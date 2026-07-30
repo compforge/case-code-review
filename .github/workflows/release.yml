@@ -31,6 +31,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Verify release version
+        run: test "$(cat VERSION)" = "${GITHUB_REF_NAME}"
+
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}
