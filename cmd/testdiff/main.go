@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/diff"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 func main() {
@@ -152,7 +151,7 @@ func buildProvider(repoDir string, args cliArgs) *diff.Provider {
 
 // ---- output helpers ----
 
-func printSummary(diffs []model.Diff) {
+func printSummary(diffs []diff.Diff) {
 	var totalAdd, totalDel int64
 	for _, d := range diffs {
 		status := "M"
@@ -172,7 +171,7 @@ func printSummary(diffs []model.Diff) {
 	fmt.Printf("\n%d file(s), +%d/-%d lines\n", len(diffs), totalAdd, totalDel)
 }
 
-func printText(diffs []model.Diff) {
+func printText(diffs []diff.Diff) {
 	for i, d := range diffs {
 		path := d.NewPath
 		if path == "/dev/null" {

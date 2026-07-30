@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/scan"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
-	"github.com/qiankunli/case-code-review/internal/tool"
 )
 
 // scanOptions mirrors reviewOptions for the full-scan subcommand. The two
@@ -255,10 +255,10 @@ Examples:
   ccr scan
 
   # Scan a single directory
-  ccr scan --path internal/agent
+  ccr scan --path internal/runner
 
   # Scan multiple files
-  ccr scan --path internal/agent/agent.go,internal/diff/scan.go
+  ccr scan --path internal/runner/runner.go,internal/diff/scan.go
 
   # Exclude generated files / fixtures
   ccr scan --exclude '**/generated/*,**/testdata/*'

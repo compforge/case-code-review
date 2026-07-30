@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 // DiffContextLines defines the number of context lines around each changed hunk.
@@ -106,8 +105,8 @@ func (p *Provider) MergeBase(ctx context.Context) string {
 	return p.mergeBase
 }
 
-// GetDiff returns all changes as parsed model.Diff structs.
-func (p *Provider) GetDiff(ctx context.Context) ([]model.Diff, error) {
+// GetDiff returns all changes as parsed Diff structs.
+func (p *Provider) GetDiff(ctx context.Context) ([]Diff, error) {
 	var combined strings.Builder
 
 	switch p.mode {
@@ -235,9 +234,9 @@ func matchGitignorePattern(relPath, pat string) bool {
 }
 
 // filterDiffs removes diffs whose file paths are excluded.
-func (p *Provider) filterDiffs(diffs []model.Diff) []model.Diff {
+func (p *Provider) filterDiffs(diffs []Diff) []Diff {
 	patterns := p.loadGitignorePatterns()
-	var result []model.Diff
+	var result []Diff
 	for _, d := range diffs {
 		path := d.NewPath
 		if path == "/dev/null" {

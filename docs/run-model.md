@@ -1,4 +1,4 @@
-# Review Run 模型：以 Unit 为调度与恢复货币
+# Runner 模型：以 Unit 为调度与恢复货币
 
 > 绿地改造设计，尚未描述当前实现。目标是把 OCR 的并发压缩、总 token 预算、断点续审等
 > case 收敛为 CCR 自己的运行模型，而不是在 file-oriented runtime 上逐项打补丁。
@@ -13,10 +13,10 @@ CCR 已把 **Unit** 建模为一次 review loop 的评审作用域，但运行�
 共享一个带会话可变状态的执行器，会让并发 Unit 互相影响；以文件作为预算和 checkpoint
 单位，又会绕开 CCR 的核心模型。因此本设计新增两个 owner：
 
-1. **ReviewRun**：拥有一次评审的全局生命周期。
+1. **Runner**：拥有一次评审的全局生命周期。
 2. **UnitExecution**：拥有一个 Unit 的执行生命周期。
 
-Unit 由此不仅是评审作用域，也是调度、预算、checkpoint 和恢复的统一货币。ReviewRun
+Unit 由此不仅是评审作用域，也是调度、预算、checkpoint 和恢复的统一货币。Runner
 只共享只读代码服务、LLM client、TokenBudget 与 Board；conversation、compression 和
 异步收尾必须由单个 UnitExecution 独占。
 
@@ -25,16 +25,16 @@ Unit 由此不仅是评审作用域，也是调度、预算、checkpoint 和恢�
 | 概念 | 身份与职责 | 生命周期 |
 |------|------------|----------|
 | `SourceSnapshot` | 本次评审所见源码的不可变身份；包含 target、解析后的 ref 与内容摘要 | ReviewPlan 全程不变 |
-| `ReviewPlan` | SourceSnapshot、全部 UnitReview 与 engine 配置摘要组成的不可变执行计划 | 一个 ReviewRun 一个 |
+| `ReviewPlan` | SourceSnapshot、全部 UnitReview 与 engine 配置摘要组成的不可变执行计划 | 一个 Runner 一个 |
 | `UnitReview` | Unit + Dossier + Briefing，以及 Board interest、输入摘要和成本估算 | 计划形成时创建 |
 | `UnitExecution` | 执行一个 UnitReview；独占消息、压缩、轮次、deadline 与评论异步任务 | start → terminal |
 | `CandidateFinding` | UnitExecution 提出的待裁决问题；携带主张、触发条件、影响、证据与 diff 归因 | UnitExecution 内形成，filter 后终止 |
 | `UnitResult` | 一个 Unit 的 CandidateFinding、confirmed facts、usage 与 Debrief | UnitExecution 终态产出 |
-| `ReviewResult` | 所有 UnitResult 经文件级过滤后的最终 findings、覆盖率、总成本与停止原因 | ReviewRun 终态产出 |
+| `ReviewResult` | 所有 UnitResult 经文件级过滤后的最终 findings、覆盖率、总成本与停止原因 | Runner 终态产出 |
 | `Attempt` | 对同一 ReviewPlan 的一次执行尝试；resume 会创建新 Attempt | started → finished/interrupted |
-| `TokenBudget` | ReviewRun 的 token 调度账本；管理 reservation、lease 与实际结算 | ReviewRun 全程 |
+| `TokenBudget` | Runner 的 token 调度账本；管理 reservation、lease 与实际结算 | Runner 全程 |
 
-`Attempt` 只解决同一 ReviewRun 的中断恢复。允许输入或 engine 变化的跨 run 结果缓存是另一项
+`Attempt` 只解决同一 Runner 的中断恢复。允许输入或 engine 变化的跨 run 结果缓存是另一项
 能力，不与 resume 混在一起。
 
 ## 流程
@@ -50,7 +50,7 @@ Fragment ──merge──▶ Unit ──find clues──▶ Dossier ──brief
                                                                │
                           ┌────────────────────────────────────┘
                           ▼
-ReviewRun（TokenBudget + Board + Attempt + deterministic scheduling）
+Runner（TokenBudget + Board + Attempt + deterministic scheduling）
     │
     ├──▶ UnitExecution ──▶ UnitResult
     ├──▶ UnitExecution ──▶ UnitResult
@@ -67,8 +67,8 @@ ReviewRun（TokenBudget + Board + Attempt + deterministic scheduling）
 
 1. 将 workspace / range / commit 解析成可校验的 SourceSnapshot 与 ChangeSet。
 2. 沿既有 split → merge → clue → briefing 链路形成不可变 ReviewPlan。
-3. ReviewRun 对 UnitReview 做确定性调度；每个 UnitReview 创建独立 UnitExecution。
-4. UnitResult 只交付 CandidateFinding；ReviewRun 按 path 聚合，以完整证据做文件级裁决。
+3. Runner 对 UnitReview 做确定性调度；每个 UnitReview 创建独立 UnitExecution。
+4. UnitResult 只交付 CandidateFinding；Runner 按 path 聚合，以完整证据做文件级裁决。
 5. 形成 ReviewResult，结束 Attempt，并持久化可恢复 checkpoint 与评测事件。
 
 ## 关键设计
@@ -170,7 +170,7 @@ UnitExecution 不写 run 级全局 collector，只返回 CandidateFinding。Cand
 这组信息属于内部裁决模型，最终评论仍保持面向开发者的简洁表达。Unit loop 可以把未完成求证的
 线索留在 Debrief 或 Board，但不得用措辞上的“可能”“建议考虑”把 hypothesis 伪装成 finding。
 
-ReviewRun 等相关 Unit 终态后按文件聚合，由独立的 evidence adjudicator 统一裁决 sibling
+Runner 等相关 Unit 终态后按文件聚合，由独立的 evidence adjudicator 统一裁决 sibling
 candidates。它看到完整 diff、变更前后源码、CandidateFinding 引用的 Dossier/Briefing，以及
 可用的 spec/case/rule/requirement；需要补证时只能使用 CCR 控制的只读代码服务。裁决结果是：
 
@@ -192,9 +192,9 @@ spec/case/rule/requirement；语言或库行为优先交给确定性分析器或
 file review-filter 自己也有 checkpoint，其复用键覆盖 path、candidate/evidence digest、
 SourceSnapshot 与 adjudicator engine digest；candidate、证据或裁决环境变化时必须重跑。
 
-### 6. Resume 继续同一 ReviewRun，不做跨 run 缓存
+### 6. Resume 继续同一 Runner，不做跨 run 缓存
 
-ReviewPlan 在 ReviewRun 内不可变。中断恢复创建新 Attempt，并依次：
+ReviewPlan 在 Runner 内不可变。中断恢复创建新 Attempt，并依次：
 
 1. 校验 SourceSnapshot；
 2. 校验当前 model / template / tools / feature gates 与 ReviewPlan 的 engine digest；
@@ -219,10 +219,11 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 
 1. 建立 ReviewPlan、UnitResult、ReviewResult 与正交 outcome 类型。
 2. 重建 SourceSnapshot 和 diff 状态机，补 merge/root/binary/特殊 hunk case。
-3. 将共享 Runner 拆成 UnitExecution，移除 run 级 conversation/compression 可变状态。
+3. 将共享的 loop 执行状态下沉为 UnitExecution，移除 run 级 conversation/compression
+   可变状态。
 4. 建立带证据的 CandidateFinding → evidence adjudicator → final finding 结果管道。
 5. 引入 TokenBudget 的 admission、lease、settle 与 finalization reserve。
-6. 引入 ReviewRun / Attempt、Unit 与 file-filter checkpoint，完成 resume。
+6. 引入 Runner / Attempt、Unit 与 file-filter checkpoint，完成 resume。
 7. 核心模型稳定后再接 Responses API、streaming、traceparent 与 background-file。
 
 跨 run cache/reuse、MCP、delegate mode 和启发式价值调度不在本轮范围。

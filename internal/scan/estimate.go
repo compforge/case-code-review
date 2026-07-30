@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 // Cost-estimation heuristics. These are deliberately rough — their job is
@@ -39,7 +38,7 @@ type Estimate struct {
 // summary phases. Returns 0 for files that are skipped before dispatch
 // (binary / empty). Used both by the aggregate estimate and by the
 // per-file budget look-ahead in dispatch.
-func estimateFileTokens(it model.ScanItem, planEnabled bool) int64 {
+func estimateFileTokens(it Item, planEnabled bool) int64 {
 	if it.IsBinary || it.Content == "" {
 		return 0
 	}
@@ -56,7 +55,7 @@ func estimateFileTokens(it model.ScanItem, planEnabled bool) int64 {
 	return total
 }
 
-func estimateCost(items []model.ScanItem, planEnabled, dedupEnabled, summaryEnabled bool) Estimate {
+func estimateCost(items []Item, planEnabled, dedupEnabled, summaryEnabled bool) Estimate {
 	var est Estimate
 	var allCommentsApprox int64
 

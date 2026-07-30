@@ -3,19 +3,17 @@ package scan
 import (
 	"reflect"
 	"testing"
-
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
-func itemList(paths ...string) []model.ScanItem {
-	out := make([]model.ScanItem, len(paths))
+func itemList(paths ...string) []Item {
+	out := make([]Item, len(paths))
 	for i, p := range paths {
-		out[i] = model.ScanItem{Path: p}
+		out[i] = Item{Path: p}
 	}
 	return out
 }
 
-func batchPaths(b [][]model.ScanItem) [][]string {
+func batchPaths(b [][]Item) [][]string {
 	out := make([][]string, len(b))
 	for i, batch := range b {
 		ps := make([]string, len(batch))
@@ -127,7 +125,7 @@ func TestLanguageKey_ExtensionlessAndDotfiles(t *testing.T) {
 		"a/b/c.Test.go":      ".go",
 	}
 	for path, want := range cases {
-		got := languageKey(model.ScanItem{Path: path})
+		got := languageKey(Item{Path: path})
 		if got != want {
 			t.Errorf("languageKey(%q) = %q, want %q", path, got, want)
 		}

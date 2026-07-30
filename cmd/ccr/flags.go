@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/feature"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 )
 
 // --- custom flag set that supports short flags (-c, -f etc.) ---
@@ -131,7 +131,7 @@ type reviewOptions struct {
 	maxGitProcs    int
 	preview        bool
 	dryRun         bool
-	features       []string // --feature name=on|off (repeatable): ablation gates; see internal/feature
+	features       []string // --feature name=on|off (repeatable): ablation gates; see internal/runner/feature
 	showHelp       bool
 }
 

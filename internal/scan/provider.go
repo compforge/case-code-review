@@ -1,7 +1,7 @@
 // Package scan implements `ccr scan` — full-file code review. It owns the
 // file-enumeration provider, the per-file orchestrator, and the FULL_SCAN
 // prompt-template plumbing. Shared LLM tool-use loop / memory compression
-// lives in internal/llmloop; this package only handles scan-specific
+// lives in internal/harness/llmloop; this package only handles scan-specific
 // concerns (enumeration, FULL_SCAN_TASK rendering, scan-specific filter).
 package scan
 
@@ -18,7 +18,6 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/model"
 	"github.com/qiankunli/case-code-review/internal/stdout"
 )
 
@@ -34,7 +33,7 @@ const binarySniffWindow = 8000
 const DefaultMaxFileSizeBytes int64 = 2 << 20 // 2 MiB
 
 // Provider enumerates source files in a repository for full-file review.
-// Unlike diff.Provider it produces no unified diffs — each ScanItem carries
+// Unlike diff.Provider it produces no unified diffs — each Item carries
 // the full file content via Content, and binaries are emitted as placeholder
 // entries (Content empty, IsBinary=true) so callers can still surface them
 // in previews without spending memory on their bytes.
@@ -73,9 +72,9 @@ func NewProvider(repoDir string, paths []string, runner *gitcmd.Runner, maxFileS
 	}
 }
 
-// Enumerate returns one ScanItem per reviewable file. Binaries are emitted
+// Enumerate returns one Item per reviewable file. Binaries are emitted
 // with empty Content + IsBinary=true so previews can show them as excluded.
-func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
+func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 	files, err := p.listFiles(ctx)
 	if err != nil {
 		return nil, err
@@ -87,7 +86,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
 
 	gitignorePatterns := diff.LoadGitignorePatterns(p.repoDir)
 
-	var out []model.ScanItem
+	var out []Item
 	for _, rel := range files {
 		// Per-iteration cancellation check: a large repo with thousands of
 		// files may take seconds to walk, and downstream Lstat / ReadFile
@@ -123,7 +122,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
 		if binary {
 			// Emit placeholder so preview can display [B], but do not
 			// read the file body — saves memory on large binaries.
-			out = append(out, model.ScanItem{
+			out = append(out, Item{
 				Path:     rel,
 				IsBinary: true,
 			})
@@ -134,7 +133,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]model.ScanItem, error) {
 			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: cannot read %s: %v\n", rel, err)
 			continue
 		}
-		out = append(out, model.ScanItem{
+		out = append(out, Item{
 			Path:      rel,
 			Content:   string(content),
 			IsBinary:  false,

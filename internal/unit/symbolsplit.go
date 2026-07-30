@@ -7,7 +7,6 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 // AutoSplitter attributes changed hunks to callable definitions reported by
@@ -18,7 +17,7 @@ type AutoSplitter struct {
 	Analyzer *language.Analyzer
 }
 
-func (s AutoSplitter) Split(d model.Diff) ([]Fragment, error) {
+func (s AutoSplitter) Split(d diff.Diff) ([]Fragment, error) {
 	if d.NewFileContent == "" {
 		return FileSplitter{}.Split(d)
 	}
@@ -56,7 +55,7 @@ type funcSpan struct {
 
 // splitByFuncSpans turns a file diff into one Fragment per touched function
 // plus a residual file Fragment for changes outside every function.
-func splitByFuncSpans(d model.Diff, spans []funcSpan) []Fragment {
+func splitByFuncSpans(d diff.Diff, spans []funcSpan) []Fragment {
 	header := diffHeader(d.Diff)
 	hunks := diff.ParseHunks(d.Diff)
 	grouped := make(map[int][]diff.Hunk)

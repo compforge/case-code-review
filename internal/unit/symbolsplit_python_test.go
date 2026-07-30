@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/diff"
 )
 
 func requirePython3(t *testing.T) {
@@ -34,7 +34,7 @@ class Svc:
 -        return 0
 +        return 2
 `
-	frags, err := AutoSplitter{}.Split(model.Diff{NewPath: "p.py", Diff: rawDiff, NewFileContent: src})
+	frags, err := AutoSplitter{}.Split(diff.Diff{NewPath: "p.py", Diff: rawDiff, NewFileContent: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ class Svc:
 
 func TestAutoSplitter_PythonSyntaxErrorFallsBack(t *testing.T) {
 	requirePython3(t)
-	frags, err := AutoSplitter{}.Split(model.Diff{
+	frags, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "p.py",
 		Diff:           "@@ -1,1 +1,1 @@\n-a\n+b\n",
 		NewFileContent: "def f(:\n  bad",
@@ -65,7 +65,7 @@ func TestAutoSplitter_PythonSyntaxErrorFallsBack(t *testing.T) {
 }
 
 func TestAutoSplitter_UnsupportedPathIsFileScope(t *testing.T) {
-	frags, err := AutoSplitter{}.Split(model.Diff{
+	frags, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "a.txt",
 		Diff:           "@@ -1,1 +1,1 @@\n-a\n+b\n",
 		NewFileContent: "hello",
@@ -80,7 +80,7 @@ func TestAutoSplitter_UnsupportedPathIsFileScope(t *testing.T) {
 
 func TestAutoSplitter_RoutesByExtension(t *testing.T) {
 	// .txt -> file scope (no language splitter), regardless of python3 presence.
-	frags, err := AutoSplitter{}.Split(model.Diff{
+	frags, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "notes.txt",
 		Diff:           "@@ -1,1 +1,1 @@\n-a\n+b\n",
 		NewFileContent: "x",
@@ -94,7 +94,7 @@ func TestAutoSplitter_RoutesByExtension(t *testing.T) {
 }
 
 func TestAutoSplitter_RoutesTypeScript(t *testing.T) {
-	frags, err := AutoSplitter{}.Split(model.Diff{
+	frags, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "app.ts",
 		Diff:           "@@ -2,1 +2,1 @@\n-  return 0;\n+  return 1;\n",
 		NewFileContent: "function app() {\n  return 1;\n}\n",

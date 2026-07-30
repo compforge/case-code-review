@@ -6,10 +6,9 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/model"
-	"github.com/qiankunli/case-code-review/internal/session"
-	"github.com/qiankunli/case-code-review/internal/tool"
 )
 
 // fakeBudgetClient returns a task_done tool call on every request and
@@ -56,10 +55,10 @@ func budgetTestTemplate() template.ScanTemplate {
 	}
 }
 
-func makeScanItems(n int) []model.ScanItem {
-	items := make([]model.ScanItem, n)
+func makeScanItems(n int) []Item {
+	items := make([]Item, n)
 	for i := range items {
-		items[i] = model.ScanItem{
+		items[i] = Item{
 			Path:      "f" + string(rune('0'+i)) + ".go",
 			Content:   "package x\n",
 			LineCount: 1,

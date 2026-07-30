@@ -1,6 +1,6 @@
 # Codegraph：统一图消费层
 
-> `internal/codegraph` 统一承接 language facts 的图用途：repo-map 排名、caller/callee 上下文与 call-chain 邻接。源码事实和解析后端只在 `internal/language`；codegraph 只拥有图算法、成本策略与评审语义。
+> `internal/unit/codegraph` 统一承接 language facts 的图用途：repo-map 排名、caller/callee 上下文与 call-chain 邻接。源码事实和解析后端只在 `internal/language`；codegraph 只拥有图算法、成本策略与评审语义。
 
 ## 理念
 

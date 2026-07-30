@@ -31,7 +31,7 @@ RUN_TIMEOUT = 30 * 60
 
 
 def encode_repo_path(p: str) -> str:
-    """Port of internal/session/persist.go encodeRepoPath (posix subset)."""
+    """Port of internal/harness/session/persist.go encodeRepoPath (posix subset)."""
     p = p.lstrip("/\\").replace("/", "-").replace("\\", "-")
     return p or "empty"
 

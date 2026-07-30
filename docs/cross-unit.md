@@ -136,7 +136,7 @@ type Board interface {
 
 ## 切片、验收与已知弱点
 
-**v0（纯机制，已实现）**：`internal/board`（Registry：交集打分 symbol>path、level 乘数、增量游标、top-K+字节封顶、隔离盖章渲染）+ `msg.Board`（进 `Reclaimable` 驱逐序，与 File 同档）+ llmloop 接缝（`Deps.Board` nil=字节不变；turn 顶 Pull 注入、tool 后自动 Publish 事实）+ agent 注册 unit interest（paths+symbols+clue_refs）+ debrief `board{pulled,injected_tokens,posted}` + `board_post` 落 session。gate `review_team` 默认关（experimental，语义入 registry `Experimental` 字段）。**不含**：cross_check、Lead、板面压缩。
+**v0（纯机制，已实现）**：`internal/harness/board`（Registry：交集打分 symbol>path、level 乘数、增量游标、top-K+字节封顶、隔离盖章渲染）+ `msg.Board`（进 `Reclaimable` 驱逐序，与 File 同档）+ llmloop 接缝（`Deps.Board` nil=字节不变；turn 顶 Pull 注入、tool 后自动 Publish 事实）+ Runner 注册 unit interest（paths+symbols+clue_refs）+ debrief `board{pulled,injected_tokens,posted}` + `board_post` 落 session。gate `review_team` 默认关（experimental，语义入 registry `Experimental` 字段）。**不含**：cross_check、Lead、板面压缩。
 
 **v0.5（怀疑通道，已实现）**：`post_bulletin` tool——模型把本 unit 范围外的跨文件疑点以 observation 级贴上板（发现者带上下文递线索，D2 的发布侧补全）。实现要点：loop 自持 handler（发布需要 scope 身份、turn 与每 loop 预算，不走 Registry provider）；路由键（paths/symbols）必填、每 loop 发帖封顶、text 截断——闸 2 的源头防线；无板或 gate 关时 `NewRunner` 直接从 tool defs 剥离，模型看不到用不了的工具。gate `post_bulletin` 默认关，依赖 `review_team`。消费侧零增量：observation 的降权乘数与"未确认观察不得作为事实引用"盖章 v0 已就位。
 

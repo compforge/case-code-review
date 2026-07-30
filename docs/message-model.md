@@ -10,7 +10,7 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 
 ## 现状与演进（passthrough 先行，类型跟着消费者走）
 
-- **PR A（已落地）**：`internal/msg`——`Msg` 接口 + `Raw` 直通 + `Lower()`；`llmloop.RunPerFile` 与 compression 链的货币换成 `[]msg.Msg`，**wire 输出逐字节不变**（round-trip 等价测试保证）。plan / review-filter / relocation / scan 的单发调用保持 lowered 形态——它们没有 loop 货币问题。
+- **PR A（已落地）**：`internal/harness/msg`——`Msg` 接口 + `Raw` 直通 + `Lower()`；`llmloop.RunPerFile` 与 compression 链的货币换成 `[]msg.Msg`，**wire 输出逐字节不变**（round-trip 等价测试保证）。plan / review-filter / relocation / scan 的单发调用保持 lowered 形态——它们没有 loop 货币问题。
 - **PR B（已落地）**：`msg.File`（file_read 结果带 path+range 身份，从结果头解析——那是工具的输出契约）+ 第一个消费者 **file_dedup**（gate）：后读覆盖先读 → 先读原地 stub 成一行指针，**保位置、保 tool_call_id**（1:1 不变量与协议配对都不破）。dogfood 验证：真实流量零误伤（不同文件/不覆盖的区间不动）；loop 内重复本就比跨 unit 重复少——跨 unit 的同文件重复读（实测同 run 两个 unit 各读一次 `stdout.go`）是 P3 案情板的地盘，不是 loop 内去重的。
 - **C1 按可再生性驱逐（已落地）**：**file_evict**（gate）——warn 阈值（80% MaxTokens）超限时，先把最老的未 stub File 逐个 stub（内容可从磁盘重取，驱逐是确定性、零成本、可恢复的），不够再走 LLM compression。stub 文本按 reason 分两种指针：superseded 指向下文的新副本，evicted 告诉模型 file_read 可取回。驱逐次序 = 可再生性排序的第一档；board 消息（可从板面重拉）与 assistant 推理（不可再生）的档位等相应类型引入时再接。
 - **C2 briefing 预载 File 化（已落地，gate `typed_briefing` 默认关）**：消息形状变为 **[system, task, own Files…, related Files…]**——File 必须在 task **之后**（compression 冻结 `messages[0:2]` 为 [system, task] 并向 index 1 追加摘要，中间不能插东西）；template 的源码槽位改填指针文本（自定义模板照常替换）。预载成为 `msg.File` 后 file_dedup/file_evict 自动覆盖它——"模型有全文仍去 ranged read"由 dedup 直接吃掉。降级链不变（先丢 related Files 再丢 own Files → 哨兵文本）。**已翻默认开**（回归集 A/B，eval/README §9：70 unit/arm，timeout 9→3、成本持平、无质量回退证据）；「flip 后清理清单」自此可执行。
@@ -38,6 +38,6 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 
 ## References
 
-- 实现锚点：`internal/msg`（类型与 lowering）、`internal/llmloop/loop.go`（货币与调用点）、`internal/llmloop/compression.go`（索引分区，1:1 不变量的依赖方）
+- 实现锚点：`internal/harness/msg`（类型与 lowering）、`internal/harness/llmloop/loop.go`（货币与调用点）、`internal/harness/llmloop/compression.go`（索引分区，1:1 不变量的依赖方）
 - 消费方向：`docs/cross-unit.md`（Board/Bulletin）、`docs/context-model.md` 关键设计 8（briefing）
 - 参考：pi `packages/coding-agent/src/core/messages.ts`

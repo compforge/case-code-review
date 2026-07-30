@@ -64,6 +64,6 @@ diff ─Splitter→ Fragment ─Merger(callchain + file)→ Unit
 
 - `diff → fragment → unit`：[`unit-model.md`](unit-model.md)
 - 评审语义（契约守恒三问、caller 上溯 spec、聚合）：workspace `docs/spec-aware-review.md`
-- 实现锚点：`internal/spec/related.go`（RelationCollector / RelatedFinder / SelfGates）、`internal/spec/docstring.go`（derived doc）、`internal/spec/deps.go`（依赖 spec 消费）、`internal/codegraph/walk.go`（caller/callee 走图 + 邻居 doc）、`internal/codegraph/usage.go`（usage-sites 预 grep）、`internal/unit/clue.go`（Clue/Relation/Dossier 类型）、`internal/agent/briefing.go`（briefer 协议 + 材料预算引擎）
+- 实现锚点：`internal/unit/spec/related.go`（RelationCollector / RelatedFinder / SelfGates）、`internal/unit/spec/docstring.go`（derived doc）、`internal/unit/spec/deps.go`（依赖 spec 消费）、`internal/unit/codegraph/walk.go`（caller/callee 走图 + 邻居 doc）、`internal/unit/codegraph/usage.go`（usage-sites 预 grep）、`internal/unit/clue.go`（Clue/Relation/Dossier 类型）、`internal/runner/briefing.go`（briefer 协议 + 材料预算引擎）
 - 驱动 briefing 设计的 trajectory 证据与方法论：`eval/README.md` §7
 - 资产侧（symbol-id / fqn / marker / specgen，Go + Python）：`spec-case`

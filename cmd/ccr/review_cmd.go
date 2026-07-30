@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/agent"
-	"github.com/qiankunli/case-code-review/internal/feature"
-	"github.com/qiankunli/case-code-review/internal/history"
-	"github.com/qiankunli/case-code-review/internal/spec"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/runner"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
-	"github.com/qiankunli/case-code-review/internal/tool"
+	"github.com/qiankunli/case-code-review/internal/unit/history"
+	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
 
 func runReview(args []string) error {
@@ -82,7 +82,7 @@ func runReview(args []string) error {
 		return fmt.Errorf("load history: %w", err)
 	}
 
-	ag := agent.New(agent.Args{
+	ag := runner.New(runner.Args{
 		RepoDir:               cc.RepoDir,
 		From:                  opts.from,
 		To:                    opts.to,
@@ -95,7 +95,7 @@ func runReview(args []string) error {
 		PlanToolDefs:          rt.PlanToolDefs,
 		MainToolDefs:          rt.MainToolDefs,
 		CommentCollector:      rt.Collector,
-		CommentWorkerPool:     agent.NewCommentWorkerPool(opts.concurrency),
+		CommentWorkerPool:     runner.NewCommentWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
@@ -192,7 +192,7 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 }
 
 func runPreview(cc *commonContext, opts reviewOptions) error {
-	ag := agent.New(agent.Args{
+	ag := runner.New(runner.Args{
 		RepoDir:    cc.RepoDir,
 		From:       opts.from,
 		To:         opts.to,
@@ -226,7 +226,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	if err != nil {
 		return err
 	}
-	ag := agent.New(agent.Args{
+	ag := runner.New(runner.Args{
 		RepoDir:      cc.RepoDir,
 		From:         opts.from,
 		To:           opts.to,

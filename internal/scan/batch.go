@@ -3,8 +3,6 @@ package scan
 import (
 	"sort"
 	"strings"
-
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 // BatchStrategy enumerates the grouping policies for scan dispatch.
@@ -39,14 +37,14 @@ func parseBatchStrategy(s string) BatchStrategy {
 // group key for determinism.
 //
 // Returns nil when items is empty.
-func groupBatches(items []model.ScanItem, strategy BatchStrategy, size int) [][]model.ScanItem {
+func groupBatches(items []Item, strategy BatchStrategy, size int) [][]Item {
 	if len(items) == 0 {
 		return nil
 	}
 
 	// Bucket by group key.
 	keyFn := batchKeyFunc(strategy)
-	buckets := make(map[string][]model.ScanItem)
+	buckets := make(map[string][]Item)
 	for _, it := range items {
 		key := keyFn(it)
 		buckets[key] = append(buckets[key], it)
@@ -59,7 +57,7 @@ func groupBatches(items []model.ScanItem, strategy BatchStrategy, size int) [][]
 	}
 	sort.Strings(keys)
 
-	var out [][]model.ScanItem
+	var out [][]Item
 	for _, k := range keys {
 		group := buckets[k]
 		if size <= 0 || len(group) <= size {
@@ -79,7 +77,7 @@ func groupBatches(items []model.ScanItem, strategy BatchStrategy, size int) [][]
 }
 
 // batchKeyFunc returns the grouping key extractor for a strategy.
-func batchKeyFunc(strategy BatchStrategy) func(model.ScanItem) string {
+func batchKeyFunc(strategy BatchStrategy) func(Item) string {
 	switch strategy {
 	case BatchByLanguage:
 		return languageKey
@@ -87,13 +85,13 @@ func batchKeyFunc(strategy BatchStrategy) func(model.ScanItem) string {
 		return firstLevelDirKey
 	default:
 		// BatchNone: each file is its own batch.
-		return func(it model.ScanItem) string { return it.Path }
+		return func(it Item) string { return it.Path }
 	}
 }
 
 // languageKey returns the lowercased file extension (with the leading dot)
 // or "<no-ext>" for extensionless files.
-func languageKey(it model.ScanItem) string {
+func languageKey(it Item) string {
 	base := it.Path
 	if i := strings.LastIndex(base, "/"); i >= 0 {
 		base = base[i+1:]
@@ -107,7 +105,7 @@ func languageKey(it model.ScanItem) string {
 
 // firstLevelDirKey returns the first path segment of a repo-relative path,
 // or "<root>" for files directly in the repo root.
-func firstLevelDirKey(it model.ScanItem) string {
+func firstLevelDirKey(it Item) string {
 	idx := strings.IndexByte(it.Path, '/')
 	if idx < 0 {
 		return "<root>"

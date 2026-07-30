@@ -38,8 +38,8 @@ func TestCountLines(t *testing.T) {
 func TestFilterByPaths(t *testing.T) {
 	all := []string{
 		"cmd/main.go",
-		"internal/agent/agent.go",
-		"internal/agent/fullscan.go",
+		"internal/runner/runner.go",
+		"internal/runner/fullscan.go",
 		"internal/scan/provider.go",
 		"README.md",
 	}
@@ -49,7 +49,7 @@ func TestFilterByPaths(t *testing.T) {
 		want  []string
 	}{
 		{"exact file", []string{"README.md"}, []string{"README.md"}},
-		{"dir prefix", []string{"internal/agent"}, []string{"internal/agent/agent.go", "internal/agent/fullscan.go"}},
+		{"dir prefix", []string{"internal/runner"}, []string{"internal/runner/runner.go", "internal/runner/fullscan.go"}},
 		{"multi", []string{"cmd/main.go", "internal/scan"}, []string{"cmd/main.go", "internal/scan/provider.go"}},
 		{"prefix not at boundary", []string{"internal/age"}, nil},
 		{"no match", []string{"does/not/exist"}, nil},
@@ -67,12 +67,12 @@ func TestFilterByPaths(t *testing.T) {
 func TestNewProvider_NormalizesPaths(t *testing.T) {
 	p := NewProvider("/tmp/repo", []string{
 		"   ",
-		"./internal/agent/",
+		"./internal/runner/",
 		"cmd",
 		"   internal/diff   ",
 		filepath.FromSlash("a/b"),
 	}, nil, 0)
-	want := []string{"internal/agent", "cmd", "internal/diff", "a/b"}
+	want := []string{"internal/runner", "cmd", "internal/diff", "a/b"}
 	if !reflect.DeepEqual(p.paths, want) {
 		t.Errorf("paths = %v, want %v", p.paths, want)
 	}
