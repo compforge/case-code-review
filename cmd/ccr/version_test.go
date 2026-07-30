@@ -9,8 +9,8 @@ func TestResolveVersion(t *testing.T) {
 		module  string
 		want    string
 	}{
-		{name: "ldflags wins", stamped: "v1.9.2", module: "v1.9.1", want: "v1.9.2"},
-		{name: "go install module version", stamped: "dev", module: "v1.9.2", want: "v1.9.2"},
+		{name: "ldflags wins", stamped: "v1.10.0", module: "v1.9.1", want: "v1.10.0"},
+		{name: "go install module version", stamped: "dev", module: "v1.10.0", want: "v1.10.0"},
 		{name: "local build", stamped: "dev", module: "(devel)", want: "dev"},
 		{name: "missing build info", stamped: "dev", want: "dev"},
 	}
