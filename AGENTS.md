@@ -28,7 +28,7 @@ case-code-review/
     ├── spec/       ★ 消费 spec.json：SpecFinder/RuleFinder/LinkFinder 把 spec/case/rule/link 找成 Clue（廉价 finder）
     ├── history/    ★ 消费 --history（上轮评审 findings，symbol-id keyed）：Finder 挂成 ClueHistory，渲染成"核验是否已修"的 prompt（廉价 finder；评审反馈闭环的消费侧）
     ├── codegraph/  ★ language facts 的图消费层：repo-map 排名 + caller/callee 邻域 Clue + call-chain 邻接；只拥有图算法与评审策略，不解释源码语法。详见 `docs/codegraph.md`
-    ├── agent/      ★ 评审编排：split→找 Clue（廉价 + 按预算闸门的昂贵 finder）→merge→每 review unit 一个 loop；按 Clue 渲染上下文；unit 的 Briefing（briefer 协议按 scope 定预载材料：own source / usage-sites / callchain 邻居函数体，共享预算引擎）；loop 收尾每 unit 落一条 **Debrief**（outcome/formed/降级/成本 → session，指标体系的常开采集面，见 `eval/README.md` §8）；file 级 review-filter；`--dry-run` 只装配上下文、不调 LLM
+    ├── agent/      ★ 评审编排：split→找 Clue（廉价 + 按预算闸门的昂贵 finder）→merge→每 review unit 一个 loop；按 Clue 渲染上下文；unit 的 Briefing（briefer 协议按 scope 定预载材料：own source / usage-sites / callchain 邻居函数体，共享预算引擎）；loop 收尾每 unit 落一条 **Debrief**（outcome/formed/降级/成本 → session，指标体系的常开采集面见 `eval/README.md`）；file 级 review-filter；`--dry-run` 只装配上下文、不调 LLM
     ├── diff/       diff/hunk 解析、评论行号解析
     ├── msg/        review 领域消息模型：loop 货币 `[]msg.Msg`，wire 格式只在 lowering 边界出现——`docs/message-model.md`
     ├── board/      Review Team v0 共享案情板（gate review_team 默认关）：Bulletin 定向路由 + 增量注入，unit loop 间互通进展——`docs/cross-unit.md`
@@ -69,4 +69,5 @@ diff ─Splitter─▶ Fragment ─Merger─▶ Unit ─ClueFinder 找 Clue(spec
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
 - Context 模型：unit → dossier——`Clue`(kind: spec/case/rule/link/doc) × `Relation`(self/owner/caller/callee/used) 两轴正交、doc 运行时抽取（adoption-free）、symbol-id 仓内 / fqn 跨仓、依赖 spec 随包发——`docs/context-model.md`
 - Review Team（设计定稿，v0 待实现）：Board/Bulletin/动态 cross_check，治跨文件一致性漏报；固定 phase 碰头会与角色化均已论证否决——`docs/cross-unit.md`
+- Review Run 绿地改造（待实施）：ReviewRun / UnitExecution 生命周期、总 token 预算与 Unit 级断点恢复——`docs/run-model.md`
 - 上游归属（Apache-2.0 衍生）：`NOTICE`

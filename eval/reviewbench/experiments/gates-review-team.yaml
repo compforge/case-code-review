@@ -1,0 +1,11 @@
+# review_team 三臂消融——回答"team 机制有没有用"（cross-unit.md 验收标准：
+# 跨文件实锤召回或 pulled→行为改变至少中一个，否则止损）。
+# 用法：cd eval/reviewbench && uv run python -m reviewbench.run experiments/gates-review-team.yaml
+name: gates-review-team
+description: review_team off / on / on+post_bulletin 三臂，同 corpus 消融
+corpus: ../data/corpus/ccr-self.json
+engine: ccr
+envs:
+  - { name: base, overrides: { config.features: "review_team=off,post_bulletin=off" } }
+  - { name: team, overrides: { config.features: "review_team=on,post_bulletin=off" } }
+  - { name: team-bulletin, overrides: { config.features: "review_team=on,post_bulletin=on" } }
