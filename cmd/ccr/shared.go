@@ -8,18 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/agent"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
 	"github.com/qiankunli/case-code-review/internal/diff"
-	"github.com/qiankunli/case-code-review/internal/feature"
+	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/runner"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
-	"github.com/qiankunli/case-code-review/internal/tool"
 )
 
 // commonContext bundles the state that both `ocr review` and `ocr scan`
@@ -154,8 +154,8 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath, modelOverride string
 	if err != nil {
 		return nil, fmt.Errorf("load tools: %w", err)
 	}
-	planToolDefs := agent.BuildToolDefs(toolEntries, true)
-	mainToolDefs := agent.BuildToolDefs(toolEntries, false)
+	planToolDefs := runner.BuildToolDefs(toolEntries, true)
+	mainToolDefs := runner.BuildToolDefs(toolEntries, false)
 
 	cfgPath, err := defaultConfigPath()
 	if err != nil {
@@ -247,18 +247,18 @@ func (h *quietHandle) Restore() {
 	h.fn = nil
 }
 
-// ResultProvider abstracts the metadata both internal/agent.Agent and
+// ResultProvider abstracts the metadata both internal/runner.Runner and
 // internal/scan.Agent expose post-run, so emitRunResult can finalize
 // either without knowing which kind it has.
 type ResultProvider interface {
-	Diffs() []model.Diff
+	Diffs() []diff.Diff
 	FilesReviewed() int64
 	TotalInputTokens() int64
 	TotalOutputTokens() int64
 	TotalTokensUsed() int64
 	TotalCacheReadTokens() int64
 	TotalCacheWriteTokens() int64
-	Warnings() []agent.AgentWarning
+	Warnings() []runner.Warning
 	// ProjectSummary is the markdown project-level summary produced by
 	// scan's PROJECT_SUMMARY_TASK. Empty for review mode and for scans
 	// that skipped / failed the summary phase.
@@ -279,12 +279,12 @@ type ResultProvider interface {
 func emitRunResult(
 	ctx context.Context,
 	ag ResultProvider,
-	comments []model.LlmComment,
+	comments []finding.Finding,
 	startTime time.Time,
 	outputFormat, audience string,
 	q *quietHandle,
 ) error {
-	comments = diff.ResolveLineNumbers(comments, ag.Diffs())
+	comments = finding.ResolveLineNumbers(comments, ag.Diffs())
 
 	duration := time.Since(startTime)
 	telemetry.RecordReviewDuration(ctx, duration)

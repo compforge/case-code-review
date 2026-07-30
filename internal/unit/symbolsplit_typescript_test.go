@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/diff"
 )
 
 func TestAutoSplitter_TypeScriptFunctionMethodAndArrow(t *testing.T) {
@@ -35,7 +35,7 @@ const View = () => {
 -  return <span>old</span>;
 +  return <span>ok</span>;
 `
-	frags, err := AutoSplitter{}.Split(model.Diff{NewPath: "app.tsx", Diff: rawDiff, NewFileContent: src})
+	frags, err := AutoSplitter{}.Split(diff.Diff{NewPath: "app.tsx", Diff: rawDiff, NewFileContent: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ const View = () => {
 
 func TestAutoSplitter_TypeScriptDoesNotNeedNode(t *testing.T) {
 	t.Setenv("PATH", "")
-	frags, err := AutoSplitter{}.Split(model.Diff{
+	frags, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "app.ts",
 		Diff:           "@@ -1,1 +1,1 @@\n-old\n+new\n",
 		NewFileContent: "function app() { return 1; }",

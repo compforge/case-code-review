@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/model"
 	"github.com/qiankunli/case-code-review/internal/stdout"
 )
 
@@ -24,10 +23,10 @@ var (
 // git show instead of reading from the working tree.
 // runner, if non-nil, is used to execute git subprocesses through a
 // shared concurrency limiter.
-func ParseDiffText(ctx context.Context, diffText string, repoDir string, ref string, runner *gitcmd.Runner) ([]model.Diff, error) {
+func ParseDiffText(ctx context.Context, diffText string, repoDir string, ref string, runner *gitcmd.Runner) ([]Diff, error) {
 	lines := strings.Split(diffText, "\n")
-	var diffs []model.Diff
-	var current *model.Diff
+	var diffs []Diff
+	var current *Diff
 	var buf strings.Builder
 
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -42,7 +41,7 @@ func ParseDiffText(ctx context.Context, diffText string, repoDir string, ref str
 				diffs = append(diffs, *current)
 				buf.Reset()
 			}
-			current = &model.Diff{
+			current = &Diff{
 				OldPath: m[1],
 				NewPath: m[2],
 			}
@@ -94,7 +93,7 @@ func ParseDiffText(ctx context.Context, diffText string, repoDir string, ref str
 
 // finalizeDiff reads the new file content. When ref is non-empty it uses
 // git show to read the file at that ref; otherwise it reads from disk.
-func finalizeDiff(ctx context.Context, d *model.Diff, repoDir string, ref string, runner *gitcmd.Runner) {
+func finalizeDiff(ctx context.Context, d *Diff, repoDir string, ref string, runner *gitcmd.Runner) {
 	if d.IsDeleted || d.NewPath == "/dev/null" {
 		d.NewPath = "/dev/null"
 		return

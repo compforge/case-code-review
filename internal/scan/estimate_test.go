@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 func TestHumanTokens(t *testing.T) {
@@ -27,7 +26,7 @@ func TestHumanTokens(t *testing.T) {
 }
 
 func TestEstimateCost_ScalesWithContentAndPhases(t *testing.T) {
-	items := []model.ScanItem{
+	items := []Item{
 		{Path: "a.go", Content: strings.Repeat("token ", 500)}, // ~non-trivial
 		{Path: "b.go", Content: strings.Repeat("x ", 300)},
 		{Path: "bin.dat", IsBinary: true}, // skipped
@@ -63,14 +62,14 @@ func TestEstimateCost_ScalesWithContentAndPhases(t *testing.T) {
 
 func TestEstimateFileTokens(t *testing.T) {
 	// Binary / empty → 0 (skipped before dispatch).
-	if got := estimateFileTokens(model.ScanItem{Path: "x", IsBinary: true}, true); got != 0 {
+	if got := estimateFileTokens(Item{Path: "x", IsBinary: true}, true); got != 0 {
 		t.Errorf("binary file should estimate 0, got %d", got)
 	}
-	if got := estimateFileTokens(model.ScanItem{Path: "x", Content: ""}, true); got != 0 {
+	if got := estimateFileTokens(Item{Path: "x", Content: ""}, true); got != 0 {
 		t.Errorf("empty file should estimate 0, got %d", got)
 	}
 
-	it := model.ScanItem{Path: "a.go", Content: strings.Repeat("token ", 400)}
+	it := Item{Path: "a.go", Content: strings.Repeat("token ", 400)}
 	withPlan := estimateFileTokens(it, true)
 	noPlan := estimateFileTokens(it, false)
 	if withPlan <= 0 || noPlan <= 0 {
@@ -82,7 +81,7 @@ func TestEstimateFileTokens(t *testing.T) {
 
 	// Per-file estimate must equal the aggregate single-file MAIN+PLAN cost
 	// (sanity that the aggregate and look-ahead share the same model).
-	agg := estimateCost([]model.ScanItem{it}, true, false, false)
+	agg := estimateCost([]Item{it}, true, false, false)
 	if agg.TotalTokens != withPlan {
 		t.Errorf("aggregate single-file total (%d) != per-file estimate (%d)", agg.TotalTokens, withPlan)
 	}

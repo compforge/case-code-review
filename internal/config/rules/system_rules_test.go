@@ -103,7 +103,7 @@ func TestResolve_FallbackToDefault(t *testing.T) {
 		"readme.md",
 		"docs/architecture.txt",
 		"Makefile",
-		"internal/agent/agent.go",
+		"internal/runner/runner.go",
 		"scripts/deploy.py",
 		"ios/ViewController.m",
 	}

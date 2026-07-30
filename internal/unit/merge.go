@@ -1,6 +1,6 @@
 package unit
 
-import "github.com/qiankunli/case-code-review/internal/model"
+import "github.com/qiankunli/case-code-review/internal/diff"
 
 // The split pipeline names two kinds of Unit:
 //
@@ -17,7 +17,7 @@ import "github.com/qiankunli/case-code-review/internal/model"
 // FileFragments pairs one file's Fragments with their source diff. It is the
 // input to a Merger, which needs the file diff to build a coalesced file Unit.
 type FileFragments struct {
-	Diff      model.Diff
+	Diff      diff.Diff
 	Fragments []Fragment
 }
 

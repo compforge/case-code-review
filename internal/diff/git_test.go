@@ -25,7 +25,7 @@ func runGitTest(t *testing.T, dir string, args ...string) {
 // writeGarbageExternalDiff writes a shell script that emits non-diff output and
 // returns its path. When git invokes it via GIT_EXTERNAL_DIFF / diff.external it
 // replaces the normal unified-diff machinery, so the output can no longer be
-// parsed into model.Diff structs unless the git command opts out with
+// parsed into Diff structs unless the git command opts out with
 // --no-ext-diff.
 func writeGarbageExternalDiff(t *testing.T) string {
 	t.Helper()

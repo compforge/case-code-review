@@ -3,14 +3,14 @@ package unit
 import (
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/model"
 )
 
 // fileWith builds a FileFragments for path with n function fragments (each id
 // path::f), each covering one line — enough for the merger's counting.
 func fileWith(path string, n int) FileFragments {
-	d := model.Diff{NewPath: path, Diff: "@@ -1,1 +1,1 @@\n-a\n+b\n"}
+	d := diff.Diff{NewPath: path, Diff: "@@ -1,1 +1,1 @@\n-a\n+b\n"}
 	var fs []Fragment
 	for range n {
 		id := language.SymbolID(path, "", "f")

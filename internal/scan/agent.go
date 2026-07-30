@@ -12,15 +12,17 @@ import (
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness/msg"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/llmloop"
-	"github.com/qiankunli/case-code-review/internal/model"
-	"github.com/qiankunli/case-code-review/internal/msg"
-	"github.com/qiankunli/case-code-review/internal/session"
+	"github.com/qiankunli/case-code-review/internal/runner/preview"
 	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
-	"github.com/qiankunli/case-code-review/internal/tool"
 )
 
 // changeFilesScanLiteral substitutes for the {{change_files}} placeholder.
@@ -97,7 +99,7 @@ func (a *Agent) summaryEnabled() bool {
 // (file enumeration, FULL_SCAN_TASK rendering, per-file filtering).
 type Agent struct {
 	args           Args
-	items          []model.ScanItem
+	items          []Item
 	currentDate    string
 	session        *session.SessionHistory
 	subtaskFailed  int64 // atomic
@@ -168,11 +170,11 @@ func (a *Agent) Session() *session.SessionHistory { return a.session }
 // FilesReviewed returns the number of items included in this scan.
 func (a *Agent) FilesReviewed() int64 { return int64(len(a.items)) }
 
-// Diffs returns the scanned items adapted to model.Diff form so callers
+// Diffs returns the scanned items adapted to diff.Diff form so callers
 // (e.g. cmd/ccr's outputJSON / ResolveLineNumbers) can treat
 // both review and scan results uniformly.
-func (a *Agent) Diffs() []model.Diff {
-	out := make([]model.Diff, len(a.items))
+func (a *Agent) Diffs() []diff.Diff {
+	out := make([]diff.Diff, len(a.items))
 	for i := range a.items {
 		out[i] = *a.items[i].AsDiff()
 	}
@@ -190,7 +192,7 @@ func (a *Agent) TotalCacheWriteTokens() int64 {
 func (a *Agent) ModelsUsed() map[string]int { return a.runner.ModelsUsed() }
 
 // Warnings returns the warnings recorded by the LLM runner.
-func (a *Agent) Warnings() []llmloop.AgentWarning { return a.runner.Warnings() }
+func (a *Agent) Warnings() []llmloop.Warning { return a.runner.Warnings() }
 
 // ToolCalls returns per-tool call counts accumulated during scan.
 func (a *Agent) ToolCalls() map[string]int64 { return a.runner.ToolCalls() }
@@ -201,7 +203,7 @@ func (a *Agent) recordWarning(warningType, file, message string) {
 
 // Run executes the full-scan pipeline: enumerate → filter → token-filter →
 // dispatch one subtask per file → collect comments.
-func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
+func (a *Agent) Run(ctx context.Context) ([]finding.Finding, error) {
 	if len(a.args.Template.MainTask.Messages) == 0 {
 		return nil, fmt.Errorf("scan template MAIN_TASK is missing or empty")
 	}
@@ -232,7 +234,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 		fmt.Fprintln(stdout.Writer(), "[ccr] No reviewable files. Skipping scan.")
 		telemetry.Event(ctx, "scan.no.files")
 		a.session.Finalize()
-		return []model.LlmComment{}, nil
+		return []finding.Finding{}, nil
 	}
 
 	// Pre-run cost projection so users aren't surprised by a large scan.
@@ -268,7 +270,7 @@ func (a *Agent) Run(ctx context.Context) ([]model.LlmComment, error) {
 
 // lookupDiff returns the synthetic Diff for a path, used by llmloop.Runner
 // to resolve code_comment line numbers against the scanned file content.
-func (a *Agent) lookupDiff(path string) *model.Diff {
+func (a *Agent) lookupDiff(path string) *diff.Diff {
 	for i := range a.items {
 		if a.items[i].Path == path {
 			return a.items[i].AsDiff()
@@ -299,11 +301,11 @@ func (a *Agent) injectScanContentMap() {
 // filterScanItems drops items that should not be reviewed under the standard
 // reviewability rules (binary, extension allowlist, user include/exclude,
 // default excluded paths).
-func (a *Agent) filterScanItems(items []model.ScanItem) []model.ScanItem {
-	var kept []model.ScanItem
+func (a *Agent) filterScanItems(items []Item) []Item {
+	var kept []Item
 	skipped := 0
 	for _, it := range items {
-		if reason := a.whyExcluded(it); reason != model.ExcludeNone {
+		if reason := a.whyExcluded(it); reason != preview.ExcludeNone {
 			if it.IsBinary {
 				fmt.Fprintf(stdout.Writer(), "[ccr] Skipping %s — binary file\n", it.Path)
 			} else {
@@ -321,12 +323,12 @@ func (a *Agent) filterScanItems(items []model.ScanItem) []model.ScanItem {
 }
 
 // filterLargeScans drops items whose content exceeds 80% of MaxTokens.
-func (a *Agent) filterLargeScans(items []model.ScanItem) []model.ScanItem {
+func (a *Agent) filterLargeScans(items []Item) []Item {
 	limit := a.args.Template.MaxTokens * 4 / 5
 	if limit <= 0 {
 		return items
 	}
-	var kept []model.ScanItem
+	var kept []Item
 	skipped := 0
 	for _, it := range items {
 		tokens := llm.CountTokens(it.Content)
@@ -344,26 +346,26 @@ func (a *Agent) filterLargeScans(items []model.ScanItem) []model.ScanItem {
 	return kept
 }
 
-// whyExcluded mirrors agent.whyExcluded but for ScanItem inputs.
-func (a *Agent) whyExcluded(it model.ScanItem) model.ExcludeReason {
+// whyExcluded mirrors runner.whyExcluded but for scan Item inputs.
+func (a *Agent) whyExcluded(it Item) preview.ExcludeReason {
 	if it.IsBinary {
-		return model.ExcludeBinary
+		return preview.ExcludeBinary
 	}
 	path := it.Path
 	if a.args.FileFilter != nil && a.args.FileFilter.IsUserExcluded(path) {
-		return model.ExcludeUserRule
+		return preview.ExcludeUserRule
 	}
 	ext := extFromPath(path)
 	if ext != "" && !allowedext.IsAllowedExt(ext) {
-		return model.ExcludeExtension
+		return preview.ExcludeExtension
 	}
 	if a.args.FileFilter != nil && a.args.FileFilter.HasInclude() && a.args.FileFilter.IsUserIncluded(path) {
-		return model.ExcludeNone
+		return preview.ExcludeNone
 	}
 	if allowedext.IsExcludedPath(path) {
-		return model.ExcludeDefaultPath
+		return preview.ExcludeDefaultPath
 	}
-	return model.ExcludeNone
+	return preview.ExcludeNone
 }
 
 func extFromPath(path string) string {
@@ -383,14 +385,14 @@ func extFromPath(path string) string {
 // batch concurrently up to MaxConcurrency. Sequential batches enable
 // future per-batch hooks (e.g. Phase 6 dedup) and improve LLM prompt-cache
 // hit rate by keeping same-language files adjacent in time.
-func (a *Agent) dispatchSubtasks(ctx context.Context) ([]model.LlmComment, error) {
+func (a *Agent) dispatchSubtasks(ctx context.Context) ([]finding.Finding, error) {
 	startTime := time.Now()
 	defer func() {
 		telemetry.RecordReviewDuration(ctx, time.Since(startTime))
 	}()
 
 	if len(a.items) == 0 {
-		return []model.LlmComment{}, nil
+		return []finding.Finding{}, nil
 	}
 
 	atomic.StoreInt64(&a.subtaskFailed, 0)
@@ -456,7 +458,7 @@ func (a *Agent) resolveBatchStrategy() BatchStrategy {
 // budget, the file (and all remaining files in the batch) are skipped.
 // This keeps overrun bounded by roughly one in-flight file per worker,
 // instead of a whole batch as the coarse batch-level gate did.
-func (a *Agent) dispatchBatch(ctx context.Context, batchIdx int, batch []model.ScanItem) (int64, bool, error) {
+func (a *Agent) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) (int64, bool, error) {
 	concurrency := a.args.MaxConcurrency
 	if concurrency <= 0 {
 		concurrency = 8
@@ -495,7 +497,7 @@ func (a *Agent) dispatchBatch(ctx context.Context, batchIdx int, batch []model.S
 
 		dispatched++
 		wg.Add(1)
-		go func(it model.ScanItem) {
+		go func(it Item) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
@@ -533,7 +535,7 @@ func (a *Agent) dispatchBatch(ctx context.Context, batchIdx int, batch []model.S
 // is small enough that planning overhead outweighs gain, or the plan call
 // itself fails. Plan failure never blocks the main review — it falls back
 // to v1 (plan-less) behavior.
-func (a *Agent) executeSubtask(ctx context.Context, it model.ScanItem) error {
+func (a *Agent) executeSubtask(ctx context.Context, it Item) error {
 	ctx, span := telemetry.StartSpan(ctx, "scan.subtask."+it.Path)
 	defer span.End()
 	telemetry.SetAttr(span, "file.path", it.Path)
@@ -577,7 +579,7 @@ func (a *Agent) executeSubtask(ctx context.Context, it model.ScanItem) error {
 // disabled or fails — that sentinel is intentionally non-empty so the
 // surrounding "### Pre-scan Focus Areas" header in MAIN_TASK has content
 // instead of dangling.
-func (a *Agent) maybeRunPlan(ctx context.Context, it model.ScanItem, rule string) string {
+func (a *Agent) maybeRunPlan(ctx context.Context, it Item, rule string) string {
 	const noPlan = "(no pre-scan plan; review the entire file as usual)"
 
 	if !a.planEnabled() {
@@ -623,7 +625,7 @@ func (a *Agent) maybeRunPlan(ctx context.Context, it model.ScanItem, rule string
 // maybeRunProjectSummary runs the post-batch PROJECT_SUMMARY_TASK over the
 // union of all collected comments. Best-effort: any error / empty input
 // / no-template silently leaves projectSummary unset.
-func (a *Agent) maybeRunProjectSummary(ctx context.Context, comments []model.LlmComment) {
+func (a *Agent) maybeRunProjectSummary(ctx context.Context, comments []finding.Finding) {
 	if !a.summaryEnabled() {
 		return
 	}
@@ -677,7 +679,7 @@ func (a *Agent) maybeRunProjectSummary(ctx context.Context, comments []model.Llm
 // markdown list suitable for embedding in the PROJECT_SUMMARY_TASK prompt.
 // Format: "- `path/to/file.go`: <one-line content (truncated)>".
 // Content is truncated to ~280 chars to bound prompt growth on large scans.
-func buildSummaryCommentsList(comments []model.LlmComment) string {
+func buildSummaryCommentsList(comments []finding.Finding) string {
 	const maxLine = 280
 	var sb strings.Builder
 	for _, c := range comments {
@@ -758,7 +760,7 @@ func (a *Agent) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 // stable c-N ids that the LLM groups by. Only fields the LLM needs to
 // judge similarity are included (path / content / existing_code), keeping
 // the prompt compact.
-func buildDedupCommentsJSON(comments []model.LlmComment) string {
+func buildDedupCommentsJSON(comments []finding.Finding) string {
 	type wire struct {
 		ID           string `json:"id"`
 		Path         string `json:"path"`
@@ -782,7 +784,7 @@ func buildDedupCommentsJSON(comments []model.LlmComment) string {
 // comment slice. Returns (nil, false) when the response is malformed OR
 // when the groups don't cover every input id exactly once (safety: we
 // refuse to silently drop comments we can't account for).
-func applyDedupGroups(rawJSON string, originals []model.LlmComment) ([]model.LlmComment, bool) {
+func applyDedupGroups(rawJSON string, originals []finding.Finding) ([]finding.Finding, bool) {
 	stripped := llmloop.StripMarkdownFences(rawJSON)
 	stripped = strings.TrimSpace(stripped)
 	if stripped == "" {
@@ -804,7 +806,7 @@ func applyDedupGroups(rawJSON string, originals []model.LlmComment) ([]model.Llm
 	}
 
 	seen := make(map[string]bool, len(originals))
-	var out []model.LlmComment
+	var out []finding.Finding
 	for _, g := range parsed.Groups {
 		if len(g.Members) == 0 {
 			return nil, false
@@ -890,7 +892,7 @@ func formatPlanGuidance(raw string) string {
 // gets substituted into {{plan_guidance}}; callers should pass a non-empty
 // sentinel when planning is disabled so the surrounding section header in
 // the prompt template doesn't dangle.
-func (a *Agent) renderMessages(it model.ScanItem, rule, planGuidance string) []llm.Message {
+func (a *Agent) renderMessages(it Item, rule, planGuidance string) []llm.Message {
 	rawMsgs := a.args.Template.MainTask.Messages
 	messages := make([]llm.Message, 0, len(rawMsgs))
 	for _, m := range rawMsgs {

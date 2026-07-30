@@ -49,23 +49,23 @@ type chainStat struct {
 }
 
 type sessionStats struct {
-	File      string       `json:"file"`
-	Repo      string       `json:"repo,omitempty"`
-	Branch    string       `json:"branch,omitempty"`
-	WallSec   float64      `json:"wall_sec"`
-	LLMCalls  int          `json:"llm_calls"`
-	LLMErrors int          `json:"llm_errors"`
-	LLMSumSec float64      `json:"llm_sum_sec"`
-	P50Sec    float64      `json:"llm_p50_sec"`
-	P90Sec    float64      `json:"llm_p90_sec"`
-	MaxSec    float64      `json:"llm_max_sec"`
-	Models    map[string]int `json:"models,omitempty"`
-	TaskTypes map[string]int `json:"task_types,omitempty"`
+	File      string               `json:"file"`
+	Repo      string               `json:"repo,omitempty"`
+	Branch    string               `json:"branch,omitempty"`
+	WallSec   float64              `json:"wall_sec"`
+	LLMCalls  int                  `json:"llm_calls"`
+	LLMErrors int                  `json:"llm_errors"`
+	LLMSumSec float64              `json:"llm_sum_sec"`
+	P50Sec    float64              `json:"llm_p50_sec"`
+	P90Sec    float64              `json:"llm_p90_sec"`
+	MaxSec    float64              `json:"llm_max_sec"`
+	Models    map[string]int       `json:"models,omitempty"`
+	TaskTypes map[string]int       `json:"task_types,omitempty"`
 	Tools     map[string]*toolStat `json:"tools,omitempty"`
-	Scopes    int          `json:"scopes"`
-	RoundsP50 int          `json:"rounds_p50"`
-	RoundsMax int          `json:"rounds_max"`
-	Chains    []chainStat  `json:"slowest_chains,omitempty"`
+	Scopes    int                  `json:"scopes"`
+	RoundsP50 int                  `json:"rounds_p50"`
+	RoundsMax int                  `json:"rounds_max"`
+	Chains    []chainStat          `json:"slowest_chains,omitempty"`
 }
 
 func runStats(args []string) error {

@@ -89,7 +89,7 @@ Examples:
   ccr review --from master --to dev        Review diff range
   ccr review --commit abc123               Review a single commit
   ccr scan                                 Scan every reviewable file in the repo
-  ccr scan --path internal/agent           Scan a single directory
+  ccr scan --path internal/runner           Scan a single directory
   ccr config provider                      Interactive provider setup
   ccr config model                         Interactive model selection
   ccr config set llm.model opus-4-6        Set a config value

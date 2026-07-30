@@ -47,7 +47,7 @@ func TestSplitPaths(t *testing.T) {
 		want []string
 	}{
 		{"empty", "", nil},
-		{"single", "internal/agent", []string{"internal/agent"}},
+		{"single", "internal/runner", []string{"internal/runner"}},
 		{"multiple", "a.go,b.go,c.go", []string{"a.go", "b.go", "c.go"}},
 		{"trims whitespace", "  a.go ,  b.go  ", []string{"a.go", "b.go"}},
 		{"drops empty segments", "a.go,,b.go,", []string{"a.go", "b.go"}},
@@ -122,11 +122,11 @@ func TestParseScanFlags_DefaultsValid(t *testing.T) {
 }
 
 func TestParseScanFlags_PathNarrowsScope(t *testing.T) {
-	opts, err := parseScanFlags([]string{"--path", "internal/agent,internal/diff"})
+	opts, err := parseScanFlags([]string{"--path", "internal/runner,internal/diff"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := splitPaths(opts.paths); !reflect.DeepEqual(got, []string{"internal/agent", "internal/diff"}) {
+	if got := splitPaths(opts.paths); !reflect.DeepEqual(got, []string{"internal/runner", "internal/diff"}) {
 		t.Errorf("splitPaths(opts.paths) = %v", got)
 	}
 }

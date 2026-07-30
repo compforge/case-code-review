@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"runtime/debug"
 )
 
 // Set via ldflags: -X main.Version=x.y.z -X main.GitCommit=abc123 -X main.BuildDate=2026-01-01T00:00:00Z
@@ -11,6 +12,23 @@ var (
 	GitCommit = ""
 	BuildDate = ""
 )
+
+func init() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	Version = resolveVersion(Version, info.Main.Version)
+}
+
+// resolveVersion preserves release builds stamped with -ldflags while making
+// `go install ...@version` report the module version embedded by the Go tool.
+func resolveVersion(stamped, module string) string {
+	if stamped != "dev" || module == "" || module == "(devel)" {
+		return stamped
+	}
+	return module
+}
 
 // versionString is the build identity stamped into session manifests
 // ("v1.7.1 (abc123)" / "dev").

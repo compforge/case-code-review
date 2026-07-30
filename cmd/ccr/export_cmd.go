@@ -185,13 +185,13 @@ func exportSession(path string) (*atifTrajectory, error) {
 	}
 	// Scope chains in first-seen order; each becomes a subagent trajectory.
 	type chain struct {
-		steps     []*atifStep
-		last      *atifStep // last agent step — tool results attach here
-		pending   []string  // tool_call ids of `last`, consumed positionally
-		extra     map[string]any
-		total     atifFinal
-		stepID    int
-		sawFirst  bool
+		steps    []*atifStep
+		last     *atifStep // last agent step — tool results attach here
+		pending  []string  // tool_call ids of `last`, consumed positionally
+		extra    map[string]any
+		total    atifFinal
+		stepID   int
+		sawFirst bool
 	}
 	chains := map[string]*chain{}
 	var order []string

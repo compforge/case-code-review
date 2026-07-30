@@ -4,15 +4,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/finding"
 )
 
-func cmt(path, content string) model.LlmComment {
-	return model.LlmComment{Path: path, Content: content}
+func cmt(path, content string) finding.Finding {
+	return finding.Finding{Path: path, Content: content}
 }
 
 func TestApplyDedupGroups_MergeAndKeep(t *testing.T) {
-	originals := []model.LlmComment{
+	originals := []finding.Finding{
 		cmt("a.go", "missing nil check"),
 		cmt("b.go", "missing nil check"),
 		cmt("c.go", "race on shared map"),
@@ -43,7 +43,7 @@ func TestApplyDedupGroups_MergeAndKeep(t *testing.T) {
 }
 
 func TestApplyDedupGroups_KeepCanonicalContentWhenNoMergedContent(t *testing.T) {
-	originals := []model.LlmComment{
+	originals := []finding.Finding{
 		cmt("a.go", "original A"),
 		cmt("b.go", "original B"),
 	}
@@ -59,7 +59,7 @@ func TestApplyDedupGroups_KeepCanonicalContentWhenNoMergedContent(t *testing.T) 
 }
 
 func TestApplyDedupGroups_RejectsBadShapes(t *testing.T) {
-	originals := []model.LlmComment{cmt("a.go", "x"), cmt("b.go", "y")}
+	originals := []finding.Finding{cmt("a.go", "x"), cmt("b.go", "y")}
 	cases := map[string]string{
 		"empty input":   ``,
 		"non-json":      `not json at all`,
@@ -79,7 +79,7 @@ func TestApplyDedupGroups_RejectsBadShapes(t *testing.T) {
 }
 
 func TestApplyDedupGroups_AcceptsMarkdownFences(t *testing.T) {
-	originals := []model.LlmComment{cmt("a.go", "x"), cmt("b.go", "y")}
+	originals := []finding.Finding{cmt("a.go", "x"), cmt("b.go", "y")}
 	raw := "```json\n" + `{"groups":[{"members":["c-0","c-1"],"merged_content":"merged"}]}` + "\n```"
 	got, ok := applyDedupGroups(raw, originals)
 	if !ok || len(got) != 1 || got[0].Content != "merged" {
@@ -88,7 +88,7 @@ func TestApplyDedupGroups_AcceptsMarkdownFences(t *testing.T) {
 }
 
 func TestBuildDedupCommentsJSON_IncludesIDsAndKeyFields(t *testing.T) {
-	cs := []model.LlmComment{
+	cs := []finding.Finding{
 		{Path: "a.go", Content: "first", ExistingCode: "x := nil"},
 		{Path: "b.go", Content: "second"},
 	}

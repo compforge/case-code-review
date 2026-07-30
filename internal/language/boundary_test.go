@@ -9,7 +9,7 @@ import (
 
 // Parser dependencies are intentionally centralized here. This test makes the
 // boundary executable: a future language feature cannot quietly add another
-// AST/subprocess backend under unit, codegraph, or spec.
+// AST/subprocess backend under runner, unit, or harness.
 func TestParserDependenciesStayInsideLanguage(t *testing.T) {
 	root := filepath.Clean("..")
 	languageRoot := filepath.Join(root, "language") + string(filepath.Separator)
@@ -49,7 +49,7 @@ func TestParserDependenciesStayInsideLanguage(t *testing.T) {
 
 func TestLanguageSyntaxStaysOutsideConsumers(t *testing.T) {
 	root := filepath.Clean("..")
-	consumerDirs := []string{"agent", "codegraph", "spec", "unit"}
+	consumerDirs := []string{"runner", "unit", "harness"}
 	forbidden := []string{
 		`".go"`, `".py"`, `".ts"`, `".tsx"`, `".js"`, `".jsx"`, `".mjs"`, `".cjs"`,
 		`"*.go"`, `"*.py"`, `"*.ts"`, `"*.tsx"`, `"*.js"`, `"*.jsx"`, `"*.mjs"`, `"*.cjs"`,

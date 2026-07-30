@@ -23,18 +23,16 @@
 case-code-review/
 ├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
 └── internal/
+    ├── runner/     ★ 顶层编排：diff→Unit→Harness execution→结果过滤与持久化；`feature`/`preview` 是 Runner 自有策略与输出
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
-    ├── unit/       ★ 两类型两阶段：`Fragment`（原子，Splitter 消费 language facts）→ Merger 归并成 `Unit`（评审作用域，WatermarkMerger）；context 抽象 Clue(kind×relation) / ClueFinder / Dossier（merge 后挂 `Unit.Dossier`，去重后喂 loop）。详见 `docs/unit-model.md` + `docs/context-model.md`
-    ├── spec/       ★ 消费 spec.json：SpecFinder/RuleFinder/LinkFinder 把 spec/case/rule/link 找成 Clue（廉价 finder）
-    ├── history/    ★ 消费 --history（上轮评审 findings，symbol-id keyed）：Finder 挂成 ClueHistory，渲染成"核验是否已修"的 prompt（廉价 finder；评审反馈闭环的消费侧）
-    ├── codegraph/  ★ language facts 的图消费层：repo-map 排名 + caller/callee 邻域 Clue + call-chain 邻接；只拥有图算法与评审策略，不解释源码语法。详见 `docs/codegraph.md`
-    ├── agent/      ★ 评审编排：split→找 Clue（廉价 + 按预算闸门的昂贵 finder）→merge→每 review unit 一个 loop；按 Clue 渲染上下文；unit 的 Briefing（briefer 协议按 scope 定预载材料：own source / usage-sites / callchain 邻居函数体，共享预算引擎）；loop 收尾每 unit 落一条 **Debrief**（outcome/formed/降级/成本 → session，指标体系的常开采集面见 `eval/README.md`）；file 级 review-filter；`--dry-run` 只装配上下文、不调 LLM
-    ├── diff/       diff/hunk 解析、评论行号解析
-    ├── msg/        review 领域消息模型：loop 货币 `[]msg.Msg`，wire 格式只在 lowering 边界出现——`docs/message-model.md`
-    ├── board/      Review Team v0 共享案情板（gate review_team 默认关）：Bulletin 定向路由 + 增量注入，unit loop 间互通进展——`docs/cross-unit.md`
-    ├── llmloop/    agentic 评审 loop（自 ocr 引擎独立演化：会话货币 msg.Msg + 1:1 lowering、wrap-up 截断纪律、file dedup/evict、Outcome 均为 ccr 侧新增——`docs/message-model.md`）
+    ├── unit/       ★ `Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md` + `docs/context-model.md`
+    ├── harness/    ★ 执行域：`llmloop` 管当前 agent loop；`msg`/`tool`/`board` 是 review 强化；`session` 收口执行记录。详见 `docs/kernel.md`
+    ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施与三大能力中心平铺
+    ├── diff/       `Diff` owner 与 git diff/hunk 解析
+    ├── finding/    `Finding` owner；finding 的行号定位与重定位
+    ├── scan/       full-file scan 与其输入 `Item`
     ├── config/     模板 prompt、rule.json、tools 配置
-    └── model · gitcmd · session · telemetry · tool · scan · viewer …   支撑模块
+    └── gitcmd · telemetry · viewer …   独立支撑能力
 ```
 
 **主链路**：
@@ -47,7 +45,7 @@ diff ─Splitter─▶ Fragment ─Merger─▶ Unit ─ClueFinder 找 Clue(spec
 >
 > **Clue / ClueFinder**：context 抽象的三件——找的动作（`ClueFinder.Find(u Unit) []Clue`，对评审作用域 Unit 找）、找的结果（`Clue{Kind, Text, Ref}`，Text 内联 / Ref 按需指针）、挂哪（`Unit.Clues`，merge 后收）。加一类 context = 加一个 finder，不动主链路。
 
-## 关键约定（核心六条）
+## 关键约定（核心七条）
 
 1. **评审语义 = 契约守恒，不是找语法 bug**：核对 diff 有没有破坏函数的 spec/case/rule 不变量；**语法 / 静态检查交给 lint 类工具**（Python `ruff`、Go `go build`/`go vet` 之类），不是 ccr 的活。
 2. **diff unit vs review unit 别混**：Splitter 从 diff 切出 diff unit；Merger 归并成 review unit（触发 loop 的那个，可能是单个、也可能是几个沿阶梯归并的更粗 unit）。成本超水位按文件归并——**降 loop 粒度、不降 context**。
@@ -58,16 +56,20 @@ diff ─Splitter─▶ Fragment ─Merger─▶ Unit ─ClueFinder 找 Clue(spec
 
 6. **review loop 结构上只读——是受守护的信任边界**：主评审 loop 的工具面是封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，`code_comment` 仅写内存 collector，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**——评审节点一旦能产生副作用，就从"看代码的"变成"改状态的"（业界事故：reviewer 执行 checkout 制造孤儿提交）。要加此类能力先问：它属于评审，还是属于评审之后的独立执行环节？后者不进这个工具集。
 
+7. **`VERSION` 是发布版本的事实源**：每个独立变更 / PR 都按 SemVer bump 一次；release tag 必须与文件内容一致，具体 build identity 继续由 commit 补充。
+
 > 另：Go 改动先 `go build ./...` / `go test ./...` 再提交。
 
 ## References
 
 - 理念：`README.md` · `README.zh-CN.md`
+- 内核分层与依赖方向：Language 产事实、Unit 汇总评审知识、Harness 执行，Review 能力只通过
+  Core 外围扩展点接入——`docs/kernel.md`
 - spec/case/rule/link 资产、各语言写法、`spec.json` schema、symbol-id 契约、**产 `spec.json` 的 `specgen`**（Go + Python）：[`spec-case`](https://github.com/qiankunli/spec-case)
 - 查覆盖 / 调试：`ccr review --dry-run` 打印每个 review unit 装配的上下文，不调 LLM（端到端：marker → specgen → spec.json → `--dry-run`）
 - Unit 模型：`Fragment` 原子 + `Unit` 作用域、两条合并轴（call-chain 语义 / file 成本）、clue 后置——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
 - Context 模型：unit → dossier——`Clue`(kind: spec/case/rule/link/doc) × `Relation`(self/owner/caller/callee/used) 两轴正交、doc 运行时抽取（adoption-free）、symbol-id 仓内 / fqn 跨仓、依赖 spec 随包发——`docs/context-model.md`
 - Review Team（设计定稿，v0 待实现）：Board/Bulletin/动态 cross_check，治跨文件一致性漏报；固定 phase 碰头会与角色化均已论证否决——`docs/cross-unit.md`
-- Review Run 绿地改造（待实施）：ReviewRun / UnitExecution 生命周期、总 token 预算与 Unit 级断点恢复——`docs/run-model.md`
+- Runner 绿地改造（待实施）：Runner / UnitExecution 生命周期、总 token 预算与 Unit 级断点恢复——`docs/run-model.md`
 - 上游归属（Apache-2.0 衍生）：`NOTICE`

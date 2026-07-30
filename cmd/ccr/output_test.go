@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/agent"
+	"github.com/qiankunli/case-code-review/internal/runner"
 )
 
 func TestSanitizeTerminal(t *testing.T) {
@@ -51,7 +51,7 @@ func TestOutputJSONFatal_EmitsParseableFailedJSON(t *testing.T) {
 	os.Stdout = w
 	emitErr := outputJSONFatal(
 		errors.New("all 3 unit review(s) failed"),
-		[]agent.AgentWarning{{Type: "unit_error", File: "a.go", Message: "context deadline exceeded"}},
+		[]runner.Warning{{Type: "unit_error", File: "a.go", Message: "context deadline exceeded"}},
 	)
 	w.Close()
 	os.Stdout = old

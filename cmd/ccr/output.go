@@ -8,12 +8,12 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/qiankunli/case-code-review/internal/agent"
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/finding"
+	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/suggestdiff"
 )
 
-func outputText(comments []model.LlmComment) {
+func outputText(comments []finding.Finding) {
 	if len(comments) == 0 {
 		fmt.Println("No comments generated. Looks good to me.")
 		return
@@ -23,7 +23,7 @@ func outputText(comments []model.LlmComment) {
 	}
 }
 
-func hasSubtaskErrors(warnings []agent.AgentWarning) bool {
+func hasSubtaskErrors(warnings []runner.Warning) bool {
 	for _, w := range warnings {
 		if w.Type == "subtask_error" {
 			return true
@@ -32,7 +32,7 @@ func hasSubtaskErrors(warnings []agent.AgentWarning) bool {
 	return false
 }
 
-func outputTextWithWarnings(comments []model.LlmComment, warnings []agent.AgentWarning) {
+func outputTextWithWarnings(comments []finding.Finding, warnings []runner.Warning) {
 	if len(comments) == 0 {
 		if hasSubtaskErrors(warnings) {
 			fmt.Println("Some files could not be reviewed due to errors (see warnings below).")
@@ -52,7 +52,7 @@ func outputTextWithWarnings(comments []model.LlmComment, warnings []agent.AgentW
 	}
 }
 
-func renderComment(comment model.LlmComment) {
+func renderComment(comment finding.Finding) {
 	lines := buildDiffLines(comment)
 	if len(lines) == 0 && comment.Content == "" {
 		return
@@ -171,7 +171,7 @@ func splitToLines(s string) []string {
 	return lines
 }
 
-func buildDiffLines(comment model.LlmComment) []suggestdiff.DiffLine {
+func buildDiffLines(comment finding.Finding) []suggestdiff.DiffLine {
 	if comment.SuggestionCode == "" || comment.ExistingCode == "" {
 		return nil
 	}
@@ -206,16 +206,16 @@ type jsonOutput struct {
 	Status string `json:"status"`
 	// Version is the reviewing ccr's own version (main.Version) — the review's
 	// tool identity, present on every JSON shape including skipped/no-files.
-	Version        string               `json:"version,omitempty"`
-	Message        string               `json:"message,omitempty"`
-	Summary        *jsonSummary         `json:"summary,omitempty"`
-	ToolCalls      *jsonToolCalls       `json:"tool_calls"`
-	Comments       []model.LlmComment   `json:"comments"`
-	Warnings       []agent.AgentWarning `json:"warnings,omitempty"`
-	ProjectSummary string               `json:"project_summary,omitempty"`
+	Version        string            `json:"version,omitempty"`
+	Message        string            `json:"message,omitempty"`
+	Summary        *jsonSummary      `json:"summary,omitempty"`
+	ToolCalls      *jsonToolCalls    `json:"tool_calls"`
+	Comments       []finding.Finding `json:"comments"`
+	Warnings       []runner.Warning  `json:"warnings,omitempty"`
+	ProjectSummary string            `json:"project_summary,omitempty"`
 }
 
-func outputJSON(comments []model.LlmComment) error {
+func outputJSON(comments []finding.Finding) error {
 	out := jsonOutput{
 		Status:   "success",
 		Version:  Version,
@@ -229,7 +229,7 @@ func outputJSON(comments []model.LlmComment) error {
 	return enc.Encode(out)
 }
 
-func outputJSONWithWarnings(comments []model.LlmComment, warnings []agent.AgentWarning,
+func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
 	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
 	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int) error {
 	out := jsonOutput{
@@ -286,12 +286,12 @@ func outputJSONWithWarnings(comments []model.LlmComment, warnings []agent.AgentW
 // leave stdout empty, or downstream parsers report their own parse failure
 // instead of the actual error. Warnings ride along — on an all-units-failed
 // run they carry the per-unit error reasons.
-func outputJSONFatal(runErr error, warnings []agent.AgentWarning) error {
+func outputJSONFatal(runErr error, warnings []runner.Warning) error {
 	out := jsonOutput{
 		Status:   "failed",
 		Version:  Version,
 		Message:  runErr.Error(),
-		Comments: []model.LlmComment{},
+		Comments: []finding.Finding{},
 		ToolCalls: &jsonToolCalls{
 			ByTool: map[string]int64{},
 		},
@@ -309,7 +309,7 @@ func outputJSONNoFiles() error {
 		Status:   "skipped",
 		Version:  Version,
 		Message:  "No supported files changed.",
-		Comments: []model.LlmComment{},
+		Comments: []finding.Finding{},
 		ToolCalls: &jsonToolCalls{
 			ByTool: map[string]int64{},
 		},
@@ -321,7 +321,7 @@ func outputJSONNoFiles() error {
 
 // outputDryRunText prints each review unit's assembled context — what the LLM
 // would receive — for `ccr review --dry-run`.
-func outputDryRunText(units []agent.UnitContext) {
+func outputDryRunText(units []runner.UnitContext) {
 	if len(units) == 0 {
 		fmt.Println("No reviewable units.")
 		return
@@ -346,18 +346,18 @@ type dryRunMetrics struct {
 }
 
 type dryRunJSON struct {
-	Features map[string]bool     `json:"features"` // resolved feature gates — self-describes the run for A/B
-	Preview  *agent.DiffPreview  `json:"preview"`
-	Metrics  dryRunMetrics       `json:"metrics"`
-	Units    []agent.UnitContext `json:"units"`
-	RepoMap  string              `json:"repo_map,omitempty"` // run-level ranked symbol map (shared by all units)
+	Features map[string]bool      `json:"features"` // resolved feature gates — self-describes the run for A/B
+	Preview  *runner.Preview      `json:"preview"`
+	Metrics  dryRunMetrics        `json:"metrics"`
+	Units    []runner.UnitContext `json:"units"`
+	RepoMap  string               `json:"repo_map,omitempty"` // run-level ranked symbol map (shared by all units)
 }
 
 // outputDryRunJSON emits the dry-run as JSON: the resolved feature gates, the file
 // preview, a structural metrics summary, and each unit's assembled context.
 // Deterministic (no LLM), so it's the free layer for A/B-comparing what a feature
 // changes — and it records which gates were active.
-func outputDryRunJSON(preview *agent.DiffPreview, units []agent.UnitContext, repoMap string, features map[string]bool) error {
+func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoMap string, features map[string]bool) error {
 	m := dryRunMetrics{
 		UnitCount:    len(units),
 		ScopeCounts:  map[string]int{},
@@ -387,7 +387,7 @@ func dryRunSection(title, body string) {
 	fmt.Printf("── %s ──\n%s\n", title, body)
 }
 
-func outputPreviewText(p *agent.DiffPreview) {
+func outputPreviewText(p *runner.Preview) {
 	if p.TotalFiles == 0 {
 		fmt.Println("No files changed.")
 		return
@@ -453,7 +453,7 @@ func statusBadge(status string) string {
 
 // findingBadge renders the compact "[category · severity]" tag for a finding;
 // empty when neither structured field is present so legacy output is unchanged.
-func findingBadge(comment model.LlmComment) string {
+func findingBadge(comment finding.Finding) string {
 	c, s := sanitizeTerminal(comment.Category), sanitizeTerminal(comment.Severity)
 	switch {
 	case c != "" && s != "":

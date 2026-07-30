@@ -3,11 +3,11 @@ package unit
 import (
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/model"
+	"github.com/qiankunli/case-code-review/internal/diff"
 )
 
 func TestAutoSplitter_TreeSitterJavaMethod(t *testing.T) {
-	fragments, err := AutoSplitter{}.Split(model.Diff{
+	fragments, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath: "Service.java",
 		Diff: `diff --git a/Service.java b/Service.java
 --- a/Service.java
@@ -34,7 +34,7 @@ func TestAutoSplitter_TreeSitterJavaMethod(t *testing.T) {
 }
 
 func TestAutoSplitter_TreeSitterSyntaxErrorFallsBack(t *testing.T) {
-	fragments, err := AutoSplitter{}.Split(model.Diff{
+	fragments, err := AutoSplitter{}.Split(diff.Diff{
 		NewPath:        "Service.java",
 		Diff:           "@@ -1,1 +1,1 @@\n-old\n+new\n",
 		NewFileContent: "class Service { void run( {",

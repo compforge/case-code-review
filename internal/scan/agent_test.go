@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/llmloop"
-	"github.com/qiankunli/case-code-review/internal/model"
-	"github.com/qiankunli/case-code-review/internal/session"
-	"github.com/qiankunli/case-code-review/internal/tool"
+	"github.com/qiankunli/case-code-review/internal/finding"
+	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
 func newAgentForTest(t *testing.T, tpl template.ScanTemplate) *Agent {
@@ -135,7 +135,7 @@ func TestPreview_EmptyResultEntriesIsNonNilSlice(t *testing.T) {
 
 func TestBuildSummaryCommentsList_TruncatesAndOneLines(t *testing.T) {
 	long := strings.Repeat("x", 400)
-	cs := []model.LlmComment{
+	cs := []finding.Finding{
 		{Path: "a.go", Content: "line one\nline two\nline three"},
 		{Path: "b.go", Content: long},
 	}
@@ -163,7 +163,7 @@ func TestMaybeRunPlan_SkipPathsDoNotCallLLM(t *testing.T) {
 	tpl := makeTemplateWithFullScan()
 	// no PlanTask attached → must return sentinel without crashing
 	a := newAgentForTest(t, tpl)
-	guidance := a.maybeRunPlan(t.Context(), model.ScanItem{Path: "x.go", Content: "package x"}, "rule")
+	guidance := a.maybeRunPlan(t.Context(), Item{Path: "x.go", Content: "package x"}, "rule")
 	if !strings.Contains(guidance, "no pre-scan plan") {
 		t.Errorf("expected fallback sentinel, got %q", guidance)
 	}
@@ -181,7 +181,7 @@ func TestMaybeRunPlan_SkipPathsDoNotCallLLM(t *testing.T) {
 		}),
 		SkipPlan: true,
 	})
-	guidance2 := a2.maybeRunPlan(t.Context(), model.ScanItem{Path: "x.go", Content: "package x"}, "rule")
+	guidance2 := a2.maybeRunPlan(t.Context(), Item{Path: "x.go", Content: "package x"}, "rule")
 	if !strings.Contains(guidance2, "no pre-scan plan") {
 		t.Errorf("SkipPlan should suppress plan, got %q", guidance2)
 	}
@@ -193,7 +193,7 @@ func TestRenderMessages(t *testing.T) {
 	a.currentDate = "2026-06-09 10:00"
 	a.args.Background = "ticket-123"
 
-	it := model.ScanItem{
+	it := Item{
 		Path:    "internal/foo/bar.go",
 		Content: "package foo\n\nfunc Bar() {}\n",
 	}
@@ -235,7 +235,7 @@ func TestFilterLargeScans(t *testing.T) {
 
 	short := strings.Repeat("a ", 5)
 	huge := strings.Repeat("token ", 200)
-	in := []model.ScanItem{
+	in := []Item{
 		{Path: "a.go", Content: short},
 		{Path: "huge.go", Content: huge},
 		{Path: "b.go", Content: short},
@@ -255,7 +255,7 @@ func TestFilterLargeScans_NoLimit(t *testing.T) {
 	tpl := makeTemplateWithFullScan()
 	tpl.MaxTokens = 0
 	a := newAgentForTest(t, tpl)
-	in := []model.ScanItem{
+	in := []Item{
 		{Path: "a.go", Content: "anything"},
 		{Path: "b.go", Content: strings.Repeat("x ", 1000)},
 	}
@@ -270,7 +270,7 @@ func TestInjectScanContentMap(t *testing.T) {
 	a := newAgentForTest(t, tpl)
 	a.args.Tools.Register(tool.NewFileReadDiff(tool.DiffMap{}))
 
-	a.items = []model.ScanItem{
+	a.items = []Item{
 		{Path: "x.go", Content: "package x"},
 		{Path: "y.go", Content: "package y"},
 	}
@@ -319,5 +319,5 @@ func TestTokenCountersDelegateToRunner(t *testing.T) {
 		a.TotalCacheWriteTokens() != a.runner.TotalCacheWriteTokens() {
 		t.Fatal("scan.Agent token getters must mirror runner")
 	}
-	_ = llmloop.AgentWarning{} // keep llmloop import meaningful
+	_ = llmloop.Warning{} // keep llmloop import meaningful
 }

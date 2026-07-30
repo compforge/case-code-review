@@ -63,5 +63,7 @@ func unit = 1 Fragment；file 粗化 = 1 Fragment（多符号、整文件 diff�
 ## References
 
 - clue 后置那半截（unit 拿到后怎么收证据）：[`context-model.md`](context-model.md)（Clue / ClueFinder / Relation / Dossier，两轴正交）。
-- 实现锚点：`internal/unit`（`Fragment` / `Unit` / `Splitter` / `Merger`）、`internal/agent`（`reviewUnit`、finder 装配与 clue 收集时机）、`internal/{spec,codegraph,history}`（finders）。
+- 实现锚点：`internal/unit`（`Fragment` / `Unit` / `Splitter` / `Merger`）及其
+  `spec`/`codegraph`/`history` 子包（finders）、`internal/runner`（`reviewUnit`、finder
+  装配与 clue 收集时机）。
 - 上层定位：`AGENTS.md`（unit 一等概念）、`README.md`（理念）。
