@@ -27,7 +27,13 @@ bin/casecodereview
 /casecodereview
 
 /node_modules
-/eval/
+
+# Eval tooling is source; real corpora, labels, datasets, and run artifacts are local-only.
+/eval/data/
+# Local bulk harvester bound to a private forge/CLI; the generic GitHub/GitLab harvester is tracked.
+/eval/codebase_labels.py
+__pycache__/
+*.py[cod]
 
 # Mac OS X
 .DS_Store

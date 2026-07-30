@@ -1,0 +1,11 @@
+# ccr vs ocr 同 corpus 对比。公平性要点（eval/README「reviewbench」）：
+# 同模型同超时；judge 只看归一化 findings（path/line/content），不看来源；
+# "clean 且确实无问题"是合格结论，不能拿 finding 数当分数。
+# ocr 二进制需在 PATH（或写绝对路径）；config 差异由各自 config 文件承担。
+name: ccr-vs-ocr
+description: 同 corpus 下 ccr 与 ocr 的 findings 质量/成本/健壮性对比
+corpus: ../data/corpus/ccr-self.json
+engine: ccr
+envs:
+  - { name: ccr, overrides: {} }
+  - { name: ocr, overrides: { config.engine: "ocr" } }
