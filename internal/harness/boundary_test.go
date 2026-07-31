@@ -69,3 +69,38 @@ func TestAgentcoreDependencyStaysInsideHarness(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLegacyLLMLoopHasNoProductionCallers(t *testing.T) {
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyRoot := filepath.Join(repoRoot, "internal", "harness", "llmloop")
+	err = filepath.WalkDir(repoRoot, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path == legacyRoot {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) != ".go" || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		source := string(data)
+		if strings.Contains(source, "llmloop.NewRunner(") ||
+			strings.Contains(source, ".RunPerFile(") {
+			t.Errorf("%s calls the legacy llmloop runtime", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
@@ -309,18 +308,16 @@ func TestRunner_Warnings_RoundTrip(t *testing.T) {
 	}
 }
 
-// Ensure llmloop.Runner is the underlying source of token counters so the
-// public methods on scan.Runner are not stale (preventing accidental refactor
-// regressions).
-func TestTokenCountersDelegateToRunner(t *testing.T) {
+// Keep scan's public counters tied to the execution aggregate that records
+// both Harness turns and scan's single-shot plan/dedup/summary calls.
+func TestTokenCountersDelegateToExecutor(t *testing.T) {
 	a := newRunnerForTest(t, makeTemplateWithFullScan())
-	if a.TotalInputTokens() != a.runner.TotalInputTokens() ||
-		a.TotalOutputTokens() != a.runner.TotalOutputTokens() ||
-		a.TotalCacheReadTokens() != a.runner.TotalCacheReadTokens() ||
-		a.TotalCacheWriteTokens() != a.runner.TotalCacheWriteTokens() {
-		t.Fatal("scan.Runner token getters must mirror runner")
+	if a.TotalInputTokens() != a.executor.TotalInputTokens() ||
+		a.TotalOutputTokens() != a.executor.TotalOutputTokens() ||
+		a.TotalCacheReadTokens() != a.executor.TotalCacheReadTokens() ||
+		a.TotalCacheWriteTokens() != a.executor.TotalCacheWriteTokens() {
+		t.Fatal("scan.Runner token getters must mirror executor")
 	}
-	_ = llmloop.Warning{} // keep llmloop import meaningful
 }
 
 func TestItemFormsWholeFileUnit(t *testing.T) {
