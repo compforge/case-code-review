@@ -1,83 +1,115 @@
-# Unit 模型：Fragment 原子 + Unit 作用域
+# Unit 与评审上下文
 
-> 设计 spec。落地锚点见末尾 References；具体字段/阈值以代码为准。
+## 1. 理念 / 概念
 
-## 理念
+CCR 不把“文件”直接等同于评审任务。文件是源码的存储边界，**Unit 才是一次行为审查的边界**：
+它应尽量容纳理解同一项行为变化所需的改动，同时避免把互不相关的变化塞进同一个 agent loop。
 
-**初衷**：固定一个文件一个 review loop 太死板，但固定一函数一个 loop 又会炸出过多调用。CCR
-因此把评审基本单位定义为可归并的 **Unit**：单文件变更直接形成一个 File Unit；多文件变更先
-按调用链把同一行为上的 func 跨文件合并，规模过大时再按文件粗化。在此之上，再给每个 loop
-喂**更合适的上下文**（spec-case 标注 + 上一轮 review history + caller/callee）。本文档管前半截
-（unit 的粒度与结构）；上下文那半截已落地（见 References）。
-
-ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一次 review loop 跑在一个 unit 上。
-上游无论来自 git diff 还是 full-file scan，都先成为 `Change`；git source 负责采集，Unit
-拥有形成作用域所需的 change/hunk 事实。它有两个层级、两个类型、两个流水线阶段：
-
-- **Fragment（原子）**：单文件的一段变更——一个函数的 hunks，或函数外的残余。Splitter 产出。**纯数据**：无 context、无分组。
-- **Unit（作用域）**：1..N 个 Fragment 按某条轴成组 + 收齐的上下文（Clues）。Merger 产出，**review loop 真正跑的东西**。
-
-历史术语对照：旧的 *diff unit* → **Fragment**；*review unit* → **Unit**。两者拆成独立类型，各自演进——Fragment 是 Splitter 的稳定原子，只有 Unit 会长（文件粗化 → 调用链 → 未来类/模块）。
-
-## 流程
-
-```
-git change / full scan ─▶ Change
-     ─Splitter─▶ Fragment（diff：每文件每函数一个 + 残余；scan：整文件一个）
-     ─Merger─▶ Unit
-          ├─ 单文件：全部 Fragment 直接形成一个 File Unit
-          └─ 多文件：
-               ① call-chain（语义轴）：跨文件、调用相邻、且都在 diff 里的 Fragment 成一簇
-               ② file-coalesce（成本轴）：残余若超水位，按同文件并
-     ─Finders 对 Unit 收 Clue（spec/case/rule/link · caller/callee · history）─▶ review loop
+```text
+Git Change ─▶ Fragment ─▶ Unit ─▶ Dossier ─▶ Briefing
+                 改了什么    审什么     已知什么      本轮看到什么
 ```
 
-func unit = 1 Fragment；file 粗化 = 1 Fragment（多符号、整文件 diff）或同文件多 Fragment；call-chain = N 个跨文件 Fragment。
+| 对象 | 语义 |
+|---|---|
+| `Change` | Git 层的一份文件变更 |
+| `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
+| `Unit` | 应由一次 Unit Review 共同判断的行为范围 |
+| `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
+| `Dossier` | 按关系与种类组织后的 Unit 案卷，不受 prompt 形状限制 |
+| `Briefing` | 从 Dossier 投影出的本轮只读上下文 |
 
-## 关键设计
+Unit 与上下文是两个正交问题：Unit 决定“哪些改动一起审”，Dossier 决定“审它时带哪些事实”。
 
-1. **Fragment 原子 / Unit 作用域，两类型**——为何：类型级区分 diff 与 review（拿到哪个一眼清、传错即编译错），且各自独立演进。Fragment 不背 context/grouping，那些是 Unit 的。
+## 2. 流程
 
-2. **Clue 挂作用域、在 merge 之后收**——为何：context 是"这次一起审的范围"的属性。对最终 Unit 收一次，比旧的"在原子上收、合并时 union"少一道；且成员去重天然（已知整簇成员，caller/callee 命中本簇成员就跳过）。
+### 2.1 从 Fragment 形成 Unit
 
-3. **调用图两种用途，别混为一谈**：
-   - *adjacency*（给 merge 决定分组）：轻量问"changed X 是否调 changed Y"。
-   - *context*（给 Clue）：问"governing spec / 依赖的契约"。
-   两者都用 call-graph，但目的、产物不同。
+Unit 粒度是一条从小到大的阶梯，而不是固定按函数或文件：
 
-4. **merge 是单文件快路径 + 多文件两轴，不是框架**——为何：只有一个文件时，函数间已经共享
-   天然的文件边界；拆成多个 loop 会增加成本，却不会获得跨文件调用链的分组收益，因此直接收为
-   File Unit，并保留全部 symbol 供 ClueFinder 查上下文。多文件时仍先走 call-chain 语义轴，
-   再走 file-coalesce 成本轴。README 的粒度阶梯（类/模块）等**第三条真实轴落地**再泛化。
+1. 语言层把 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
+2. 若一次 review 只改一个文件，直接收为一个 file Unit。一次 loop 共同理解同文件内的相关改动，
+   通常比机械地逐函数启动多个 loop 更快、更完整。
+3. 若改动跨多个文件，先用高置信调用关系合并真正协作的 Fragment。例如 `func1` 调用另一文件
+   的 `func3`，两者可形成 call-chain Unit；无关的 `func2` 保持独立。
+4. 剩余 Fragment 再按最小合理作用域收敛，避免碎片遗失，也不把整个 diff 合成一个巨型 Unit。
 
-5. **跨文件 Unit 的落地**：reviewUnit 渲染**所有 Fragment 的 diff**（按文件分块、带文件头）；评论已 per-comment 自带路径，**评论路由不改**；change-files 列表遍历成员路径；行数 = 成员求和。
+合并的目标不是追求更少 Unit，而是让每个 Unit 接近一个可独立判断的行为变化。调用图没有足够
+置信度时宁可保持分离，再通过 Clue 补充邻域；错误合并会同时放大 token、推理和归因成本。
 
-6. **命名**：`Unit` 留给作用域（贴合"unit 是评审作用域"的北极星）；原子叫 `Fragment`。
+### 2.2 为 Unit 组织上下文
 
-7. **`symbol-id` 不是 `Unit` 的 id**——三层关系要分清：
-   ```
-   symbol-id（<relpath>::<symbol>，一个函数，最细）
-       ⊂ Fragment（单文件区域，覆盖 1+ symbol-id）
-           ⊂ Unit（评审作用域，含 1+ Fragment → 引用一组 symbol-id）
-   ```
-   `symbol-id` 是 spec-case 的**函数级 spec 绑定键**（specgen 产、ccr 查），键格式 `<relpath>::<symbol>` **不变**；`Fragment.Symbols` 就是它覆盖的 symbol-id 们。
-   > 这个概念早先叫 "unit-id"，与 ccr 的评审作用域 `Unit` 字面撞、且方向相反（symbol-id 命名最细那层、Unit 命名最粗那层）。已跨仓改名为 `symbol-id`（spec-case 术语/资产 + ccr 的 `symbol_id` 字段 + devloop 消费），把 "unit" 让给评审作用域；键格式 `::` 不变。
+Clue 用两个正交维度表达上下文：
 
-8. **unit 生命周期（完成边界）——已实现**：scope 状态机 `open → closing → closed`。loop 以 `Close(debrief)` 声明完成；异步 comment 工作（relocation）以 per-scope 计数（`BeginAsync`/`EndAsync`）注册，Close 时若仍在飞则停靠 debrief、最后一个异步任务归零时自动 finalize（聚合+落盘）——debrief 的完整性与并发安全由**生命周期**保证，不再靠编排顺序（此前 #90 竞态、debrief 队列、Await 时序注释是同一缺口的三次显影，队列机制已删除）。向 closed scope 写入被计数并告警（`LateWrites`）；panic 的 unit 也走 Close（`outcome=panic`，进健壮性仪表盘）。team 方向的 final bulletin 挂点即在 Close（`docs/cross-unit.md`）。
+- **Relation**：事实与 Unit 的关系，如 `self`、`owner`、`caller`、`callee`、`used`。
+- **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`。
 
-## 两条合并轴：动机不同（语义 vs 成本）
+因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
+不决定 prompt 排版；Dossier 先保存完整语义，Briefing 再按预算、优先级和消息形状投影。
 
-- **single-file（直接粗化）**：ChangeSet 只有一个可评审文件时，完整文件 diff 只触发一个 loop；
-  Splitter 得到的全部 symbol 仍保留在 File Unit 中，spec/case/rule/link/doc 等 Clue 不丢失。
-- **call-chain（语义 / 按需求分组）**先做：一个需求天然横跨一条调用链——`X 调 Y`、两者都在本次 diff，就按这条链当一个 unit 审，**和 reviewer 脑中"这个需求改了哪些地方"对齐**（抓出贯穿调用链的交互 bug 是顺带收益）。只合**都变了的**相邻；只一个变的邻居走 context 注入（不合并）。
-- **file-coalesce（成本兜底）**收尾：大改动会炸出太多 func unit → loop 爆；同文件并粗，**降 loop 数、不降 context**。
-- **簇大小上限**：一个改动函数扇出多个改动 callee 时，连通分量可能很大 → 设上限（累计变更行 / 成员数超阈值就不再吸纳），超出的退回成本轴，**防单个 unit 巨到塞爆一次 loop**。一般改动（小簇）走语义轴、大改动（大簇/超量）落成本轴——正好对应初衷里"一般改动 vs 大改动"两种场景。
-- adjacency 计算 costly，沿用现有预算闸门：unit 太多就跳过语义合并、退回文件粗化。
+```text
+Unit
+  └─ ClueFinder[]
+       └─ Clue{Relation, Kind, Ref, Content}
+            └─ Dossier
+                 └─ Briefing / typed file messages
+```
+
+### 2.3 静态 Briefing 与按需工具
+
+Briefing 只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
+未知路径和低概率细节由 Unit Review 通过只读工具按需获取。
+
+这条边界同时控制两个风险：
+
+- 全量预载会让每个 Unit 重复携带仓库材料，成本随 Unit 数放大；
+- 完全依赖工具会浪费轮次重新寻找本可确定注入的事实。
+
+当内容超预算时，应先降级为范围、摘要或可重取指针，而不是静默丢掉整个 Unit。无法完成的 Unit
+必须显式标为 partial/incomplete，不能伪装成 clean。
+
+## 3. 关键设计
+
+### 3.1 稳定身份连接 diff、源码和契约
+
+路径和短函数名不足以跨文件、重命名和依赖建立关系。语言层提供稳定 `symbol-id`；作者声明的
+契约另保留可跨仓匹配的 `fqn`。Unit、Clue 和历史反馈优先用稳定身份连接，Forge 只剩文件锚点时
+才退化到 path。
+
+身份解析失败表示 `unknown`，不能用猜测的同名符号替代。这是防止“上下文看似丰富、实际属于
+另一个函数”的基本准确性边界。
+
+### 3.2 图事实按置信度消费
+
+Language 负责产出 definition、reference、call edge 等源码事实；Unit 层决定这些事实能否参与合并
+和上下文组织。
+
+- 低置信文本线索可用于 repo map、搜索建议或 clue 候选。
+- 类型解析后的调用边可用于 caller/callee 关系与 call-chain Unit。
+- 无法判定的边保持 unknown，不升级成“确定调用”。
+
+图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Dossier 的证据来源，
+其错误成本取决于消费位置：展示错一个候选影响有限，错误合并 Unit 则会改变整个评审边界。
+
+### 3.3 Unit 在一次 run 内是有生命周期的对象
+
+Unit 在形成后保持稳定身份，并沿主链路逐步获得 Dossier、Briefing、Execution 结果和 Hypothesis。
+并发调度只改变执行时机，不改变 Unit 的语义归属。跨 Unit 共享的信息由 Unit Review 的 Board /
+Bulletin 机制表达，不反向修改已确定的静态 Unit 边界。
+
+### 3.4 效果评估不能只看 comment 数
+
+Unit 设计同时影响召回、准确率和成本，至少应观察：
+
+- Fragment 到 Unit 的合并比例与错误合并样本；
+- 每个 Unit 的预载字节、工具调用、token 和完成状态；
+- 有真实 finding 的 Unit 是否获得了足够契约和邻域；
+- 被合并或被拆开的 Unit 是否改变 wrong / missed；
+- partial Unit 是否被单独统计，而非混入 clean。
 
 ## References
 
-- clue 后置那半截（unit 拿到后怎么收证据）：[`context-model.md`](context-model.md)（Clue / ClueFinder / Relation / Dossier，两轴正交）。
-- 实现锚点：`internal/unit`（`Fragment` / `Unit` / `Splitter` / `Merger`）及其
-  `change`/`spec`/`codegraph`/`history` 子包，`internal/runner/source` 与
-  `internal/runner/scan`（输入），以及 `internal/runner`（finder 装配与 clue 收集时机）。
-- 上层定位：`AGENTS.md`（unit 一等概念）、`README.md`（理念）。
+- [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
+- [`language.md`](language.md) — symbol、definition、reference 与图事实的生产边界
+- [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与跨 Unit 协作
+- [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 跨 Unit 归案后的复核与 Trial

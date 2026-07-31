@@ -1,10 +1,10 @@
 // Package board is the Review Team's shared state: an in-memory case board that
 // concurrent review-unit loops post progress bulletins to and pull peers'
 // relevant bulletins from, at turn boundaries. It is the v0 mechanism layer of
-// docs/cross-unit.md — auto-published facts + directed incremental injection,
+// docs/unit_review.md — auto-published facts + directed incremental injection,
 // no dynamic tasks, no LLM lead.
 //
-// Consumption is asymmetric on purpose (docs/cross-unit.md D2): publishing is a
+// Consumption is asymmetric on purpose (see docs/unit_review.md): publishing is a
 // push the engine does for free from tool calls; consumption is NOT a pull tool
 // (a model can't query what it doesn't know exists, and a pull round is exactly
 // the fetch cost briefing spent months eliminating). So the board decides WHO
@@ -21,7 +21,7 @@ import (
 )
 
 // Level is a bulletin's confidence tier. The gap between observation and
-// confirmed is the trust boundary (docs/cross-unit.md): an observation is one
+// confirmed is the trust boundary (docs/unit_review.md): an observation is one
 // unit's suspicion and must not be consumed as established fact — the injection
 // stamp enforces this at render time, not the reader's discretion.
 type Level int
@@ -44,7 +44,7 @@ func (l Level) String() string {
 }
 
 // Bulletin is one progress note posted by a unit's loop — the "in-flight,
-// public, peer-facing" sibling of the Debrief (docs/cross-unit.md). Routing
+// public, peer-facing" sibling of the Debrief (docs/unit_review.md). Routing
 // keys (Paths/Symbols) say what the note is ABOUT, so peers interested in the
 // same code receive it.
 type Bulletin struct {
@@ -61,7 +61,7 @@ type Bulletin struct {
 
 // Interest is a subscriber unit's routing filter: the code it cares about. Set
 // from the unit's own paths + covered symbols + clue neighbors (clue_refs) —
-// context-model's Relation axis reused as "what this unit is watching".
+// Unit model's Relation axis reused as "what this unit is watching".
 type Interest struct {
 	Paths   map[string]bool
 	Symbols map[string]bool
@@ -102,16 +102,16 @@ type Board interface {
 	Pull(scopeID string) (digest string, n int)
 }
 
-// injection caps: a turn's board digest is a few cards, never a firehose (the
-// 15×-token lesson, docs/cross-unit.md). Overflow is summarized as a count line,
+// Injection caps keep a turn's board digest to a few cards, never a firehose
+// (see docs/unit_review.md). Overflow is summarized as a count line,
 // not queued — stale bulletins lose value.
 const (
 	maxPerPull = 5
 	maxDigestB = 4 * 1024
 )
 
-// Registry is the in-memory Board. Same-process goroutines, so a mutex — no
-// files, no locks, no mailbox (docs/cross-unit.md D1).
+// Registry is the in-memory Board. Same-process goroutines need only a mutex;
+// persistence and cross-process mailboxes are deliberately outside this run model.
 type Registry struct {
 	mu        sync.Mutex
 	bulletins []Bulletin
@@ -197,8 +197,7 @@ type scored struct {
 
 // render builds the injected digest. The header is the isolation stamp: peers'
 // notes are context, and an observation is explicitly NOT a fact to be repeated
-// as a finding (the input-boundary discipline — see docs/cross-unit.md 业界扫描,
-// Superpowers v6 trust boundary).
+// as a finding (the input-boundary discipline in docs/unit_review.md).
 func render(hits []scored, total int) string {
 	var sb strings.Builder
 	sb.WriteString("Notes from other review units working on this change-set. " +

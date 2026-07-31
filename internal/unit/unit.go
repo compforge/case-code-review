@@ -74,7 +74,7 @@ type Unit struct {
 	Fragments []Fragment
 	// Dossier is the deduped set of Clues assembled for this Unit (spec/rule/link/
 	// doc/history across the self/owner/caller/callee/used relations), gathered
-	// post-merge against AllSymbols. See docs/context-model.md.
+	// post-merge against AllSymbols. See docs/unit-model.md.
 	Dossier Dossier
 }
 

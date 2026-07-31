@@ -18,8 +18,8 @@ import (
 //
 // Deliberately NO wire form is stored: the identity is content + pairing, and
 // the wire SHAPE (tool_result vs user text) is Lower()'s rendering decision —
-// the precondition for ever A/B-ing per-provider forms (docs/message-model.md
-// 关键设计 4). Today the decision is fixed: paired content renders as the
+// the precondition for ever A/B-ing per-provider forms (see docs/harness.md).
+// Today the decision is fixed: paired content renders as the
 // tool_result it answers, unpaired as user text.
 //
 // A File is held by pointer so it can be stubbed IN PLACE: stubbing swaps the

@@ -25,7 +25,7 @@ case-code-review/
 └── internal/
     ├── runner/     ★ 顶层编排：选择 git-change / full-scan 输入，形成 Unit，交给 Harness；`review` 持有 Hypothesis → CaseFile → Assessment → Trial，`finding` 只承载最终结果
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
-    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md` + `docs/context-model.md`
+    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentcore 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`llmloop` 作为旧实现自包含保留，仓库其他包不再依赖。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施与三大能力中心平铺
     ├── config/     模板 prompt、rule.json、tools 配置
@@ -65,13 +65,15 @@ full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 - 理念：`README.md` · `README.zh-CN.md`
 - 内核分层与依赖方向：Language 产事实、Unit 汇总评审知识、Harness 执行，Review 能力只通过
   Core 外围扩展点接入——`docs/kernel.md`
-- Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点与明确终态
-  ——`docs/harness.md`
+- Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
+  与 HTML Viewer 可观测性——`docs/harness.md`
 - spec/case/rule/link 资产、各语言写法、`spec.json` schema、symbol-id 契约、**产 `spec.json` 的 `specgen`**（Go + Python）：[`spec-case`](https://github.com/qiankunli/spec-case)
 - 查覆盖 / 调试：`ccr review --dry-run` 打印每个 review unit 装配的上下文，不调 LLM（端到端：marker → specgen → spec.json → `--dry-run`）
-- Unit 模型：`Fragment` 原子 + `Unit` 作用域、两条合并轴（call-chain 语义 / file 成本）、clue 后置——`docs/unit-model.md`
+- Unit 与上下文：`Fragment` / `Unit` 作用域、Clue / Dossier 两轴上下文、图事实消费与 Briefing
+  ——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
-- Context 模型：unit → dossier——`Clue`(kind: spec/case/rule/link/doc) × `Relation`(self/owner/caller/callee/used) 两轴正交、doc 运行时抽取（adoption-free）、symbol-id 仓内 / fqn 跨仓、依赖 spec 随包发——`docs/context-model.md`
-- Review Team（设计定稿，v0 待实现）：Board/Bulletin/动态 cross_check，治跨文件一致性漏报；固定 phase 碰头会与角色化均已论证否决——`docs/cross-unit.md`
-- Runner 绿地改造（待实施）：Runner / UnitExecution 生命周期、总 token 预算与 Unit 级断点恢复——`docs/run-model.md`
+- Unit Review：Review 1 的有界探索、原子完成、上下文治理与 Board/Bulletin 跨 Unit 协作
+  ——`docs/unit_review.md`
+- Hypothesis Review：CaseFile、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial
+  ——`docs/hypothesis_review.md`
 - 上游归属（Apache-2.0 衍生）：`NOTICE`

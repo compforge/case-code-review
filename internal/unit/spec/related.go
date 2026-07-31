@@ -9,7 +9,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-// This file is the factored context pipeline of docs/context-model.md: the
+// This file is the factored context pipeline of docs/unit-model.md: the
 // relation axis (RelationCollector: unit → related symbols) × the source axis
 // (cluesFor: symbol → authored marks + derived docstring). RelatedFinder composes
 // the two into one unit.ClueFinder, so adding a relation or a source never

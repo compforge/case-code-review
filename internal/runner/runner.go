@@ -181,7 +181,7 @@ type Runner struct {
 	// callgraph lookup, comment tagging, and ranged briefing.
 	analyzer *language.Analyzer
 	// board is the Review Team's shared case board for this run (nil when the
-	// review_team gate is off). See docs/cross-unit.md.
+	// review_team gate is off). See docs/unit_review.md.
 	board *board.Registry
 	// hypotheses contains the divergent Unit Review output. It is separate from
 	// args.Findings so unassessed suspicions can never leak into public results.
@@ -232,7 +232,7 @@ func New(args Args) *Runner {
 	// gates (spec_case/rule/link/doc) switch an evidence kind off across every
 	// relation — the ablation unit matches the dry-run relation×kind matrix — and
 	// the caller_callee COST gate switches the expensive call-graph walk. Relations
-	// themselves are not gated (cheap mechanism). See docs/context-model.md.
+	// themselves are not gated (cheap mechanism). See docs/unit-model.md.
 	f := args.Features
 	analyzer := language.NewAnalyzer(args.RepoDir)
 	kinds := spec.KindGates{
@@ -279,7 +279,7 @@ func New(args Args) *Runner {
 		typedGraph:    typed,
 		analyzer:      analyzer,
 	}
-	// Review Team board (docs/cross-unit.md): one shared in-memory board per run
+	// Review Team board (docs/unit_review.md): one shared in-memory board per run
 	// when the gate is on; nil otherwise (loop behavior byte-identical).
 	if f.Enabled(feature.ReviewTeam) {
 		a.board = board.New()
@@ -781,7 +781,7 @@ func (a *Runner) splitUnits() ([]unit.Unit, error) {
 
 	// Review Team: register each unit's board interest before dispatch — its
 	// files + covered symbols + clue neighbors (the Relation axis reused as
-	// "what this unit watches"; docs/cross-unit.md 消费侧闸 1).
+	// "what this unit watches"; see docs/unit_review.md).
 	if a.board != nil {
 		for _, u := range units {
 			a.board.Register(u.ID, unitInterest(u))
@@ -811,7 +811,7 @@ func unitInterest(u unit.Unit) board.Interest {
 
 // findClues assembles a Unit's Dossier: the cheap ClueFinders run always, the
 // costly ones (call-graph grep) only when includeCostly, then dedup makes the
-// result idempotent (the Dossier's one invariant — see docs/context-model.md; each
+// result idempotent (the Dossier's one invariant — see docs/unit-model.md; each
 // finder already carries its own relation label in the clue's Text).
 func (a *Runner) findClues(u unit.Unit, includeCostly bool) unit.Dossier {
 	var clues unit.Dossier

@@ -3,7 +3,7 @@ package msg
 import "github.com/qiankunli/case-code-review/internal/llm"
 
 // Board is the digest of peer units' bulletins injected at a turn boundary
-// (docs/cross-unit.md). Like File it is re-derivable — the content came from
+// (docs/unit_review.md). Like File it is re-derivable — the content came from
 // the board and can be pulled again — so it participates in eviction: under
 // token pressure a stale board digest is shed before the model's own
 // reasoning, the same re-derivability ordering File uses.
