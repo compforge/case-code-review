@@ -137,9 +137,9 @@ type Args struct {
 	Version string
 }
 
-// Runner orchestrates the AI-powered code review. LLM tool-use loop / memory
-// compression / token aggregation now live in internal/harness/llmloop.Runner; this
-// struct holds the diff-side state and orchestrates per-file subtasks.
+// Runner orchestrates the AI-powered code review. Harness owns one Unit's
+// generic agent loop; this struct owns Unit formation, review extensions and
+// run-level aggregation.
 type Runner struct {
 	args            Args
 	changes         []change.Change // parsed diffs
@@ -148,7 +148,7 @@ type Runner struct {
 	currentDate     string
 	session         *session.SessionHistory
 	unitFailed      int64 // count of failed unit reviews, accessed atomically
-	runner          *llmloop.Runner
+	executor        *unitExecutor
 	// splitter turns each changed file's diff into diff units (one per changed
 	// function); merger consolidates those into review units (what actually
 	// triggers a review loop). Both set in New().
@@ -289,32 +289,9 @@ func New(args Args) *Runner {
 		Model:        args.Model,
 		Relocation:   f.Enabled(feature.Relocation),
 	}
-	a.runner = llmloop.NewRunner(llmloop.Deps{
-		LLMClient:           args.LLMClient,
-		Model:               args.Model,
-		Template:            args.Template,
-		Tools:               args.Tools,
-		MainToolDefs:        args.MainToolDefs,
-		Session:             args.Session,
-		WrapUpPrompt:        finding.WrapUpPrompt,
-		ToolCallHook:        findingHook,
-		FileDedupEnabled:    f.Enabled(feature.FileDedup),
-		FileEvictEnabled:    f.Enabled(feature.FileEvict),
-		Board:               boardOrNil(a.board),
-		PostBulletinEnabled: f.Enabled(feature.PostBulletin),
-	})
-	findingHook.RecordUsage = a.runner.RecordUsage
+	a.executor = newUnitExecutor(args, findingHook, a.board)
+	findingHook.RecordUsage = a.executor.RecordUsage
 	return a
-}
-
-// boardOrNil returns the board as the llmloop interface, or a true nil interface
-// when there is no board — Deps.Board must be a nil INTERFACE (not a typed nil
-// *Registry) so the loop's `Board != nil` guard works.
-func boardOrNil(b *board.Registry) board.Board {
-	if b == nil {
-		return nil
-	}
-	return b
 }
 
 // Run executes the full review pipeline: parse diffs -> plan per file -> LLM tool-loop -> collect comments.
@@ -395,19 +372,19 @@ func (a *Runner) Changes() []change.Change {
 
 // TotalTokensUsed returns PromptTokens + CompletionTokens across all LLM calls.
 // For Anthropic, PromptTokens already includes cache read/write tokens.
-func (a *Runner) TotalTokensUsed() int64 { return a.runner.TotalTokensUsed() }
+func (a *Runner) TotalTokensUsed() int64 { return a.executor.TotalTokensUsed() }
 
 // TotalInputTokens returns the accumulated input/prompt tokens from all LLM calls.
-func (a *Runner) TotalInputTokens() int64 { return a.runner.TotalInputTokens() }
+func (a *Runner) TotalInputTokens() int64 { return a.executor.TotalInputTokens() }
 
 // TotalOutputTokens returns the accumulated completion tokens from all LLM calls.
-func (a *Runner) TotalOutputTokens() int64 { return a.runner.TotalOutputTokens() }
+func (a *Runner) TotalOutputTokens() int64 { return a.executor.TotalOutputTokens() }
 
 // TotalCacheReadTokens returns the accumulated cache read tokens from all LLM calls.
-func (a *Runner) TotalCacheReadTokens() int64 { return a.runner.TotalCacheReadTokens() }
+func (a *Runner) TotalCacheReadTokens() int64 { return a.executor.TotalCacheReadTokens() }
 
 // TotalCacheWriteTokens returns the accumulated cache write tokens from all LLM calls.
-func (a *Runner) TotalCacheWriteTokens() int64 { return a.runner.TotalCacheWriteTokens() }
+func (a *Runner) TotalCacheWriteTokens() int64 { return a.executor.TotalCacheWriteTokens() }
 
 // ProjectSummary returns the markdown project-level summary. Always empty
 // for the diff-review path; defined so *Runner satisfies the
@@ -415,18 +392,18 @@ func (a *Runner) TotalCacheWriteTokens() int64 { return a.runner.TotalCacheWrite
 func (a *Runner) ProjectSummary() string { return "" }
 
 // Warnings returns a copy of non-fatal warnings recorded during review.
-func (a *Runner) Warnings() []Warning { return a.runner.Warnings() }
+func (a *Runner) Warnings() []Warning { return a.executor.Warnings() }
 
 // ToolCalls returns per-tool call counts accumulated during review.
-func (a *Runner) ToolCalls() map[string]int64 { return a.runner.ToolCalls() }
+func (a *Runner) ToolCalls() map[string]int64 { return a.executor.ToolCalls() }
 
 // ModelsUsed returns the routing aliases that served a response this review,
 // each with its response count (deduped). Empty for a single-model run.
-func (a *Runner) ModelsUsed() map[string]int { return a.runner.ModelsUsed() }
+func (a *Runner) ModelsUsed() map[string]int { return a.executor.ModelsUsed() }
 
 // recordWarning adds a non-fatal warning to the agent's warning list.
 func (a *Runner) recordWarning(warningType, file, message string) {
-	a.runner.RecordWarning(warningType, file, message)
+	a.executor.RecordWarning(warningType, file, message)
 }
 
 // loadChanges populates the diff-related fields.
@@ -1077,7 +1054,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// REVIEW_FILTER_TASK is NOT run here: it is a file-level post-pass
 	// (runReviewFilters), so sibling Units of the same file don't filter each
 	// other's comments against the wrong diff slice.
-	outcome, err := a.runner.RunPerFile(ctx, domain, sc)
+	outcome, err := a.executor.Run(ctx, domain, sc)
 	deb.Outcome, deb.Reason = outcome.State, outcome.Reason
 	deb.BoardPulled = outcome.BoardPulled
 	deb.BoardInjectedTokens = outcome.BoardInjectedTokens
@@ -1160,7 +1137,7 @@ func (a *Runner) executeReviewFilter(ctx context.Context, d change.Change) {
 		return
 	}
 	rec.SetResponse(resp, time.Since(startTime))
-	a.runner.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Usage)
 
 	indices := parseFilterResponse(resp.Content(), len(comments))
 	if len(indices) == 0 {
@@ -1374,7 +1351,7 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc session.Scope, rawDiff
 		return "", fmt.Errorf("plan request: %w", err)
 	}
 	rec.SetResponse(resp, time.Since(startTime))
-	a.runner.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Usage)
 	fmt.Fprintf(stdout.Writer(), "[ccr] Plan completed for %s\n", newPath)
 	return resp.Content(), nil
 }

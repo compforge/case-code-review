@@ -121,24 +121,23 @@ while condition:
 2. **eval 方法论要求同引擎消融**（§2.5）：机制收益与实现差异必须可分离。
 3. **仓库同一答案已用四次**：plan / review-filter / relocation / typed_briefing 都是"单引擎 + gate 可选环节"。
 
-接缝（引擎不再为实验改动，迭代全在 Board 实现包）：
+接缝（Board 语义留在 Runner，Harness 只提供中立扩展点）：
 
 ```go
-// llmloop.Deps 增加可选依赖；nil = 今天的行为，prompt 逐字节不变（实现形态）
-Board board.Board
-type Board interface {
-    Register(scopeID string, in Interest)      // dispatch 前登记 unit interest
-    Publish(b Bulletin)                        // tool 后自动层提取事实；post_bulletin 走同一入口
-    Pull(scopeID string) (digest string, n int) // turn 顶部：路由+打分+封顶后的渲染增量
-}
+// Runner 的 UnitExecution 实现这两个 Harness 契约。
+PullTurnContext(ctx, scope) []msg.Msg // turn 顶部从 Board 拉取并包成 msg.Board
+HandleTool(ctx, request) (...)       // post_bulletin 等领域工具
+
+// Harness EventSink 由 Runner 消费，在 tool 事件后自动发布事实。
 ```
-> 板负责渲染（打分/封顶/隔离盖章都在 Registry），llmloop 只把非空 digest 包成 `msg.Board` 注入——渲染集中、引擎薄。
+> 板负责渲染（打分/封顶/隔离盖章都在 Registry），Runner 只把非空 digest 包成
+> `msg.Board` 交给 Harness——渲染集中、执行层不知道 Board。
 
 ## 切片、验收与已知弱点
 
-**v0（纯机制，已实现）**：`internal/harness/board`（Registry：交集打分 symbol>path、level 乘数、增量游标、top-K+字节封顶、隔离盖章渲染）+ `msg.Board`（进 `Reclaimable` 驱逐序，与 File 同档）+ llmloop 接缝（`Deps.Board` nil=字节不变；turn 顶 Pull 注入、tool 后自动 Publish 事实）+ Runner 注册 unit interest（paths+symbols+clue_refs）+ debrief `board{pulled,injected_tokens,posted}` + `board_post` 落 session。gate `review_team` 默认关（experimental，语义入 registry `Experimental` 字段）。**不含**：cross_check、Lead、板面压缩。
+**v0（纯机制，已实现）**：`internal/harness/board`（Registry：交集打分 symbol>path、level 乘数、增量游标、top-K+字节封顶、隔离盖章渲染）+ `msg.Board`（进 `Reclaimable` 驱逐序，与 File 同档）+ Runner 的 UnitExecution 适配（turn 顶通过 `TurnContextProvider` Pull 注入、消费 Harness tool Event 后自动 Publish 事实）+ Runner 注册 unit interest（paths+symbols+clue_refs）+ debrief `board{pulled,injected_tokens,posted}` + `board_post` 落 session。gate `review_team` 默认关（experimental，语义入 registry `Experimental` 字段）。**不含**：cross_check、Lead、板面压缩。
 
-**v0.5（怀疑通道，已实现）**：`post_bulletin` tool——模型把本 unit 范围外的跨文件疑点以 observation 级贴上板（发现者带上下文递线索，D2 的发布侧补全）。实现要点：loop 自持 handler（发布需要 scope 身份、turn 与每 loop 预算，不走 Registry provider）；路由键（paths/symbols）必填、每 loop 发帖封顶、text 截断——闸 2 的源头防线；无板或 gate 关时 `NewRunner` 直接从 tool defs 剥离，模型看不到用不了的工具。gate `post_bulletin` 默认关，依赖 `review_team`。消费侧零增量：observation 的降权乘数与"未确认观察不得作为事实引用"盖章 v0 已就位。
+**v0.5（怀疑通道，已实现）**：`post_bulletin` tool——模型把本 unit 范围外的跨文件疑点以 observation 级贴上板（发现者带上下文递线索，D2 的发布侧补全）。实现要点：Runner 的 UnitExecution 持有 handler（发布需要 scope 身份、turn 与每 Execution 预算，不走 Registry provider）；路由键（paths/symbols）必填、每 Execution 发帖封顶、text 截断——闸 2 的源头防线；无板或 gate 关时装配阶段直接从 tool defs 剥离，模型看不到用不了的工具。gate `post_bulletin` 默认关，依赖 `review_team`。消费侧零增量：observation 的降权乘数与"未确认观察不得作为事实引用"盖章 v0 已就位。
 
 **v0 冒烟（2026-07-05，ed0ca39 6 文件 5 unit）**：19 条 confirmed 级 file-read 事实自动发布；路由生效——`agent.go` 被 3 个 unit 读，其 debrief 各记 pulls 3/5/10；注入 token 86-473/unit（封顶有效）。跨 unit 同文件重复读（loop 内 dedup 够不着的那类）现在互相可见——是否降低重复读，正是 v0 待答的问题。
 

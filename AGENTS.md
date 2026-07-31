@@ -26,7 +26,7 @@ case-code-review/
     ├── runner/     ★ 顶层编排：选择 git-change / full-scan 输入，形成 Unit，交给 Harness，再聚合 Finding；`source`/`scan`/`finding`/`feature`/`preview` 都是 Runner 的输入、结果或策略
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
     ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md` + `docs/context-model.md`
-    ├── harness/    ★ 通用执行域：`llmloop` 管 agent loop、工具 hook、压缩与 usage；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。详见 `docs/harness.md`
+    ├── harness/    ★ 通用执行域：适配 agentcore 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`llmloop` 保留给尚未迁移的 scan 路径。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施与三大能力中心平铺
     ├── config/     模板 prompt、rule.json、tools 配置
     └── gitcmd · telemetry · viewer …   独立支撑能力
@@ -52,7 +52,7 @@ git change / full scan ─▶ Change ─Splitter─▶ Fragment ─Merger─▶ 
 
 5. **通用操作不就地手写**：先查 stdlib（`slices`/`maps`/内置 `min`/`max`），stdlib 没有的查/进 [`go-stdx`](https://github.com/qiankunli/go-stdx)（自 `pkg/stdx` 孵化毕业，收录纪律见其 AGENTS.md）；第三方 common 库（samber/lo、bytedance/gopkg 等）已评估过暂不引——出现第三个"纯 transform 链"调用点再议。
 
-6. **review loop 结构上只读——是受守护的信任边界**：Harness Core 不内建 review 分支；Runner 通过 tool/hook 注册封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，`code_comment` 只形成内存 Finding，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**。
+6. **review loop 结构上只读——是受守护的信任边界**：领域代码不得直接 import agentcore，只经 `internal/harness` 适配层接入；Harness 不内建 review 分支，Runner 通过 tool/hook 注册封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，`code_comment` 只形成内存 Finding，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**。
 
 7. **`VERSION` 是发布版本的事实源**：每个独立变更 / PR 都按 SemVer bump 一次；release tag 必须与文件内容一致，具体 build identity 继续由 commit 补充。
 

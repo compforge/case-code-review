@@ -12,6 +12,7 @@ require (
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/qiankunli/go-stdx v0.0.1
+	github.com/voocel/agentcore v1.8.0
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.43.0

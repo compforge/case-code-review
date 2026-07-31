@@ -17,7 +17,7 @@ import (
 // robustness, formed → granularity, clues/materials/usage → context, the
 // aggregated tail → cost.
 type Debrief struct {
-	// Outcome is the loop's terminal state: llmloop's completed / truncated /
+	// Outcome is the Harness execution's terminal state: completed / truncated /
 	// timeout / llm_error, or "skipped_policy" when a governor (token guard)
 	// decided not to run the loop at all — a deliberate skip, not a failure.
 	Outcome string
