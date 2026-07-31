@@ -3,8 +3,8 @@ package runner
 import (
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // countingFinder records how many times it is asked to find clues.
@@ -17,7 +17,7 @@ func TestSplitUnits_CostlyFindersGatedByBudget(t *testing.T) {
 	var under int
 	au := &Runner{
 		splitter:      unit.AutoSplitter{},
-		diffs:         []diff.Diff{goDiff("p.go", 3)},
+		changes:       []change.Change{goDiff("p.go", 3)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&under}},
 	}
 	if _, err := au.splitUnits(); err != nil {
@@ -31,7 +31,7 @@ func TestSplitUnits_CostlyFindersGatedByBudget(t *testing.T) {
 	var over int
 	ao := &Runner{
 		splitter:      unit.AutoSplitter{},
-		diffs:         []diff.Diff{goDiff("p.go", defaultUnitWatermark+2)},
+		changes:       []change.Change{goDiff("p.go", defaultUnitWatermark+2)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&over}},
 	}
 	if _, err := ao.splitUnits(); err != nil {

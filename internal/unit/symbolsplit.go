@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // AutoSplitter attributes changed hunks to callable definitions reported by
@@ -17,7 +17,7 @@ type AutoSplitter struct {
 	Analyzer *language.Analyzer
 }
 
-func (s AutoSplitter) Split(d diff.Diff) ([]Fragment, error) {
+func (s AutoSplitter) Split(d change.Change) ([]Fragment, error) {
 	if d.NewFileContent == "" {
 		return FileSplitter{}.Split(d)
 	}
@@ -55,10 +55,10 @@ type funcSpan struct {
 
 // splitByFuncSpans turns a file diff into one Fragment per touched function
 // plus a residual file Fragment for changes outside every function.
-func splitByFuncSpans(d diff.Diff, spans []funcSpan) []Fragment {
+func splitByFuncSpans(d change.Change, spans []funcSpan) []Fragment {
 	header := diffHeader(d.Diff)
-	hunks := diff.ParseHunks(d.Diff)
-	grouped := make(map[int][]diff.Hunk)
+	hunks := change.ParseHunks(d.Diff)
+	grouped := make(map[int][]change.Hunk)
 	for _, h := range hunks {
 		group := funcOfHunk(h, spans)
 		grouped[group] = append(grouped[group], h)
@@ -89,7 +89,7 @@ func splitByFuncSpans(d diff.Diff, spans []funcSpan) []Fragment {
 	return fragments
 }
 
-func funcOfHunk(h diff.Hunk, spans []funcSpan) int {
+func funcOfHunk(h change.Hunk, spans []funcSpan) int {
 	line := changedLine(h)
 	for i := range spans {
 		if line >= spans[i].start && line <= spans[i].end {
@@ -99,13 +99,13 @@ func funcOfHunk(h diff.Hunk, spans []funcSpan) int {
 	return -1
 }
 
-func changedLine(h diff.Hunk) int {
+func changedLine(h change.Hunk) int {
 	line := h.NewStart
 	for _, diffLine := range h.Lines {
 		switch diffLine.Type {
-		case diff.HunkAdded:
+		case change.HunkAdded:
 			return line
-		case diff.HunkDeleted:
+		case change.HunkDeleted:
 		default:
 			line++
 		}
@@ -113,13 +113,13 @@ func changedLine(h diff.Hunk) int {
 	return h.NewStart
 }
 
-func countChanges(hunks []diff.Hunk) (insertions, deletions int64) {
+func countChanges(hunks []change.Hunk) (insertions, deletions int64) {
 	for _, hunk := range hunks {
 		for _, line := range hunk.Lines {
 			switch line.Type {
-			case diff.HunkAdded:
+			case change.HunkAdded:
 				insertions++
-			case diff.HunkDeleted:
+			case change.HunkDeleted:
 				deletions++
 			}
 		}
@@ -137,15 +137,15 @@ func diffHeader(rawDiff string) string {
 	return rawDiff
 }
 
-func renderHunks(hunks []diff.Hunk) string {
+func renderHunks(hunks []change.Hunk) string {
 	var rendered strings.Builder
 	for _, hunk := range hunks {
 		fmt.Fprintf(&rendered, "@@ -%d,%d +%d,%d @@\n", hunk.OldStart, hunk.OldCount, hunk.NewStart, hunk.NewCount)
 		for _, line := range hunk.Lines {
 			switch line.Type {
-			case diff.HunkAdded:
+			case change.HunkAdded:
 				rendered.WriteString("+" + line.Content + "\n")
-			case diff.HunkDeleted:
+			case change.HunkDeleted:
 				rendered.WriteString("-" + line.Content + "\n")
 			default:
 				rendered.WriteString(" " + line.Content + "\n")

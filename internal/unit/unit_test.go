@@ -3,11 +3,11 @@ package unit
 import (
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func TestFileSplitter_OneFragmentPerFile(t *testing.T) {
-	d := diff.Diff{
+	d := change.Change{
 		NewPath:    "internal/foo/bar.go",
 		Diff:       "@@ -1,2 +1,3 @@\n+added line\n",
 		Insertions: 1,

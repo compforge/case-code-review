@@ -20,9 +20,9 @@ func (a *Runner) buildRepoMap(units []unit.Unit) string {
 	start := time.Now()
 
 	var seedFiles []string
-	for i := range a.diffs {
-		if !a.diffs[i].IsDeleted && a.diffs[i].NewPath != "" {
-			seedFiles = append(seedFiles, a.diffs[i].NewPath)
+	for i := range a.changes {
+		if !a.changes[i].IsDeleted && a.changes[i].NewPath != "" {
+			seedFiles = append(seedFiles, a.changes[i].NewPath)
 		}
 	}
 	var seedIdents []string

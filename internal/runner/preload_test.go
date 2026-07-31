@@ -16,7 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-func newPreloadAgent(t *testing.T, files map[string]string) *Runner {
+func newPreloadRunner(t *testing.T, files map[string]string) *Runner {
 	t.Helper()
 	dir := t.TempDir()
 	for p, content := range files {
@@ -39,7 +39,7 @@ func wholeFile(path string, symbols ...string) material {
 }
 
 func TestRenderMaterials_WholeFile(t *testing.T) {
-	a := newPreloadAgent(t, map[string]string{
+	a := newPreloadRunner(t, map[string]string{
 		"pkg/a.go": "package a\n\nfunc F() {}\n",
 	})
 	got, related, _ := a.renderMaterials(context.Background(), []material{wholeFile("pkg/a.go")})
@@ -72,7 +72,7 @@ func TestRenderMaterials_BudgetAndRangedFallback(t *testing.T) {
 	// A file over the budget with no symbols is named but not inlined; the budget
 	// failure of one file doesn't block a later small file.
 	big := strings.Repeat("x", preloadSourceBudget+1)
-	a := newPreloadAgent(t, map[string]string{"big.go": big, "small.go": "ok\n"})
+	a := newPreloadRunner(t, map[string]string{"big.go": big, "small.go": "ok\n"})
 	got, _, outcomes := a.renderMaterials(context.Background(), []material{wholeFile("big.go"), wholeFile("small.go")})
 	if strings.Contains(got, big[:64]) {
 		t.Fatal("oversized file must not be inlined")
@@ -94,7 +94,7 @@ func TestRenderMaterials_BudgetAndRangedFallback(t *testing.T) {
 		sb.WriteString(filler + "\n")
 	}
 	sb.WriteString("\nfunc Changed() int {\n\treturn 42\n}\n")
-	a2 := newPreloadAgent(t, map[string]string{"big.go": sb.String()})
+	a2 := newPreloadRunner(t, map[string]string{"big.go": sb.String()})
 	got2, _, _ := a2.renderMaterials(context.Background(), []material{wholeFile("big.go", "big.go::Changed")})
 	if !strings.Contains(got2, "LINE_RANGE: ") || !strings.Contains(got2, "func Changed() int {") {
 		t.Fatalf("want ranged fallback with the changed function's body, got:\n%.300s", got2)
@@ -112,7 +112,7 @@ func TestRenderMaterials_BudgetAndRangedFallback(t *testing.T) {
 }
 
 func TestRenderMaterials_RelatedBodiesSplitAndPriority(t *testing.T) {
-	a := newPreloadAgent(t, map[string]string{
+	a := newPreloadRunner(t, map[string]string{
 		"own.go":      "package p\n\nfunc Changed() {}\n",
 		"neighbor.go": "package p\n\nfunc Caller() {\n\tChanged()\n}\n",
 	})

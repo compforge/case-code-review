@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// Tool represents a single review tool.
+// Tool is the stable name of a Harness capability.
 type Tool struct {
 	name string
 }
@@ -13,7 +13,6 @@ type Tool struct {
 var (
 	Unknown      = Tool{name: "unknown"}
 	TaskDone     = Tool{name: "task_done"}
-	CodeComment  = Tool{name: "code_comment"}
 	FileRead     = Tool{name: "file_read"}
 	FileFind     = Tool{name: "file_find"}
 	FileReadDiff = Tool{name: "file_read_diff"}
@@ -22,16 +21,17 @@ var (
 )
 
 func OfName(name string) Tool {
-	for _, t := range allTools() {
-		if t.name == name {
-			return t
-		}
-	}
-	return Unknown
+	return Named(name)
 }
 
-func allTools() []Tool {
-	return []Tool{Unknown, TaskDone, CodeComment, FileRead, FileFind, FileReadDiff, CodeSearch, PostBulletin}
+// Named creates a tool identity for a core or domain-provided capability.
+// Availability is decided by Registry, so the Harness does not need a closed
+// enum of every tool that extensions may add.
+func Named(name string) Tool {
+	if name == "" || name == Unknown.name {
+		return Unknown
+	}
+	return Tool{name: name}
 }
 
 // Name returns the tool's identifier name.

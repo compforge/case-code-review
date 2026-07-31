@@ -23,14 +23,11 @@
 case-code-review/
 ├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
 └── internal/
-    ├── runner/     ★ 顶层编排：diff→Unit→Harness execution→结果过滤与持久化；`feature`/`preview` 是 Runner 自有策略与输出
+    ├── runner/     ★ 顶层编排：选择 git-change / full-scan 输入，形成 Unit，交给 Harness，再聚合 Finding；`source`/`scan`/`finding`/`feature`/`preview` 都是 Runner 的输入、结果或策略
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
-    ├── unit/       ★ `Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md` + `docs/context-model.md`
-    ├── harness/    ★ 执行域：`llmloop` 管当前 agent loop；`msg`/`tool`/`board` 是 review 强化；`session` 收口执行记录。详见 `docs/kernel.md`
+    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md` + `docs/context-model.md`
+    ├── harness/    ★ 通用执行域：`llmloop` 管 agent loop、工具 hook、压缩与 usage；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。详见 `docs/kernel.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施与三大能力中心平铺
-    ├── diff/       `Diff` owner 与 git diff/hunk 解析
-    ├── finding/    `Finding` owner；finding 的行号定位与重定位
-    ├── scan/       full-file scan 与其输入 `Item`
     ├── config/     模板 prompt、rule.json、tools 配置
     └── gitcmd · telemetry · viewer …   独立支撑能力
 ```
@@ -38,7 +35,8 @@ case-code-review/
 **主链路**：
 
 ```
-diff ─Splitter─▶ Fragment ─Merger─▶ Unit ─ClueFinder 找 Clue(spec/case/rule/link + caller/callee)─▶ review loop
+git change / full scan ─▶ Change ─Splitter─▶ Fragment ─Merger─▶ Unit
+    ─ClueFinder 找 Clue(spec/case/rule/link + caller/callee)─▶ Harness execution ─▶ Finding
 ```
 
 > 即：Splitter 把每个文件 diff 切成 `Fragment`（一函数一个 + 残余）→ Merger 归并成 `Unit`（评审作用域）→ 各 ClueFinder **对 Unit** 找 Clue 挂到 `Unit.Clues`（spec/case/rule/link 廉价直查；caller/callee 经 call-graph 上溯/下探）→ 一个 Unit 一个 review loop。context 后置（对最终作用域收一次）。
@@ -48,13 +46,13 @@ diff ─Splitter─▶ Fragment ─Merger─▶ Unit ─ClueFinder 找 Clue(spec
 ## 关键约定（核心七条）
 
 1. **评审语义 = 契约守恒，不是找语法 bug**：核对 diff 有没有破坏函数的 spec/case/rule 不变量；**语法 / 静态检查交给 lint 类工具**（Python `ruff`、Go `go build`/`go vet` 之类），不是 ccr 的活。
-2. **diff unit vs review unit 别混**：Splitter 从 diff 切出 diff unit；Merger 归并成 review unit（触发 loop 的那个，可能是单个、也可能是几个沿阶梯归并的更粗 unit）。成本超水位按文件归并——**降 loop 粒度、不降 context**。
+2. **Fragment vs Unit 别混**：Splitter 从 Change 切出 Fragment；Merger 归并成 Unit（触发 loop 的那个，可能是单个、也可能是几个沿阶梯归并的更粗 Unit）。成本超水位按文件归并——**降 loop 粒度、不降 context**。
 3. **边界现场算、`spec.json` 只语义**：函数边界评审时由 `internal/language` 现场解析、**永不落盘**（不 stale）；parser / compiler / gotreesitter 不得泄漏到 unit/codegraph，使用方只消费语言事实；`spec.json` 只有 `FuncID → spec/cases/rules/links`、**无行号**；join key 是 symbol-id `<relpath>::<symbol>`（与 spec-case 一致）。
 4. **上下文分廉价 / 昂贵两档，重活有闸**：廉价 finder（spec.json 查 spec/case/rule/link）总跑；昂贵 finder（caller/callee 的 call-graph grep）走**预算闸门**——diff unit 数超水位就跳（反正要归并、per-func 上下文也被稀释）。link 指向的 doc/函数**内容**仍按需 tool 取，不预塞。
 
 5. **通用操作不就地手写**：先查 stdlib（`slices`/`maps`/内置 `min`/`max`），stdlib 没有的查/进 [`go-stdx`](https://github.com/qiankunli/go-stdx)（自 `pkg/stdx` 孵化毕业，收录纪律见其 AGENTS.md）；第三方 common 库（samber/lo、bytedance/gopkg 等）已评估过暂不引——出现第三个"纯 transform 链"调用点再议。
 
-6. **review loop 结构上只读——是受守护的信任边界**：主评审 loop 的工具面是封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，`code_comment` 仅写内存 collector，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**——评审节点一旦能产生副作用，就从"看代码的"变成"改状态的"（业界事故：reviewer 执行 checkout 制造孤儿提交）。要加此类能力先问：它属于评审，还是属于评审之后的独立执行环节？后者不进这个工具集。
+6. **review loop 结构上只读——是受守护的信任边界**：Harness Core 不内建 review 分支；Runner 通过 tool/hook 注册封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，`code_comment` 只形成内存 Finding，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**。
 
 7. **`VERSION` 是发布版本的事实源**：每个独立变更 / PR 都按 SemVer bump 一次；release tag 必须与文件内容一致，具体 build identity 继续由 commit 补充。
 

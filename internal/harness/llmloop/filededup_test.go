@@ -39,7 +39,6 @@ func TestRunPerFile_FileDedupStubsCoveredRead(t *testing.T) {
 		LLMClient:        client,
 		Template:         template.Template{MaxToolRequestTimes: 10, MaxTokens: 10000},
 		Tools:            reg,
-		CommentCollector: tool.NewCommentCollector(),
 		Session:          session.New(".", "test", "m", session.SessionOptions{}),
 		FileDedupEnabled: true,
 	})
@@ -85,11 +84,10 @@ func TestRunPerFile_FileDedupGateOff(t *testing.T) {
 	reg.Register(fileReadStub{body: result})
 	reg.Freeze()
 	r := NewRunner(Deps{
-		LLMClient:        client,
-		Template:         template.Template{MaxToolRequestTimes: 10, MaxTokens: 10000},
-		Tools:            reg,
-		CommentCollector: tool.NewCommentCollector(),
-		Session:          session.New(".", "test", "m", session.SessionOptions{}),
+		LLMClient: client,
+		Template:  template.Template{MaxToolRequestTimes: 10, MaxTokens: 10000},
+		Tools:     reg,
+		Session:   session.New(".", "test", "m", session.SessionOptions{}),
 	})
 	if _, err := r.RunPerFile(context.Background(), msg.Wrap([]llm.Message{llm.NewTextMessage("user", "review")}), scope()); err != nil {
 		t.Fatalf("RunPerFile: %v", err)
@@ -216,12 +214,11 @@ func TestRunPerFile_BoardPullInjectsAndAutoPublishes(t *testing.T) {
 	reg.Freeze()
 	sb := &stubBoard{digest: "peer confirmed: read shared.go"}
 	r := NewRunner(Deps{
-		LLMClient:        client,
-		Template:         template.Template{MaxToolRequestTimes: 10, MaxTokens: 10000},
-		Tools:            reg,
-		CommentCollector: tool.NewCommentCollector(),
-		Session:          session.New(".", "test", "m", session.SessionOptions{}),
-		Board:            sb,
+		LLMClient: client,
+		Template:  template.Template{MaxToolRequestTimes: 10, MaxTokens: 10000},
+		Tools:     reg,
+		Session:   session.New(".", "test", "m", session.SessionOptions{}),
+		Board:     sb,
 	})
 	outcome, err := r.RunPerFile(context.Background(), msg.Wrap([]llm.Message{llm.NewTextMessage("user", "review")}), scope())
 	if err != nil {

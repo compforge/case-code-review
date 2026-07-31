@@ -11,7 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/runner/source"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func main() {
@@ -138,20 +139,20 @@ func resolveRepo(input string) (string, error) {
 	return abs, nil
 }
 
-func buildProvider(repoDir string, args cliArgs) *diff.Provider {
+func buildProvider(repoDir string, args cliArgs) *source.Provider {
 	switch {
 	case args.commit != "":
-		return diff.NewCommitProvider(repoDir, args.commit, nil)
+		return source.NewCommitProvider(repoDir, args.commit, nil)
 	case args.from != "" && args.to != "":
-		return diff.NewProvider(repoDir, args.from, args.to, nil)
+		return source.NewProvider(repoDir, args.from, args.to, nil)
 	default:
-		return diff.NewWorkspaceProvider(repoDir, nil)
+		return source.NewWorkspaceProvider(repoDir, nil)
 	}
 }
 
 // ---- output helpers ----
 
-func printSummary(diffs []diff.Diff) {
+func printSummary(diffs []change.Change) {
 	var totalAdd, totalDel int64
 	for _, d := range diffs {
 		status := "M"
@@ -171,7 +172,7 @@ func printSummary(diffs []diff.Diff) {
 	fmt.Printf("\n%d file(s), +%d/-%d lines\n", len(diffs), totalAdd, totalDel)
 }
 
-func printText(diffs []diff.Diff) {
+func printText(diffs []change.Change) {
 	for i, d := range diffs {
 		path := d.NewPath
 		if path == "/dev/null" {

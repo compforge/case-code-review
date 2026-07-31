@@ -5,13 +5,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-// goDiff builds a diff.Diff for a Go file of n trivial functions (f0..f{n-1})
+// goDiff builds a change.Change for a Go file of n trivial functions (f0..f{n-1})
 // with a one-line change in each, so AutoSplitter yields n function Units.
-func goDiff(path string, n int) diff.Diff {
+func goDiff(path string, n int) change.Change {
 	var s strings.Builder
 	s.WriteString("package p\n\n")
 	for i := range n {
@@ -23,12 +23,12 @@ func goDiff(path string, n int) diff.Diff {
 		start := 3 + i*4 // each func block + trailing blank is 4 lines, first at line 3
 		fmt.Fprintf(&d, "@@ -%d,3 +%d,3 @@\n func f%d() {\n-\t_ = old\n+\t_ = %d\n }\n", start, start, i, i)
 	}
-	return diff.Diff{NewPath: path, Diff: d.String(), NewFileContent: s.String(), Insertions: int64(n), Deletions: int64(n)}
+	return change.Change{NewPath: path, Diff: d.String(), NewFileContent: s.String(), Insertions: int64(n), Deletions: int64(n)}
 }
 
-func splitWith(t *testing.T, diffs ...diff.Diff) []unit.Unit {
+func splitWith(t *testing.T, diffs ...change.Change) []unit.Unit {
 	t.Helper()
-	a := &Runner{splitter: unit.AutoSplitter{}, diffs: diffs}
+	a := &Runner{splitter: unit.AutoSplitter{}, changes: diffs}
 	units, err := a.splitUnits()
 	if err != nil {
 		t.Fatal(err)
@@ -67,7 +67,7 @@ func TestSplitUnits_GovernorCoarsensSingleFile(t *testing.T) {
 func TestSplitUnits_GovernorCoarsensOnlyMultiFuncFiles(t *testing.T) {
 	// 9 single-function files + 1 two-function file = 11 Units > budget(10).
 	// Only the multi-function file coarsens: 9 func units + 1 coalesced file unit.
-	var diffs []diff.Diff
+	var diffs []change.Change
 	for i := range 9 {
 		diffs = append(diffs, goDiff(fmt.Sprintf("f%d.go", i), 1))
 	}

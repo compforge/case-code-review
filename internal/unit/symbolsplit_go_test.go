@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // fragID is the symbol-id a fragment represents: its sole symbol for a function
@@ -64,7 +64,7 @@ func Beta(x int) int {
 +	return x + 1
  }
 `
-	frags, err := AutoSplitter{}.Split(diff.Diff{NewPath: "foo.go", Diff: rawDiff, NewFileContent: src})
+	frags, err := AutoSplitter{}.Split(change.Change{NewPath: "foo.go", Diff: rawDiff, NewFileContent: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func (s *Service) Do() error {
 +	return errors.New("x")
  }
 `
-	frags, err := AutoSplitter{}.Split(diff.Diff{NewPath: "foo.go", Diff: rawDiff, NewFileContent: src})
+	frags, err := AutoSplitter{}.Split(change.Change{NewPath: "foo.go", Diff: rawDiff, NewFileContent: src})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func (s *Service) Do() error {
 }
 
 func TestAutoSplitter_GoFallsBackOnParseError(t *testing.T) {
-	frags, err := AutoSplitter{}.Split(diff.Diff{
+	frags, err := AutoSplitter{}.Split(change.Change{
 		NewPath:        "bad.go",
 		Diff:           "@@ -1,1 +1,1 @@\n-x\n+y\n",
 		NewFileContent: "package foo\nthis is not valid go",
@@ -164,7 +164,7 @@ func TestAutoSplitter_GoFallsBackOnParseError(t *testing.T) {
 }
 
 func TestAutoSplitter_UnparseablePythonIsFileScope(t *testing.T) {
-	frags, err := AutoSplitter{}.Split(diff.Diff{
+	frags, err := AutoSplitter{}.Split(change.Change{
 		NewPath:        "app/api.py",
 		Diff:           "@@ -1,1 +1,1 @@\n-x\n+y\n",
 		NewFileContent: "def f(: bad",

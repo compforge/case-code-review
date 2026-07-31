@@ -3,8 +3,8 @@ package runner
 import (
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func TestConnectedComponents(t *testing.T) {
@@ -23,7 +23,7 @@ func TestConnectedComponents(t *testing.T) {
 
 // ff / fn build test FileFragments / function Fragments.
 func ff(path string, frags ...unit.Fragment) unit.FileFragments {
-	return unit.FileFragments{Diff: diff.Diff{NewPath: path, Diff: "@@ -1 +1 @@\n+x"}, Fragments: frags}
+	return unit.FileFragments{Diff: change.Change{NewPath: path, Diff: "@@ -1 +1 @@\n+x"}, Fragments: frags}
 }
 func fn(path, sym string, lines int64) unit.Fragment {
 	return unit.Fragment{Path: path, Symbols: []string{path + "::" + sym}, Diff: "@@\n+x", Insertions: lines}
