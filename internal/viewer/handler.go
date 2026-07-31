@@ -58,6 +58,13 @@ type sessionPageData struct {
 	Session     *ViewSession
 }
 
+type reviewPageData struct {
+	EncodedRepo string
+	RepoName    string
+	Session     *ViewSession
+	Review      *ReviewRun
+}
+
 func handleSession(w http.ResponseWriter, r *http.Request, root, repo, sessionID string) {
 	vs, err := LoadSession(root, repo, sessionID)
 	if err != nil {
@@ -75,5 +82,35 @@ func handleSession(w http.ResponseWriter, r *http.Request, root, repo, sessionID
 		EncodedRepo: repo,
 		RepoName:    name,
 		Session:     vs,
+	})
+}
+
+func handleReview(w http.ResponseWriter, r *http.Request, root, repo, sessionID string) {
+	scopeID := r.URL.Query().Get("scope")
+	if scopeID == "" {
+		http.Error(w, "missing review scope", http.StatusBadRequest)
+		return
+	}
+
+	vs, err := LoadSession(root, repo, sessionID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load session: %v", err), http.StatusNotFound)
+		return
+	}
+	review := vs.Review(scopeID)
+	if review == nil {
+		http.Error(w, "review scope not found", http.StatusNotFound)
+		return
+	}
+
+	name := filepath.Base(vs.Summary.CWD)
+	if name == "." || name == "" {
+		name = repo
+	}
+	renderTemplate(w, "review.html", reviewPageData{
+		EncodedRepo: repo,
+		RepoName:    name,
+		Session:     vs,
+		Review:      review,
 	})
 }

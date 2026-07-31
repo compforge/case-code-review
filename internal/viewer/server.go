@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,15 @@ func StartServer(addr string) error {
 		}
 		handleSession(w, r, root, repo, sid)
 	})
+	mux.HandleFunc("/r/{repo}/{sessionID}/review", func(w http.ResponseWriter, r *http.Request) {
+		repo := r.PathValue("repo")
+		sid := r.PathValue("sessionID")
+		if strings.Contains(repo, "..") || strings.Contains(sid, "..") {
+			http.Error(w, "invalid path", http.StatusBadRequest)
+			return
+		}
+		handleReview(w, r, root, repo, sid)
+	})
 
 	// Wrap the mux with a Host-header allowlist. Without this, any web page
 	// the user visits can DNS-rebind its origin to 127.0.0.1 and read the
@@ -88,24 +98,57 @@ func formatTime(t time.Time) string {
 func parseTemplate(name string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"formatDuration": formatDuration,
-		"formatTime":     formatTime,
-		"truncate":       truncateText,
-		"add":            func(a, b int) int { return a + b },
-		"scopesOfKind": func(units []*UnitGroup, kind string) []*UnitGroup {
-			out := make([]*UnitGroup, 0, len(units))
-			for _, u := range units {
-				if u.Kind == kind {
-					out = append(out, u)
+		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },
+		"formatInt":      formatInt,
+		"formatSigned": func(n int) string {
+			if n > 0 {
+				return "+" + formatInt(n)
+			}
+			return formatInt(n)
+		},
+		"barPercent": func(value, maximum int) int {
+			if value <= 0 || maximum <= 0 {
+				return 0
+			}
+			pct := value * 100 / maximum
+			if pct < 1 {
+				return 1
+			}
+			if pct > 100 {
+				return 100
+			}
+			return pct
+		},
+		"formatTime": formatTime,
+		"truncate":   truncateText,
+		"add":        func(a, b int) int { return a + b },
+		"reviewsOfStage": func(reviews []*ReviewRun, stage string) []*ReviewRun {
+			out := make([]*ReviewRun, 0, len(reviews))
+			for _, review := range reviews {
+				if string(review.Stage) == stage {
+					out = append(out, review)
 				}
 			}
 			return out
 		},
-		"cardCount": func(tasks map[TaskType][]*TaskCard) int {
-			n := 0
-			for _, cards := range tasks {
-				n += len(cards)
+		"toolCallCount": func(tools []ToolUsage) int {
+			total := 0
+			for _, tool := range tools {
+				total += tool.Calls
 			}
-			return n
+			return total
+		},
+		"systemPromptsFor": func(prompts []SystemPrompt, tasks map[TaskType][]*TaskCard) []SystemPrompt {
+			out := make([]SystemPrompt, 0, len(prompts))
+			for _, prompt := range prompts {
+				for _, taskType := range prompt.TaskTypes {
+					if len(tasks[taskType]) > 0 {
+						out = append(out, prompt)
+						break
+					}
+				}
+			}
+			return out
 		},
 		"taskTypeClass": func(tt TaskType) string {
 			switch tt {
@@ -194,4 +237,16 @@ func formatDuration(seconds float64) string {
 	minutes := int(d.Minutes())
 	sec := int(d.Seconds()) - minutes*60
 	return fmt.Sprintf("%dm%ds", minutes, sec)
+}
+
+func formatInt(n int) string {
+	s := strconv.Itoa(n)
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign, s = "-", s[1:]
+	}
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return sign + s
 }

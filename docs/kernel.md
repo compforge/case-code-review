@@ -28,15 +28,16 @@ full-file scan 都先归一为 Unit 的 `Change` 输入；最终 `Hypothesis` / 
 Review 结果管道使用一条显式的认知链：
 
 ```text
-Clue == Harness ==> Hypothesis == Review ==> Assessment == Trial ==> Finding
+Clue / Unit == Review 1 ==> Hypothesis / CaseFile == Review 2 ==> Assessment == Trial ==> Finding
 ```
 
 - **Clue** 是围绕 Unit 收集的原始材料，尚未证明某个问题成立，也可能无关或产生误导。
-- **Hypothesis** 是发散性的 Unit Review 提出的可证伪问题主张，不是已经决定发布的评论。
-- **CaseFile** 是发散阶段移交给收敛式 Review 的案卷：一组可能互相支持、反驳或重复的
+- **Review 1（Unit Review）** 以 Unit 为评审粒度，负责从 Clue 发散出待验证的问题主张。
+- **Hypothesis** 是 Review 1 提出的可证伪问题主张，不是已经决定发布的评论。
+- **CaseFile** 是 Review 1 移交给 Review 2 的案卷：一组可能互相支持、反驳或重复的
   Hypothesis，以及它们共享的 Change 和 Clue。首版一个 ChangeSet 形成一个 CaseFile。
-- **Review** 对本次变更的全部 Hypothesis 做独立、收敛式复核；证据不足时通过只读工具检查
-  diff、baseline 与相关源码，产出 Assessment。
+- **Review 2（Hypothesis Review）** 以 CaseFile 为评审粒度，对本次变更的全部 Hypothesis
+  做独立、收敛式复核；证据不足时通过只读工具检查 diff、baseline 与相关源码，产出 Assessment。
 - **Assessment** 分开记录证据支持度、变更归因、交付价值与交付新颖性；这些判断正交，不能把
   “真实但低价值”“本次变更前已存在”或“已经交付过”混同为“主张错误”。
 - **Trial** 根据 Hypothesis、Assessment 与 Runner 签发的证据回执作最终认定；它是 Runner
@@ -44,14 +45,14 @@ Clue == Harness ==> Hypothesis == Review ==> Assessment == Trial ==> Finding
 - **Finding** 是通过证据与价值门槛、可以最终交付的问题。
 
 Clue 只有经过核查并与某个 Hypothesis 建立支持或反驳关系后，才成为该 Assessment 的 Evidence。
-这些对象及其晋级规则由 Runner 拥有；Harness 只负责执行 Unit Review 或 Hypothesis Review
+这些对象及其晋级规则由 Runner 拥有；Harness 只负责执行 Review 1 或 Review 2
 所需的 Execution。链路中的 `Harness` 表示前一阶段由 Harness Execution 承载，不表示 Harness
 拥有 Clue 或 Hypothesis。
 
 这条链可以借公检法分工帮助理解：
 
-- **公安机关侦查**：从现场 Clue 发散出待查的 Hypothesis，并组装 CaseFile，对应 Unit Review；
-- **检察院审查起诉**：复核事实、证据和是否值得起诉，必要时补充调查，对应 Review 与
+- **公安机关侦查**：从现场 Clue 发散出待查的 Hypothesis，并组装 CaseFile，对应 Review 1；
+- **检察院审查起诉**：复核事实、证据和是否值得起诉，必要时补充调查，对应 Review 2 与
   Assessment；
 - **法院审判**：作最终认定，对应 Trial；通过 Trial 的主张才成为 Finding。
 
@@ -64,13 +65,13 @@ Clue 只有经过核查并与某个 Hypothesis 建立支持或反驳关系后，
 两次 Review 面对的对象和优化目标不同：
 
 ```text
-Clue / Unit == Unit Review ==> Hypothesis
-Hypothesis / CaseFile == Hypothesis Review ==> Assessment == Trial ==> Finding
+Clue / Unit == Review 1 ==> Hypothesis
+Hypothesis / CaseFile == Review 2 ==> Assessment == Trial ==> Finding
 ```
 
-**Unit Review 按代码行为聚合，负责发散。** 固定按文件评审时，文件边界既可能把同一调用链
-切开，也可能让一次 loop 重复探索已经能够直接提供的上下文。CCR 先识别改动 symbol，再形成
-真正触发 loop 的 Unit：
+**Review 1 按代码行为聚合，负责发散。** 它以 Unit 为粒度。固定按文件评审时，文件边界既可能
+把同一调用链切开，也可能让一次 loop 重复探索已经能够直接提供的上下文。CCR 先识别改动
+symbol，再形成真正触发 loop 的 Unit：
 
 - 只有一个文件改动时，全部 Fragment 收为一个 File Unit，不因文件内改了多个函数而增加 loop；
   同时保留所有 symbol，以 Clue 补充 spec、case、rule、link、doc 与调用关系。相对 file review，
@@ -82,11 +83,11 @@ Hypothesis / CaseFile == Hypothesis Review ==> Assessment == Trial ==> Finding
 这里追求的不是机械增加 context，而是提高**相关上下文密度**：能直接定界的 Clue 随 Unit
 进入 Briefing，开放式补证才交给只读工具，从而减少 agent 用轮次重新发现 CCR 已知事实。
 
-**Hypothesis Review 按判断关系聚合，负责收敛。** Unit Review 可以主动发散，但它产出的只是
-待证伪主张。Runner 把本次变更的 Hypothesis 与共享材料组装成 CaseFile，用一次独立 Review
-跨 Unit、跨文件核验证据，识别重复或相互矛盾的主张；没有 Hypothesis 时无需启动。它增加的是
-一次有界的 run 级收敛成本，而不是按文件或逐 Hypothesis 再开一批 loop，换来对无证据、
-非本次变更、低价值和重复问题的集中拦截。
+**Review 2 按判断关系聚合，负责收敛。** 它以 CaseFile 为粒度。Review 1 可以主动发散，但它
+产出的只是待证伪主张。Runner 把本次变更的 Hypothesis 与共享材料组装成 CaseFile，用一次
+独立的 Review 2 跨 Unit、跨文件核验证据，识别重复或相互矛盾的主张；没有 Hypothesis 时无需
+启动。它增加的是一次有界的 run 级收敛成本，而不是按文件或逐 Hypothesis 再开一批 loop，换来
+对无证据、非本次变更、低价值和重复问题的集中拦截。
 
 因此，“更快”来自更少的无谓拆分、重复探索和补证调用；“更准”来自行为完整的 Unit、相关
 Clue，以及独立的 CaseFile 复核与确定性 Trial。两者是需要通过 eval 验证的设计假设：
@@ -136,7 +137,7 @@ Fragment ──merge──▶ Unit
                     CaseFile
                        │
                        ▼
-                Hypothesis Review
+                    Review 2
                        │
                        ▼
                   Assessment[]
@@ -183,8 +184,8 @@ job、tool state 和异步收尾不得跨 Execution 共享。
 Review 能力通过 Tool、ToolGate、Hook、Middleware、Context Strategy、Stop Guard 等扩展点
 包在 Core 外围，包括：
 
-- Unit Review 使用封闭的只读代码工具、`report_hypothesis` 与 `task_done`；
-- Hypothesis Review 只使用只读代码工具、`submit_assessments` 与 `task_done`；
+- Review 1 使用封闭的只读代码工具、`report_hypothesis` 与 `task_done`；
+- Review 2 只使用只读代码工具、`submit_assessments` 与 `task_done`；
 - 保留 fact、hypothesis、rejected hypothesis、证据引用和未决问题的 review 专用压缩；
 - 预算将尽时的 forced wrap-up，以及“没有 `task_done` 就不是完整结果”的结束纪律；
 - File/Board 等可重新获取内容的去重与优先淘汰；
@@ -211,10 +212,10 @@ Unit 负责把能一步定界、高信号的材料组织进 Briefing；开放式
 当上下文增长时，Harness 先按可再生性去重和淘汰，再使用 review 专用压缩。上下文选择、压缩
 和预算由此形成一条闭环，而不是三个互不知情的补丁。
 
-### 6. Hypothesis 经 Review 与 Trial 后才能成为 Finding
+### 6. Hypothesis 经 Review 2 与 Trial 后才能成为 Finding
 
-Unit Review 负责发散并提出 Hypothesis，不同时承担最终认定。Runner 等全部 Unit 终态后聚合
-本次变更的 Hypothesis，形成一个 CaseFile，并建立一个独立、收敛式的 Hypothesis Review
+Review 1 负责发散并提出 Hypothesis，不同时承担最终认定。Runner 等全部 Unit 终态后聚合
+本次变更的 Hypothesis，形成一个 CaseFile，并建立一个独立、收敛式的 Review 2
 Execution：它可以读取任意相关 diff、源码和已有 Clue，也可以通过封闭的只读工具定向补证，
 但不能提出新 Hypothesis、产生评论或修改仓库。文件只是证据位置，不是 Review 边界；跨文件的
 同一问题和重复 Hypothesis 必须放在同一案卷中比较。后续若单个 ChangeSet 超出预算，按行为链和

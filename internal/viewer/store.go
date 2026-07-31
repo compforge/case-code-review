@@ -198,9 +198,10 @@ func peekSession(path string) (SessionSummary, error) {
 type ViewSession struct {
 	Summary       SessionSummary
 	TokenUsage    TokenUsageSummary
+	ToolUsage     []ToolUsage
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
 	Artifacts     []ReviewArtifact
-	Units         []*UnitGroup // review scopes: units first, then run/file-level passes
+	Reviews       []*ReviewRun
 }
 
 // ReviewArtifact is a domain-owned intermediate decision rendered without
@@ -245,17 +246,6 @@ type FileTokenUsage struct {
 	CacheWriteTokens int
 }
 
-// UnitGroup aggregates records for one review scope: a Unit (plan/main/
-// compression/relocation), or a non-Unit pass (Hypothesis Review / scan).
-type UnitGroup struct {
-	ID       string   // scope id: unit.ID, run-level phase ID, or scan file path
-	Kind     string   // "unit" | "file"
-	Scope    string   // func/file/callchain (units) | filter | scan
-	Paths    []string // member file(s)
-	FilePath string   // representative path
-	Tasks    map[TaskType][]*TaskCard
-}
-
 // TaskType mirrors session.TaskType.
 type TaskType string
 
@@ -269,15 +259,19 @@ const (
 
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
-	// Request holds the non-system messages sent in this call (the system prompt
-	// is hoisted to ViewSession.SystemPrompts). This is what the model saw.
+	// Request holds the complete recorded message list sent in this call.
 	Request          []DisplayMessage
+	TaskType         TaskType
 	RequestNo        int
+	TurnNo           int
+	PromptDelta      int
+	MessageDelta     int
 	ResponseContent  string
 	ToolCalls        []ToolCallInfo
 	DurationMs       int64
 	Error            string
 	Model            string
+	HasResponse      bool
 	PromptTokens     int
 	CompletionTokens int
 	CacheReadTokens  int
@@ -302,23 +296,23 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	}
 	defer f.Close()
 
-	vs := &ViewSession{Units: make([]*UnitGroup, 0)}
-	unitIndex := make(map[string]*UnitGroup)
+	vs := &ViewSession{Reviews: make([]*ReviewRun, 0)}
+	reviewIndex := make(map[string]*ReviewRun)
 	sysIndex := make(map[string]int) // system prompt text -> index in vs.SystemPrompts
 
-	// groupFor resolves the UnitGroup a record belongs to, keyed by scope_id.
-	groupFor := func(rec map[string]any) *UnitGroup {
+	// groupFor resolves the ReviewRun a record belongs to, keyed by scope_id.
+	groupFor := func(rec map[string]any) *ReviewRun {
 		key, _ := rec["scope_id"].(string)
-		ug := unitIndex[key]
-		if ug == nil {
+		run := reviewIndex[key]
+		if run == nil {
 			kind, _ := rec["kind"].(string)
 			scope, _ := rec["scope"].(string)
 			fp, _ := rec["filePath"].(string)
-			ug = &UnitGroup{ID: key, Kind: kind, Scope: scope, Paths: stringList(rec["paths"]), FilePath: fp, Tasks: make(map[TaskType][]*TaskCard)}
-			unitIndex[key] = ug
-			vs.Units = append(vs.Units, ug)
+			run = &ReviewRun{ID: key, Kind: kind, Scope: scope, Paths: stringList(rec["paths"]), FilePath: fp, Tasks: make(map[TaskType][]*TaskCard)}
+			reviewIndex[key] = run
+			vs.Reviews = append(vs.Reviews, run)
 		}
-		return ug
+		return run
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -331,6 +325,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			continue // skip malformed lines
 		}
 		typ, _ := rec["type"].(string)
+		if scopeID, _ := rec["scope_id"].(string); scopeID != "" {
+			groupFor(rec).observeTimestamp(rec["timestamp"])
+		}
 
 		switch typ {
 		case "session_start":
@@ -369,14 +366,14 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			for _, m := range extractMessages(rec["messages"]) {
 				if m.Role == "system" {
 					registerSystemPrompt(vs, sysIndex, TaskType(tt), m.Text)
-					continue // hoisted to session level; don't repeat in every card
 				}
 				reqMsgs = append(reqMsgs, m)
 			}
 
-			tc := &TaskCard{Request: reqMsgs, RequestNo: reqNo}
+			tc := &TaskCard{Request: reqMsgs, TaskType: TaskType(tt), RequestNo: reqNo}
 			fg := groupFor(rec)
 			fg.Tasks[TaskType(tt)] = append(fg.Tasks[TaskType(tt)], tc)
+			fg.Calls = append(fg.Calls, tc)
 
 		case "artifact":
 			kind, _ := rec["artifact_kind"].(string)
@@ -421,9 +418,10 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			fg := groupFor(rec)
 			if fg != nil {
 				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 && cards[len(cards)-1].ResponseContent == "" {
+				if len(cards) > 0 && !cards[len(cards)-1].HasResponse {
 					card := cards[len(cards)-1]
 					card.ResponseContent = content
+					card.HasResponse = true
 					card.DurationMs = durationMs
 					card.Model = model
 					card.Error = errStr
@@ -465,7 +463,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			fg := groupFor(rec)
 			if fg != nil {
 				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 && cards[len(cards)-1].Error == "" {
+				if len(cards) > 0 && !cards[len(cards)-1].HasResponse && cards[len(cards)-1].Error == "" {
 					card := cards[len(cards)-1]
 					card.Error = errStr
 					card.DurationMs = durationMs
@@ -518,13 +516,16 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		}
 	}
 
-	// Aggregate token usage: session totals across all scopes, plus a per-file
-	// rollup (summing across the units that touch each file).
+	// Build the same read model at both levels: the session overview is a rollup
+	// of Review 1/2 runs, while each run preserves its ordered prompt timeline.
 	fileIdx := make(map[string]*FileTokenUsage)
 	fileOrder := make([]string, 0)
-	for _, fg := range vs.Units {
-		rollupKey := fg.FilePath
-		if fg.Kind == "run" {
+	sessionTools := map[string]*ToolUsage{}
+	for _, run := range vs.Reviews {
+		finalizeReview(run)
+
+		rollupKey := run.FilePath
+		if run.Kind == "run" {
 			rollupKey = "(run-level)"
 		}
 		ft := fileIdx[rollupKey]
@@ -533,20 +534,25 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			fileIdx[rollupKey] = ft
 			fileOrder = append(fileOrder, rollupKey)
 		}
-		for _, cards := range fg.Tasks {
-			for _, c := range cards {
-				vs.TokenUsage.TotalPromptTokens += c.PromptTokens
-				vs.TokenUsage.TotalCompletionTokens += c.CompletionTokens
-				vs.TokenUsage.TotalCacheReadTokens += c.CacheReadTokens
-				vs.TokenUsage.TotalCacheWriteTokens += c.CacheWriteTokens
-				if c.ResponseContent != "" || c.PromptTokens > 0 {
-					vs.TokenUsage.RequestCount++
-				}
-				ft.PromptTokens += c.PromptTokens
-				ft.CompletionTokens += c.CompletionTokens
-				ft.CacheReadTokens += c.CacheReadTokens
-				ft.CacheWriteTokens += c.CacheWriteTokens
+		vs.TokenUsage.TotalPromptTokens += run.Metrics.PromptTokens
+		vs.TokenUsage.TotalCompletionTokens += run.Metrics.CompletionTokens
+		vs.TokenUsage.TotalCacheReadTokens += run.Metrics.CacheReadTokens
+		vs.TokenUsage.TotalCacheWriteTokens += run.Metrics.CacheWriteTokens
+		vs.TokenUsage.RequestCount += run.Metrics.LLMCalls
+		ft.PromptTokens += run.Metrics.PromptTokens
+		ft.CompletionTokens += run.Metrics.CompletionTokens
+		ft.CacheReadTokens += run.Metrics.CacheReadTokens
+		ft.CacheWriteTokens += run.Metrics.CacheWriteTokens
+
+		for _, tool := range run.Tools {
+			total := sessionTools[tool.Name]
+			if total == nil {
+				total = &ToolUsage{Name: tool.Name}
+				sessionTools[tool.Name] = total
 			}
+			total.Calls += tool.Calls
+			total.Failures += tool.Failures
+			total.DurationMs += tool.DurationMs
 		}
 	}
 	fileBreakdown := make([]FileTokenUsage, 0, len(fileOrder))
@@ -557,13 +563,14 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		return fileBreakdown[i].PromptTokens+fileBreakdown[i].CompletionTokens > fileBreakdown[j].PromptTokens+fileBreakdown[j].CompletionTokens
 	})
 	vs.TokenUsage.FileTokenBreakdown = fileBreakdown
+	vs.ToolUsage = sortedTools(sessionTools)
 
-	// Units first (the investigative scopes), then other passes (Hypothesis Review /
-	// scan); stable by id within each kind.
-	sort.SliceStable(vs.Units, func(i, j int) bool {
-		a, b := vs.Units[i], vs.Units[j]
-		if (a.Kind == "unit") != (b.Kind == "unit") {
-			return a.Kind == "unit"
+	// Review 1 first, then Review 2 and non-diff scan passes; stable by id
+	// within each stage so overview links do not jump between reloads.
+	sort.SliceStable(vs.Reviews, func(i, j int) bool {
+		a, b := vs.Reviews[i], vs.Reviews[j]
+		if a.Stage != b.Stage {
+			return reviewStageRank(a.Stage) < reviewStageRank(b.Stage)
 		}
 		return a.ID < b.ID
 	})
