@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 )
 
+const repositoryURL = "https://github.com/compforge/case-code-review"
+
 // Set via ldflags: -X main.Version=x.y.z -X main.GitCommit=abc123 -X main.BuildDate=2026-01-01T00:00:00Z
 var (
 	Version   = "dev"
@@ -48,5 +50,5 @@ func printVersion() {
 	if BuildDate != "" {
 		fmt.Printf("built at: %s\n", BuildDate)
 	}
-	fmt.Println("https://github.com/qiankunli/case-code-review")
+	fmt.Println(repositoryURL)
 }

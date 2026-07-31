@@ -15,6 +15,15 @@ import (
 //go:embed templates/*.html static/style.css
 var assets embed.FS
 
+// BrowserURL turns an all-interface listen address into a URL a local browser
+// can actually navigate to without changing which interfaces the server binds.
+func BrowserURL(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+	return "http://" + addr
+}
+
 func StartServer(addr string) error {
 	root, err := SessionsRoot()
 	if err != nil {
@@ -60,7 +69,7 @@ func StartServer(addr string) error {
 		Handler: guarded,
 	}
 
-	fmt.Printf("\nOpen browser: http://%s\n", addr)
+	fmt.Printf("\nOpen browser: %s\n", BrowserURL(addr))
 	return srv.ListenAndServe()
 }
 
