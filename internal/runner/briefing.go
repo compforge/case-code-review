@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/language"
@@ -324,7 +323,7 @@ func (a *Runner) assembleTypedBriefing(build func(unitSlot, relatedSlot string) 
 		return out
 	}
 
-	over := func(m []msg.Msg) bool { return llmloop.CountMessagesTokens(msg.Lower(m)) > tokenLimit }
+	over := func(m []msg.Msg) bool { return llm.CountMessagesTokens(msg.Lower(m)) > tokenLimit }
 	domain := assemble(true, true)
 	if len(related) > 0 && over(domain) {
 		domain = assemble(true, false)

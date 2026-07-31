@@ -38,6 +38,6 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 
 ## References
 
-- 实现锚点：`internal/harness/msg`（类型与 lowering）、`internal/harness/context_manager.go`（Execution 的投影、回收与 agentcore 压缩边界）；`internal/harness/llmloop` 仅保留旧实现
+- 实现锚点：`internal/harness/msg`（类型与 lowering）、`internal/harness/context_manager.go`（Execution 的投影、回收与 agentcore 压缩边界）；`internal/harness/llmloop` 作为自包含旧实现保留，外部包不再 import
 - 消费方向：`docs/cross-unit.md`（Board/Bulletin）、`docs/context-model.md` 关键设计 8（briefing）
 - 参考：pi `packages/coding-agent/src/core/messages.ts`

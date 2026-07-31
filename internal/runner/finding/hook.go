@@ -2,15 +2,12 @@ package finding
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/board"
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -22,7 +19,7 @@ import (
 // resolution, optional re-location and result storage stay outside Harness.
 type Hook struct {
 	Collector    *Collector
-	WorkerPool   *llmloop.WorkerPool
+	WorkerPool   *harness.WorkerPool
 	Session      *session.SessionHistory
 	ChangeLookup func(path string) *change.Change
 	LLMClient    llm.LLMClient
@@ -34,26 +31,14 @@ type Hook struct {
 
 var _ harness.ToolHandler = (*Hook)(nil)
 
-// Handle implements llmloop.ToolCallHook.
-func (h *Hook) Handle(ctx context.Context, call llmloop.HookCall) (tool.TaskCheckpoint, bool) {
-	return h.handleTool(ctx, harness.ToolRequest{
-		Scope: call.Scope,
-		Tool:  call.Tool,
-		Call:  call.Call,
-		Args:  call.Args,
-		Alias: call.Alias,
-	}, call.Record)
-}
-
-// HandleTool implements harness.ToolHandler for the agentcore execution path.
+// HandleTool implements harness.ToolHandler.
 func (h *Hook) HandleTool(ctx context.Context, call harness.ToolRequest) (tool.TaskCheckpoint, bool) {
-	return h.handleTool(ctx, call, nil)
+	return h.handleTool(ctx, call)
 }
 
 func (h *Hook) handleTool(
 	ctx context.Context,
 	call harness.ToolRequest,
-	record *session.TaskRecord,
 ) (tool.TaskCheckpoint, bool) {
 	if call.Tool != CodeComment {
 		return tool.TaskCheckpoint{}, false
@@ -95,9 +80,6 @@ func (h *Hook) handleTool(
 	}
 
 	if h.WorkerPool != nil {
-		if record != nil {
-			record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, "(async)")
-		}
 		asyncCtx := context.WithoutCancel(ctx)
 		var scope *session.ScopeSession
 		if h.Session != nil {
@@ -120,36 +102,7 @@ func (h *Hook) handleTool(
 	duration := time.Since(started)
 	telemetry.RecordToolCall(ctx, call.Tool.Name(), duration, true)
 	telemetry.PrintToolCallFinished(call.Tool.Name(), duration)
-	if record != nil {
-		record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, submitSucceeded)
-	}
 	return tool.Of(submitSucceeded), true
-}
-
-// Facts implements llmloop.ToolFactHook for cross-Unit awareness.
-func (h *Hook) Facts(scope session.Scope, turn int, calls []llm.ToolCall) []board.Bulletin {
-	var facts []board.Bulletin
-	for _, call := range calls {
-		if call.Function.Name != CodeComment.Name() {
-			continue
-		}
-		var args struct {
-			Path string `json:"path"`
-		}
-		_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
-		path := args.Path
-		if path == "" || !slices.Contains(scope.Paths, path) {
-			path = scope.Path()
-		}
-		if path == "" {
-			continue
-		}
-		facts = append(facts, board.Bulletin{
-			From: scope.ID, Turn: turn, Level: board.LevelConfirmed,
-			Paths: []string{path}, Text: "flagged an issue in " + path,
-		})
-	}
-	return facts
 }
 
 func (h *Hook) relocate(ctx context.Context, scope session.Scope, finding *Finding, ch *change.Change) {

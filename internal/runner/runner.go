@@ -17,8 +17,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -38,7 +38,7 @@ import (
 )
 
 // Warning is the non-fatal execution warning exposed by Runner.
-type Warning = llmloop.Warning
+type Warning = harness.Warning
 
 // Args holds all dependencies and configuration needed to run a review session.
 type Args struct {
@@ -89,7 +89,7 @@ type Args struct {
 	//
 	// When nil (the default), comment processing happens synchronously inside
 	// executeToolCall instead of via a separate worker pool.
-	WorkerPool *llmloop.WorkerPool
+	WorkerPool *harness.WorkerPool
 
 	// Concurrency limit for per-file subtasks. Defaults to number of CPUs.
 	MaxConcurrency int
@@ -1022,12 +1022,12 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		unitSource, relatedSource, outs := a.renderMaterials(ctx, mats)
 		deb.Materials = outs
 		messages := buildMessages(unitSource, relatedSource)
-		if relatedSource != "" && llmloop.CountMessagesTokens(messages) > tokenLimit {
+		if relatedSource != "" && llm.CountMessagesTokens(messages) > tokenLimit {
 			relatedSource = ""
 			messages = buildMessages(unitSource, relatedSource)
 			deb.Degradations = append(deb.Degradations, "related_source_dropped")
 		}
-		if unitSource != sourceNotPreloaded && llmloop.CountMessagesTokens(messages) > tokenLimit {
+		if unitSource != sourceNotPreloaded && llm.CountMessagesTokens(messages) > tokenLimit {
 			unitSource = sourceNotPreloaded
 			messages = buildMessages(unitSource, relatedSource)
 			deb.Degradations = append(deb.Degradations, "unit_source_dropped")
@@ -1035,7 +1035,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		domain = msg.Wrap(messages)
 	}
 
-	tokenCount := llmloop.CountMessagesTokens(msg.Lower(domain))
+	tokenCount := llm.CountMessagesTokens(msg.Lower(domain))
 	if tokenCount > tokenLimit {
 		msg := fmt.Sprintf("prompt tokens (%d) exceed %d%% of max_tokens(%d)", tokenCount, 80, maxAllowed)
 		fmt.Fprintf(stdout.Writer(), "[ccr] WARNING: %s for %s\n", msg, newPath)
@@ -1170,7 +1170,7 @@ func buildFilterCommentsJSON(comments []finding.Finding) string {
 // parseFilterResponse extracts comment indices from the LLM filter response.
 // Returns a set of 0-based indices. Invalid IDs or out-of-range indices are ignored.
 func parseFilterResponse(raw string, total int) map[int]struct{} {
-	raw = llmloop.StripMarkdownFences(raw)
+	raw = llm.StripMarkdownFences(raw)
 	var ids []string
 	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
 		preview := raw

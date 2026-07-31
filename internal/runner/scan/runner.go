@@ -13,7 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -49,7 +49,7 @@ type Args struct {
 	Tools                 *tool.Registry
 	MainToolDefs          []llm.ToolDef
 	Findings              *finding.Collector
-	WorkerPool            *llmloop.WorkerPool
+	WorkerPool            *harness.WorkerPool
 	MaxConcurrency        int
 	ConcurrentTaskTimeout int
 	Model                 string
@@ -185,7 +185,7 @@ func (a *Runner) TotalCacheWriteTokens() int64 {
 func (a *Runner) ModelsUsed() map[string]int { return a.executor.ModelsUsed() }
 
 // Warnings returns the warnings recorded by scan executions.
-func (a *Runner) Warnings() []llmloop.Warning { return a.executor.Warnings() }
+func (a *Runner) Warnings() []harness.Warning { return a.executor.Warnings() }
 
 // ToolCalls returns per-tool call counts accumulated during scan.
 func (a *Runner) ToolCalls() map[string]int64 { return a.executor.ToolCalls() }
@@ -261,8 +261,8 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	return comments, err
 }
 
-// lookupChange returns the synthetic Diff for a path, used by llmloop.Runner
-// to resolve code_comment line numbers against the scanned file content.
+// lookupChange returns the synthetic Diff used to resolve code_comment line
+// numbers against the scanned file content.
 func (a *Runner) lookupChange(path string) *change.Change {
 	for i := range a.items {
 		if a.items[i].Path == path {
@@ -546,7 +546,7 @@ func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
 
 	messages := a.renderMessages(it, rule, planGuidance)
 
-	tokenCount := llmloop.CountMessagesTokens(messages)
+	tokenCount := llm.CountMessagesTokens(messages)
 	maxAllowed := a.args.Template.MaxTokens
 	tokenLimit := maxAllowed * 4 / 5
 	if tokenCount > tokenLimit {
@@ -661,7 +661,7 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	rec.SetResponse(resp, time.Since(startTime))
 	a.executor.RecordUsage(resp.Usage)
 
-	body := strings.TrimSpace(llmloop.StripMarkdownFences(resp.Content()))
+	body := strings.TrimSpace(llm.StripMarkdownFences(resp.Content()))
 	if body == "" {
 		return
 	}
@@ -778,7 +778,7 @@ func buildDedupCommentsJSON(comments []finding.Finding) string {
 // when the groups don't cover every input id exactly once (safety: we
 // refuse to silently drop comments we can't account for).
 func applyDedupGroups(rawJSON string, originals []finding.Finding) ([]finding.Finding, bool) {
-	stripped := llmloop.StripMarkdownFences(rawJSON)
+	stripped := llm.StripMarkdownFences(rawJSON)
 	stripped = strings.TrimSpace(stripped)
 	if stripped == "" {
 		return nil, false
@@ -836,7 +836,7 @@ func applyDedupGroups(rawJSON string, originals []finding.Finding) ([]finding.Fi
 // "no plan" fallback when the LLM did say something useful but in the
 // wrong shape).
 func formatPlanGuidance(raw string) string {
-	stripped := llmloop.StripMarkdownFences(raw)
+	stripped := llm.StripMarkdownFences(raw)
 	stripped = strings.TrimSpace(stripped)
 	if stripped == "" {
 		return ""
