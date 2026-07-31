@@ -22,8 +22,8 @@ full-file scan 都先归一为 Unit 的 `Change` 输入；最终 `CandidateFindi
 但不把这些 review 语义下沉到 Harness Core。
 
 这里的“通用 Harness”是指**不含 review 领域分支的执行内核**，不等于建设多 Backend 或
-多 Agent 平台。首版可以直接以 AgentCore 作为内部执行引擎，不为未来可能接入 Codex、Claude
-预建适配层。
+多 Agent 平台。首版在 Go 内收敛 Execution Core，参考 Pi AgentCore 的消息转换、工具 Hook
+和事件边界，但不引入 Node 运行时，也不为未来可能接入 Codex、Claude 预建适配层。
 
 ## 流程
 
@@ -54,7 +54,7 @@ Fragment ──merge──▶ Unit
                        │
                        ▼
                   Harness Core
-                 ├── AgentCore Agent
+                 ├── Agent Loop
                  ├── tool runtime
                  ├── context lifecycle
                  ├── token / time budget
@@ -84,7 +84,7 @@ Runner 负责把 Unit 转成 Execution 输入，并把 Execution 结果还原成
 ### 1. 依赖朝事实与通用机制流动
 
 Language 只产事实，Unit 消费事实形成评审作用域与上下文；Harness Core 只消费执行输入。
-Review 扩展同时理解 review 契约和 Harness 扩展点，是两侧的适配层。任何 AgentCore、provider
+Review 扩展同时理解 review 契约和 Harness 扩展点，是两侧的适配层。任何 provider
 或 wire 类型都不得反向进入 Language 和 Unit。
 
 ### 2. Core 只有一套执行模型
@@ -131,7 +131,7 @@ Unit 负责把能一步定界、高信号的材料组织进 Briefing；开放式
 ### 6. Review 的只读边界是结构约束
 
 Harness Core 可以执行任意被注入的工具，但 Review 扩展只注册 CCR 控制的只读工具，并以
-ToolGate 做硬限制。shell、文件写和 git 状态修改不因采用通用 AgentCore 而进入 review loop；
+ToolGate 做硬限制。shell、文件写和 git 状态修改不因 Harness 的通用性而进入 review loop；
 需要副作用的能力属于评审之后的独立执行环节。
 
 ## References
@@ -143,6 +143,7 @@ ToolGate 做硬限制。shell、文件写和 git 状态修改不因采用通用 
 | Clue、Relation、Dossier 与 Briefing | [Context 模型](context-model.md) |
 | caller/callee、repo-map 与图消费策略 | [Codegraph：统一图消费层](codegraph.md) |
 | review 领域消息、lowering、去重与驱逐 | [Message 模型](message-model.md) |
+| Execution、Agent Loop、上下文、预算与终态 | [Harness 模型](harness.md) |
 | Runner、UnitExecution、预算与结果终态 | [Runner 模型](run-model.md) |
 | Board、Bulletin 与跨 Unit 协作 | [Review Team](cross-unit.md) |
 | 质量、成本与健壮性的评测闭环 | [Eval README](../eval/README.md) |

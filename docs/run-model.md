@@ -22,6 +22,10 @@ CCR 已把 **Unit** 建模为一次 review loop 的评审作用域，但运行�
 1. **Runner**：拥有一次评审的全局生命周期。
 2. **UnitExecution**：拥有一个 Unit 的执行生命周期。
 
+UnitExecution 不是 Harness 之外的第二套 loop；它是 Runner 对“一 Unit 一 Harness
+Execution”的领域包装，负责把 UnitReview 转成 ExecutionSpec，并把 ExecutionResult 还原为
+UnitResult。
+
 Unit 由此不仅是评审作用域，也是调度、预算和质量量测的统一货币；未来 checkpoint 和恢复
 也沿用同一货币。Runner
 只共享只读代码服务、LLM client、TokenBudget 与 Board；conversation、compression 和
@@ -257,6 +261,7 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 
 ## References
 
+- Harness Execution、Agent Loop、context 生命周期与请求级预算：`harness.md`
 - Unit 作用域、形成轴与完成边界：`unit-model.md`
 - Dossier、Clue kind × relation 与 Briefing：`context-model.md`
 - review 领域消息、compression 与 lowering：`message-model.md`
