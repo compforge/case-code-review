@@ -21,15 +21,17 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		},
 	}
 	review := &ReviewRun{
-		ID:       "internal/viewer/store.go",
-		Kind:     "unit",
-		Scope:    "file",
-		Stage:    Review1Stage,
-		Paths:    []string{"internal/viewer/store.go"},
-		FilePath: "internal/viewer/store.go",
-		Tasks:    map[TaskType][]*TaskCard{MainTask: {turn}},
-		Calls:    []*TaskCard{turn},
-		Turns:    []*TaskCard{turn},
+		ID:          "internal/viewer/store.go",
+		Kind:        "unit",
+		Scope:       "file",
+		EncodedRepo: "repo",
+		SessionID:   "session-1",
+		Stage:       Review1Stage,
+		Paths:       []string{"internal/viewer/store.go"},
+		FilePath:    "internal/viewer/store.go",
+		Tasks:       map[TaskType][]*TaskCard{MainTask: {turn}},
+		Calls:       []*TaskCard{turn},
+		Turns:       []*TaskCard{turn},
 		Metrics: ReviewMetrics{
 			LLMCalls:        1,
 			TurnCount:       1,
@@ -64,6 +66,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			}
 			if strings.Contains(out.String(), "ZgotmplZ") {
 				t.Fatal("template emitted an unsafe CSS or URL placeholder")
+			}
+			if tt.name == "session.html" && !strings.Contains(out.String(), `href="/r/repo/session-1/review?scope=internal%2Fviewer%2Fstore.go"`) {
+				t.Fatal("session review link does not preserve the repo and session path")
 			}
 		})
 	}

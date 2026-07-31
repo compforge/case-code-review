@@ -522,6 +522,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	fileOrder := make([]string, 0)
 	sessionTools := map[string]*ToolUsage{}
 	for _, run := range vs.Reviews {
+		run.EncodedRepo = encodedRepo
+		run.SessionID = sessionID
 		finalizeReview(run)
 
 		rollupKey := run.FilePath

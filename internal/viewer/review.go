@@ -33,17 +33,19 @@ func (s ReviewStage) Label() string {
 // is keyed by CaseFile/run scope. Calls stays in transcript order so the
 // detail page can replay prompt growth across the agent loop.
 type ReviewRun struct {
-	ID       string   // scope id: unit.ID, run-level phase ID, or scan file path
-	Kind     string   // "unit" | "run" | "file"
-	Scope    string   // func/file/callchain (units) | filter | scan
-	Paths    []string // member file(s)
-	FilePath string   // representative path
-	Stage    ReviewStage
-	Tasks    map[TaskType][]*TaskCard
-	Calls    []*TaskCard
-	Turns    []*TaskCard
-	Metrics  ReviewMetrics
-	Tools    []ToolUsage
+	ID          string   // scope id: unit.ID, run-level phase ID, or scan file path
+	Kind        string   // "unit" | "run" | "file"
+	Scope       string   // func/file/callchain (units) | filter | scan
+	Paths       []string // member file(s)
+	FilePath    string   // representative path
+	EncodedRepo string   // encoded repository path used by viewer links
+	SessionID   string   // owning session used by viewer links
+	Stage       ReviewStage
+	Tasks       map[TaskType][]*TaskCard
+	Calls       []*TaskCard
+	Turns       []*TaskCard
+	Metrics     ReviewMetrics
+	Tools       []ToolUsage
 
 	startedAt  time.Time
 	finishedAt time.Time
