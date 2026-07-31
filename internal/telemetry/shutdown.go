@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 )
 
 // Shutdown flushes and shuts down all initialized providers.
@@ -35,6 +35,6 @@ func ShutdownWithTimeout(ctx context.Context, timeout time.Duration) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := Shutdown(cctx); err != nil {
-		fmt.Fprintf(stdout.Err(), "[ccr] WARNING: telemetry shutdown error: %v\n", err)
+		fmt.Fprintf(console.Err(), "[ccr] WARNING: telemetry shutdown error: %v\n", err)
 	}
 }

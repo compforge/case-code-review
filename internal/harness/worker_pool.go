@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 )
 
 // WorkerPool bounds asynchronous work requested by tool handlers. Harness owns
@@ -33,12 +33,12 @@ func (p *WorkerPool) Submit(f func() error) {
 		defer func() { <-p.semaphore }()
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(stdout.Writer(), "[ccr] WorkerPool panic: %v\n%s\n", r, debug.Stack())
+				fmt.Fprintf(console.Out(), "[ccr] WorkerPool panic: %v\n%s\n", r, debug.Stack())
 			}
 		}()
 
 		if err := f(); err != nil {
-			fmt.Fprintf(stdout.Writer(), "[ccr] WorkerPool error: %v\n", err)
+			fmt.Fprintf(console.Out(), "[ccr] WorkerPool error: %v\n", err)
 		}
 	})
 }

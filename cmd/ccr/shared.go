@@ -11,12 +11,12 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -219,7 +219,7 @@ func excludeToolDef(defs []llm.ToolDef, name string) []llm.ToolDef {
 	return out
 }
 
-// quietHandle wraps a stdout.Quiet() restorer so callers can `defer
+// quietHandle wraps a console.Quiet() restorer so callers can `defer
 // q.Restore()` for safety while emitRunResult restores it early when the
 // agent-text audience needs the trace summary on the user's terminal.
 // Restore is idempotent.
@@ -232,7 +232,7 @@ type quietHandle struct {
 func newQuietHandle(outputFormat, audience string) *quietHandle {
 	h := &quietHandle{}
 	if outputFormat == "json" || audience == "agent" {
-		h.fn = stdout.Quiet()
+		h.fn = console.Quiet()
 	}
 	return h
 }

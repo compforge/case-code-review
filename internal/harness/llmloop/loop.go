@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -285,11 +285,11 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 					toolReqCount = wrapUpMaxRounds
 				}
 				messages = append(messages, msg.Text("user", r.deps.WrapUpPrompt))
-				fmt.Fprintf(stdout.Writer(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (deadline)\n", newPath)
+				fmt.Fprintf(console.Out(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (deadline)\n", newPath)
 			} else if toolReqCount == wrapUpRoundReserve {
 				wrapUpIssued = true
 				messages = append(messages, msg.Text("user", r.deps.WrapUpPrompt))
-				fmt.Fprintf(stdout.Writer(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (rounds)\n", newPath)
+				fmt.Fprintf(console.Out(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (rounds)\n", newPath)
 			}
 		}
 
@@ -347,7 +347,7 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 		calls := resp.ToolCalls()
 
 		if len(calls) == 0 {
-			fmt.Fprintf(stdout.Writer(), "[ccr] No tool calls parsed for %s, retrying...\n", newPath)
+			fmt.Fprintf(console.Out(), "[ccr] No tool calls parsed for %s, retrying...\n", newPath)
 			messages = append(messages, msg.Text("user", "You did not successfully call any tools. Please try again or use task_done if finished."))
 			if content != "" {
 				messages = append(messages[:len(messages)-1], msg.Text("assistant", content), messages[len(messages)-1])
@@ -424,18 +424,18 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 		if !hasValidResult {
 			consecutiveEmptyRounds++
 			if consecutiveEmptyRounds >= maxConsecutiveEmptyRounds {
-				fmt.Fprintf(stdout.Writer(), "[ccr] Too many empty retries for %s, stopping.\n", newPath)
+				fmt.Fprintf(console.Out(), "[ccr] Too many empty retries for %s, stopping.\n", newPath)
 				truncateReason = "consecutive empty tool rounds"
 				break
 			}
-			fmt.Fprintf(stdout.Writer(), "[ccr] No valid tool results for %s, retrying...\n", newPath)
+			fmt.Fprintf(console.Out(), "[ccr] No valid tool results for %s, retrying...\n", newPath)
 		} else {
 			consecutiveEmptyRounds = 0
 		}
 
 		succeed := r.addNextMessage(ctx, content, calls, results, &messages, sc)
 		if !succeed {
-			fmt.Fprintf(stdout.Writer(), "[ccr] Context compression exceeded threshold for %s, stopping.\n", newPath)
+			fmt.Fprintf(console.Out(), "[ccr] Context compression exceeded threshold for %s, stopping.\n", newPath)
 			truncateReason = "context compression limit"
 			break
 		}
@@ -444,7 +444,7 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 	if !completed {
 		if truncateReason == "" {
 			truncateReason = "tool-round budget exhausted"
-			fmt.Fprintf(stdout.Writer(), "[ccr] Max tool requests reached for %s.\n", newPath)
+			fmt.Fprintf(console.Out(), "[ccr] Max tool requests reached for %s.\n", newPath)
 		}
 		r.RecordWarning("unit_incomplete", newPath,
 			"review ended without task_done ("+truncateReason+"); verdict is partial — do not read as clean")

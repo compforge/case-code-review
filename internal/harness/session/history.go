@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/go-stdx/uuid"
 )
 
@@ -250,7 +250,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 
 	p, err := newJSONLWriter(sessionID, repoDir, gitBranch, model, opts)
 	if err != nil {
-		fmt.Fprintf(stdout.Err(), "[ccr session] warning: failed to create session writer: %v\n", err)
+		fmt.Fprintf(console.Err(), "[ccr session] warning: failed to create session writer: %v\n", err)
 	} else {
 		sh.persist = p
 		p.WriteSessionStart(sh.StartTime)
@@ -320,7 +320,7 @@ func (ss *ScopeSession) AppendTaskRecord(taskType TaskType, messages []llm.Messa
 	// and voiced, because it also escaped the debrief's cost rollup.
 	if ss.state == scopeClosed {
 		ss.lateWrites++
-		fmt.Fprintf(stdout.Err(), "[ccr session] warning: %s record appended to closed scope %q\n", taskType, ss.ID)
+		fmt.Fprintf(console.Err(), "[ccr session] warning: %s record appended to closed scope %q\n", taskType, ss.ID)
 	}
 
 	rec := &TaskRecord{

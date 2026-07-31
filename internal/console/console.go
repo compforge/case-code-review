@@ -1,4 +1,4 @@
-package stdout
+package console
 
 import (
 	"io"
@@ -12,8 +12,8 @@ var (
 	mu   sync.RWMutex
 )
 
-// Writer returns the current stdout writer (real stdout or discard).
-func Writer() io.Writer {
+// Out returns the current stdout writer (real stdout or discard).
+func Out() io.Writer {
 	mu.RLock()
 	defer mu.RUnlock()
 	return w
@@ -46,7 +46,7 @@ func AddErrSink(sink io.Writer) func() {
 // Quiet replaces stdout with io.Discard and returns a cleanup function.
 // Usage:
 //
-//	defer stdout.Quiet()()
+//	defer console.Quiet()()
 //
 // WARNING: Quiet must ONLY be called from the main goroutine, before spawning
 // any concurrent work that writes to stdout, and its returned cleanup must be

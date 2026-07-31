@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 )
 
 // Compression thresholds, as fractions of MaxTokens.
@@ -255,7 +255,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []msg.Msg, sc session.
 	rec := fs.AppendTaskRecord(session.MemoryCompressionTask, compressionMsgs)
 	if err != nil {
 		rec.SetError(err, duration)
-		fmt.Fprintf(stdout.Writer(), "[ccr] Memory compression failed: %v\n", err)
+		fmt.Fprintf(console.Out(), "[ccr] Memory compression failed: %v\n", err)
 		// Return msgs unchanged: truncating to frozenEnd would discard all
 		// conversation context, which is worse than staying over the token
 		// limit temporarily.

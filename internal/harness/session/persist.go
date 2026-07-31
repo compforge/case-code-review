@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/go-stdx/uuid"
 )
 
@@ -134,7 +134,7 @@ func (jw *jsonlWriter) open() error {
 func (jw *jsonlWriter) writeRecordLocked(rec map[string]any) {
 	data, err := json.Marshal(rec)
 	if err != nil {
-		fmt.Fprintf(stdout.Err(), "[ccr session] failed to marshal record: %v\n", err)
+		fmt.Fprintf(console.Err(), "[ccr session] failed to marshal record: %v\n", err)
 		return
 	}
 	jw.writer.Write(data)
