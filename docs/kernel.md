@@ -35,12 +35,12 @@ Clue == Harness ==> Hypothesis == Review ==> Assessment == Trial ==> Finding
 - **Hypothesis** 是发散性的 Unit Review 提出的可证伪问题主张，不是已经决定发布的评论。
 - **CaseFile** 是发散阶段移交给收敛式 Review 的案卷：一组可能互相支持、反驳或重复的
   Hypothesis，以及它们共享的 Change 和 Clue。首版一个 ChangeSet 形成一个 CaseFile。
-- **Review** 对本次变更的全部 Hypothesis 做独立、收敛式复核；证据不足时通过只读工具补证，
-  产出 Assessment。
-- **Assessment** 记录证据对主张的支持度及其交付价值；二者正交，不能把“真实但低价值”混同为
-  “主张错误”。
-- **Trial** 根据 Hypothesis 与 Assessment 作最终认定；首版是 Runner 持有的确定性规则，不再
-  启动一轮 LLM 调查。
+- **Review** 对本次变更的全部 Hypothesis 做独立、收敛式复核；证据不足时通过只读工具检查
+  diff、baseline 与相关源码，产出 Assessment。
+- **Assessment** 分开记录证据支持度、变更归因、交付价值与交付新颖性；这些判断正交，不能把
+  “真实但低价值”“本次变更前已存在”或“已经交付过”混同为“主张错误”。
+- **Trial** 根据 Hypothesis、Assessment 与 Runner 签发的证据回执作最终认定；它是 Runner
+  持有的确定性规则，不再启动一轮 LLM 调查。
 - **Finding** 是通过证据与价值门槛、可以最终交付的问题。
 
 Clue 只有经过核查并与某个 Hypothesis 建立支持或反驳关系后，才成为该 Assessment 的 Evidence。
@@ -220,10 +220,12 @@ Execution：它可以读取任意相关 diff、源码和已有 Clue，也可以�
 同一问题和重复 Hypothesis 必须放在同一案卷中比较。后续若单个 ChangeSet 超出预算，按行为链和
 共享证据拆 CaseFile，不按文件硬切。
 
-Assessment 至少把“证据是否支持”与“问题是否值得交付”分开表达。Trial 再以确定性规则消费
-Hypothesis 与 Assessment：只有证据支持且具有交付价值的 Hypothesis 才成为 Finding；存在反证、
-证据仍不足或真实但低价值的 Hypothesis 只留下 Assessment 记录，供 session、viewer 和 eval
-解释，不对外发布。
+Assessment 把四个问题分开表达：证据是否支持、问题是否由本次变更新增或改变、是否值得交付、
+是否已在当前案卷或更早 revision 中交付。模型可以描述它看到的 Evidence，但不能自行声明已经
+调用工具；只读工具成功执行后由 Runner 签发 Evidence Receipt。Trial 再以确定性规则消费这些
+对象：只有 `supported + caused + actionable + new`，且至少有一条匹配评论锚点
+文件的 diff receipt，Hypothesis 才成为 Finding。存在反证、证据不足、旧代码问题、低价值问题
+或重复问题时，只留下 Assessment 记录，供 session、viewer 和 eval 解释，不对外发布。
 
 ### 7. Review 的只读边界是结构约束
 

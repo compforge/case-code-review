@@ -38,7 +38,7 @@ References the author flagged as relevant when changing these function(s) — co
 {{see_also}}
 
 ### Prior Review (Optional)
-Findings a previous review raised on these function(s). For each, check whether the current code now addresses it: if fixed, note it briefly; if still present, re-raise it; do not re-flag what is already resolved. If empty, there is no prior review to reconcile.
+Findings already delivered as durable comments on this MR. Use them to understand the current revision, but do not create a new Hypothesis for the same underlying issue, whether it is fixed or still present. Only report a distinct regression with a different trigger or impact. If empty, there is no prior delivery to reconcile.
 {{prior_findings}}
 
 ### Repo Symbol Map (Optional)

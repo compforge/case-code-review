@@ -432,6 +432,11 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 	}
 
 	a.changes = parsed
+	if p, ok := a.args.Tools.Get(tool.FileReadBase.Name()); ok {
+		if base, ok := p.(*tool.FileReadProvider); ok {
+			base.SetRef(provider.BaseRef(ctx))
+		}
+	}
 
 	for i := range parsed {
 		d := &parsed[i]
@@ -582,14 +587,17 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	hypotheses := a.hypotheses.Hypotheses()
+	a.persistHypotheses(hypotheses)
 	var comments []finding.Finding
+	var assessments []review.Assessment
 	if a.features.Enabled(feature.HypothesisReview) {
-		assessments := a.runHypothesisReviews(ctx, units)
+		assessments = a.runHypothesisReviews(ctx, units)
 		comments = review.Trial(hypotheses, assessments)
 	} else {
 		// Gate-off is the one-stage baseline used by eval ablations.
 		comments = review.BypassTrial(hypotheses)
 	}
+	a.persistAssessments(hypotheses, assessments)
 	for _, comment := range comments {
 		a.args.Findings.Add(comment)
 	}
@@ -638,18 +646,55 @@ func (a *Runner) persistFindings(comments []finding.Finding) {
 	findings := make([]session.Finding, 0, len(comments))
 	for _, c := range comments {
 		findings = append(findings, session.Finding{
-			Path:        c.Path,
-			StartLine:   c.StartLine,
-			EndLine:     c.EndLine,
-			SymbolID:    c.SymbolID,
-			Fingerprint: c.Fingerprint,
-			Alias:       c.Alias,
-			Content:     c.Content,
-			Category:    c.Category,
-			Severity:    c.Severity,
+			HypothesisID: c.HypothesisID,
+			Path:         c.Path,
+			StartLine:    c.StartLine,
+			EndLine:      c.EndLine,
+			SymbolID:     c.SymbolID,
+			Fingerprint:  c.Fingerprint,
+			Alias:        c.Alias,
+			Content:      c.Content,
+			Category:     c.Category,
+			Severity:     c.Severity,
 		})
 	}
 	a.session.WriteFindings(findings)
+}
+
+func (a *Runner) persistHypotheses(hypotheses []review.Hypothesis) {
+	for _, h := range hypotheses {
+		a.session.WriteArtifact("review_hypothesis", map[string]any{
+			"id": h.ID, "origin_unit": h.OriginUnit, "path": h.Path,
+			"content": h.Content, "existing_code": h.ExistingCode,
+			"start_line": h.StartLine, "end_line": h.EndLine,
+			"trigger": h.Trigger, "impact": h.Impact,
+			"change_attribution": h.ChangeAttribution,
+			"evidence":           h.Evidence, "uncertainty": h.Uncertainty,
+			"alias": h.Alias, "category": h.Category, "severity": h.Severity,
+		})
+	}
+}
+
+func (a *Runner) persistAssessments(
+	hypotheses []review.Hypothesis,
+	assessments []review.Assessment,
+) {
+	byID := make(map[string]review.Hypothesis, len(hypotheses))
+	for _, hypothesis := range hypotheses {
+		byID[hypothesis.ID] = hypothesis
+	}
+	for _, assessment := range assessments {
+		hypothesis, ok := byID[assessment.HypothesisID]
+		a.session.WriteArtifact("review_assessment", map[string]any{
+			"hypothesis_id": assessment.HypothesisID,
+			"support":       assessment.Support, "attribution": assessment.Attribution,
+			"value": assessment.Value, "novelty": assessment.Novelty,
+			"reason": assessment.Reason, "evidence": assessment.Evidence,
+			"evidence_receipts": assessment.EvidenceReceipts,
+			"reviewer_alias":    assessment.ReviewerAlias,
+			"passed_trial":      ok && review.PassesTrial(hypothesis, assessment),
+		})
+	}
 }
 
 // tagSymbolIDs resolves each comment's enclosing symbol-id (<relpath>::<symbol>)

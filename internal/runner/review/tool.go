@@ -16,7 +16,8 @@ const (
 		"change attribution, evidence, and uncertainty; then call task_done. Do not call other tools."
 	HypothesisReviewWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop gathering evidence now. " +
 		"Submit one assessment for every supplied hypothesis using only the evidence already gathered, " +
-		"then call task_done. Use insufficient/unknown when a decisive fact is still missing."
+		"then call task_done. Use insufficient/unknown when a decisive fact is still missing; do not " +
+		"claim support without the required diff evidence receipt."
 )
 
 func HypothesisToolDef() llm.ToolDef {
@@ -125,6 +126,7 @@ func HypothesisReviewToolDefs(main []llm.ToolDef) []llm.ToolDef {
 	allowed := map[string]bool{
 		tool.TaskDone.Name():     true,
 		tool.FileRead.Name():     true,
+		tool.FileReadBase.Name(): true,
 		tool.FileFind.Name():     true,
 		tool.FileReadDiff.Name(): true,
 		tool.CodeSearch.Name():   true,

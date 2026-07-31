@@ -199,11 +199,11 @@
   <text x="1335" y="752" text-anchor="middle" class="label">Assessments</text>
 
   <rect x="1190" y="772" width="290" height="30" rx="8" fill="#dff5e8" class="soft-box"/>
-  <text x="1208" y="793" class="small">supported + actionable</text>
+  <text x="1208" y="793" class="small">supported · changed · actionable · new</text>
   <rect x="1190" y="812" width="290" height="30" rx="8" fill="#f8e3e3" class="soft-box"/>
   <text x="1208" y="833" class="small">contradicted</text>
   <rect x="1190" y="852" width="290" height="30" rx="8" fill="#fff0bf" class="soft-box"/>
-  <text x="1208" y="873" class="small">insufficient / low value</text>
+  <text x="1208" y="873" class="small">insufficient / old / low value / repeat</text>
 
   <line x1="1510" y1="790" x2="1540" y2="790" class="flow"/>
 
@@ -215,7 +215,7 @@
 
   <rect x="1515" y="850" width="200" height="52" rx="26" fill="#dff5e8" class="box"/>
   <text x="1615" y="873" text-anchor="middle" class="label">Finding</text>
-  <text x="1615" y="893" text-anchor="middle" class="tiny">supported + actionable only</text>
+  <text x="1615" y="893" text-anchor="middle" class="tiny">four gates + diff receipt</text>
 
   <rect x="1160" y="910" width="555" height="30" rx="15" fill="#dff5e8" class="soft-box"/>
   <text x="1437" y="931" text-anchor="middle" class="tiny">

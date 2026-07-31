@@ -93,13 +93,19 @@ func (a *Runner) executeHypothesisReview(
 		Kind: "run", Type: "hypothesis_review", Paths: caseFile.Paths(),
 	}
 	collector := review.NewAssessmentCollector()
+	evidence := &review.EvidenceLedger{}
+	assessmentHook := &review.AssessmentHook{Collector: collector, Evidence: evidence}
 	result, err := harness.Execute(ctx, harness.ExecutionSpec{
-		LLMClient:               a.args.LLMClient,
-		Model:                   a.args.Model,
-		Messages:                msg.Wrap(messages),
-		ToolDefs:                review.HypothesisReviewToolDefs(a.args.MainToolDefs),
-		Tools:                   a.args.Tools,
-		ToolHandler:             &review.AssessmentHook{Collector: collector},
+		LLMClient: a.args.LLMClient,
+		Model:     a.args.Model,
+		Messages:  msg.Wrap(messages),
+		ToolDefs:  review.HypothesisReviewToolDefs(a.args.MainToolDefs),
+		Tools:     a.args.Tools,
+		ToolHandler: &review.ReviewHandler{
+			Assessments: assessmentHook,
+			Evidence:    evidence,
+			Tools:       a.args.Tools,
+		},
 		Session:                 a.session,
 		Scope:                   scope,
 		TaskType:                session.HypothesisReviewTask,

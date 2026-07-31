@@ -61,25 +61,79 @@ def load_labels(labels_dir: Path) -> list[dict]:
     return list(latest_by_thread.values())
 
 
-def load_session_findings(sessions_dir: Path) -> dict[str, str]:
-    by_fingerprint: dict[str, set[str]] = defaultdict(set)
+def load_session_findings(sessions_dir: Path) -> dict[str, list[dict]]:
+    by_fingerprint: dict[str, list[dict]] = defaultdict(list)
     for path in sessions_dir.rglob("*.jsonl"):
         try:
             records = read_jsonl(path)
         except (OSError, json.JSONDecodeError):
             continue
+        manifest = next(
+            (record for record in records if record.get("type") == "session_start"),
+            {},
+        )
+        hypotheses = {
+            str(record.get("data", {}).get("id")): record.get("data", {})
+            for record in records
+            if record.get("type") == "artifact"
+            and record.get("artifact_kind") == "review_hypothesis"
+            and record.get("data", {}).get("id")
+        }
+        assessments = {
+            str(record.get("data", {}).get("hypothesis_id")): record.get("data", {})
+            for record in records
+            if record.get("type") == "artifact"
+            and record.get("artifact_kind") == "review_assessment"
+            and record.get("data", {}).get("hypothesis_id")
+        }
         for record in records:
             fingerprint = record.get("fingerprint")
             content = record.get("content")
             if record.get("type") == "finding" and fingerprint and content:
-                by_fingerprint[fingerprint].add(content.strip())
-    # A fingerprint with multiple distinct texts is ambiguous and unsafe to
-    # backfill. Direct forge comment text still wins for those records.
-    return {
-        fingerprint: next(iter(contents))
-        for fingerprint, contents in by_fingerprint.items()
-        if len(contents) == 1
-    }
+                hypothesis_id = str(record.get("hypothesis_id") or "")
+                by_fingerprint[fingerprint].append({
+                    "content": content.strip(),
+                    "timestamp": record.get("timestamp") or "",
+                    "repo": manifest.get("cwd") or "",
+                    "engine": {
+                        "session_id": manifest.get("sessionId"),
+                        "tool_version": manifest.get("tool_version"),
+                        "model": manifest.get("model"),
+                        "features": manifest.get("features") or {},
+                        "params": manifest.get("params") or {},
+                        "git_head": manifest.get("git_head"),
+                        "hypothesis": hypotheses.get(hypothesis_id),
+                        "assessment": assessments.get(hypothesis_id),
+                    },
+                })
+    return by_fingerprint
+
+
+def source_repo_name(source: str) -> str:
+    tail = source.rsplit("/", 1)[-1]
+    return re.split(r"[#!]", tail, maxsplit=1)[0]
+
+
+def choose_session_finding(
+    candidates: list[dict], source: str, labeled_at: str
+) -> dict | None:
+    repo_name = source_repo_name(source)
+    scoped = [
+        candidate
+        for candidate in candidates
+        if not repo_name or repo_name in Path(candidate.get("repo") or "").parts
+    ]
+    if not scoped:
+        scoped = candidates
+    if labeled_at:
+        preceding = [
+            candidate
+            for candidate in scoped
+            if candidate.get("timestamp") and candidate["timestamp"] <= labeled_at
+        ]
+        if preceding:
+            scoped = preceding
+    return max(scoped, key=lambda candidate: candidate.get("timestamp") or "") if scoped else None
 
 
 def normalize_finding(raw: str) -> tuple[str, str | None]:
@@ -89,20 +143,25 @@ def normalize_finding(raw: str) -> tuple[str, str | None]:
     return FOOTER_RE.sub("", body).strip(), model
 
 
-def build_example(record: dict, session_findings: dict[str, str]) -> dict | None:
+def build_example(record: dict, session_findings: dict[str, list[dict]]) -> dict | None:
     kind = "missed" if record.get("label") == "missed" else "finding"
+    source = record.get("source") or ""
+    session_finding = choose_session_finding(
+        session_findings.get(record.get("fingerprint"), []),
+        source,
+        record.get("at") or "",
+    )
     raw = record.get("finding")
-    if not raw and record.get("fingerprint"):
-        raw = session_findings.get(record["fingerprint"])
+    if not raw and session_finding:
+        raw = session_finding["content"]
     if kind == "missed":
         raw = raw or record.get("note")
     if not raw:
         return None
     finding, model = normalize_finding(raw)
-    source = record.get("source") or ""
     reply_id = record.get("reply_id")
     example_id = hashlib.sha256(f"{source}:{reply_id}".encode()).hexdigest()[:16]
-    return {
+    example = {
         "id": example_id,
         "kind": kind,
         "finding": finding,
@@ -119,6 +178,9 @@ def build_example(record: dict, session_findings: dict[str, str]) -> dict | None
         "by": record.get("by"),
         "at": record.get("at"),
     }
+    if session_finding and session_finding.get("engine"):
+        example["engine"] = session_finding["engine"]
+    return example
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:

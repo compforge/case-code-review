@@ -405,6 +405,9 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 	if f.SymbolID != "" {
 		rec["symbol_id"] = f.SymbolID
 	}
+	if f.HypothesisID != "" {
+		rec["hypothesis_id"] = f.HypothesisID
+	}
 	if f.Alias != "" {
 		rec["alias"] = f.Alias
 	}
@@ -413,6 +416,28 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 	}
 	if f.Severity != "" {
 		rec["severity"] = f.Severity
+	}
+	jw.writeRecordLocked(rec)
+	jw.lastUUID = uuid
+	return uuid
+}
+
+// WriteArtifact stores an opaque domain artifact under a stable envelope. The
+// payload schema belongs to the caller; session persistence only supplies run
+// identity, ordering, and timestamps.
+func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any) string {
+	uuid := uuid.V4()
+
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	rec := map[string]any{
+		"uuid":          uuid,
+		"parentUuid":    jw.lastUUID,
+		"type":          "artifact",
+		"artifact_kind": kind,
+		"sessionId":     jw.sessionID,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"data":          data,
 	}
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid

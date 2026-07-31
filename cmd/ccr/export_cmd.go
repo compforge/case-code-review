@@ -82,26 +82,33 @@ type atifFinal struct {
 // exportEvent is the read-side of session records for export — richer than
 // statsEvent (full messages / tool calls / usage), still decode-what-we-need.
 type exportEvent struct {
-	Type       string           `json:"type"`
-	Timestamp  string           `json:"timestamp"`
-	SessionID  string           `json:"sessionId"`
-	Model      string           `json:"model"`
-	Cwd        string           `json:"cwd"`
-	GitBranch  string           `json:"gitBranch"`
-	ReviewMode string           `json:"reviewMode"`
-	DiffFrom   string           `json:"diffFrom"`
-	DiffTo     string           `json:"diffTo"`
-	ScopeID    string           `json:"scope_id"`
-	FilePath   string           `json:"filePath"`
-	Kind       string           `json:"kind"`
-	Paths      []string         `json:"paths"`
-	TaskType   string           `json:"taskType"`
-	RequestNo  int              `json:"request_no"`
-	Messages   []exportMessage  `json:"messages"`
-	Content    string           `json:"content"`
-	ToolCalls  []map[string]any `json:"tool_calls"`
-	DurationMS float64          `json:"duration_ms"`
-	Usage      struct {
+	Type         string           `json:"type"`
+	Timestamp    string           `json:"timestamp"`
+	SessionID    string           `json:"sessionId"`
+	Model        string           `json:"model"`
+	Cwd          string           `json:"cwd"`
+	GitBranch    string           `json:"gitBranch"`
+	ReviewMode   string           `json:"reviewMode"`
+	DiffFrom     string           `json:"diffFrom"`
+	DiffTo       string           `json:"diffTo"`
+	ToolVersion  string           `json:"tool_version"`
+	Features     map[string]bool  `json:"features"`
+	Params       map[string]any   `json:"params"`
+	GitHead      string           `json:"git_head"`
+	EvalTag      string           `json:"eval_tag"`
+	ArtifactKind string           `json:"artifact_kind"`
+	Data         map[string]any   `json:"data"`
+	ScopeID      string           `json:"scope_id"`
+	FilePath     string           `json:"filePath"`
+	Kind         string           `json:"kind"`
+	Paths        []string         `json:"paths"`
+	TaskType     string           `json:"taskType"`
+	RequestNo    int              `json:"request_no"`
+	Messages     []exportMessage  `json:"messages"`
+	Content      string           `json:"content"`
+	ToolCalls    []map[string]any `json:"tool_calls"`
+	DurationMS   float64          `json:"duration_ms"`
+	Usage        struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		CacheReadTokens  int `json:"cache_read_tokens"`
@@ -183,6 +190,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		Agent:         atifAgent{Name: "case-code-review", Version: "unknown"},
 		Steps:         []*atifStep{},
 	}
+	var reviewArtifacts []map[string]any
 	// Scope chains in first-seen order; each becomes a subagent trajectory.
 	type chain struct {
 		steps    []*atifStep
@@ -237,6 +245,27 @@ func exportSession(path string) (*atifTrajectory, error) {
 				"repo": e.Cwd, "branch": e.GitBranch, "review_mode": e.ReviewMode,
 				"diff_from": e.DiffFrom, "diff_to": e.DiffTo,
 			}
+			if e.ToolVersion != "" {
+				root.Agent.Version = e.ToolVersion
+				root.Extra["tool_version"] = e.ToolVersion
+			}
+			if len(e.Features) > 0 {
+				root.Extra["features"] = e.Features
+			}
+			if len(e.Params) > 0 {
+				root.Extra["params"] = e.Params
+			}
+			if e.GitHead != "" {
+				root.Extra["git_head"] = e.GitHead
+			}
+			if e.EvalTag != "" {
+				root.Extra["eval_tag"] = e.EvalTag
+			}
+		case "artifact":
+			reviewArtifacts = append(reviewArtifacts, map[string]any{
+				"kind": e.ArtifactKind,
+				"data": e.Data,
+			})
 		case "llm_request":
 			c := get(e)
 			// Only the chain's FIRST request seeds steps: later requests replay the
@@ -314,6 +343,12 @@ func exportSession(path string) (*atifTrajectory, error) {
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
+	}
+	if len(reviewArtifacts) > 0 {
+		if root.Extra == nil {
+			root.Extra = map[string]any{}
+		}
+		root.Extra["review_artifacts"] = reviewArtifacts
 	}
 
 	rootFinal := atifFinal{}

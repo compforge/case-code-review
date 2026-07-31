@@ -167,10 +167,10 @@ func runScan(args []string) error {
 		scanTpl.ApplyLanguage(rt.AppCfg.Language)
 	}
 
-	// file_read_diff is meaningless in scan mode (no diff exists). Hiding it
-	// from MainToolDefs stops the LLM from burning tool-call rounds probing
-	// for diff content that does not exist.
-	scanToolDefs := excludeToolDef(rt.MainToolDefs, "file_read_diff")
+	// Diff and baseline reads are meaningless in scan mode (no reviewed change
+	// exists). Hiding both stops the LLM from probing unavailable evidence.
+	scanToolDefs := excludeToolDef(rt.MainToolDefs, tool.FileReadDiff.Name())
+	scanToolDefs = excludeToolDef(scanToolDefs, tool.FileReadBase.Name())
 
 	// Scan mode always reads file contents from the working tree.
 	fileReader := &tool.FileReader{
@@ -178,7 +178,7 @@ func runScan(args []string) error {
 		Mode:    tool.ModeWorkspace,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Findings, fileReader)
+	tools := buildToolRegistry(rt.Findings, fileReader, nil)
 
 	ag := scan.New(scan.Args{
 		RepoDir:               cc.RepoDir,

@@ -22,6 +22,6 @@ Summarize in one sentence the core matter currently being investigated or handle
 ## Rules
 1. Preserve exact paths, symbols, Hypothesis IDs, and decisive facts needed to resume.
 2. Do not copy large source blocks; retain locations and concise conclusions.
-3. Keep support and actionability separate when Assessments exist.
+3. Keep support, attribution, delivery value, and novelty separate when Assessments exist.
 4. Omit any dimension that has no relevant content.
 5. Current Focus should be concise, no more than one sentence.

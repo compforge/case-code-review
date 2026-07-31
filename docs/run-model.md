@@ -198,9 +198,15 @@ spec/case/rule/requirement；需要完整 diff、变更前后源码或调用路�
 只读代码服务定向补证。Assessment 分开表达：
 
 - `support = supported | contradicted | insufficient`：证据是否支持主张；
-- `actionability = actionable | low_value | unknown`：主张若成立，是否值得交付。
+- `attribution = caused | pre_existing | unknown`：问题是否由本次变更事实上造成；`caused` 不判断
+  主观意图，反事实标准是撤销当前 diff 后，trigger 或 impact 是否会消失或实质改变；
+- `value = actionable | low_value | unknown`：主张若成立，是否值得交付；
+- `novelty = new | duplicate_in_case | already_delivered`：是否已在本案卷或更早 revision 交付。
 
-只有 `supported + actionable` 的 Hypothesis 才生成最终 Finding。`insufficient` 不等于错误，
+模型提交的 Evidence 是判断说明，不是工具调用证明。Hypothesis Review 每次成功读取 diff、baseline
+或相关源码时，由 Runner 记录带工具调用 id、证据类型和引用对象的 Evidence Receipt；模型不能
+自行伪造 receipt。Trial 仅允许 `supported + caused + actionable + new`，且具备
+与 Hypothesis 锚点文件匹配的 diff receipt 的主张生成最终 Finding。`insufficient` 不等于错误，
 只表示它还没达到公开 finding 的证据门槛；`supported + low_value` 则表示问题可能真实，但
 交付收益不足。补证按主张缺口取材料：
 执行路径问题查 caller、validator 和 wire contract；变更归因查 base/head；意图问题查
@@ -211,7 +217,9 @@ spec/case/rule/requirement；语言或库行为优先交给确定性分析器或
 这样可以守住两条边界：
 
 - 不同 Unit、不同文件但属于同一行为链或重复问题的 Hypothesis 始终放在一起分析；
-- resume 复用的 Hypothesis 与新 Hypothesis 会重新分析，不沿用旧文件环境下的 Assessment。
+- resume 复用的 Hypothesis 与新 Hypothesis 会重新分析，不沿用旧文件环境下的 Assessment；
+- Forge 已交付 comment 作为 prior delivery 进入案卷；无论问题仍存在还是已修复，都不得重复形成
+  同一 Hypothesis，只有 trigger 或 impact 不同的独立回归才算新问题。
 
 run 级 Hypothesis Review 自己也有 checkpoint，其复用键覆盖 hypothesis/evidence digest、
 SourceSnapshot 与 review engine digest；Hypothesis、证据或审查环境变化时必须重跑。后续若
@@ -261,8 +269,9 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 - 已 admission Unit 有 wrap-up/review 额度，partial 结果携带明确 coverage 与 stop reason。
 - resume 不重复执行 completed Unit，且必定重跑 incomplete/timeout/panic/skipped Unit。
 - source 或 engine digest 变化时拒绝 resume；Board 只恢复 confirmed facts。
-- 每条最终 Finding 都有 `supported + actionable` 的 Assessment；存在反证、补证后仍为
-  `insufficient` 或属于 `low_value` 的 Hypothesis 不会对外发布，分析理由可进入评测事件。
+- 每条最终 Finding 都有通过完整四轴门禁的 Assessment 与匹配锚点文件的 diff receipt；存在反证、
+  补证后仍为 `insufficient`、归因为 `pre_existing`、属于 `low_value` 或已经交付的 Hypothesis
+  不会对外发布，分析理由可进入评测事件。
 - merge commit、root commit、binary、rename、非 ASCII 与特殊 hunk diff 均有契约测试。
 - `go build ./...`、`go test ./...`、`go test -race ./...` 通过。
 - reviewbench 分别回放 wrong、repeat 与 important/minor 样本，量测误报拦截率、重复交付率、

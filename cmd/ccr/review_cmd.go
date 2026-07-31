@@ -71,7 +71,8 @@ func runReview(args []string) error {
 		Ref:     ref,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Findings, fileReader)
+	baseReader := &tool.FileReader{RepoDir: cc.RepoDir, Mode: tool.ModeCommit, Runner: cc.GitRunner}
+	tools := buildToolRegistry(rt.Findings, fileReader, baseReader)
 
 	// Loads the --spec path plus auto-discovered .casecodereview/spec.json layers, mirroring
 	// how rules are resolved. Nil when no layer exists.
@@ -256,9 +257,16 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	return nil
 }
 
-func buildToolRegistry(findings *finding.Collector, fr *tool.FileReader) *tool.Registry {
+func buildToolRegistry(
+	findings *finding.Collector,
+	fr *tool.FileReader,
+	base *tool.FileReader,
+) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewFileRead(fr))
+	if base != nil {
+		reg.Register(tool.NewFileReadBase(base))
+	}
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
 	reg.Register(tool.NewCodeSearch(fr))

@@ -107,6 +107,22 @@
 </div>
 {{end}}
 
+{{if .Session.Artifacts}}
+<h3>Review Decision Trail ({{len .Session.Artifacts}})</h3>
+<p class="section-note">Unit Review 产生的 Hypothesis，以及 Hypothesis Review / Trial 的收敛判断。</p>
+<div class="system-prompts">
+{{range .Session.Artifacts}}
+<details class="system-prompt">
+    <summary class="system-prompt-header">
+        <span class="chevron"></span>
+        <span class="system-prompt-label">{{.Kind}}</span>
+    </summary>
+    <pre class="msg-text">{{.Data}}</pre>
+</details>
+{{end}}
+</div>
+{{end}}
+
 <h3>Units ({{len (scopesOfKind .Session.Units "unit")}})</h3>
 <div class="conversations">
 {{range scopesOfKind .Session.Units "unit"}}

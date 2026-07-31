@@ -37,6 +37,7 @@ type Hypothesis struct {
 // Finding converts an approved Hypothesis into the public result shape.
 func (h Hypothesis) Finding() finding.Finding {
 	return finding.Finding{
+		HypothesisID:   h.ID,
 		Path:           h.Path,
 		Content:        h.Content,
 		SuggestionCode: h.SuggestionCode,
@@ -102,7 +103,8 @@ func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
 			Evidence:          stringSlice(item["evidence"]),
 		}
 		if h.Path == "" || h.Content == "" || h.ExistingCode == "" ||
-			h.Trigger == "" || h.Impact == "" || h.ChangeAttribution == "" {
+			h.Trigger == "" || h.Impact == "" || h.ChangeAttribution == "" ||
+			len(h.Evidence) == 0 {
 			continue
 		}
 		h.ID = IDFor(h)

@@ -51,8 +51,9 @@ func TestFinder(t *testing.T) {
 	if len(clues) != 1 || clues[0].Kind != unit.ClueHistory {
 		t.Fatalf("want 1 history clue, got %+v", clues)
 	}
-	// framed as an adjudication task, carrying the finding + sha.
-	for _, want := range []string{"previous review", "missing nil check", "abc1234"} {
+	// Framed as a prior delivery, carrying the finding + sha without asking the
+	// next revision to publish a duplicate.
+	for _, want := range []string{"PRIOR DELIVERY", "do not create a new Hypothesis", "missing nil check", "abc1234"} {
 		if !strings.Contains(clues[0].Text, want) {
 			t.Errorf("clue text missing %q: %q", want, clues[0].Text)
 		}
