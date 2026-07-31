@@ -55,5 +55,5 @@ Everywhere else in the repository the changed function(s) are referenced, as pre
 ### Review Plan (Optional)
 {{plan_guidance}}
 
-Now please review the code changes in <current_file_diff>
+Investigate the code changes in <current_file_diff>. Report the concrete issue Hypotheses worth independent review, then call `task_done`.
 </user_task>

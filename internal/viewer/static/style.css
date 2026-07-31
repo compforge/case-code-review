@@ -229,7 +229,7 @@ h3 { margin: 1.5rem 0 0.75rem; color: #24292e; }
 .task-plan .task-type-dot { background: #8250df; }
 .task-memory .task-type-dot { background: #8b949e; }
 .task-relocation .task-type-dot { background: #e36209; }
-.task-filter .task-type-dot { background: #1a7f37; }
+.task-review .task-type-dot { background: #1a7f37; }
 .task-default .task-type-dot { background: #57606a; }
 
 /* Card */
@@ -247,7 +247,7 @@ h3 { margin: 1.5rem 0 0.75rem; color: #24292e; }
 .task-plan .card { border-left: 3px solid #8250df; }
 .task-memory .card { border-left: 3px solid #8b949e; }
 .task-relocation .card { border-left: 3px solid #e36209; }
-.task-filter .card { border-left: 3px solid #1a7f37; }
+.task-review .card { border-left: 3px solid #1a7f37; }
 
 .card-header {
     background: #f6f8fa;

@@ -192,7 +192,7 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 }
 
 // addScopeFields stamps the scope identity onto a per-record map: scope_id/kind/
-// scope/paths identify the review scope (a Unit, or a file-level pass); filePath
+// scope/paths identify the review scope (a Unit, run-level Review, or scan pass); filePath
 // is the representative member path, kept for comment anchoring and file rollups.
 func addScopeFields(rec map[string]any, ss *ScopeSession) {
 	rec["filePath"] = ss.Path

@@ -77,8 +77,11 @@ func TestLoadDefault_FieldsPopulated(t *testing.T) {
 	if tpl.ReLocationTask == nil {
 		t.Fatal("ReLocationTask is nil, expected non-nil")
 	}
-	if tpl.ReviewFilterTask == nil {
-		t.Fatal("ReviewFilterTask is nil, expected non-nil")
+	if tpl.HypothesisReviewTask == nil {
+		t.Fatal("HypothesisReviewTask is nil, expected non-nil")
+	}
+	if tpl.HypothesisReviewTask.Timeout != 600 {
+		t.Errorf("HypothesisReviewTask.Timeout = %d, want 600", tpl.HypothesisReviewTask.Timeout)
 	}
 	if tpl.MaxTokens != 58888 {
 		t.Errorf("MaxTokens = %d, want 58888", tpl.MaxTokens)
@@ -106,7 +109,7 @@ func TestLoadDefault_PlaceholdersPresent(t *testing.T) {
 		{"MainTask user has diff", tpl.MainTask.Messages[1].Content, "{{diff}}"},
 		{"PlanTask system has plan_tools", tpl.PlanTask.Messages[0].Content, "{{plan_tools}}"},
 		{"MemoryCompression user has context", tpl.MemoryCompressionTask.Messages[1].Content, "{{context}}"},
-		{"ReviewFilter user has comments", tpl.ReviewFilterTask.Messages[1].Content, "{{comments}}"},
+		{"HypothesisReview user has hypotheses", tpl.HypothesisReviewTask.Messages[1].Content, "{{hypotheses}}"},
 		{"ReLocation user has diff (single brace)", tpl.ReLocationTask.Messages[1].Content, "{diff}"},
 	}
 
@@ -145,6 +148,9 @@ func TestApplyLanguage(t *testing.T) {
 	}
 	if !strings.HasSuffix(tpl.MemoryCompressionTask.Messages[0].Content, suffix) {
 		t.Errorf("MemoryCompressionTask system message does not end with %q", suffix)
+	}
+	if !strings.HasSuffix(tpl.HypothesisReviewTask.Messages[0].Content, suffix) {
+		t.Errorf("HypothesisReviewTask system message does not end with %q", suffix)
 	}
 }
 

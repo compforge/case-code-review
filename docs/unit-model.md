@@ -4,7 +4,11 @@
 
 ## 理念
 
-**初衷**：一个文件一个 review loop 太死板，所以把评审基本单位下沉到 **unit**（一函数一 unit）；但函数级会炸出太多 loop，所以**必要时合并**——除了按文件合（成本），还按调用链合（一个需求天然横跨上下游几个 func/文件）。在此之上，再给每个 loop 喂**更合适的上下文**（spec-case 标注 + 上一轮 review history + caller/callee）。本文档管前半截（unit 的粒度与结构）；上下文那半截已落地（见 References）。
+**初衷**：固定一个文件一个 review loop 太死板，但固定一函数一个 loop 又会炸出过多调用。CCR
+因此把评审基本单位定义为可归并的 **Unit**：单文件变更直接形成一个 File Unit；多文件变更先
+按调用链把同一行为上的 func 跨文件合并，规模过大时再按文件粗化。在此之上，再给每个 loop
+喂**更合适的上下文**（spec-case 标注 + 上一轮 review history + caller/callee）。本文档管前半截
+（unit 的粒度与结构）；上下文那半截已落地（见 References）。
 
 ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一次 review loop 跑在一个 unit 上。
 上游无论来自 git diff 还是 full-file scan，都先成为 `Change`；git source 负责采集，Unit
@@ -20,9 +24,11 @@ ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一�
 ```
 git change / full scan ─▶ Change
      ─Splitter─▶ Fragment（diff：每文件每函数一个 + 残余；scan：整文件一个）
-     ─Merger（两步顺序）─▶ Unit
-          ① call-chain（语义轴）：跨文件、调用相邻、且都在 diff 里的 Fragment 成一簇
-          ② file-coalesce（成本轴）：残余若超水位，按同文件并
+     ─Merger─▶ Unit
+          ├─ 单文件：全部 Fragment 直接形成一个 File Unit
+          └─ 多文件：
+               ① call-chain（语义轴）：跨文件、调用相邻、且都在 diff 里的 Fragment 成一簇
+               ② file-coalesce（成本轴）：残余若超水位，按同文件并
      ─Finders 对 Unit 收 Clue（spec/case/rule/link · caller/callee · history）─▶ review loop
 ```
 
@@ -39,7 +45,10 @@ func unit = 1 Fragment；file 粗化 = 1 Fragment（多符号、整文件 diff�
    - *context*（给 Clue）：问"governing spec / 依赖的契约"。
    两者都用 call-graph，但目的、产物不同。
 
-4. **merge = 两步顺序，不是框架**——为何：现仅两轴（语义/成本）。README 的粒度阶梯（类/模块）等**第三条真实轴落地**再泛化。YAGNI：不建 pass-pipeline / 注册表，就先 call-chain 再 file-coalesce 顺序写。
+4. **merge 是单文件快路径 + 多文件两轴，不是框架**——为何：只有一个文件时，函数间已经共享
+   天然的文件边界；拆成多个 loop 会增加成本，却不会获得跨文件调用链的分组收益，因此直接收为
+   File Unit，并保留全部 symbol 供 ClueFinder 查上下文。多文件时仍先走 call-chain 语义轴，
+   再走 file-coalesce 成本轴。README 的粒度阶梯（类/模块）等**第三条真实轴落地**再泛化。
 
 5. **跨文件 Unit 的落地**：reviewUnit 渲染**所有 Fragment 的 diff**（按文件分块、带文件头）；评论已 per-comment 自带路径，**评论路由不改**；change-files 列表遍历成员路径；行数 = 成员求和。
 
@@ -58,6 +67,8 @@ func unit = 1 Fragment；file 粗化 = 1 Fragment（多符号、整文件 diff�
 
 ## 两条合并轴：动机不同（语义 vs 成本）
 
+- **single-file（直接粗化）**：ChangeSet 只有一个可评审文件时，完整文件 diff 只触发一个 loop；
+  Splitter 得到的全部 symbol 仍保留在 File Unit 中，spec/case/rule/link/doc 等 Clue 不丢失。
 - **call-chain（语义 / 按需求分组）**先做：一个需求天然横跨一条调用链——`X 调 Y`、两者都在本次 diff，就按这条链当一个 unit 审，**和 reviewer 脑中"这个需求改了哪些地方"对齐**（抓出贯穿调用链的交互 bug 是顺带收益）。只合**都变了的**相邻；只一个变的邻居走 context 注入（不合并）。
 - **file-coalesce（成本兜底）**收尾：大改动会炸出太多 func unit → loop 爆；同文件并粗，**降 loop 数、不降 context**。
 - **簇大小上限**：一个改动函数扇出多个改动 callee 时，连通分量可能很大 → 设上限（累计变更行 / 成员数超阈值就不再吸纳），超出的退回成本轴，**防单个 unit 巨到塞爆一次 loop**。一般改动（小簇）走语义轴、大改动（大簇/超量）落成本轴——正好对应初衷里"一般改动 vs 大改动"两种场景。

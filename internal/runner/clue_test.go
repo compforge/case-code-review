@@ -13,7 +13,8 @@ type countingFinder struct{ n *int }
 func (f countingFinder) Find(unit.Unit) []unit.Clue { *f.n++; return nil }
 
 func TestSplitUnits_CostlyFindersGatedByBudget(t *testing.T) {
-	// Below the watermark: units stay fine-grained → costly finder runs per unit.
+	// Below the watermark: the single-file change is one file Unit, so the costly
+	// finder runs once against that Unit's complete symbol set.
 	var under int
 	au := &Runner{
 		splitter:      unit.AutoSplitter{},
@@ -23,8 +24,8 @@ func TestSplitUnits_CostlyFindersGatedByBudget(t *testing.T) {
 	if _, err := au.splitUnits(); err != nil {
 		t.Fatal(err)
 	}
-	if under != 3 {
-		t.Errorf("under watermark: costly finder should run once per diff unit, got %d", under)
+	if under != 1 {
+		t.Errorf("under watermark: costly finder should run once for the file Unit, got %d", under)
 	}
 
 	// Above the watermark: units will coalesce → costly finder skipped entirely.

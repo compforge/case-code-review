@@ -77,7 +77,7 @@ Runner UnitExecution
       ExecutionResult
             │
             ▼
-Runner → UnitResult → aggregate / adjudicate → Finding[]
+Runner → UnitResult → Hypothesis[] → Hypothesis Review → Assessment[] → Finding[]
 ```
 
 一次 Execution 的主链路是：
@@ -157,7 +157,8 @@ Tool 提供 schema 与执行能力，ToolGate 在执行前实施权限和运行�
 也不出现 `if review`。
 
 CCR 的只读信任边界由 Runner Review Extension 组合出来：只注册受控代码读取工具，
-`code_comment` 只形成内存中的 candidate，`task_done` 只改变完成状态。Harness 能运行注入的
+`report_hypothesis` 只形成内存中的 Hypothesis，`submit_assessments` 只形成 Assessment，
+`task_done` 只改变完成状态。Harness 能运行注入的
 通用工具，不代表 review loop 可以获得 shell、文件写或 git 状态修改能力。
 
 ### 6. Event 是观测接口，不是第二套状态机

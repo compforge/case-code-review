@@ -8,11 +8,15 @@ A diff alone is too little to review well — it can't tell whether a change bre
 
 **1. Capture more context.** ccr locates the *functions* a diff changes, then gathers the context the diff doesn't carry — along typed relations, from two sources (see below).
 
-**2. Review per *unit*, with a merge step.** A *unit* is the scope of one review loop, and its granularity is a ladder: **function → class → file → module / directory**. From a diff ccr first collects the changed units (functions), then **merges** them — by a strategy — into the units that actually trigger loops, coarsening *up that ladder* as the change grows: functions changed together along a call chain become one cross-file unit; a sweeping change coalesces into file-level units. So focus is highest for small changes and cost stays bounded for big ones — one loop per merged unit.
+**2. Review per *unit*, with a merge step.** A *unit* is the scope of one review loop, and its granularity is a ladder: **function → class → file → module / directory**. A single-file change remains one file unit. For multi-file changes, ccr first locates changed functions and then **merges** them into the units that actually trigger loops: functions changed together along a call chain become one cross-file unit, while a sweeping change coalesces into file-level units. The result preserves semantic focus without multiplying loops unnecessarily — one loop per merged unit.
+
+In diff review, Unit reviews investigate broadly and produce falsifiable hypotheses, not public comments. A separate evidence review then examines the change as one case, uses read-only code tools to verify or refute every hypothesis, and publishes only supported, actionable findings.
 
 The payoff: ccr finds the bugs that need background — a change quietly breaking a caller's assumption, or violating an invariant the diff doesn't show — checklist-checked against the function's real contract. (Syntax stays lint's job.)
 
 Review quality is judged on three goals that pull against each other — **robustness, accuracy, cost** — pursued through three levers all centered on the review loop: its capability, its granularity, and its context. See `AGENTS.md` for the full frame.
+
+![CCR two-stage evidence review pipeline](docs/kernel-pipeline.svg)
 
 ## The context model: evidence kinds × relations
 

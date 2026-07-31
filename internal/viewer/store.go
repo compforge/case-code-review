@@ -199,7 +199,7 @@ type ViewSession struct {
 	Summary       SessionSummary
 	TokenUsage    TokenUsageSummary
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
-	Units         []*UnitGroup   // review scopes: units first, then file-level passes
+	Units         []*UnitGroup   // review scopes: units first, then run/file-level passes
 }
 
 // DisplayMessage is one message of an LLM request with its text content
@@ -238,9 +238,9 @@ type FileTokenUsage struct {
 }
 
 // UnitGroup aggregates records for one review scope: a Unit (plan/main/
-// compression/relocation), or a file-level pass (review_filter / scan).
+// compression/relocation), or a non-Unit pass (Hypothesis Review / scan).
 type UnitGroup struct {
-	ID       string   // scope id: unit.ID, or file path for file-level passes
+	ID       string   // scope id: unit.ID, run-level phase ID, or scan file path
 	Kind     string   // "unit" | "file"
 	Scope    string   // func/file/callchain (units) | filter | scan
 	Paths    []string // member file(s)
@@ -256,7 +256,7 @@ const (
 	MainTask              TaskType = "main_task"
 	MemoryCompressionTask TaskType = "memory_compression_task"
 	ReLocationTask        TaskType = "re_location_task"
-	ReviewFilterTask      TaskType = "review_filter_task"
+	HypothesisReviewTask  TaskType = "hypothesis_review_task"
 )
 
 // TaskCard links an LLM request with its response and tool calls.
@@ -504,11 +504,15 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	fileIdx := make(map[string]*FileTokenUsage)
 	fileOrder := make([]string, 0)
 	for _, fg := range vs.Units {
-		ft := fileIdx[fg.FilePath]
+		rollupKey := fg.FilePath
+		if fg.Kind == "run" {
+			rollupKey = "(run-level)"
+		}
+		ft := fileIdx[rollupKey]
 		if ft == nil {
-			ft = &FileTokenUsage{FilePath: fg.FilePath}
-			fileIdx[fg.FilePath] = ft
-			fileOrder = append(fileOrder, fg.FilePath)
+			ft = &FileTokenUsage{FilePath: rollupKey}
+			fileIdx[rollupKey] = ft
+			fileOrder = append(fileOrder, rollupKey)
 		}
 		for _, cards := range fg.Tasks {
 			for _, c := range cards {
@@ -535,7 +539,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	})
 	vs.TokenUsage.FileTokenBreakdown = fileBreakdown
 
-	// Units first (the review scopes), then file-level passes (review_filter /
+	// Units first (the investigative scopes), then other passes (Hypothesis Review /
 	// scan); stable by id within each kind.
 	sort.SliceStable(vs.Units, func(i, j int) bool {
 		a, b := vs.Units[i], vs.Units[j]

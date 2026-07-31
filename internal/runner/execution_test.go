@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
-	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/runner/review"
 )
 
 func TestReviewCompressionPromptsAdaptTemplateContext(t *testing.T) {
@@ -160,29 +159,16 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 	}
 }
 
-func TestUnitExecutionAnchorsFindingFactsToScopeMembers(t *testing.T) {
+func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 	sharedBoard := board.New()
 	run := &unitExecution{
 		executor: &unitExecutor{board: sharedBoard},
 		scope:    session.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
 		turn:     2,
 	}
-	for _, arguments := range []string{
-		`{}`,
-		`{"path":"b.go"}`,
-		`{"path":"elsewhere.go"}`,
-	} {
-		run.publishToolFact(finding.CodeComment.Name(), json.RawMessage(arguments))
-	}
-
-	posts := sharedBoard.Posted()
-	if len(posts) != 3 {
-		t.Fatalf("want 3 facts, got %d: %+v", len(posts), posts)
-	}
-	for i, want := range []string{"a.go", "b.go", "a.go"} {
-		if posts[i].Paths[0] != want {
-			t.Fatalf("fact %d: want path %s, got %+v", i, want, posts[i])
-		}
+	run.publishToolFact(review.ReportHypothesis.Name(), []byte(`{"path":"b.go"}`))
+	if posts := sharedBoard.Posted(); len(posts) != 0 {
+		t.Fatalf("an unassessed hypothesis must not become a confirmed board fact: %+v", posts)
 	}
 }
 
