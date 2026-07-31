@@ -103,5 +103,5 @@ Use "ccr rules -h" for more information about rules.
 Use "ccr config" for more information about config.
 Use "ccr llm" for more information about LLM utilities.
 
-GitHub: https://github.com/qiankunli/case-code-review`)
+GitHub: ` + repositoryURL)
 }
