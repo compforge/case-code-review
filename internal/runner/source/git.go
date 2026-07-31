@@ -127,9 +127,24 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 		combined.WriteString(out)
 
 	case ModeCommit:
-		out, err := p.runGit(ctx, "show", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", p.commit)
+		base := p.BaseRef(ctx)
+		if base == "" {
+			// A root commit has no first parent, so git show supplies its
+			// empty-tree diff. Invalid refs also fail here with a useful error.
+			out, err := p.runGit(ctx, "show", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", p.commit)
+			if err != nil {
+				return nil, fmt.Errorf("git show failed: %w", err)
+			}
+			combined.WriteString(out)
+			break
+		}
+
+		// Always compare against the first parent. Besides making ordinary
+		// commits explicit, this reviews what a merge added to its target
+		// branch, including any conflict resolution recorded in the merge.
+		out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", base, p.commit, "--")
 		if err != nil {
-			return nil, fmt.Errorf("git show failed: %w", err)
+			return nil, fmt.Errorf("git diff failed: %w", err)
 		}
 		combined.WriteString(out)
 

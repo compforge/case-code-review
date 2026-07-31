@@ -99,8 +99,8 @@ func TestWorkspaceDiffSurvivesExternalDiffTool(t *testing.T) {
 	}
 }
 
-// TestCommitDiffSurvivesExternalDiffTool covers the ModeCommit call site
-// (git show <commit>), which likewise must pass --no-ext-diff so that a
+// TestCommitDiffSurvivesExternalDiffTool covers the ModeCommit call site,
+// which likewise must pass --no-ext-diff so that a
 // user's external diff tool does not break single-commit analysis.
 func TestCommitDiffSurvivesExternalDiffTool(t *testing.T) {
 	repo := initRepoWithChange(t)
@@ -123,6 +123,71 @@ func TestCommitDiffSurvivesExternalDiffTool(t *testing.T) {
 		t.Fatalf("expected at least one parsed commit diff with an external diff "+
 			"tool active, got 0 -- git show call site must pass "+
 			"--no-ext-diff (issue #82). GIT_EXTERNAL_DIFF=%s", garbage)
+	}
+}
+
+func TestCommitDiffUsesFirstParentForMerge(t *testing.T) {
+	repo := t.TempDir()
+	runGitTest(t, repo, "init", "-q")
+	runGitTest(t, repo, "config", "user.email", "test@example.com")
+	runGitTest(t, repo, "config", "user.name", "Test User")
+	runGitTest(t, repo, "config", "commit.gpgsign", "false")
+
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "base.txt")
+	runGitTest(t, repo, "commit", "-q", "-m", "initial commit")
+	runGitTest(t, repo, "branch", "-M", "main")
+
+	runGitTest(t, repo, "checkout", "-q", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repo, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "feature.txt")
+	runGitTest(t, repo, "commit", "-q", "-m", "feature change")
+
+	runGitTest(t, repo, "checkout", "-q", "main")
+	if err := os.WriteFile(filepath.Join(repo, "main.txt"), []byte("main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "main.txt")
+	runGitTest(t, repo, "commit", "-q", "-m", "main change")
+	runGitTest(t, repo, "merge", "-q", "--no-ff", "feature", "-m", "merge feature")
+
+	provider := NewCommitProvider(repo, "HEAD", gitcmd.New(0))
+	diffs, err := provider.GetDiff(context.Background())
+	if err != nil {
+		t.Fatalf("GetDiff (merge commit) returned error: %v", err)
+	}
+	if len(diffs) != 1 {
+		t.Fatalf("merge diff count = %d, want 1: %+v", len(diffs), diffs)
+	}
+	if diffs[0].NewPath != "feature.txt" {
+		t.Fatalf("merge diff path = %q, want feature.txt", diffs[0].NewPath)
+	}
+}
+
+func TestCommitDiffSupportsRootCommit(t *testing.T) {
+	repo := t.TempDir()
+	runGitTest(t, repo, "init", "-q")
+	runGitTest(t, repo, "config", "user.email", "test@example.com")
+	runGitTest(t, repo, "config", "user.name", "Test User")
+	runGitTest(t, repo, "config", "commit.gpgsign", "false")
+
+	if err := os.WriteFile(filepath.Join(repo, "root.txt"), []byte("root\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitTest(t, repo, "add", "root.txt")
+	runGitTest(t, repo, "commit", "-q", "-m", "root commit")
+
+	provider := NewCommitProvider(repo, "HEAD", gitcmd.New(0))
+	diffs, err := provider.GetDiff(context.Background())
+	if err != nil {
+		t.Fatalf("GetDiff (root commit) returned error: %v", err)
+	}
+	if len(diffs) != 1 || diffs[0].NewPath != "root.txt" {
+		t.Fatalf("root commit diffs = %+v, want root.txt", diffs)
 	}
 }
 
