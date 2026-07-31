@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -31,8 +32,29 @@ type Hook struct {
 	RecordUsage  func(*llm.UsageInfo)
 }
 
+var _ harness.ToolHandler = (*Hook)(nil)
+
 // Handle implements llmloop.ToolCallHook.
 func (h *Hook) Handle(ctx context.Context, call llmloop.HookCall) (tool.TaskCheckpoint, bool) {
+	return h.handleTool(ctx, harness.ToolRequest{
+		Scope: call.Scope,
+		Tool:  call.Tool,
+		Call:  call.Call,
+		Args:  call.Args,
+		Alias: call.Alias,
+	}, call.Record)
+}
+
+// HandleTool implements harness.ToolHandler for the agentcore execution path.
+func (h *Hook) HandleTool(ctx context.Context, call harness.ToolRequest) (tool.TaskCheckpoint, bool) {
+	return h.handleTool(ctx, call, nil)
+}
+
+func (h *Hook) handleTool(
+	ctx context.Context,
+	call harness.ToolRequest,
+	record *session.TaskRecord,
+) (tool.TaskCheckpoint, bool) {
 	if call.Tool != CodeComment {
 		return tool.TaskCheckpoint{}, false
 	}
@@ -73,8 +95,8 @@ func (h *Hook) Handle(ctx context.Context, call llmloop.HookCall) (tool.TaskChec
 	}
 
 	if h.WorkerPool != nil {
-		if call.Record != nil {
-			call.Record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, "(async)")
+		if record != nil {
+			record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, "(async)")
 		}
 		asyncCtx := context.WithoutCancel(ctx)
 		var scope *session.ScopeSession
@@ -98,8 +120,8 @@ func (h *Hook) Handle(ctx context.Context, call llmloop.HookCall) (tool.TaskChec
 	duration := time.Since(started)
 	telemetry.RecordToolCall(ctx, call.Tool.Name(), duration, true)
 	telemetry.PrintToolCallFinished(call.Tool.Name(), duration)
-	if call.Record != nil {
-		call.Record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, submitSucceeded)
+	if record != nil {
+		record.AddToolResult(call.Tool.Name(), call.Call.Function.Arguments, submitSucceeded)
 	}
 	return tool.Of(submitSucceeded), true
 }

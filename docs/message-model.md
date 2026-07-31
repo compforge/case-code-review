@@ -10,9 +10,9 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 
 ## 现状与演进（passthrough 先行，类型跟着消费者走）
 
-- **PR A（已落地）**：`internal/harness/msg`——`Msg` 接口 + `Raw` 直通 + `Lower()`；`llmloop.RunPerFile` 与 compression 链的货币换成 `[]msg.Msg`，**wire 输出逐字节不变**（round-trip 等价测试保证）。plan / review-filter / relocation / scan 的单发调用保持 lowered 形态——它们没有 loop 货币问题。
+- **PR A（已落地）**：`internal/harness/msg`——`Msg` 接口 + `Raw` 直通 + `Lower()`；review Execution 在 Harness ContextManager 内保持 `[]msg.Msg` 到 provider 边界，legacy scan loop 仍沿用相同货币，**wire 输出逐字节不变**（round-trip 等价测试保证）。plan / review-filter / relocation / scan 的单发调用保持 lowered 形态——它们没有 loop 货币问题。
 - **PR B（已落地）**：`msg.File`（file_read 结果带 path+range 身份，从结果头解析——那是工具的输出契约）+ 第一个消费者 **file_dedup**（gate）：后读覆盖先读 → 先读原地 stub 成一行指针，**保位置、保 tool_call_id**（1:1 不变量与协议配对都不破）。dogfood 验证：真实流量零误伤（不同文件/不覆盖的区间不动）；loop 内重复本就比跨 unit 重复少——跨 unit 的同文件重复读（实测同 run 两个 unit 各读一次 `stdout.go`）是 P3 案情板的地盘，不是 loop 内去重的。
-- **C1 按可再生性驱逐（已落地）**：**file_evict**（gate）——warn 阈值（80% MaxTokens）超限时，先把最老的未 stub File 逐个 stub（内容可从磁盘重取，驱逐是确定性、零成本、可恢复的），不够再走 LLM compression。stub 文本按 reason 分两种指针：superseded 指向下文的新副本，evicted 告诉模型 file_read 可取回。驱逐次序 = 可再生性排序的第一档；board 消息（可从板面重拉）与 assistant 推理（不可再生）的档位等相应类型引入时再接。
+- **C1 按可再生性驱逐（已落地）**：**file_evict**（gate）——warn 阈值（80% MaxTokens）超限时，先把最老的未 stub File 逐个 stub（内容可从磁盘重取，驱逐是确定性、零成本、可恢复的），不够再交给 agentcore ContextEngine 做 trim / summary。stub 文本按 reason 分两种指针：superseded 指向下文的新副本，evicted 告诉模型 file_read 可取回。驱逐次序 = 可再生性排序的第一档；Board 与 File 同为可再生消息，assistant 推理最后进入 summary。
 - **C2 briefing 预载 File 化（已落地，gate `typed_briefing` 默认关）**：消息形状变为 **[system, task, own Files…, related Files…]**——File 必须在 task **之后**（compression 冻结 `messages[0:2]` 为 [system, task] 并向 index 1 追加摘要，中间不能插东西）；template 的源码槽位改填指针文本（自定义模板照常替换）。预载成为 `msg.File` 后 file_dedup/file_evict 自动覆盖它——"模型有全文仍去 ranged read"由 dedup 直接吃掉。降级链不变（先丢 related Files 再丢 own Files → 哨兵文本）。**已翻默认开**（回归集 A/B，eval/README §9：70 unit/arm，timeout 9→3、成本持平、无质量回退证据）；「flip 后清理清单」自此可执行。
 - **briefing 其余区 typed 化（spec/usage/repo_map 等）**：等出现消费者再做（YAGNI）。
 - **Board / Bulletin 消息**：P3 立项时再加（见 `docs/cross-unit.md`），消息分级（intent/observation/confirmed）、路由键（symbols/paths）都是字段而非文本约定。
@@ -23,7 +23,7 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 1. **lowering 1:1 不变量**：一条领域消息恰好降为一条 wire 消息。compression 按消息**索引**分区（frozen/compress/active、assistant+tool rounds），1:N 或 drop 型 lowering 会悄悄错位分区。要从 context 消失的消息走**驱逐**（从 `[]Msg` 移除），不走"降为空"。
 2. **wire-shaped 的内容就该是 Raw**：loop 的操舵语（wrap-up、"call task_done" 重试提示）本质就是 wire 文本，不强行领域化——直通不是过渡态，是这类消息的终态。
 3. **session 记 lowered 形态**：transcript 记录模型实际看到的东西（llm_request = `msg.Lower` 的结果），领域形态入库是 PR C 之后按需再议——refactor 不背 schema 变更。
-4. **lowering 的最终归宿在 client 边界（讨论中）**：per-provider 的渲染决策（FileMsg 降成 user 文本还是 tool_result）逻辑上属于"知道 provider 是谁"的那一层，即 llm client。但今天只有一种 wire 模型、零个 per-provider 决策，且 `msg` 依赖 `llm`（wire 类型所在），client 直接收 `[]msg.Msg` 会造成 import 环。所以：**当下 lowering 留在 loop 侧**（`RunPerFile` 内、API 调用前一行）；当 PR B/C 真出现 provider 敏感的渲染决策时，再引入 client 包装层（`ReviewClient{llm.LLMClient; Renderer}`）或把 wire 类型下沉成独立包解环——那时搬迁只是移动一个调用点，因为 lowering 从未散开过。
+4. **lowering 的最终归宿在 client 边界（讨论中）**：per-provider 的渲染决策（FileMsg 降成 user 文本还是 tool_result）逻辑上属于"知道 provider 是谁"的那一层，即 llm client。但今天只有一种 wire 模型、零个 per-provider 决策，且 `msg` 依赖 `llm`（wire 类型所在），client 直接收 `[]msg.Msg` 会造成 import 环。所以：**当下 lowering 留在 Harness ContextManager 的 provider 边界**；当真出现 provider 敏感的渲染决策时，再引入 client 包装层（`ReviewClient{llm.LLMClient; Renderer}`）或把 wire 类型下沉成独立包解环——那时搬迁只是移动一个调用点，因为 lowering 从未散开过。
 
 ## flip 后清理清单（typed_briefing 转默认开时执行，债务挂账）
 
@@ -38,6 +38,6 @@ LLM API 的 wire 格式只有 user / assistant / system / tool 四种 role，**r
 
 ## References
 
-- 实现锚点：`internal/harness/msg`（类型与 lowering）、`internal/harness/llmloop/loop.go`（货币与调用点）、`internal/harness/llmloop/compression.go`（索引分区，1:1 不变量的依赖方）
+- 实现锚点：`internal/harness/msg`（类型与 lowering）、`internal/harness/context_manager.go`（review Execution 的投影、回收与 agentcore 压缩边界）；`internal/harness/llmloop` 保留 legacy scan 路径
 - 消费方向：`docs/cross-unit.md`（Board/Bulletin）、`docs/context-model.md` 关键设计 8（briefing）
 - 参考：pi `packages/coding-agent/src/core/messages.ts`

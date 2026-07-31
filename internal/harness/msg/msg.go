@@ -80,3 +80,25 @@ func Lower(msgs []Msg) []llm.Message {
 	}
 	return out
 }
+
+// CloneAll copies a conversation without sharing mutable typed messages.
+// Context projection may stub File or Board values, while the runtime
+// transcript must remain unchanged until a rewrite is explicitly committed.
+func CloneAll(msgs []Msg) []Msg {
+	out := make([]Msg, len(msgs))
+	for i, m := range msgs {
+		switch value := m.(type) {
+		case *File:
+			cp := *value
+			out[i] = &cp
+		case *Board:
+			cp := *value
+			out[i] = &cp
+		case Raw:
+			out[i] = Raw{M: value.M}
+		default:
+			out[i] = value
+		}
+	}
+	return out
+}
