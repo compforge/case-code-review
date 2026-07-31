@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -50,7 +50,7 @@ func ReLocateComment(
 		MaxTokens: maxTokens,
 	})
 	if err != nil {
-		fmt.Fprintf(stdout.Writer(), "[ccr] Re-location LLM call failed for %s: %v\n", cm.Path, err)
+		fmt.Fprintf(console.Out(), "[ccr] Re-location LLM call failed for %s: %v\n", cm.Path, err)
 		return false, nil, messages
 	}
 

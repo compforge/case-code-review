@@ -15,9 +15,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/pathutil"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 )
 
 // binarySniffWindow is the number of leading bytes inspected to decide
@@ -102,20 +102,20 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 		full := filepath.Join(p.repoDir, rel)
 		info, err := os.Lstat(full)
 		if err != nil {
-			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: cannot stat %s: %v\n", rel, err)
+			fmt.Fprintf(console.Err(), "[ccr] WARNING: cannot stat %s: %v\n", rel, err)
 			continue
 		}
 		if !info.Mode().IsRegular() {
 			continue
 		}
 		if info.Size() > p.maxFileSizeBytes {
-			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: skipping %s (%d bytes exceeds %d-byte scan limit; raise MaxTokens if the real concern is token budget, not memory)\n",
+			fmt.Fprintf(console.Err(), "[ccr] WARNING: skipping %s (%d bytes exceeds %d-byte scan limit; raise MaxTokens if the real concern is token budget, not memory)\n",
 				rel, info.Size(), p.maxFileSizeBytes)
 			continue
 		}
 		binary, err := isBinaryFile(full)
 		if err != nil {
-			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: cannot sniff %s: %v\n", rel, err)
+			fmt.Fprintf(console.Err(), "[ccr] WARNING: cannot sniff %s: %v\n", rel, err)
 			continue
 		}
 		if binary {
@@ -129,7 +129,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 		}
 		content, err := os.ReadFile(full)
 		if err != nil {
-			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: cannot read %s: %v\n", rel, err)
+			fmt.Fprintf(console.Err(), "[ccr] WARNING: cannot read %s: %v\n", rel, err)
 			continue
 		}
 		out = append(out, Item{
@@ -203,7 +203,7 @@ func (p *Provider) listFilesViaWalk(ctx context.Context) ([]string, error) {
 			return cerr
 		}
 		if err != nil {
-			fmt.Fprintf(stdout.Err(), "[ccr] WARNING: walk error at %s: %v\n", path, err)
+			fmt.Fprintf(console.Err(), "[ccr] WARNING: walk error at %s: %v\n", path, err)
 			return nil // continue walking; skip this entry
 		}
 		if path == p.repoDir {

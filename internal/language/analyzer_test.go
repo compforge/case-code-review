@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -74,6 +75,30 @@ class Service {
 	assertDefinition(t, analysis, "app.ts::helper", Span{Start: 1, End: 1})
 	assertDefinition(t, analysis, "app.ts::Service.run", Span{Start: 4, End: 6})
 	assertNames(t, analysis.CalleesOf("Service.run"), "helper", "load")
+}
+
+func TestAnalyzeTypeScriptImportTypeQuery(t *testing.T) {
+	source := Source{Path: "app.ts", Content: `function load() {
+  return factory<typeof import("./model").Result>();
+}
+`}
+	entry := grammars.DetectLanguageByName("typescript")
+	parser := gotreesitter.NewParser(entry.Language())
+	tree, err := parser.ParseStrict([]byte(source.Content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Release()
+	if tree.RootNode().HasError() {
+		t.Fatal("TypeScript import-type query produced a syntax error")
+	}
+
+	analysis, err := NewAnalyzer("").Analyze(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDefinition(t, analysis, "app.ts::load", Span{Start: 1, End: 3})
+	assertNames(t, analysis.CalleesOf("load"), "factory")
 }
 
 func TestAnalyzeUnsupported(t *testing.T) {

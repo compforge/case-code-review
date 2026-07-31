@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 )
 
 // typedBuildTimeout caps the one-off packages.Load. A module that can't
@@ -38,11 +38,11 @@ func (t *TypedGraph) graph() *language.CallGraph {
 			// Expected on non-building diffs / non-Go repos — informational.
 			// Stderr, not stdout: the lazy build fires inside dry-run too,
 			// and --format json must stay machine-parseable.
-			fmt.Fprintf(stdout.Err(), "[ccr] Typed call graph unavailable (%v) — using grep heuristics\n", err)
+			fmt.Fprintf(console.Err(), "[ccr] Typed call graph unavailable (%v) — using grep heuristics\n", err)
 			return
 		}
 		nodes, edges := g.Stats()
-		fmt.Fprintf(stdout.Err(), "[ccr] Typed call graph: %d funcs, %d edges in %s\n",
+		fmt.Fprintf(console.Err(), "[ccr] Typed call graph: %d funcs, %d edges in %s\n",
 			nodes, edges, time.Since(start).Round(time.Millisecond))
 		t.g = g
 	})

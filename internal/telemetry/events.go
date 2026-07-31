@@ -12,7 +12,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 )
 
 // Event emits a structured event as a span with immediate end.
@@ -73,9 +73,9 @@ func PrintTraceSummary(filesReviewed, commentsGenerated int64, inputTokens, outp
 		if cacheReadTokens > 0 || cacheWriteTokens > 0 {
 			base += fmt.Sprintf(", cache(read: ~%d, write: ~%d)", cacheReadTokens, cacheWriteTokens)
 		}
-		fmt.Fprintf(stdout.Writer(), "%s, %s elapsed\n", base, elapsed)
+		fmt.Fprintf(console.Out(), "%s, %s elapsed\n", base, elapsed)
 	} else {
-		fmt.Fprintf(stdout.Writer(), "[ccr] Summary: %d file(s) reviewed, %d comment(s), ~%d token(s) used, %s elapsed\n",
+		fmt.Fprintf(console.Out(), "[ccr] Summary: %d file(s) reviewed, %d comment(s), ~%d token(s) used, %s elapsed\n",
 			filesReviewed, commentsGenerated, totalTokens, elapsed)
 	}
 }
@@ -86,22 +86,22 @@ func PrintTraceSummary(filesReviewed, commentsGenerated int64, inputTokens, outp
 func PrintToolCallStarted(toolName string, args map[string]any) {
 	summary := summarizeArgs(args)
 	if summary != "" {
-		fmt.Fprintf(stdout.Writer(), "[ccr]   ▶ %s %s\n", toolName, summary)
+		fmt.Fprintf(console.Out(), "[ccr]   ▶ %s %s\n", toolName, summary)
 	} else {
-		fmt.Fprintf(stdout.Writer(), "[ccr]   ▶ %s\n", toolName)
+		fmt.Fprintf(console.Out(), "[ccr]   ▶ %s\n", toolName)
 	}
 }
 
 // PrintToolCallFinished prints a line when a tool finishes successfully.
 // Example: [ccr]   ✔ file_read "internal/config/rules/loader.go" (12ms)
 func PrintToolCallFinished(toolName string, dur time.Duration) {
-	fmt.Fprintf(stdout.Writer(), "[ccr]   ✔ %s (%s)\n", toolName, FormatDuration(dur))
+	fmt.Fprintf(console.Out(), "[ccr]   ✔ %s (%s)\n", toolName, FormatDuration(dur))
 }
 
 // PrintToolCallError prints a line when a tool fails.
 // Example: [ccr]   ✘ file_read "internal/config/rules/loader.go" failed: permission denied
 func PrintToolCallError(toolName string, err error) {
-	fmt.Fprintf(stdout.Err(), "[ccr]   ✘ %s failed: %v\n", toolName, err)
+	fmt.Fprintf(console.Err(), "[ccr]   ✘ %s failed: %v\n", toolName, err)
 }
 
 // summarizeArgs extracts a concise key=value summary from tool arguments for console display.

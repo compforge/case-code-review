@@ -6,7 +6,7 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 )
 
 // Warning describes a non-fatal warning recorded during an execution.
@@ -43,13 +43,13 @@ func (p *WorkerPool) Submit(f func() error) {
 		// crash the whole process; the semaphore is still released.
 		defer func() {
 			if r := recover(); r != nil {
-				fmt.Fprintf(stdout.Writer(), "[ccr] WorkerPool panic: %v\n%s\n", r, debug.Stack())
+				fmt.Fprintf(console.Out(), "[ccr] WorkerPool panic: %v\n%s\n", r, debug.Stack())
 			}
 		}()
 
 		err := f()
 		if err != nil {
-			fmt.Fprintf(stdout.Writer(), "[ccr] WorkerPool error: %v\n", err)
+			fmt.Fprintf(console.Out(), "[ccr] WorkerPool error: %v\n", err)
 		}
 	})
 }

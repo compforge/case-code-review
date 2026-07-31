@@ -12,6 +12,7 @@ import (
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
@@ -20,7 +21,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/preview"
-	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -220,11 +220,11 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	a.items = a.filterLargeScans(a.items)
 
 	reviewable := len(a.items)
-	fmt.Fprintf(stdout.Writer(), "[ccr] full-scan: %d file(s) discovered, reviewing %d in %s\n",
+	fmt.Fprintf(console.Out(), "[ccr] full-scan: %d file(s) discovered, reviewing %d in %s\n",
 		totalDiscovered, reviewable, a.args.RepoDir)
 
 	if reviewable == 0 {
-		fmt.Fprintln(stdout.Writer(), "[ccr] No reviewable files. Skipping scan.")
+		fmt.Fprintln(console.Out(), "[ccr] No reviewable files. Skipping scan.")
 		telemetry.Event(ctx, "scan.no.files")
 		a.session.Finalize()
 		return []finding.Finding{}, nil
@@ -232,11 +232,11 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 
 	// Pre-run cost projection so users aren't surprised by a large scan.
 	est := estimateCost(a.items, a.planEnabled(), a.dedupEnabled(), a.summaryEnabled())
-	fmt.Fprintf(stdout.Writer(), "[ccr] estimated cost: %s\n", est)
+	fmt.Fprintf(console.Out(), "[ccr] estimated cost: %s\n", est)
 	if a.args.MaxTokensBudget > 0 {
-		fmt.Fprintf(stdout.Writer(), "[ccr] token budget: %s (dispatch stops once exceeded)\n", humanTokens(a.args.MaxTokensBudget))
+		fmt.Fprintf(console.Out(), "[ccr] token budget: %s (dispatch stops once exceeded)\n", humanTokens(a.args.MaxTokensBudget))
 		if est.TotalTokens > a.args.MaxTokensBudget {
-			fmt.Fprintf(stdout.Writer(), "[ccr] WARNING: estimate (%s) exceeds budget (%s); scan will stop partway\n",
+			fmt.Fprintf(console.Out(), "[ccr] WARNING: estimate (%s) exceeds budget (%s); scan will stop partway\n",
 				humanTokens(est.TotalTokens), humanTokens(a.args.MaxTokensBudget))
 		}
 	}
@@ -300,9 +300,9 @@ func (a *Runner) filterScanItems(items []Item) []Item {
 	for _, it := range items {
 		if reason := a.whyExcluded(it); reason != preview.ExcludeNone {
 			if it.IsBinary {
-				fmt.Fprintf(stdout.Writer(), "[ccr] Skipping %s — binary file\n", it.Path)
+				fmt.Fprintf(console.Out(), "[ccr] Skipping %s — binary file\n", it.Path)
 			} else {
-				fmt.Fprintf(stdout.Writer(), "[ccr] Skipping %s — filtered by path/extension rules\n", it.Path)
+				fmt.Fprintf(console.Out(), "[ccr] Skipping %s — filtered by path/extension rules\n", it.Path)
 			}
 			skipped++
 			continue
@@ -310,7 +310,7 @@ func (a *Runner) filterScanItems(items []Item) []Item {
 		kept = append(kept, it)
 	}
 	if skipped > 0 {
-		fmt.Fprintf(stdout.Writer(), "[ccr] Filtered %d file(s) by include/exclude rules\n", skipped)
+		fmt.Fprintf(console.Out(), "[ccr] Filtered %d file(s) by include/exclude rules\n", skipped)
 	}
 	return kept
 }
@@ -326,7 +326,7 @@ func (a *Runner) filterLargeScans(items []Item) []Item {
 	for _, it := range items {
 		tokens := llm.CountTokens(it.Content)
 		if tokens > limit {
-			fmt.Fprintf(stdout.Writer(), "[ccr] Skipping %s (~%d tokens exceeds 80%% of max_tokens(%d))\n",
+			fmt.Fprintf(console.Out(), "[ccr] Skipping %s (~%d tokens exceeds 80%% of max_tokens(%d))\n",
 				it.Path, tokens, a.args.Template.MaxTokens)
 			skipped++
 			continue
@@ -334,7 +334,7 @@ func (a *Runner) filterLargeScans(items []Item) []Item {
 		kept = append(kept, it)
 	}
 	if skipped > 0 {
-		fmt.Fprintf(stdout.Writer(), "[ccr] Pre-filtered %d file(s) exceeding 80%% of max_tokens\n", skipped)
+		fmt.Fprintf(console.Out(), "[ccr] Pre-filtered %d file(s) exceeding 80%% of max_tokens\n", skipped)
 	}
 	return kept
 }
@@ -392,7 +392,7 @@ func (a *Runner) dispatchSubtasks(ctx context.Context) ([]finding.Finding, error
 
 	strategy := a.resolveBatchStrategy()
 	batches := groupBatches(a.items, strategy, a.args.Template.BatchSize)
-	fmt.Fprintf(stdout.Writer(), "[ccr] scan dispatch: %d batch(es) by %s strategy\n", len(batches), strategy)
+	fmt.Fprintf(console.Out(), "[ccr] scan dispatch: %d batch(es) by %s strategy\n", len(batches), strategy)
 
 	var dispatched int64
 	for bi, batch := range batches {
@@ -472,7 +472,7 @@ func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) 
 			used := a.executor.TotalTokensUsed()
 			projected := used + estimateFileTokens(batch[i], a.planEnabled())
 			if projected > a.args.MaxTokensBudget {
-				fmt.Fprintf(stdout.Writer(), "[ccr] token budget reached (used %s + next-file est ≈ %s > budget %s) — skipping %s and remaining files\n",
+				fmt.Fprintf(console.Out(), "[ccr] token budget reached (used %s + next-file est ≈ %s > budget %s) — skipping %s and remaining files\n",
 					humanTokens(used), humanTokens(projected), humanTokens(a.args.MaxTokensBudget), batch[i].Path)
 				a.recordWarning("token_budget_reached", batch[i].Path,
 					fmt.Sprintf("stopped in batch #%d: used %d tokens + next-file estimate exceeds budget %d", batchIdx, used, a.args.MaxTokensBudget))
@@ -505,7 +505,7 @@ func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) 
 
 			if err := a.executeSubtask(fileCtx, it); err != nil {
 				atomic.AddInt64(&a.subtaskFailed, 1)
-				fmt.Fprintf(stdout.Writer(), "[ccr] Scan subtask error for %s (batch #%d): %v\n", it.Path, batchIdx, err)
+				fmt.Fprintf(console.Out(), "[ccr] Scan subtask error for %s (batch #%d): %v\n", it.Path, batchIdx, err)
 				telemetry.ErrorEvent(fileCtx, "scan.subtask.error", err,
 					telemetry.AnyToAttr("file.path", it.Path),
 					telemetry.AnyToAttr("batch.index", batchIdx))
@@ -551,7 +551,7 @@ func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
 	tokenLimit := maxAllowed * 4 / 5
 	if tokenCount > tokenLimit {
 		msg := fmt.Sprintf("prompt tokens (%d) exceed %d%% of max_tokens(%d)", tokenCount, 80, maxAllowed)
-		fmt.Fprintf(stdout.Writer(), "[ccr] WARNING: %s for %s\n", msg, it.Path)
+		fmt.Fprintf(console.Out(), "[ccr] WARNING: %s for %s\n", msg, it.Path)
 		a.recordWarning("token_threshold_exceeded", it.Path, msg)
 		telemetry.Event(ctx, "token.threshold.exceeded",
 			telemetry.AnyToAttr("file.path", it.Path),
@@ -602,7 +602,7 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	})
 	if err != nil {
 		rec.SetError(err, time.Since(startTime))
-		fmt.Fprintf(stdout.Writer(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
+		fmt.Fprintf(console.Out(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
 		return noPlan
 	}
 	rec.SetResponse(resp, time.Since(startTime))
@@ -655,7 +655,7 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	})
 	if err != nil {
 		rec.SetError(err, time.Since(startTime))
-		fmt.Fprintf(stdout.Writer(), "[ccr] scan project summary failed: %v\n", err)
+		fmt.Fprintf(console.Out(), "[ccr] scan project summary failed: %v\n", err)
 		return
 	}
 	rec.SetResponse(resp, time.Since(startTime))
@@ -730,7 +730,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	})
 	if err != nil {
 		rec.SetError(err, time.Since(startTime))
-		fmt.Fprintf(stdout.Writer(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
+		fmt.Fprintf(console.Out(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
 		return
 	}
 	rec.SetResponse(resp, time.Since(startTime))
@@ -738,7 +738,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 
 	deduped, ok := applyDedupGroups(resp.Content(), batchComments)
 	if !ok {
-		fmt.Fprintf(stdout.Writer(), "[ccr] scan dedup batch #%d: malformed groups, keeping originals\n", batchIdx)
+		fmt.Fprintf(console.Out(), "[ccr] scan dedup batch #%d: malformed groups, keeping originals\n", batchIdx)
 		return
 	}
 	if len(deduped) == len(batchComments) {
@@ -746,7 +746,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 		return
 	}
 	a.args.Findings.ReplaceSince(batchStart, deduped)
-	fmt.Fprintf(stdout.Writer(), "[ccr] scan dedup batch #%d: %d → %d comments\n", batchIdx, len(batchComments), len(deduped))
+	fmt.Fprintf(console.Out(), "[ccr] scan dedup batch #%d: %d → %d comments\n", batchIdx, len(batchComments), len(deduped))
 }
 
 // buildDedupCommentsJSON renders the batch comments as a JSON list with

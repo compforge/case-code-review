@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/qiankunli/case-code-review/internal/stdout"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
@@ -63,7 +63,7 @@ func clusterByCallChain(files []unit.FileFragments, adj map[string][]string) ([]
 		if len(comp) > maxChainMembers || lines > maxChainChangeLines {
 			// Too big for one loop — leave its members to the cost axis. Logged so
 			// the coarsening isn't silent.
-			fmt.Fprintf(stdout.Writer(), "[ccr] call-chain cluster of %d funcs (%d lines) exceeds cap — left to function/file scope: %v\n", len(comp), lines, comp)
+			fmt.Fprintf(console.Out(), "[ccr] call-chain cluster of %d funcs (%d lines) exceeds cap — left to function/file scope: %v\n", len(comp), lines, comp)
 			continue
 		}
 		frags := make([]unit.Fragment, 0, len(comp))
