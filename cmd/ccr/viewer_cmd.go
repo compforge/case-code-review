@@ -12,7 +12,7 @@ type viewerOptions struct {
 }
 
 func parseViewerFlags(args []string) (viewerOptions, error) {
-	a := newOcrFlagSet("ocr viewer")
+	a := newOcrFlagSet("ccr viewer")
 
 	opts := viewerOptions{}
 	a.StringVar(&opts.addr, "addr", "localhost:5483", "listen address")
@@ -43,13 +43,12 @@ func printViewerUsage() {
 	fmt.Println(`Session history WebUI viewer.
 
 Usage:
-  ocr viewer [flags]
-  ocr v [flags]              (alias)
+  ccr viewer [flags]
 
 Flags:
   --addr <address>           listen address (default: localhost:5483)
 
 Examples:
-  ocr viewer                     # start on default port
-  ocr viewer --addr :3000        # bind to all interfaces on port 3000`)
+  ccr viewer                         # start on default port
+  ccr viewer --addr 127.0.0.1:3000   # listen on port 3000`)
 }

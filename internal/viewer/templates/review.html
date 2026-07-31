@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Review.Stage.Label}} - CCR Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; <a href="/r/{{.EncodedRepo}}/{{.Session.Summary.SessionID}}">Session {{.Session.Summary.SessionID | truncate 12}}</a> &rsaquo; {{.Review.Stage.Label}}</nav>
+<main>
+<div class="session-header review-header">
+    <div class="stage-kicker">{{.Review.Stage.Label}}</div>
+    <h2>{{if .Review.ID}}{{.Review.ID}}{{else}}{{.Review.FilePath}}{{end}}</h2>
+    <div class="meta">
+        <span><strong>Scope:</strong> {{if .Review.Scope}}{{.Review.Scope}}{{else}}-{{end}}</span>
+        <span><strong>Kind:</strong> {{.Review.Kind}}</span>
+        {{if .Review.FilePath}}<span><strong>Anchor:</strong> {{.Review.FilePath}}</span>{{end}}
+        {{if .Review.Paths}}<span><strong>Files:</strong> {{len .Review.Paths}}</span>{{end}}
+    </div>
+    {{if .Review.Paths}}<div class="review-paths review-header-paths">{{range $i, $p := .Review.Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</div>{{end}}
+</div>
+
+<div class="overview-grid review-metrics-grid">
+    <div class="overview-card">
+        <div class="overview-value">{{formatDuration .Review.Metrics.ElapsedSec}}</div>
+        <div class="overview-label">Elapsed</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatMillis .Review.Metrics.LLMDurationMs}}</div>
+        <div class="overview-label">LLM Time</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{.Review.Metrics.TurnCount}}</div>
+        <div class="overview-label">Agent Turns</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Review.Metrics.LLMCalls}}</div>
+        <div class="overview-label">LLM Calls</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Review.Metrics.PromptTokens}}</div>
+        <div class="overview-label">Prompt Total</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Review.Metrics.CompletionTokens}}</div>
+        <div class="overview-label">Completion</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Review.Metrics.ToolCalls}}</div>
+        <div class="overview-label">Tool Calls</div>
+    </div>
+    {{if .Review.Metrics.ToolFailures}}
+    <div class="overview-card error-card">
+        <div class="overview-value">{{.Review.Metrics.ToolFailures}}</div>
+        <div class="overview-label">Tool Failures</div>
+    </div>
+    {{end}}
+</div>
+
+{{if .Review.Tools}}
+<h3>Tool Usage</h3>
+<table class="review-table tool-summary-table">
+    <thead><tr><th>Tool</th><th>Calls</th><th>Failures</th><th>Time</th></tr></thead>
+    <tbody>
+    {{range .Review.Tools}}
+        <tr><td><code>{{.Name}}</code></td><td>{{formatInt .Calls}}</td><td>{{formatInt .Failures}}</td><td>{{formatMillis .DurationMs}}</td></tr>
+    {{end}}
+    </tbody>
+</table>
+{{end}}
+
+{{$prompts := systemPromptsFor .Session.SystemPrompts .Review.Tasks}}
+{{if $prompts}}
+<h3>System Prompt</h3>
+<div class="system-prompts">
+{{range $prompts}}
+<details class="system-prompt">
+    <summary class="system-prompt-header">
+        <span class="chevron"></span>
+        <span class="system-prompt-label">{{range $i, $t := .TaskTypes}}{{if $i}}, {{end}}{{$t}}{{end}}</span>
+        <span class="system-prompt-meta">{{len .Text}} chars</span>
+    </summary>
+    <pre class="msg-text">{{.Text}}</pre>
+</details>
+{{end}}
+</div>
+{{end}}
+
+<h3>Prompt Growth</h3>
+<p class="section-note">每一行是 agent loop 的一次 turn；横条表示该轮实际 prompt tokens，Δ 表示相对上一轮的变化。上方 Prompt Total 是各轮输入之和，不是当前 context 大小。</p>
+{{if .Review.Turns}}
+<div class="prompt-timeline">
+{{range .Review.Turns}}
+<details class="prompt-turn">
+    <summary class="prompt-turn-summary">
+        <span class="turn-index">Turn {{.TurnNo}}</span>
+        <span class="turn-task">{{.TaskType}}</span>
+        <span class="prompt-bar-track" title="{{.PromptTokens}} prompt tokens">
+            <span class="prompt-bar-fill" style="width: {{barPercent .PromptTokens $.Review.Metrics.MaxPromptTokens}}%;">
+                {{if .CacheReadTokens}}<span class="prompt-cache-fill" style="width: {{barPercent .CacheReadTokens .PromptTokens}}%;"></span>{{end}}
+            </span>
+        </span>
+        <span class="turn-token">{{formatInt .PromptTokens}}</span>
+        <span class="turn-delta {{if lt .PromptDelta 0}}delta-negative{{else}}delta-positive{{end}}">Δ {{formatSigned .PromptDelta}}</span>
+        <span class="turn-messages">{{len .Request}} msgs (Δ {{formatSigned .MessageDelta}})</span>
+        <span class="chevron"></span>
+    </summary>
+    {{template "callBody" .}}
+</details>
+{{end}}
+</div>
+{{else}}
+<p class="empty-state">No agent turns were recorded for this review.</p>
+{{end}}
+
+{{if gt .Review.Metrics.LLMCalls .Review.Metrics.TurnCount}}
+<h3>Supporting Model Calls</h3>
+<p class="section-note">压缩、重定位等辅助调用计入本 Review 的 token 和时间，但不属于主 agent loop 的 prompt 增长曲线。</p>
+<div class="supporting-calls">
+{{range .Review.Calls}}{{if not .TurnNo}}
+<details class="prompt-turn supporting-call">
+    <summary class="prompt-turn-summary">
+        <span class="turn-index">{{.TaskType}}</span>
+        <span class="turn-task">Request #{{.RequestNo}}</span>
+        <span class="turn-token">P {{formatInt .PromptTokens}} / C {{formatInt .CompletionTokens}}</span>
+        <span class="turn-messages">{{formatMillis .DurationMs}}</span>
+        <span class="chevron"></span>
+    </summary>
+    {{template "callBody" .}}
+</details>
+{{end}}{{end}}
+</div>
+{{end}}
+
+{{define "callBody"}}
+<div class="prompt-turn-body">
+    <div class="call-meta">
+        {{if .Model}}<span class="badge badge-model">{{.Model}}</span>{{end}}
+        <span class="badge badge-tokens">P:{{formatInt .PromptTokens}} C:{{formatInt .CompletionTokens}}{{if or .CacheReadTokens .CacheWriteTokens}} CR:{{formatInt .CacheReadTokens}} CW:{{formatInt .CacheWriteTokens}}{{end}}</span>
+        {{if .DurationMs}}<span class="badge badge-duration">{{formatMillis .DurationMs}}</span>{{end}}
+        {{if .Error}}<span class="badge badge-error">{{.Error}}</span>{{end}}
+    </div>
+    {{if .Request}}
+    <div class="request-body full-request">
+        <h4>Prompt snapshot</h4>
+        {{range .Request}}
+        <div class="msg msg-{{.Role}}">
+            <div class="msg-role">{{.Role}}</div>
+            <pre class="msg-text">{{.Text}}</pre>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+    {{with .ResponseContent}}
+    <div class="card-body response-content">
+        <h4>Response</h4>
+        <div class="response-text">{{.}}</div>
+    </div>
+    {{end}}
+    {{if .ToolCalls}}
+    <div class="tool-calls-section">
+        <div class="tool-calls-label">Tool Calls ({{len .ToolCalls}})</div>
+        {{range .ToolCalls}}
+        <div class="tool-call-item {{if not .Ok}}tool-call-error{{end}}">
+            <div class="tool-call-header">
+                <span class="tool-icon">&#9881;</span>
+                <strong class="tool-name">{{.Name}}</strong>
+                {{if .DurationMs}}<span class="badge badge-duration">{{formatMillis .DurationMs}}</span>{{end}}
+                {{if not .Ok}}<span class="badge badge-error">Failed</span>{{end}}
+            </div>
+            <details class="tool-detail">
+                <summary class="tool-detail-toggle"><span class="chevron-sm"></span><span>Show Details</span></summary>
+                <div class="tool-detail-body">
+                    <div class="tool-section"><div class="tool-section-label">Arguments</div><pre>{{.Arguments}}</pre></div>
+                    {{if .Result}}<div class="tool-section"><div class="tool-section-label">Result</div><pre>{{.Result}}</pre></div>{{end}}
+                </div>
+            </details>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+{{end}}
+
+<script>
+document.querySelectorAll('.response-text').forEach(function(el) {
+    var text = el.textContent;
+    var esc = function(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
+    var codeBlocks = [];
+    var html = esc(text);
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+        codeBlocks.push(code.replace(/^\n|\n$/g, ''));
+        return '%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%';
+    });
+    html = html
+        .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>')
+        .replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>')
+        .replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>')
+        .replace(/^[-*] (.+)$/gm, '<div class="md-li">&bull; $1</div>')
+        .replace(/\n{2,}/g, '<br><br>')
+        .replace(/\n/g, '<br>');
+    codeBlocks.forEach(function(code, i) {
+        html = html.replace('%%CODEBLOCK_' + i + '%%',
+            '<pre class="code-block"><code>' + code + '</code></pre>');
+    });
+    el.innerHTML = html;
+});
+</script>
+</main>
+</body>
+</html>

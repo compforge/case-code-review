@@ -3,14 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Session Detail - Open Code Review Viewer</title>
+    <title>Session Overview - CCR Viewer</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<nav class="breadcrumb"><a href="/">Open Code Review Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Session {{.Session.Summary.SessionID | truncate 12}}</nav>
+<nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Session {{.Session.Summary.SessionID | truncate 12}}</nav>
 <main>
+{{$review1 := reviewsOfStage .Session.Reviews "review1"}}
+{{$review2 := reviewsOfStage .Session.Reviews "review2"}}
+{{$scans := reviewsOfStage .Session.Reviews "scan"}}
+
 <div class="session-header">
-    <h2>Session: {{.Session.Summary.SessionID}}</h2>
+    <h2>Session Overview</h2>
+    <div class="session-id">{{.Session.Summary.SessionID}}</div>
     <div class="meta">
         <span><strong>CWD:</strong> {{.Session.Summary.CWD}}</span>
         <span><strong>Branch:</strong> {{.Session.Summary.GitBranch}}</span>
@@ -23,93 +28,102 @@
         <span><strong>Commit:</strong> <code>{{.Session.Summary.DiffCommit}}</code></span>
         {{end}}
         <span><strong>Model:</strong> <code>{{.Session.Summary.Model}}</code></span>
-        <span><strong>Duration:</strong> {{formatDuration .Session.Summary.DurationSec}}</span>
         <span><strong>Files:</strong> {{.Session.Summary.FileCount}}</span>
     </div>
 </div>
 
-<div class="token-summary">
-    <h3>Token Usage</h3>
-    <div class="token-stats">
-        <div class="token-item">
-            <div class="token-value">{{.Session.TokenUsage.TotalPromptTokens}}</div>
-            <div class="token-label">Prompt Tokens</div>
-        </div>
-        <div class="token-item">
-            <div class="token-value">{{.Session.TokenUsage.TotalCompletionTokens}}</div>
-            <div class="token-label">Completion Tokens</div>
-        </div>
-        <div class="token-item">
-            <div class="token-value">{{add .Session.TokenUsage.TotalPromptTokens .Session.TokenUsage.TotalCompletionTokens}}</div>
-            <div class="token-label">Total Tokens</div>
-        </div>
-        <div class="token-item">
-            <div class="token-value">{{.Session.TokenUsage.RequestCount}}</div>
-            <div class="token-label">LLM Requests</div>
-        </div>
-        {{if or .Session.TokenUsage.TotalCacheReadTokens .Session.TokenUsage.TotalCacheWriteTokens}}
-        <div class="token-item">
-            <div class="token-value">{{.Session.TokenUsage.TotalCacheReadTokens}}</div>
-            <div class="token-label">Cache Read</div>
-        </div>
-        <div class="token-item">
-            <div class="token-value">{{.Session.TokenUsage.TotalCacheWriteTokens}}</div>
-            <div class="token-label">Cache Write</div>
-        </div>
-        {{end}}
-        {{if .Session.Summary.LLMFailures}}
-        <div class="token-item">
-            <div class="token-value badge-error">{{.Session.Summary.LLMFailures}}</div>
-            <div class="token-label">LLM Failures</div>
-        </div>
-        {{end}}
+<div class="overview-grid">
+    <div class="overview-card">
+        <div class="overview-value">{{formatDuration .Session.Summary.DurationSec}}</div>
+        <div class="overview-label">Wall Time</div>
     </div>
-    {{with .Session.TokenUsage.FileTokenBreakdown}}
-    <table class="token-table">
-        <thead><tr><th>File</th><th>Prompt</th><th>Completion</th>{{if or $.Session.TokenUsage.TotalCacheReadTokens $.Session.TokenUsage.TotalCacheWriteTokens}}<th>Cache Read</th><th>Cache Write</th>{{end}}<th>Total</th></tr></thead>
-        <tbody>
-        {{range .}}
-            <tr>
-                <td title="{{.FilePath}}">{{.FilePath | truncate 60}}</td>
-                <td>{{.PromptTokens}}</td>
-                <td>{{.CompletionTokens}}</td>
-                {{if or $.Session.TokenUsage.TotalCacheReadTokens $.Session.TokenUsage.TotalCacheWriteTokens}}<td>{{.CacheReadTokens}}</td><td>{{.CacheWriteTokens}}</td>{{end}}
-                <td><strong>{{add .PromptTokens .CompletionTokens}}</strong></td>
-            </tr>
-        {{end}}
-        </tbody>
-    </table>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Session.TokenUsage.TotalPromptTokens}}</div>
+        <div class="overview-label">Prompt Tokens</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Session.TokenUsage.TotalCompletionTokens}}</div>
+        <div class="overview-label">Completion Tokens</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Session.TokenUsage.RequestCount}}</div>
+        <div class="overview-label">LLM Calls</div>
+    </div>
+    <div class="overview-card review1-card">
+        <div class="overview-value">{{len $review1}}</div>
+        <div class="overview-label">Review 1</div>
+    </div>
+    <div class="overview-card review2-card">
+        <div class="overview-value">{{len $review2}}</div>
+        <div class="overview-label">Review 2</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{toolCallCount .Session.ToolUsage}}</div>
+        <div class="overview-label">Tool Calls</div>
+    </div>
+    {{if .Session.Summary.LLMFailures}}
+    <div class="overview-card error-card">
+        <div class="overview-value">{{.Session.Summary.LLMFailures}}</div>
+        <div class="overview-label">LLM Failures</div>
+    </div>
     {{end}}
 </div>
+
+{{if or .Session.TokenUsage.TotalCacheReadTokens .Session.TokenUsage.TotalCacheWriteTokens}}
+<div class="cache-summary">
+    Cache read <strong>{{formatInt .Session.TokenUsage.TotalCacheReadTokens}}</strong>
+    &middot; Cache write <strong>{{formatInt .Session.TokenUsage.TotalCacheWriteTokens}}</strong>
+</div>
+{{end}}
+
+<h3>Review 1 <span class="heading-count">{{len $review1}}</span></h3>
+<p class="section-note">以 Unit 为粒度发散 Hypothesis。点进任一 Review 查看 prompt 随 agent turn 的增长。</p>
+{{if $review1}}
+<table class="review-table">
+    <thead><tr><th>Unit</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <tbody>{{range $review1}}{{template "reviewRow" .}}{{end}}</tbody>
+</table>
+{{else}}<p class="empty-state">No Review 1 runs.</p>{{end}}
+
+<h3>Review 2 <span class="heading-count">{{len $review2}}</span></h3>
+<p class="section-note">以 CaseFile 为粒度收敛全部 Hypothesis，产出 Assessment。</p>
+{{if $review2}}
+<table class="review-table">
+    <thead><tr><th>CaseFile</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <tbody>{{range $review2}}{{template "reviewRow" .}}{{end}}</tbody>
+</table>
+{{else}}<p class="empty-state">No Review 2 runs.</p>{{end}}
+
+{{if $scans}}
+<h3>Scan <span class="heading-count">{{len $scans}}</span></h3>
+<table class="review-table">
+    <thead><tr><th>File</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <tbody>{{range $scans}}{{template "reviewRow" .}}{{end}}</tbody>
+</table>
+{{end}}
+
+{{if .Session.ToolUsage}}
+<h3>Tool Usage</h3>
+<table class="review-table tool-summary-table">
+    <thead><tr><th>Tool</th><th>Calls</th><th>Failures</th><th>Time</th></tr></thead>
+    <tbody>
+    {{range .Session.ToolUsage}}
+        <tr><td><code>{{.Name}}</code></td><td>{{formatInt .Calls}}</td><td>{{formatInt .Failures}}</td><td>{{formatMillis .DurationMs}}</td></tr>
+    {{end}}
+    </tbody>
+</table>
+{{end}}
 
 {{if .Session.Summary.FilesReviewed}}
 <h3>Files Reviewed</h3>
 <ul class="file-list">
-{{range .Session.Summary.FilesReviewed}}
-    <li>{{.}}</li>
-{{end}}
+{{range .Session.Summary.FilesReviewed}}<li>{{.}}</li>{{end}}
 </ul>
 {{end}}
 
-{{if .Session.SystemPrompts}}
-<h3>System Prompts ({{len .Session.SystemPrompts}})</h3>
-<div class="system-prompts">
-{{range .Session.SystemPrompts}}
-<details class="system-prompt">
-    <summary class="system-prompt-header">
-        <span class="chevron"></span>
-        <span class="system-prompt-label">{{range $i, $t := .TaskTypes}}{{if $i}}, {{end}}{{$t}}{{end}}</span>
-        <span class="system-prompt-meta">system &middot; {{len .Text}} chars</span>
-    </summary>
-    <pre class="msg-text">{{.Text}}</pre>
-</details>
-{{end}}
-</div>
-{{end}}
-
 {{if .Session.Artifacts}}
-<h3>Review Decision Trail ({{len .Session.Artifacts}})</h3>
-<p class="section-note">Unit Review 产生的 Hypothesis，以及 Hypothesis Review / Trial 的收敛判断。</p>
+<h3>Review Decision Trail <span class="heading-count">{{len .Session.Artifacts}}</span></h3>
+<p class="section-note">Review 1 产生 Hypothesis，Review 2 形成 Assessment，Trial 决定最终 Finding。</p>
 <div class="system-prompts">
 {{range .Session.Artifacts}}
 <details class="system-prompt">
@@ -123,148 +137,24 @@
 </div>
 {{end}}
 
-<h3>Units ({{len (scopesOfKind .Session.Units "unit")}})</h3>
-<div class="conversations">
-{{range scopesOfKind .Session.Units "unit"}}
-    {{template "scopeAccordion" .}}
+{{define "reviewRow"}}
+<tr>
+    <td>
+        <a class="review-link" href="review?scope={{urlquery .ID}}">{{if .ID}}{{.ID | truncate 54}}{{else}}{{.FilePath | truncate 54}}{{end}}</a>
+        {{if gt (len .Paths) 1}}<div class="review-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</div>{{end}}
+    </td>
+    <td><span class="badge badge-scope">{{if .Scope}}{{.Scope}}{{else}}{{.Stage.Label}}{{end}}</span></td>
+    <td>{{formatDuration .Metrics.ElapsedSec}}</td>
+    <td>{{formatMillis .Metrics.LLMDurationMs}}</td>
+    <td>{{.Metrics.TurnCount}}</td>
+    <td>{{formatInt .Metrics.PromptTokens}}</td>
+    <td>{{formatInt .Metrics.CompletionTokens}}</td>
+    <td>
+        <strong>{{.Metrics.ToolCalls}}</strong>
+        {{if .Tools}}<div class="tool-chips">{{range .Tools}}<span><code>{{.Name}}</code> ×{{.Calls}}{{if .Failures}} / <b>{{.Failures}} failed</b>{{end}}</span>{{end}}</div>{{end}}
+    </td>
+</tr>
 {{end}}
-</div>
-{{with scopesOfKind .Session.Units "run"}}
-<h3>Run-level passes ({{len .}})</h3>
-<p class="section-note">Hypothesis Review（对本次变更的全部假设统一复核）。</p>
-<div class="conversations">
-{{range .}}
-    {{template "scopeAccordion" .}}
-{{end}}
-</div>
-{{end}}
-
-{{with scopesOfKind .Session.Units "file"}}
-<h3>File-level passes ({{len .}})</h3>
-<p class="section-note">scan 等按文件执行的非 unit 作用域。</p>
-<div class="conversations">
-{{range .}}
-    {{template "scopeAccordion" .}}
-{{end}}
-</div>
-{{end}}
-
-{{define "scopeAccordion"}}
-<details class="file-accordion">
-    <summary class="file-accordion-header">
-        <span class="chevron"></span>
-        {{if .Scope}}<span class="badge badge-scope">{{.Scope}}</span>{{end}}
-        <span class="file-path">{{if or (eq .Kind "unit") (eq .Kind "run")}}{{.ID}}{{else}}{{.FilePath}}{{end}}</span>
-        {{if gt (len .Paths) 1}}<span class="unit-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</span>{{end}}
-        <span class="file-count-badge">{{cardCount .Tasks}} requests</span>
-    </summary>
-    <div class="file-accordion-body">
-        {{range $tg := orderedTasks .Tasks}}
-        <div class="task-group {{taskTypeClass $tg.Type}}">
-            <h4 class="task-type-label">
-                <span class="task-type-dot"></span>
-                {{$tg.Type}}
-            </h4>
-            {{range $tg.Cards}}
-            <div class="card">
-                <div class="card-header">
-                    <span class="request-label">Request #{{.RequestNo}}</span>
-                    {{if .Model}}<span class="badge badge-model">{{.Model}}</span>{{end}}
-                    {{if or .PromptTokens .CompletionTokens}}<span class="badge badge-tokens">P:{{.PromptTokens}} C:{{.CompletionTokens}}{{if or .CacheReadTokens .CacheWriteTokens}} CR:{{.CacheReadTokens}} CW:{{.CacheWriteTokens}}{{end}}</span>{{end}}
-                    {{if .DurationMs}}<span class="badge badge-duration">{{.DurationMs}}ms</span>{{end}}
-                    {{if .Error}}<span class="badge badge-error">{{.Error}}</span>{{end}}
-                </div>
-                {{if .Request}}
-                <details class="request-section">
-                    <summary class="request-toggle">
-                        <span class="chevron-sm"></span>
-                        <span>Request ({{len .Request}} msg{{if gt (len .Request) 1}}s{{end}})</span>
-                    </summary>
-                    <div class="request-body">
-                        {{range .Request}}
-                        <div class="msg msg-{{.Role}}">
-                            <div class="msg-role">{{.Role}}</div>
-                            <pre class="msg-text">{{.Text}}</pre>
-                        </div>
-                        {{end}}
-                    </div>
-                </details>
-                {{end}}
-                {{with .ResponseContent}}
-                <div class="card-body response-content">
-                    <div class="response-text">{{.}}</div>
-                </div>
-                {{end}}
-                {{if .ToolCalls}}
-                <div class="tool-calls-section">
-                    <div class="tool-calls-label">Tool Calls ({{len .ToolCalls}})</div>
-                    {{range .ToolCalls}}
-                    <div class="tool-call-item {{if not .Ok}}tool-call-error{{end}}">
-                        <div class="tool-call-header">
-                            <span class="tool-icon">&#9881;</span>
-                            <strong class="tool-name">{{.Name}}</strong>
-                            {{if .DurationMs}}<span class="badge badge-duration">{{.DurationMs}}ms</span>{{end}}
-                            {{if not .Ok}}<span class="badge badge-error">Failed</span>{{end}}
-                        </div>
-                        <details class="tool-detail">
-                            <summary class="tool-detail-toggle">
-                                <span class="chevron-sm"></span>
-                                <span>Show Details</span>
-                            </summary>
-                            <div class="tool-detail-body">
-                                <div class="tool-section">
-                                    <div class="tool-section-label">Arguments</div>
-                                    <pre>{{.Arguments}}</pre>
-                                </div>
-                                {{if .Result}}
-                                <div class="tool-section">
-                                    <div class="tool-section-label">Result</div>
-                                    <pre>{{.Result}}</pre>
-                                </div>
-                                {{end}}
-                            </div>
-                        </details>
-                    </div>
-                    {{end}}
-                </div>
-                {{end}}
-            </div>
-            {{end}}
-        </div>
-        {{end}}
-    </div>
-</details>
-{{end}}
-
-<script>
-document.querySelectorAll('.response-text').forEach(function(el) {
-    var text = el.textContent;
-    var esc = function(s) {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    };
-    var codeBlocks = [];
-    var html = esc(text);
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
-        codeBlocks.push(code.replace(/^\n|\n$/g, ''));
-        return '%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%';
-    });
-    html = html
-        .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>')
-        .replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>')
-        .replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>')
-        .replace(/^[-*] (.+)$/gm, '<div class="md-li">&bull; $1</div>')
-        .replace(/\n{2,}/g, '<br><br>')
-        .replace(/\n/g, '<br>');
-    codeBlocks.forEach(function(code, i) {
-        html = html.replace('%%CODEBLOCK_' + i + '%%',
-            '<pre class="code-block"><code>' + code + '</code></pre>');
-    });
-    el.innerHTML = html;
-});
-</script>
 </main>
 </body>
 </html>
