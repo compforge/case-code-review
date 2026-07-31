@@ -1,7 +1,7 @@
 package unit
 
 // A review unit's context is assembled on two orthogonal axes (see
-// docs/context-model.md): the Relation (which related symbol a clue came from)
+// docs/unit-model.md): the Relation (which related symbol a clue came from)
 // and the Clue's Kind (what evidence it is). Keeping them separate lets dry-run
 // report a relation×kind matrix and lets a clue be labelled by how it was reached.
 
@@ -45,7 +45,7 @@ type Clue struct {
 }
 
 // Dossier is a Unit's assembled, deduped set of Clues — the review loop's evidence
-// input (docs/context-model.md).
+// input (docs/unit-model.md).
 type Dossier = []Clue
 
 // ClueFinder finds the Clues relevant to reviewing one Unit — one implementation

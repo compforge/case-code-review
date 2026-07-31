@@ -81,7 +81,7 @@ type ScopeSession struct {
 	TaskRecords map[TaskType][]*TaskRecord
 	session     *SessionHistory // back-reference for JSONL persistence
 
-	// Unit lifecycle (docs/unit-model.md 关键设计 8): open → closing (Close
+	// Unit lifecycle (see docs/unit-model.md): open → closing (Close
 	// called, async still in flight) → closed (debrief persisted). Scopes that
 	// never Close (scan / run-level passes) just stay open — the lifecycle is
 	// opt-in for scopes that produce a debrief.

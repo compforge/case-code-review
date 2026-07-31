@@ -33,7 +33,7 @@ const (
 	// issued: what's left of the budget goes to concluding, not digging.
 	wrapUpMaxRounds = 2
 	// maxBulletinsPerLoop caps model-initiated post_bulletin publishes per unit
-	// loop — the board must stay a few cards, not a firehose (docs/cross-unit.md
+	// loop — the board must stay a few cards, not a firehose (docs/unit_review.md
 	// capacity defenses), and an unbounded tool invites filler posts the same
 	// way unbounded findings invite padding.
 	maxBulletinsPerLoop = 3
@@ -88,7 +88,7 @@ type Deps struct {
 	// pass, shed the re-derivable slice of the context — file content the
 	// model can always read again.
 	FileEvictEnabled bool
-	// Board is the Review Team's shared case board (docs/cross-unit.md); nil =
+	// Board is the Review Team's shared case board (docs/unit_review.md); nil =
 	// no team (today's behavior, prompt byte-identical). When set, each turn
 	// pulls peers' relevant bulletins and auto-publishes this loop's facts.
 	Board board.Board
@@ -240,7 +240,7 @@ func (r *Runner) RecordUsage(u *llm.UsageInfo) {
 //
 // The conversation's currency is the review-domain []msg.Msg; the wire form
 // (llm.Message) exists only at the msg.Lower call sites — the API request,
-// the session record, and the compression prompt (see docs/message-model.md).
+// the session record, and the compression prompt (see docs/harness.md).
 //
 // Truncation discipline: a chain that ends WITHOUT task_done is a partial
 // verdict, and silence would read as "clean" downstream (measured on real
@@ -296,7 +296,7 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 		toolReqCount--
 
 		// Review Team: pull peers' relevant bulletins at the turn boundary
-		// (docs/cross-unit.md). Injection is directed + incremental + capped by
+		// (docs/unit_review.md). Injection is directed + incremental + capped by
 		// the board, so an empty digest costs nothing; a non-empty one enters as
 		// an evictable Board message.
 		if r.deps.Board != nil {
@@ -402,7 +402,7 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 			}
 		}
 
-		// Review Team: auto-publish this turn's facts for peers (docs/cross-unit.md
+		// Review Team: auto-publish this turn's facts for peers (docs/unit_review.md
 		// D2 — the engine extracts facts from tool calls for free; the model
 		// never spends a round on it). v0 publishes read + flag facts, keyed by
 		// path so peers watching the same file receive them.
@@ -576,7 +576,7 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 }
 
 // extractFacts turns a turn's tool calls into board bulletins — the auto
-// publish layer (docs/cross-unit.md D2). Core harvests generic file reads;
+// publish layer described in docs/unit_review.md. Core harvests generic file reads;
 // domain tools contribute their own facts through ToolFactHook.
 func extractFacts(sc session.Scope, turn int, calls []llm.ToolCall) []board.Bulletin {
 	var out []board.Bulletin
@@ -603,7 +603,7 @@ func extractFacts(sc session.Scope, turn int, calls []llm.ToolCall) []board.Bull
 }
 
 // handlePostBulletin executes the model-initiated publish side of the Review
-// Team (docs/cross-unit.md D2): an observation-level suspicion routed to peers
+// Team (see docs/unit_review.md): an observation-level suspicion routed to peers
 // via the caller-supplied keys. Loop-owned rather than a Registry provider
 // because publishing needs the scope identity, turn, and per-loop budget that
 // only the running loop holds. Returns the tool result for the model and
@@ -629,7 +629,7 @@ func (r *Runner) handlePostBulletin(scopeID string, turn int, call llm.ToolCall,
 	}
 	*budget--
 	// Keep the card a card: the board digest is byte-capped, and one verbose
-	// note must not crowd out peers' (docs/cross-unit.md: summary + pointer).
+	// note must not crowd out peers' (docs/unit_review.md: summary + pointer).
 	if runes := []rune(args.Text); len(runes) > maxBulletinTextRunes {
 		args.Text = string(runes[:maxBulletinTextRunes]) + "…"
 	}

@@ -4,7 +4,7 @@
 // (llm.Message's user/assistant/tool roles) appears only at the Lower
 // boundary, immediately before an API call.
 //
-// Why a domain layer (see docs/message-model.md): wire roles erase identity.
+// Why a domain layer (see docs/harness.md): wire roles erase identity.
 // Once a file's content is flattened into a user-role string, nothing can
 // tell it apart from instructions — so it can't be deduplicated against a
 // later file_read, evicted by staleness when the context tightens, or

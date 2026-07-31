@@ -48,7 +48,7 @@ type Debrief struct {
 	// UsageSites is how many pre-grepped use sites the briefing carried.
 	UsageSites int
 
-	// Review Team board activity (docs/cross-unit.md), 0 when the board is off.
+	// Review Team board activity (docs/unit_review.md), 0 when the board is off.
 	BoardPulled         int // peer bulletins injected into this unit's loop
 	BoardInjectedTokens int // their rough token cost
 	BoardPosted         int // facts this unit published for peers
@@ -62,7 +62,7 @@ type Debrief struct {
 
 // CloseScope declares a scope's work DONE and hands over its debrief — the
 // explicit end of the unit lifecycle (open → closing → closed; see
-// docs/unit-model.md 关键设计 8). The debrief persists immediately when no
+// docs/unit-model.md). The debrief persists immediately when no
 // async work is in flight, or parks until the scope's last async task ends
 // (EndAsync finalizes). The caller supplies only what it alone knows (outcome,
 // briefing fate); cost is aggregated at finalize so it can't drift from the

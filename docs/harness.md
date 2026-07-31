@@ -1,203 +1,177 @@
-# Harness：Execution 驱动的 Agent 执行内核
+# Harness：有界、可观测的 Agent 执行层
 
-> 绿地设计。本文展开 `kernel.md` 中 Harness 能力中心的内部模型；Runner 如何形成 Unit、
-> 分配总预算和聚合 Finding 见 `run-model.md`，review 消息与上下文证据分别见
-> `message-model.md` 和 `context-model.md`。
+## 1. 理念 / 概念
 
-## 理念 / 概念
-
-Harness 的目标不是提供更多 Agent 形态，而是**可靠执行一次有预算、有上下文管理、有明确
-终态的 Agent loop**。在 CCR 中，这让 Runner 能为单个 Unit 提供更多有效上下文，又不会因
-context、token 或耗时失控而降低 review 价值。
-
-Harness 的通用性只表示 Core 不理解 review 领域：
-
-- 不知道 Unit、Dossier、Finding、文件 diff 或源码语言；
-- 不决定快速/深度模式、Unit admission、调度顺序和最终裁决；
-- 不内建某一套 review tool、prompt、压缩摘要或完成信号；
-- 只执行调用方注入的消息、工具、策略和限制，并交付可解释的结果。
-
-**Agent 是 Harness 内部实现词，不是独立能力中心。** 对外稳定货币是 Execution：一次
-Execution 有不可变输入、独占运行状态、共享预算中的额度和唯一终态。是否使用某个 AgentCore
-实现 loop，不改变 Runner 与 Harness 的边界。
-
-| 概念 | 语义与 owner | 首版提供方 |
-|------|--------------|-----------|
-| `ExecutionSpec` | 一次执行的不可变输入：模型、初始消息、工具、策略、预算句柄和限制 | 适配层组装 |
-| `Execution` | Harness 内的一次运行；独占 conversation、compression、tool state、deadline 与收尾状态 | agentcore `Agent`（一 Unit 一实例） |
-| `AgentLoop` | 在 Execution 内反复完成 context projection → model call → tool execution → stop decision | agentcore |
-| `ContextStrategy` | 决定消息如何投影、回收、压缩和降为 provider 输入；策略由调用方组合 | agentcore `ContextManager` 接口；review 策略由适配层实现 |
-| `Budget` | 为模型请求提供 lease 并按真实 usage 结算；可以由多个 Execution 共享 | 暂缓（见关键设计 3） |
-| `Tool` / `ToolGate` / `Hook` | 工具能力、调用前门禁和调用前后扩展点；领域语义由外围 Hook 持有 | agentcore |
-| `Guard` | 判断领域是否完成，以及预算、时间或外部信号是否要求停止或收尾 | agentcore `StopGuard`；完成条件由适配层注入 |
-| `Event` | 执行过程的事实流，供 session、telemetry、eval 和 UI 消费 | agentcore |
-| `ExecutionResult` | 唯一终态、usage 与必要的运行记录；不包含 Unit coverage 或 Finding | 适配层基于 Event 与 Guard 裁决 |
-
-Runner 可以为一个 Unit 建立领域侧的 `UnitExecution`，但它进入 Harness 后只是一条
-`ExecutionSpec`。Harness 返回 `ExecutionResult`，Runner 再结合领域 Hook 产出 `UnitResult`。
-这样 Unit 仍是 review 的货币，Execution 则是通用执行货币。
-
-## 流程
+Harness 只解决一件事：**让一次 agent execution 在明确输入、能力、预算和完成契约下可靠运行**。
+它不理解 Unit、Hypothesis 或 Finding，也不决定某条结论是否值得发布。
 
 ```text
-Unit + Dossier + Briefing
-            │
-            ▼
-Runner UnitExecution
-  ├── review messages / lowering
-  ├── read-only tools + ToolGate
-  ├── review ContextStrategy
-  ├── completion / stop guards
-  └── finding hooks
-            │
-            ▼
-      ExecutionSpec
-            │
-            ▼
-       Harness.Run
-  ┌───────────────────────────────┐
-  │ create isolated Execution     │
-  │             │                 │
-  │             ▼                 │
-  │ project / reclaim / compress  │
-  │             │                 │
-  │             ▼                 │
-  │ acquire lease → model call    │
-  │             │                 │
-  │             ▼                 │
-  │ validate / gate / run tools   │
-  │             │                 │
-  │             ▼                 │
-  │ hooks + events + stop guard   │
-  │             │                 │
-  │        next turn / finish     │
-  └───────────────────────────────┘
-            │
-            ▼
-      ExecutionResult
-            │
-            ▼
-Runner → UnitResult → Hypothesis[] → Hypothesis Review → Assessment[] → Finding[]
+ExecutionSpec
+  ├─ typed messages / tools / hooks
+  ├─ context provider / budget / completion contract
+  └─ session recorder
+          │
+          ▼
+      AgentCore loop
+          │
+          ▼
+ExecutionResult + events + session JSONL
 ```
 
-一次 Execution 的主链路是：
+| 对象 | 责任 |
+|---|---|
+| `ExecutionSpec` | 一次执行的输入消息、工具、hook、预算和 scope |
+| `Execution` | 持有本次 loop 的可变状态与生命周期 |
+| `ContextManager` | 注入、去重、淘汰、压缩和投影上下文 |
+| `Tool Registry` | 把工具定义、provider 与执行身份绑定 |
+| `Hook / Event` | 提供领域扩展点和稳定观测事件 |
+| `ExecutionResult` | 返回完成状态、输出、usage、工具统计和错误 |
+| `Session` | 以稳定 JSONL 持久化实际发生的执行事实 |
 
-1. Harness 根据 `ExecutionSpec` 创建独立运行状态，不复用其他 Execution 的 conversation、
-   compression job 或 tool state。
-2. 每轮请求前由 `ContextStrategy` 生成本轮 provider context：先做确定性的去重和回收，
-   必要时再申请预算执行压缩。
-3. Harness 为模型调用申请 token lease；没有 lease 时不发送请求，转入已预留的收尾路径或
-   形成 incomplete 终态。
-4. 模型响应进入 transcript；工具调用经过参数校验和 ToolGate，再由 Tool 执行，并通过 Hook
-   交给领域扩展。
-5. Event 记录 model、tool、compression、usage 和终态事实；Stop Guard 决定继续、强制收尾
-   或终止。
-6. 所有同步和异步工作结束后，Harness 只产出一个 terminal `ExecutionResult`。
+Runner 可以用 Harness 执行 Unit Review 或 Hypothesis Review；Harness 不反向 import Runner、Unit、
+Assessment 等评审领域对象。领域语义通过消息、工具、hook 和 event 适配进入。
 
-## 关键设计
+## 2. 流程
 
-### 1. Execution 是唯一可变状态边界
+### 2.1 启动 Execution
 
-Harness Core 可以共享无状态的 LLM client、工具实现和预算账本，但不能共享“当前会话”。
-conversation、compression snapshot/job、turn counter、deadline、tool call state 和异步收尾
-都由单个 Execution 独占。Runner 负责多个 Execution 的并发；Harness 不以全局 Runner 对象
-承载执行中的可变状态。
+调用方组装 `ExecutionSpec`，明确本次执行允许看到和做到什么。Harness 将其降成 AgentCore 的 model、
+tool 和 context 契约，启动独立 Execution。一次 Execution 的状态不能被另一个 scope 隐式复用。
 
-这条边界直接防止并发 Unit 互相抢压缩任务、串消息或覆盖完成状态。它应由依赖测试和并发契约
-测试守住，而不只是一条文档约定。
+### 2.2 每轮模型与工具循环
 
-### 2. Context 管理是一条有顺序的生命周期
+每轮按以下顺序推进：
 
-更多上下文不是一次性预载更多字符串。Harness 每轮按以下顺序处理：
+1. ContextManager 根据当前状态生成模型可见消息；
+2. recorder 记录实际发送给模型的 request；
+3. model adapter 调用模型并记录原始 response、usage 和 stop reason；
+4. tool call 经 Registry 找到 provider，经 hook 校验和执行；
+5. tool result 进入 transcript，同时发出稳定事件；
+6. completion contract 判断是否结束、强制收敛或继续下一轮。
 
-1. **projection**：保留领域消息身份，在模型边界统一 lowering；
-2. **deduplication**：消除确定重复、但保持 tool call/result 配对；
-3. **reclamation**：优先移除可重新获取的 File、Board 等内容；
-4. **compression**：只压缩不可继续原样保留的历史；
-5. **active context**：保留最近推理、未决工具调用和当前证据。
+预算耗尽、deadline、模型错误和缺少终态动作必须形成不同 completion 状态。调用方需要知道“没有
+finding”究竟是审完了，还是执行没完成。
 
-Core 负责编排这条生命周期并守住消息协议，具体保留什么属于 `ContextStrategy`。Review
-Strategy 必须保留 confirmed fact、hypothesis、rejected hypothesis、证据引用与未决问题；
-不能用通用聊天摘要抹掉“为什么某个问题已被否证”。具体消息身份和 lowering 不变量由
-`message-model.md` 定义。
+### 2.3 返回结果
 
-### 3. 预算机制与业务策略分离
+Harness 返回结构化 ExecutionResult，不直接生成 ReviewResult。Runner 将其解释成 Hypothesis、
+Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
-Harness 的 Budget 只回答“这次请求能否发出、发出后花了多少”：
+## 3. 关键设计
 
-- 主 loop、compression 和 forced wrap-up 使用同一账本；
-- 请求前 lease，响应后按 provider usage settle；
-- provider usage 事后可知，所以限制的是新请求派发，不承诺账单精确封顶；
-- deadline、turn limit 和 token lease 共同参与停止判断。
+### 3.1 Typed message 是内部语义，wire message 是边界投影
 
-Runner 决定快速/深度模式、Run 总预算、Unit admission、覆盖公平和最终裁决预留。Harness
-不能根据 Unit 类型私自改变额度，也不能在预算耗尽后绕过账本继续调用模型。
+Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义。只有在调用模型前才降成
+provider wire message：
 
-> **首版暂缓 lease/settle**：usage 只做事后记账，请求前不拦截。机制设计保留——它是
-> Runner 侧总预算（`run-model.md`）落地时的既定接口，届时在适配层的 ChatModel 包装处
-> 回补 lease 点，不动 agentcore 内部。
+```text
+msg.Msg / msg.File
+   ── context lifecycle ──▶ lowered model messages
+```
 
-### 4. 完成信号与停止原因正交
+文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，ContextManager 才能判断两个范围是否
+重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
 
-Harness 不内建 `task_done`，而由调用方注入 Completion Guard 判断领域完成条件。通用结果至少
-区分：
+降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
+发送的 wire shape，因此 Viewer 能回答“模型当时究竟看到了什么”。
 
-- execution 是否 completed、incomplete、failed 或 cancelled；
-- 是自然结束还是 forced wrap-up；
-- 停止原因是 budget、deadline、turn limit、model/tool error 或外部取消。
+### 3.2 上下文生命周期统一在 ContextManager
 
-forced wrap-up 只是一种收尾方式，不自动代表 completed。CCR 的 Review Guard 只有观察到
-`task_done` 才接受完整结果；否则即使没有 Finding，也必须向 Runner 返回 incomplete，不能被
-解释为 clean review。
+上下文不是只增不减的聊天数组。Harness 统一处理：
 
-### 5. 工具能力通过组合进入 Core
+- 注入：system/task、静态 briefing、跨 turn provider 输出；
+- 去重：后一次覆盖读取替代早期重复 file content；
+- 淘汰：优先移除可重取、低价值的大块内容；
+- 压缩：只在轻量手段不足时进行有损总结；
+- 投影：临近调用时降成模型可见消息。
 
-Tool 提供 schema 与执行能力，ToolGate 在执行前实施权限和运行策略，Hook 在调用前后连接领域
-行为，Event 则记录已经发生的事实。Core 只按 Registry 查找工具，不维护 review 工具枚举，
-也不出现 `if review`。
+领域层可以决定“哪类事实值得提供”，但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
+统计和恢复行为会分裂。
 
-CCR 的只读信任边界由 Runner Review Extension 组合出来：只注册受控代码读取工具，
-`report_hypothesis` 只形成内存中的 Hypothesis，`submit_assessments` 只形成 Assessment，
-`task_done` 只改变完成状态。Harness 能运行注入的
-通用工具，不代表 review loop 可以获得 shell、文件写或 git 状态修改能力。
+### 3.3 预算是机制，完成策略属于调用方
 
-### 6. Event 是观测接口，不是第二套状态机
+Harness 提供 token、tool round、deadline 等预算机制，以及“接近边界”的 hook。调用方定义终态
+动作和收敛语义。例如 Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个
+输入都有 Assessment。
 
-Harness 对 model request/response、tool start/end、compression、usage、warning 和 terminal
-outcome 发出有序 Event。Session 持久化、telemetry、eval 导出和 UI 是 Event 的消费者，
-不反向控制 AgentLoop；改变下一轮行为仍通过显式 Strategy、Hook 或 Guard。
+Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用方给出的 completion contract。超时或
+轮次耗尽时返回 partial/incomplete，不把空输出包装成成功。
 
-为了验证“预算内提高质量”，每个 Execution 至少应能回答：注入了哪些 context、各阶段消耗
-多少 token/时间、发生了几次回收或压缩、调用了哪些工具、是否完成以及为何停止。Finding
-正确性继续由 Runner/eval 量测，不能把“loop 顺利结束”当作质量提升。
+### 3.4 Tool 与 Hook 是执行能力，不是领域所有权
 
-### 7. 执行内核采用 agentcore，`internal/harness` 是适配层
+工具定义、参数解析、provider 调用和通用 telemetry 位于 Harness。某个工具是否在一个阶段可见、
+调用后产生何种领域 artifact，由 Runner 的 execution spec / hook 决定。
 
-本文概念表中的 AgentLoop、Execution 隔离、ContextManager、StopGuard、ToolGate 和 Event
-流，与 [`agentcore`](https://github.com/voocel/agentcore)（Go，Apache-2.0）的已有接口逐条
-对应。首版**不自研 Go agent loop**，直接以 agentcore 为执行内核；`internal/harness` 从
-自研 Core 变为适配层，持有且只持有以下 ccr 专属职责：
+这允许同一个 `file_read` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
+的能力。Runner 适配可以依赖 Harness，Harness 不依赖 Runner。
 
-- **ChatModel 适配**：包 `internal/llm` 现有 client（含 LLMRouter failover），不替换
-  provider 层；agentcore 对 ccr 的路由与重试策略无感。
-- **review 完成纪律**：`task_done` 映射为 terminal tool + `StopGuard` 裁决，deadline/round
-  reserve 的 forced wrap-up 经 `Agent.Inject` 在 turn 边界注入（关键设计 4）。
-- **review ContextStrategy**：file dedup、file evict、保 confirmed fact 的压缩纪律，实现为
-  agentcore `ContextManager`/Strategy（关键设计 2）。
-- **Event 接线**：agentcore Event 流 → ccr 的 session 持久化、telemetry 与 viewer（关键
-  设计 6），以及基于 Event 与 Guard 的 `ExecutionResult` 领域裁决。
-- **Board/Review Team**：继续走领域 middleware/hook，不进适配层。
+### 3.5 AgentCore 是内核依赖，不是项目领域模型
 
-**领域代码不直接 import agentcore，只经 `internal/harness` 适配层。** agentcore 是年轻的
-外部依赖，这条边界保证升级、替换或 vendor/fork 只动一层；同时沿用现有 boundary test 守住
-Harness 不 import review 域的方向，并加反向的 import 约束。仍不为未来接入 Codex/Claude
-预建 Backend 抽象——只有当执行运行时本身再次变化时才重新评估。
+AgentCore 负责模型循环和通用上下文机制。CCR 在 Harness 边界将自身 typed message、tool provider、
+hook 和事件适配进去，并把 AgentCore response 转回稳定 ExecutionResult。
+
+AgentCore 类型不应泄漏到 Runner、Session Viewer 或 Unit 模型。这样替换执行内核、保留旧 `llmloop`
+作参考或并行演进 Viewer，都不会迫使评审领域一起迁移。
+
+## 4. 可观测性：Session JSONL 与 HTML Viewer
+
+一次昂贵或异常的 review 必须能回答三类问题：整体花费在哪里、每个 loop 如何演进、最终决策为何
+产生。仅打印终端摘要不够，Harness 因而把实际执行持续写入 Session JSONL。
+
+### 4.1 Session JSONL 是事实源
+
+Session 使用追加式事件记录，不要求运行结束后才能生成完整对象。稳定记录至少包括：
+
+- run/scope 身份、review snapshot、工具版本、feature 与模型身份；
+- 每轮实际发送的 prompt、LLM response、stop reason 和 usage；
+- tool call 参数、结果、耗时、成功状态和所属 request；
+- warning、completion 状态和 Execution 级统计；
+- Hypothesis、Assessment、Trial 等由领域层写入的 artifact。
+
+JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化
+发生在 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。
+
+Session 仍是本地执行记录，不替代 Forge 上的持久评论、代码仓或业务事实源。跨 CI revision 的
+prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然存在。
+
+### 4.2 HTML Viewer 是诊断投影
+
+Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不持有执行状态。它提供两个互补
+视角：
+
+1. **Run Overview**：总 token、时间、模型、工具调用、文件/Unit 完成率和 warning，定位成本与
+   吞吐瓶颈；
+2. **Agent Loop Timeline**：按 scope/request 展示 prompt 如何随工具读取和上下文生命周期变化、
+   LLM 返回了什么、调用了哪些工具，以及 Hypothesis → Assessment → Trial 的 Decision Trail。
+
+这两个视角分别回答“整次 review 怎么样”和“某一轮为什么这样判断”。Overview 不能替代逐轮证据，
+Timeline 也不能替代全局统计。
+
+### 4.3 展示层不反向定义协议
+
+JSONL schema 是执行与诊断之间的稳定协议；HTML 只是其中一种投影。新增图表或页面不应迫使 recorder
+依赖模板结构，Viewer 也不应回写 session 或修改 Trial 结果。若需要新的诊断能力，先定义稳定事件或
+artifact，再让 CLI、eval 和 HTML 分别消费。
+
+### 4.4 隐私与体积边界
+
+Session 可能包含源码、prompt 和工具结果，应默认按本地敏感数据处理，不自动上传到外部目的地。
+体积治理应依靠事件语义、可配置保留和离线汇总，不能为了缩小文件而漏记“模型实际看到了什么”。
+
+## 5. 验证 Harness 的方式
+
+Harness 变更至少验证：
+
+- 相同 typed input 降成稳定、可解释的 wire messages；
+- 工具结果与触发它的 model request 正确关联；
+- budget/deadline/terminal action 产生正确 completion 状态；
+- recorder 能在错误和 partial execution 下写出可读取 JSONL；
+- Viewer 的 overview 与 timeline 均由同一批事件推导，不出现统计和逐轮记录矛盾；
+- Harness 包保持不依赖 Runner、Unit 和评审领域。
 
 ## References
 
-- 三个能力中心与依赖方向：[`kernel.md`](kernel.md)
-- Runner、UnitExecution、Run 级预算与结果裁决：[`run-model.md`](run-model.md)
-- review 消息、lowering、去重与驱逐：[`message-model.md`](message-model.md)
-- Unit 的 Dossier、Briefing 与静态 context：[`context-model.md`](context-model.md)
-- Board/Bulletin 的跨 Execution 信息共享：[`cross-unit.md`](cross-unit.md)
-- 质量、成本和健壮性量测：[`../eval/README.md`](../eval/README.md)
+- [`kernel.md`](kernel.md) — Harness 在 CCR Kernel 中的职责
+- [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
+- [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
+- [`unit-model.md`](unit-model.md) — typed briefing 所承载的 Unit / Dossier 语义
