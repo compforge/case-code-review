@@ -21,7 +21,7 @@ import (
 // because session traces show the loop's early rounds are otherwise spent
 // fetching content ccr already knows the unit needs (file_read of the reviewed
 // file, code_search for callers/usages). Metaphor chain: Clue(线索) is gathered
-// evidence, Dossier(卷宗) is the deduped case file, Briefing(交底) is what's
+// evidence, Dossier(卷宗) is the Unit's deduped context, Briefing(交底) is what's
 // laid on the reviewer's desk before they start.
 
 // material is one piece of source content the briefing wants inlined — the

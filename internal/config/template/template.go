@@ -18,7 +18,7 @@ type Template struct {
 	MaxToolRequestTimes   int              `json:"MAX_TOOL_REQUEST_TIMES"`
 	PlanModeLineThreshold int              `json:"PLAN_MODE_LINE_THRESHOLD"`
 	ReLocationTask        *LlmConversation `json:"RE_LOCATION_TASK,omitempty"`
-	ReviewFilterTask      *LlmConversation `json:"REVIEW_FILTER_TASK,omitempty"`
+	HypothesisReviewTask  *LlmConversation `json:"HYPOTHESIS_REVIEW_TASK,omitempty"`
 }
 
 // ScanTemplate holds the full-file scan task template configuration loaded
@@ -66,7 +66,7 @@ type templateManifest struct {
 	MaxToolRequestTimes   int                   `json:"MAX_TOOL_REQUEST_TIMES"`
 	PlanModeLineThreshold int                   `json:"PLAN_MODE_LINE_THRESHOLD"`
 	ReLocationTask        *manifestConversation `json:"RE_LOCATION_TASK,omitempty"`
-	ReviewFilterTask      *manifestConversation `json:"REVIEW_FILTER_TASK,omitempty"`
+	HypothesisReviewTask  *manifestConversation `json:"HYPOTHESIS_REVIEW_TASK,omitempty"`
 }
 
 func resolveConversation(m manifestConversation) (LlmConversation, error) {
@@ -124,7 +124,7 @@ func LoadDefault() (*Template, error) {
 	if tpl.ReLocationTask, err = resolveOptionalConversation(m.ReLocationTask, "RE_LOCATION_TASK"); err != nil {
 		return nil, err
 	}
-	if tpl.ReviewFilterTask, err = resolveOptionalConversation(m.ReviewFilterTask, "REVIEW_FILTER_TASK"); err != nil {
+	if tpl.HypothesisReviewTask, err = resolveOptionalConversation(m.HypothesisReviewTask, "HYPOTHESIS_REVIEW_TASK"); err != nil {
 		return nil, err
 	}
 	return &tpl, nil
@@ -163,6 +163,9 @@ func (t *Template) ApplyLanguage(lang string) {
 	applyLanguage(&t.MainTask, instruction)
 	if t.PlanTask != nil {
 		applyLanguage(t.PlanTask, instruction)
+	}
+	if t.HypothesisReviewTask != nil {
+		applyLanguage(t.HypothesisReviewTask, instruction)
 	}
 	applyLanguage(&t.MemoryCompressionTask, instruction)
 }

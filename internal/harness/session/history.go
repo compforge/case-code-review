@@ -1,7 +1,6 @@
 // Package session provides a session history mechanism for collecting conversation
 // records during code review task execution. It organizes records by review scope
-// (a Unit, or a file-level pass — see ScopeSession) and request type (plan_task,
-// main_task, re_location_task, memory_compression_task, review_filter_task).
+// (a Unit, run-level Review, or file-level scan — see ScopeSession) and request type.
 package session
 
 import (
@@ -23,7 +22,7 @@ const (
 	MainTask              TaskType = "main_task"
 	MemoryCompressionTask TaskType = "memory_compression_task"
 	ReLocationTask        TaskType = "re_location_task"
-	ReviewFilterTask      TaskType = "review_filter_task"
+	HypothesisReviewTask  TaskType = "hypothesis_review_task"
 )
 
 const (
@@ -70,11 +69,11 @@ func (sh *SessionHistory) SetDiffStats(files int, insertions, deletions int64) {
 
 // ScopeSession holds the conversation records for one review scope: a Unit
 // (plan / main / memory-compression / re-location all nest here), or a
-// file-level pass (review_filter, or scan's per-file work). Keyed by scope ID
+// non-Unit pass (Hypothesis Review, or scan's per-file work). Keyed by scope ID
 // so two Units in the same file don't collide and a cross-file Unit stays whole.
 type ScopeSession struct {
 	mu          sync.Mutex
-	ID          string   // scope id: unit.ID, or file path for file-level passes
+	ID          string   // scope id: unit.ID, a run-level phase, or a scan file path
 	Kind        string   // "unit" | "file"
 	Scope       string   // func/file/callchain (units) | filter | scan
 	Paths       []string // member file(s)
@@ -84,7 +83,7 @@ type ScopeSession struct {
 
 	// Unit lifecycle (docs/unit-model.md 关键设计 8): open → closing (Close
 	// called, async still in flight) → closed (debrief persisted). Scopes that
-	// never Close (scan / file-level passes) just stay open — the lifecycle is
+	// never Close (scan / run-level passes) just stay open — the lifecycle is
 	// opt-in for scopes that produce a debrief.
 	state         scopeState
 	pendingAsync  int      // async tasks registered via BeginAsync, not yet ended
@@ -102,10 +101,10 @@ const (
 )
 
 // Scope identifies a review sub-session for recording: a Unit, or a file-level
-// pass. Callers build it from a unit.Unit (review) or a file path (review_filter
-// / scan); SessionHistory keys ScopeSessions by ID.
+// pass. Callers build it from a unit.Unit, run-level Review, or scan file path;
+// SessionHistory keys ScopeSessions by ID.
 type Scope struct {
-	ID    string   // unit.ID, or file path for file-level passes
+	ID    string   // unit.ID, run-level phase ID, or scan file path
 	Kind  string   // "unit" | "file"
 	Type  string   // func/file/callchain (units) | filter | scan
 	Paths []string // member file(s)
@@ -177,12 +176,12 @@ type SessionOptions struct {
 	GitHead string
 }
 
-// Finding is a final (post-filter) review comment persisted into the
+// Finding is a final post-Trial review comment persisted into the
 // transcript, so the session file alone carries everything the posterior
 // accuracy tier joins on: the fingerprint keys human labels, the symbol-id +
 // lines key "did a later commit touch this" scans (with the manifest's
-// git_head as the anchor). Raw code_comment tool calls in llm_response
-// records are pre-filter and don't reflect what the review delivered.
+// git_head as the anchor). Investigative result-tool calls in llm_response
+// records are pre-Trial and don't reflect what the review delivered.
 type Finding struct {
 	Path        string
 	StartLine   int
@@ -261,7 +260,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 
 // GetOrCreateScope returns the ScopeSession for the given scope, creating one
 // if it doesn't exist yet. Keyed by scope ID, so every task of one Unit (or one
-// file-level pass) lands in the same sub-session.
+// run/file-level pass) lands in the same sub-session.
 func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()

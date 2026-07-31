@@ -16,19 +16,19 @@ import (
 type Gate string
 
 const (
-	Plan         Gate = "plan"          // PLAN_TASK pre-pass per unit
-	CallChain    Gate = "callchain"     // call-chain merge axis (cross-file units via call graph)
-	CallerCallee Gate = "caller_callee" // caller/callee context clues (call-graph grep)
-	SpecCase     Gate = "spec_case"     // spec/case contract clues (authored; all relations)
-	Rule         Gate = "rule"          // @rule clues (authored; all relations)
-	Link         Gate = "link"          // @link see-also clues (authored; all relations)
-	Doc          Gate = "doc"           // docstring clues (derived from source; all relations)
-	History      Gate = "history"       // prior-review findings clues (reconciliation)
-	ReviewFilter Gate = "review_filter" // file-level pass dropping provably-wrong comments
-	Relocation   Gate = "relocation"    // LLM re-location of comments to the right line
-	Routing      Gate = "routing"       // multi-model round-robin pool; off = single model (deterministic)
-	RepoMap      Gate = "repo_map"      // ranked symbol map injected per run (anti guessed-name searches)
-	TypedGraph   Gate = "typed_graph"   // type-checker-resolved call edges for caller/callee/merge (Go)
+	Plan             Gate = "plan"              // PLAN_TASK pre-pass per unit
+	CallChain        Gate = "callchain"         // call-chain merge axis (cross-file units via call graph)
+	CallerCallee     Gate = "caller_callee"     // caller/callee context clues (call-graph grep)
+	SpecCase         Gate = "spec_case"         // spec/case contract clues (authored; all relations)
+	Rule             Gate = "rule"              // @rule clues (authored; all relations)
+	Link             Gate = "link"              // @link see-also clues (authored; all relations)
+	Doc              Gate = "doc"               // docstring clues (derived from source; all relations)
+	History          Gate = "history"           // prior-review findings clues (reconciliation)
+	HypothesisReview Gate = "hypothesis_review" // independent evidence review before deterministic Trial
+	Relocation       Gate = "relocation"        // LLM re-location of comments to the right line
+	Routing          Gate = "routing"           // multi-model round-robin pool; off = single model (deterministic)
+	RepoMap          Gate = "repo_map"          // ranked symbol map injected per run (anti guessed-name searches)
+	TypedGraph       Gate = "typed_graph"       // type-checker-resolved call edges for caller/callee/merge (Go)
 
 	// Briefing gates: what source material each unit's briefing pre-inlines so the
 	// review loop doesn't spend rounds fetching it (see internal/runner/briefing.go).
@@ -70,19 +70,19 @@ type def struct {
 // (all on — the full feature set is the product default; gates exist to turn things
 // OFF for ablation).
 var registry = map[Gate]def{
-	Plan:         {true, "PLAN_TASK pre-pass per unit", false},
-	CallChain:    {true, "call-chain merge axis (cross-file units via call graph)", false},
-	CallerCallee: {true, "caller/callee context clues (call-graph grep)", false},
-	SpecCase:     {true, "spec/case contract clues (authored; all relations)", false},
-	Rule:         {true, "@rule clues (authored; all relations)", false},
-	Link:         {true, "@link see-also clues (authored; all relations)", false},
-	Doc:          {true, "docstring clues (derived from source; all relations)", false},
-	History:      {true, "prior-review findings clues (reconciliation)", false},
-	ReviewFilter: {true, "file-level pass dropping provably-wrong comments", false},
-	Relocation:   {true, "LLM re-location of comments to the right line", false},
-	Routing:      {true, "multi-model round-robin pool; off = single model (deterministic)", false},
-	RepoMap:      {true, "ranked symbol map injected per run (anti guessed-name searches)", false},
-	TypedGraph:   {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
+	Plan:             {true, "PLAN_TASK pre-pass per unit", false},
+	CallChain:        {true, "call-chain merge axis (cross-file units via call graph)", false},
+	CallerCallee:     {true, "caller/callee context clues (call-graph grep)", false},
+	SpecCase:         {true, "spec/case contract clues (authored; all relations)", false},
+	Rule:             {true, "@rule clues (authored; all relations)", false},
+	Link:             {true, "@link see-also clues (authored; all relations)", false},
+	Doc:              {true, "docstring clues (derived from source; all relations)", false},
+	History:          {true, "prior-review findings clues (reconciliation)", false},
+	HypothesisReview: {true, "independent evidence review of hypotheses before deterministic Trial", false},
+	Relocation:       {true, "LLM re-location of comments to the right line", false},
+	Routing:          {true, "multi-model round-robin pool; off = single model (deterministic)", false},
+	RepoMap:          {true, "ranked symbol map injected per run (anti guessed-name searches)", false},
+	TypedGraph:       {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
 
 	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the briefing", false},
 	RangedPreload:  {true, "over-budget file fallback: inline the unit's function bodies", false},

@@ -1,0 +1,232 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1050" viewBox="0 0 1800 1050">
+  <title>CCR two-stage evidence review pipeline</title>
+  <desc>
+    CCR forms review Units from a ChangeSet, enriches them with Clues, and runs
+    divergent Unit Reviews that produce falsifiable Hypotheses. A CaseFile then
+    carries all hypotheses into an independent convergent review. Deterministic
+    Trial publishes only supported and actionable Findings.
+  </desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#111827" stroke-width="1.8"/>
+    </marker>
+    <marker id="review-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#6d4cc5" stroke-width="1.8"/>
+    </marker>
+    <marker id="evidence-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#a76b00" stroke-width="1.8"/>
+    </marker>
+    <style>
+      text {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", Arial, sans-serif;
+        fill: #111827;
+      }
+      .title { font-size: 27px; font-weight: 650; }
+      .section-title { font-size: 22px; font-weight: 650; }
+      .label { font-size: 19px; font-weight: 600; }
+      .small { font-size: 16px; }
+      .tiny { font-size: 13px; }
+      .box { stroke: #111827; stroke-width: 2.6; }
+      .soft-box { stroke: #8a94a6; stroke-width: 1.8; }
+      .flow { fill: none; stroke: #111827; stroke-width: 2.8; marker-end: url(#arrow); }
+      .review-flow {
+        fill: none;
+        stroke: #6d4cc5;
+        stroke-width: 2.8;
+        marker-end: url(#review-arrow);
+      }
+      .evidence-flow {
+        fill: none;
+        stroke: #a76b00;
+        stroke-width: 2.8;
+        marker-end: url(#evidence-arrow);
+      }
+      .divider { stroke: #aeb6c4; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1050" fill="#ffffff"/>
+  <text x="900" y="48" text-anchor="middle" class="title">CCR · 两阶段证据评审</text>
+  <text x="900" y="78" text-anchor="middle" class="small">
+    Unit Review 负责发散，CaseFile Review 负责收敛，Trial 只交付证据支持且值得行动的 Finding
+  </text>
+
+  <!-- Source and Unit formation -->
+  <rect x="35" y="130" width="590" height="810" rx="16" fill="#f9fbff" class="box"/>
+  <text x="65" y="172" class="section-title">Change → Unit</text>
+  <text x="595" y="172" text-anchor="end" class="tiny">按代码行为组织评审作用域</text>
+
+  <rect x="70" y="205" width="220" height="95" rx="14" fill="#e7edf8" class="box"/>
+  <text x="180" y="244" text-anchor="middle" class="label">ChangeSet</text>
+  <text x="180" y="274" text-anchor="middle" class="small">diff · files · hunks</text>
+
+  <rect x="355" y="205" width="230" height="95" rx="14" fill="#eef3fb" class="box"/>
+  <text x="470" y="244" text-anchor="middle" class="label">Language facts</text>
+  <text x="470" y="274" text-anchor="middle" class="small">symbol · span · call</text>
+
+  <path d="M180 300 V330 H250" class="flow"/>
+  <path d="M470 300 V330 H405" class="flow"/>
+
+  <rect x="70" y="345" width="515" height="135" rx="14" fill="#ffffff" class="soft-box"/>
+  <text x="95" y="378" class="label">Fragments · 改动原子</text>
+  <text x="560" y="378" text-anchor="end" class="tiny">函数 hunks + 文件残余</text>
+
+  <rect x="95" y="402" width="135" height="52" rx="10" fill="#f2edff" class="soft-box"/>
+  <text x="162" y="424" text-anchor="middle" class="small">file1 · func1</text>
+  <text x="162" y="445" text-anchor="middle" class="tiny">changed symbol</text>
+
+  <rect x="260" y="402" width="135" height="52" rx="10" fill="#f2edff" class="soft-box"/>
+  <text x="327" y="424" text-anchor="middle" class="small">file1 · func2</text>
+  <text x="327" y="445" text-anchor="middle" class="tiny">changed symbol</text>
+
+  <rect x="425" y="402" width="135" height="52" rx="10" fill="#f2edff" class="soft-box"/>
+  <text x="492" y="424" text-anchor="middle" class="small">file2 · func3</text>
+  <text x="492" y="445" text-anchor="middle" class="tiny">changed symbol</text>
+
+  <line x1="327" y1="480" x2="327" y2="520" class="flow"/>
+
+  <rect x="70" y="535" width="515" height="165" rx="14" fill="#eef3fb" class="box"/>
+  <text x="95" y="570" class="label">Unit formation</text>
+  <text x="560" y="570" text-anchor="end" class="tiny">一个 Unit 一个 Review loop</text>
+  <line x1="327" y1="590" x2="327" y2="678" class="divider"/>
+
+  <text x="198" y="615" text-anchor="middle" class="small">只有一个文件改动</text>
+  <text x="198" y="646" text-anchor="middle" class="label">File Unit</text>
+  <text x="198" y="672" text-anchor="middle" class="tiny">全部 Fragment · 仍保留所有 symbol</text>
+
+  <text x="456" y="615" text-anchor="middle" class="small">多个文件改动</text>
+  <text x="456" y="646" text-anchor="middle" class="label">Call-chain Unit</text>
+  <text x="456" y="672" text-anchor="middle" class="tiny">语义归并 · 成本过高再按文件粗化</text>
+
+  <path d="M198 700 V733" class="flow"/>
+  <path d="M456 700 V733" class="flow"/>
+
+  <rect x="70" y="748" width="240" height="102" rx="14" fill="#eee8ff" class="box"/>
+  <text x="190" y="785" text-anchor="middle" class="label">File Unit</text>
+  <text x="190" y="814" text-anchor="middle" class="small">file1 · func1 + func2</text>
+  <text x="190" y="837" text-anchor="middle" class="tiny">单文件始终只触发一个 loop</text>
+
+  <rect x="345" y="748" width="240" height="102" rx="14" fill="#eee8ff" class="box"/>
+  <text x="465" y="785" text-anchor="middle" class="label">Behavior Unit</text>
+  <text x="465" y="814" text-anchor="middle" class="small">func1 + func3</text>
+  <text x="465" y="837" text-anchor="middle" class="tiny">文件只是位置，不是行为边界</text>
+
+  <rect x="70" y="875" width="515" height="46" rx="23" fill="#fff0bf" class="box"/>
+  <text x="327" y="904" text-anchor="middle" class="small">
+    Clues · spec · case · rule · link · doc · caller / callee
+  </text>
+
+  <!-- Review 1 -->
+  <rect x="655" y="130" width="430" height="810" rx="16" fill="#f4f0ff" class="box"/>
+  <text x="685" y="172" class="section-title">Review 1 · 发散</text>
+  <text x="1055" y="172" text-anchor="end" class="tiny">公安侦查：形成可证伪主张</text>
+
+  <rect x="700" y="220" width="340" height="310" rx="16" fill="#eee8ff" class="box"/>
+  <text x="870" y="262" text-anchor="middle" class="label">Unit Review</text>
+  <text x="870" y="291" text-anchor="middle" class="small">一个 Unit · 一次 Harness Execution</text>
+
+  <rect x="735" y="325" width="270" height="130" rx="14" fill="#ffffff" class="soft-box"/>
+  <text x="870" y="358" text-anchor="middle" class="label">Investigate broadly</text>
+  <text x="870" y="387" text-anchor="middle" class="small">理解 diff · 重建行为 · 检查契约</text>
+  <text x="870" y="415" text-anchor="middle" class="small">只读代码工具 · Clue / Briefing</text>
+  <text x="870" y="442" text-anchor="middle" class="tiny">report_hypothesis · task_done</text>
+
+  <path d="M585 799 H630 V375 H685" class="flow"/>
+  <text x="638" y="594" text-anchor="middle" class="tiny" transform="rotate(-90 638 594)">Unit</text>
+  <path d="M585 898 H645 V465 H685" class="evidence-flow"/>
+  <text x="654" y="682" text-anchor="middle" class="tiny" transform="rotate(-90 654 682)">Clue / Briefing</text>
+
+  <line x1="870" y1="530" x2="870" y2="575" class="review-flow"/>
+
+  <rect x="700" y="590" width="340" height="230" rx="16" fill="#fff7dc" class="box"/>
+  <text x="870" y="627" text-anchor="middle" class="label">Hypotheses</text>
+  <text x="870" y="650" text-anchor="middle" class="tiny">待证伪主张，不是已经决定发布的评论</text>
+
+  <rect x="725" y="670" width="290" height="38" rx="9" fill="#fff0bf" class="soft-box"/>
+  <text x="745" y="695" class="small">H-1 · trigger → impact</text>
+  <rect x="725" y="720" width="290" height="38" rx="9" fill="#fff0bf" class="soft-box"/>
+  <text x="745" y="745" class="small">H-2 · diff attribution</text>
+  <rect x="725" y="770" width="290" height="38" rx="9" fill="#fff0bf" class="soft-box"/>
+  <text x="745" y="795" class="small">H-3 · uncertainty allowed</text>
+
+  <rect x="700" y="860" width="340" height="48" rx="24" fill="#dff5e8" class="box"/>
+  <text x="870" y="890" text-anchor="middle" class="small">更快 · 少拆 loop，少重复探索与工具查询</text>
+
+  <!-- Review 2 and Trial -->
+  <rect x="1115" y="130" width="650" height="810" rx="16" fill="#f9fbff" class="box"/>
+  <text x="1145" y="172" class="section-title">Review 2 + Trial · 收敛</text>
+  <text x="1735" y="172" text-anchor="end" class="tiny">检察复核 → 法院裁决</text>
+
+  <path d="M1040 705 H1095 V285 H1145" class="review-flow"/>
+  <text x="1090" y="508" text-anchor="middle" class="tiny" transform="rotate(-90 1090 508)">
+    assemble once per ChangeSet
+  </text>
+
+  <path d="M1160 225 H1300 L1325 200 H1720 V385 H1160 Z" fill="#fff0bf" class="box"/>
+  <text x="1190" y="252" class="label">CaseFile · 案卷</text>
+  <text x="1690" y="252" text-anchor="end" class="tiny">跨 Unit、跨文件统一复核</text>
+
+  <rect x="1190" y="280" width="145" height="62" rx="11" fill="#ffffff" class="soft-box"/>
+  <text x="1262" y="307" text-anchor="middle" class="small">ChangeSet</text>
+  <text x="1262" y="329" text-anchor="middle" class="tiny">完整变更范围</text>
+
+  <rect x="1360" y="280" width="145" height="62" rx="11" fill="#ffffff" class="soft-box"/>
+  <text x="1432" y="307" text-anchor="middle" class="small">Clues</text>
+  <text x="1432" y="329" text-anchor="middle" class="tiny">共享材料</text>
+
+  <rect x="1530" y="280" width="160" height="62" rx="11" fill="#ffffff" class="soft-box"/>
+  <text x="1610" y="307" text-anchor="middle" class="small">Hypotheses</text>
+  <text x="1610" y="329" text-anchor="middle" class="tiny">全部待查主张</text>
+
+  <text x="1440" y="370" text-anchor="middle" class="tiny">
+    没有 Hypothesis 就不启动；超出预算才按行为与共享证据拆卷
+  </text>
+
+  <line x1="1335" y1="385" x2="1335" y2="425" class="review-flow"/>
+
+  <rect x="1160" y="440" width="350" height="225" rx="16" fill="#eee8ff" class="box"/>
+  <text x="1335" y="478" text-anchor="middle" class="label">Hypothesis Review</text>
+  <text x="1335" y="506" text-anchor="middle" class="small">独立复核 · 默认不相信已有结论</text>
+
+  <rect x="1190" y="530" width="290" height="105" rx="13" fill="#ffffff" class="soft-box"/>
+  <text x="1335" y="558" text-anchor="middle" class="small">支持证据 + 反证</text>
+  <text x="1335" y="584" text-anchor="middle" class="small">跨 Unit 去重 · 检查是否本次引入</text>
+  <text x="1335" y="610" text-anchor="middle" class="tiny">read-only tools · submit_assessments</text>
+
+  <line x1="1335" y1="665" x2="1335" y2="705" class="review-flow"/>
+
+  <rect x="1160" y="720" width="350" height="170" rx="16" fill="#eef3fb" class="box"/>
+  <text x="1335" y="752" text-anchor="middle" class="label">Assessments</text>
+
+  <rect x="1190" y="772" width="290" height="30" rx="8" fill="#dff5e8" class="soft-box"/>
+  <text x="1208" y="793" class="small">supported + actionable</text>
+  <rect x="1190" y="812" width="290" height="30" rx="8" fill="#f8e3e3" class="soft-box"/>
+  <text x="1208" y="833" class="small">contradicted</text>
+  <rect x="1190" y="852" width="290" height="30" rx="8" fill="#fff0bf" class="soft-box"/>
+  <text x="1208" y="873" class="small">insufficient / low value</text>
+
+  <line x1="1510" y1="790" x2="1540" y2="790" class="flow"/>
+
+  <circle cx="1615" cy="770" r="65" fill="#e7f7ee" class="box"/>
+  <text x="1615" y="760" text-anchor="middle" class="label">Trial</text>
+  <text x="1615" y="786" text-anchor="middle" class="small">deterministic</text>
+  <text x="1615" y="808" text-anchor="middle" class="tiny">不再启动 LLM</text>
+  <line x1="1615" y1="835" x2="1615" y2="842" class="flow"/>
+
+  <rect x="1515" y="850" width="200" height="52" rx="26" fill="#dff5e8" class="box"/>
+  <text x="1615" y="873" text-anchor="middle" class="label">Finding</text>
+  <text x="1615" y="893" text-anchor="middle" class="tiny">supported + actionable only</text>
+
+  <rect x="1160" y="910" width="555" height="30" rx="15" fill="#dff5e8" class="soft-box"/>
+  <text x="1437" y="931" text-anchor="middle" class="tiny">
+    更准 · 拦截无证据、重复、非本次变更与低价值问题
+  </text>
+
+  <!-- Legend -->
+  <line x1="475" y1="995" x2="530" y2="995" class="flow"/>
+  <text x="545" y="1001" class="small">主流程与确定性裁决</text>
+  <line x1="785" y1="995" x2="840" y2="995" class="evidence-flow"/>
+  <text x="855" y="1001" class="small">Clue 与证据材料</text>
+  <line x1="1085" y1="995" x2="1140" y2="995" class="review-flow"/>
+  <text x="1155" y="1001" class="small">Review 输出与阶段交接</text>
+</svg>

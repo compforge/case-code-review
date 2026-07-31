@@ -113,9 +113,19 @@
     {{template "scopeAccordion" .}}
 {{end}}
 </div>
+{{with scopesOfKind .Session.Units "run"}}
+<h3>Run-level passes ({{len .}})</h3>
+<p class="section-note">Hypothesis Review（对本次变更的全部假设统一复核）。</p>
+<div class="conversations">
+{{range .}}
+    {{template "scopeAccordion" .}}
+{{end}}
+</div>
+{{end}}
+
 {{with scopesOfKind .Session.Units "file"}}
 <h3>File-level passes ({{len .}})</h3>
-<p class="section-note">review_filter（按文件过滤跨 unit 评论）/ scan 等非 unit 作用域。</p>
+<p class="section-note">scan 等按文件执行的非 unit 作用域。</p>
 <div class="conversations">
 {{range .}}
     {{template "scopeAccordion" .}}
@@ -128,7 +138,7 @@
     <summary class="file-accordion-header">
         <span class="chevron"></span>
         {{if .Scope}}<span class="badge badge-scope">{{.Scope}}</span>{{end}}
-        <span class="file-path">{{if eq .Kind "unit"}}{{.ID}}{{else}}{{.FilePath}}{{end}}</span>
+        <span class="file-path">{{if or (eq .Kind "unit") (eq .Kind "run")}}{{.ID}}{{else}}{{.FilePath}}{{end}}</span>
         {{if gt (len .Paths) 1}}<span class="unit-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</span>{{end}}
         <span class="file-count-badge">{{cardCount .Tasks}} requests</span>
     </summary>

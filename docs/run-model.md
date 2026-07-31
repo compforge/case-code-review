@@ -39,9 +39,11 @@ Unit 由此不仅是评审作用域，也是调度、预算和质量量测的统
 | `ReviewPlan` | SourceSnapshot、全部 UnitReview 与 engine 配置摘要组成的不可变执行计划 | 一个 Runner 一个 |
 | `UnitReview` | Unit + Dossier + Briefing，以及 Board interest、输入摘要和成本估算 | 计划形成时创建 |
 | `UnitExecution` | 执行一个 UnitReview；独占消息、压缩、轮次、deadline 与评论异步任务 | start → terminal |
-| `CandidateFinding` | UnitExecution 提出的待裁决问题；携带主张、触发条件、影响、证据与 diff 归因 | UnitExecution 内形成，filter 后终止 |
-| `UnitResult` | 一个 Unit 的 CandidateFinding、confirmed facts、usage 与 Debrief | UnitExecution 终态产出 |
-| `ReviewResult` | 所有 UnitResult 经文件级过滤后的最终 findings、覆盖率、总成本与停止原因 | Runner 终态产出 |
+| `Hypothesis` | UnitExecution 提出的可证伪问题主张；携带触发条件、影响、证据引用与 diff 归因 | UnitExecution 内形成，Assessment 后终止 |
+| `CaseFile` | 发散阶段移交给 Review 的案卷，包含相关 Hypothesis 及共享的 Change、Clue；首版一个 ChangeSet 一个案卷 | UnitResult 汇总后形成，Hypothesis Review 后终止 |
+| `Assessment` | 对 Hypothesis 的证据支持度与交付价值判断，以及实际核查过的 Evidence | run 级 Hypothesis Review 终态产出 |
+| `UnitResult` | 一个 Unit 的 Hypothesis、confirmed facts、usage 与 Debrief | UnitExecution 终态产出 |
+| `ReviewResult` | 所有 Hypothesis 经 Assessment 选择后的最终 findings、覆盖率、总成本与停止原因 | Runner 终态产出 |
 | `Attempt` | 对同一 ReviewPlan 的一次执行尝试；resume 会创建新 Attempt | started → finished/interrupted |
 | `TokenBudget` | Runner 的 token 调度账本；管理 reservation、lease 与实际结算 | Runner 全程 |
 
@@ -68,7 +70,10 @@ Runner（TokenBudget + Board + Attempt + deterministic scheduling）
     └──▶ UnitExecution ──▶ UnitResult
                           │
                           ▼
-              path 分组 + evidence adjudicator
+               CaseFile（首版 = ChangeSet）
+                          │
+                          ▼
+                 Hypothesis Review
                           │
                           ▼
                     ReviewResult
@@ -76,7 +81,7 @@ Runner（TokenBudget + Board + Attempt + deterministic scheduling）
 
 输入与输出也服从 Runner 边界：workspace/range/commit 由 Runner source 采集，full-file
 scan 是 Runner 的另一输入模式；两者归一为 `Change` 后形成 Unit。Harness 只看到一次通用
-Execution，通过 tool hook 把领域输出交还 Runner；`CandidateFinding` 与最终 `Finding`
+Execution，通过 tool hook 把领域输出交还 Runner；`Hypothesis`、`Assessment` 与最终 `Finding`
 始终属于 Runner，不进入 Harness Core。
 
 主流程分为五步：
@@ -84,7 +89,8 @@ Execution，通过 tool hook 把领域输出交还 Runner；`CandidateFinding` �
 1. 将 workspace / range / commit 解析成可校验的 SourceSnapshot 与 ChangeSet。
 2. 沿既有 split → merge → clue → briefing 链路形成不可变 ReviewPlan。
 3. Runner 对 UnitReview 做确定性调度；每个 UnitReview 创建独立 UnitExecution。
-4. UnitResult 只交付 CandidateFinding；Runner 按 path 聚合，以完整证据做文件级裁决。
+4. UnitResult 只交付 Hypothesis；Runner 汇总整次变更，执行一次 Hypothesis Review 并产出
+   Assessment。
 5. 形成 ReviewResult，结束 Attempt，并持久化可恢复 checkpoint 与评测事件。
 
 ## 关键设计
@@ -156,14 +162,14 @@ Unit admission 预留：
 
 - 第一次 LLM 请求；
 - 一次 forced wrap-up；
-- Unit 涉及文件的 review-filter 额度，同文件只预留一次。
+- 本次 run 的 Hypothesis Review 额度，只预留一次。
 
 后续每次 LLM 请求前，根据当前 input 与最大 output 申请 lease；响应后以真实 usage 结算并释放
 差额。lease 不足时停止探索并进入已预留的 wrap-up。预算耗尽后：
 
 - 未启动 Unit → `skipped / budget`；
 - 已启动 Unit → 使用收尾预留做 forced wrap-up；
-- 已产生 candidates 的文件 → 使用 filter 预留完成最终过滤；
+- 本次 run 已产生 Hypothesis → 使用 review 预留完成最终审查；
 - ReviewResult → `partial / budget_exhausted`。
 
 输出同时给出 configured limit、reserved、estimated、actual usage 与 overrun。overrun 只能来自
@@ -173,10 +179,10 @@ Unit admission 预留：
 不先引入未经评测的“高价值 Unit”打分。若后续按 Dossier、history 或 scope 排序，必须作为可
 消融策略进入 reviewbench。
 
-### 5. CandidateFinding 经证据裁决后才能成为最终 finding
+### 5. Hypothesis 经 Review 后才能成为最终 Finding
 
-UnitExecution 不写 run 级全局 collector，只返回 CandidateFinding。CandidateFinding 不是一段
-已经决定发布的评论，而是一个待证伪的主张；它必须表达：
+UnitExecution 不写 run 级全局 collector，只返回 Hypothesis。Hypothesis 不是一段已经决定发布
+的评论，而是一个待证伪的主张；它必须表达：
 
 - 当前代码中真实存在的触发条件，而不是未来调用方或假设输入；
 - diff 改变了什么行为，以及该行为如何产生可观察影响；
@@ -186,15 +192,17 @@ UnitExecution 不写 run 级全局 collector，只返回 CandidateFinding。Cand
 这组信息属于内部裁决模型，最终评论仍保持面向开发者的简洁表达。Unit loop 可以把未完成求证的
 线索留在 Debrief 或 Board，但不得用措辞上的“可能”“建议考虑”把 hypothesis 伪装成 finding。
 
-Runner 等相关 Unit 终态后按文件聚合，由独立的 evidence adjudicator 统一裁决 sibling
-candidates。它看到完整 diff、变更前后源码、CandidateFinding 引用的 Dossier/Briefing，以及
-可用的 spec/case/rule/requirement；需要补证时只能使用 CCR 控制的只读代码服务。裁决结果是：
+Runner 等全部 Unit 终态后汇总本次变更，由独立的 Hypothesis Review Execution 统一审查全部
+Hypothesis。它看到 ChangeSet、Hypothesis 引用的 Dossier/Briefing，以及可用的
+spec/case/rule/requirement；需要完整 diff、变更前后源码或调用路径时，只能使用 CCR 控制的
+只读代码服务定向补证。Assessment 分开表达：
 
-- `confirmed`：触发条件、执行路径、diff 归因和影响均成立，生成最终 finding；
-- `refuted`：存在反证，删除 candidate 并记录原因；
-- `needs_context`：当前证据不足，按主张缺口做一次定向补证；仍不能确认则不对外发布。
+- `support = supported | contradicted | insufficient`：证据是否支持主张；
+- `actionability = actionable | low_value | unknown`：主张若成立，是否值得交付。
 
-`needs_context` 不等于错误，只表示它还没达到公开 finding 的证据门槛。补证按 claim 取材料：
+只有 `supported + actionable` 的 Hypothesis 才生成最终 Finding。`insufficient` 不等于错误，
+只表示它还没达到公开 finding 的证据门槛；`supported + low_value` 则表示问题可能真实，但
+交付收益不足。补证按主张缺口取材料：
 执行路径问题查 caller、validator 和 wire contract；变更归因查 base/head；意图问题查
 spec/case/rule/requirement；语言或库行为优先交给确定性分析器或契约测试，不让模型凭记忆断言。
 这比为所有 Unit 固定扩充上下文更省预算，也能区分“证据没提供”“没有检索”“检索后忽略”和
@@ -202,11 +210,12 @@ spec/case/rule/requirement；语言或库行为优先交给确定性分析器或
 
 这样可以守住两条边界：
 
-- sibling Unit 的 comments 始终在完整文件 diff 上一起过滤；
-- resume 复用的 candidates 与新 candidates 会重新过滤，不沿用旧文件环境下的最终 verdict。
+- 不同 Unit、不同文件但属于同一行为链或重复问题的 Hypothesis 始终放在一起分析；
+- resume 复用的 Hypothesis 与新 Hypothesis 会重新分析，不沿用旧文件环境下的 Assessment。
 
-file review-filter 自己也有 checkpoint，其复用键覆盖 path、candidate/evidence digest、
-SourceSnapshot 与 adjudicator engine digest；candidate、证据或裁决环境变化时必须重跑。
+run 级 Hypothesis Review 自己也有 checkpoint，其复用键覆盖 hypothesis/evidence digest、
+SourceSnapshot 与 review engine digest；Hypothesis、证据或审查环境变化时必须重跑。后续若
+规模要求拆分，按相关 Hypothesis 组成的 CaseFile 分案，不按评论锚点文件硬切。
 
 ### 6. Resume 继续同一 Runner，不做跨 run 缓存（后续）
 
@@ -218,7 +227,7 @@ ReviewPlan 在 Runner 内不可变。中断恢复创建新 Attempt，并依次�
 4. 复用 completed UnitResult，重跑 incomplete / skipped / failed Unit；
 5. 将 completed Unit 的 confirmed facts 恢复到 Board；
 6. 调度剩余 Unit；
-7. 合并复用与新增 candidates，恢复或重跑 file review-filter；
+7. 合并复用与新增 Hypothesis，恢复或重跑 run 级 Hypothesis Review；
 8. 生成新的 ReviewResult。
 
 Board 只恢复 confirmed facts，不跨 Attempt 回放 intent 或 observation。逻辑持久化记录至少包括
@@ -238,7 +247,7 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 2. 将共享的 loop 执行状态下沉为 UnitExecution，移除 run 级 conversation/compression
    可变状态。
 3. 建立快速/深度模式与 TokenBudget 的 admission、lease、settle、压缩和 finalization reserve。
-4. 建立带证据的 CandidateFinding → evidence adjudicator → final finding 结果管道。
+4. 建立 Clue → Hypothesis → Assessment → Finding 结果管道。
 5. 建立 ReviewPlan、UnitResult、ReviewResult 与正交 outcome 类型，并强化 SourceSnapshot。
 6. 质量、成本和健壮性指标稳定后，再引入 Attempt/checkpoint/resume。
 
@@ -249,11 +258,11 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 - 并发 Unit 同时触发压缩时，消息、摘要和取消动作不会跨 Unit。
 - 每个 Unit 恰好产生一个 terminal UnitResult 与 Debrief；incomplete 永不表现成 clean。
 - 没有 lease 的 LLM 请求不能发送；预算耗尽后不再 admission 新 Unit。
-- 已 admission Unit 有 wrap-up/filter 额度，partial 结果携带明确 coverage 与 stop reason。
+- 已 admission Unit 有 wrap-up/review 额度，partial 结果携带明确 coverage 与 stop reason。
 - resume 不重复执行 completed Unit，且必定重跑 incomplete/timeout/panic/skipped Unit。
 - source 或 engine digest 变化时拒绝 resume；Board 只恢复 confirmed facts。
-- 每条最终 finding 都有 `confirmed` 裁决；`refuted` 和补证后仍为 `needs_context` 的 candidate
-  不会对外发布，裁决理由可进入评测事件。
+- 每条最终 Finding 都有 `supported + actionable` 的 Assessment；存在反证、补证后仍为
+  `insufficient` 或属于 `low_value` 的 Hypothesis 不会对外发布，分析理由可进入评测事件。
 - merge commit、root commit、binary、rename、非 ASCII 与特殊 hunk diff 均有契约测试。
 - `go build ./...`、`go test ./...`、`go test -race ./...` 通过。
 - reviewbench 分别回放 wrong 与 important/minor 样本，量测误报拦截率、真问题保留率和补证成本；

@@ -46,15 +46,24 @@ func countScope(units []unit.Unit, s unit.Scope) int {
 	return n
 }
 
-func TestSplitUnits_UnderBudgetKeepsFunctions(t *testing.T) {
+func TestSplitUnits_SingleFileCoalescesBelowWatermark(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 3))
+	if len(units) != 1 || units[0].Scope != unit.ScopeFile {
+		t.Fatalf("want 1 file unit, got %d (%+v)", len(units), units)
+	}
+	if len(units[0].AllSymbols()) != 3 {
+		t.Errorf("file unit should retain all 3 func ids, got %v", units[0].AllSymbols())
+	}
+}
+
+func TestSplitUnits_MultipleFilesBelowWatermarkKeepFunctions(t *testing.T) {
+	units := splitWith(t, goDiff("p.go", 2), goDiff("q.go", 1))
 	if len(units) != 3 || countScope(units, unit.ScopeFunc) != 3 {
 		t.Fatalf("want 3 function units, got %d (%d func)", len(units), countScope(units, unit.ScopeFunc))
 	}
 }
 
-func TestSplitUnits_GovernorCoarsensSingleFile(t *testing.T) {
-	// One file splitting into more Units than the budget coarsens to one file Unit.
+func TestSplitUnits_SingleFileRetainsSymbolsAboveWatermark(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", defaultUnitWatermark+2))
 	if len(units) != 1 || units[0].Scope != unit.ScopeFile {
 		t.Fatalf("want 1 coalesced file unit, got %d (%+v)", len(units), units)

@@ -1,6 +1,7 @@
 package finding
 
-// Finding is a potential code issue emitted by the review pipeline.
+// Finding is a code issue approved for public delivery. Diff review reaches it
+// only through Trial; full-file scan produces it directly.
 type Finding struct {
 	Path           string `json:"path"`
 	Content        string `json:"content"`

@@ -16,7 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
-	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/runner/review"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -71,7 +71,7 @@ func newUnitExecutor(
 	handler harness.ToolHandler,
 	sharedBoard *board.Registry,
 ) *unitExecutor {
-	defs := slices.Clone(args.MainToolDefs)
+	defs := review.InvestigationToolDefs(slices.Clone(args.MainToolDefs))
 	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
 	postBulletin := sharedBoard != nil && args.Features.Enabled(feature.PostBulletin)
 	if !postBulletin {
@@ -92,7 +92,7 @@ func newUnitExecutor(
 		maxTokens:               args.Template.MaxTokens,
 		fileDedup:               args.Features.Enabled(feature.FileDedup),
 		fileEvict:               args.Features.Enabled(feature.FileEvict),
-		wrapUpPrompt:            finding.WrapUpPrompt,
+		wrapUpPrompt:            review.InvestigationWrapUpPrompt,
 		compressionSystemPrompt: compressionSystemPrompt,
 		compressionPrompt:       compressionPrompt,
 	}
@@ -271,6 +271,9 @@ func (e *unitExecutor) countableTool(name string) bool {
 	if name == tool.TaskDone.Name() {
 		return false
 	}
+	if name == review.ReportHypothesis.Name() {
+		return true
+	}
 	if name == tool.PostBulletin.Name() {
 		return e.postBulletin
 	}
@@ -359,7 +362,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 
 func (r *unitExecution) observesGenericTool(name string) bool {
 	return r.executor.countableTool(name) &&
-		name != finding.CodeComment.Name() &&
+		name != review.ReportHypothesis.Name() &&
 		name != tool.PostBulletin.Name()
 }
 
@@ -419,17 +422,6 @@ func (r *unitExecution) publishToolFact(name string, raw json.RawMessage) {
 		}
 		bulletin = board.Bulletin{
 			Level: board.LevelConfirmed, Paths: []string{path}, Text: text,
-		}
-	case finding.CodeComment.Name():
-		path, _ := args["path"].(string)
-		if path == "" || !slices.Contains(r.scope.Paths, path) {
-			path = r.scope.Path()
-		}
-		if path == "" {
-			return
-		}
-		bulletin = board.Bulletin{
-			Level: board.LevelConfirmed, Paths: []string{path}, Text: "flagged an issue in " + path,
 		}
 	default:
 		return
