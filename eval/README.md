@@ -47,6 +47,7 @@ ccr:label=important — 会破坏现有调用契约，已采纳修复
 ccr:label=minor — 问题成立但影响较小，已采纳修复
 ccr:label=debatable — 属于取舍或防御性建议，不作为缺陷采纳
 ccr:label=wrong — 实际调用在进入此处前已被校验 #cross-file
+ccr:label=repeat — 同一问题已由本 MR 更早的 comment 提出（附 comment 链接或 id）
 ```
 
 发现 CCR 漏掉的真实问题时，直接在 diff 行创建新评论：
@@ -60,8 +61,10 @@ ccr:missed — 这里在并发关闭后仍可能写入已关闭 channel
 - 每条 finding 都标，不能只收集 `wrong` 或只收集采纳项。
 - 必须查代码求证，不能因为 finding 文本听起来合理就同意它。
 - `wrong` 给出可验证反证；拿不准用 `debatable`。
-- pre-existing 行为不算当前 diff 的有效 finding。
-- 可选病因 tag：`#textbook`、`#padding`、`#pre-existing`、`#stale`、
+- `repeat` 只表示同一 MR 的更早 comment 已交付同一问题，并附其链接或 id；它不表示
+  “问题在本次 diff 之前就存在”。
+- 本次 diff 之前已存在的行为不算有效 finding，按 `wrong #out-of-diff` 标注并给出 attribution 反证。
+- 可选病因 tag：`#textbook`、`#padding`、`#out-of-diff`、`#stale`、
   `#cross-file`。
 
 ### 3. 回收 GitHub 标签
@@ -203,7 +206,8 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
 在仓库根目录按 eval/README.md 采集 CCR 数据。
 1. 先读取 AGENTS.md，确认公开仓脱敏规则。
 2. 不打印、记录或提交 token；认证缺失时停下并告诉我缺什么。
-3. 对每条 finding 查真实 diff/代码后再打 ccr:label，四类都收集；wrong 给具体反证。
+3. 对每条 finding 查真实 diff/代码后再打 ccr:label，五类都收集；wrong 给具体反证，
+   repeat 指向本 MR 更早的同问题 comment。
 4. 使用 eval/labels.py 回收，每个仓库持续 upsert 到 eval/data/labels/。
 5. 运行 eval/build_label_dataset.py，报告总数、label 分布和 unpaired 数。
 6. 最后确认 git ls-files eval/data 和

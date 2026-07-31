@@ -265,7 +265,8 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
   `insufficient` 或属于 `low_value` 的 Hypothesis 不会对外发布，分析理由可进入评测事件。
 - merge commit、root commit、binary、rename、非 ASCII 与特殊 hunk diff 均有契约测试。
 - `go build ./...`、`go test ./...`、`go test -race ./...` 通过。
-- reviewbench 分别回放 wrong 与 important/minor 样本，量测误报拦截率、真问题保留率和补证成本；
+- reviewbench 分别回放 wrong、repeat 与 important/minor 样本，量测误报拦截率、重复交付率、
+  真问题保留率和补证成本；
   precision 不回退，timeout/incomplete 降低，预算下覆盖率可解释。
 
 ## References

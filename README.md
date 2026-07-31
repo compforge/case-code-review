@@ -16,7 +16,7 @@ The payoff: ccr finds the bugs that need background — a change quietly breakin
 
 Review quality is judged on three goals that pull against each other — **robustness, accuracy, cost** — pursued through three levers all centered on the review loop: its capability, its granularity, and its context. See `AGENTS.md` for the full frame.
 
-![CCR two-stage evidence review pipeline](docs/kernel-pipeline.svg)
+![CCR review pipeline from Diff to Finding](docs/review-pipeline.svg)
 
 ## The context model: evidence kinds × relations
 
@@ -83,6 +83,12 @@ ccr review --format json                # machine-readable output (CI, bots)
 ccr review --background "$(cat mr.md)"  # inject requirement/business context for precision
 ccr review --history prior.json         # prior findings, re-checked against the new diff
 ```
+
+For continuous PR/MR review, the forge comments are the durable history. On each revision,
+the caller fetches the current PR/MR comments, materializes a temporary `prior.json`, and
+passes it to ccr; devloop and review-harness do this automatically. Keys prefer symbol IDs
+and may fall back to repo-relative paths when the forge only retains a file anchor, for
+example `{"path/to/file.go::Symbol":[{"msg":"prior finding","sha":"abc123"}]}`.
 
 ### Inspect before spending tokens
 
