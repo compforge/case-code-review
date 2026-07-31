@@ -21,17 +21,17 @@ Harness 的通用性只表示 Core 不理解 review 领域：
 Execution 有不可变输入、独占运行状态、共享预算中的额度和唯一终态。是否使用某个 AgentCore
 实现 loop，不改变 Runner 与 Harness 的边界。
 
-| 概念 | 语义与 owner |
-|------|--------------|
-| `ExecutionSpec` | 一次执行的不可变输入：模型、初始消息、工具、策略、预算句柄和限制 |
-| `Execution` | Harness 内的一次运行；独占 conversation、compression、tool state、deadline 与收尾状态 |
-| `AgentLoop` | 在 Execution 内反复完成 context projection → model call → tool execution → stop decision |
-| `ContextStrategy` | 决定消息如何投影、回收、压缩和降为 provider 输入；策略由调用方组合 |
-| `Budget` | 为模型请求提供 lease 并按真实 usage 结算；可以由多个 Execution 共享 |
-| `Tool` / `ToolGate` / `Hook` | 工具能力、调用前门禁和调用前后扩展点；领域语义由外围 Hook 持有 |
-| `Guard` | 判断领域是否完成，以及预算、时间或外部信号是否要求停止或收尾 |
-| `Event` | 执行过程的事实流，供 session、telemetry、eval 和 UI 消费 |
-| `ExecutionResult` | 唯一终态、usage 与必要的运行记录；不包含 Unit coverage 或 Finding |
+| 概念 | 语义与 owner | 首版提供方 |
+|------|--------------|-----------|
+| `ExecutionSpec` | 一次执行的不可变输入：模型、初始消息、工具、策略、预算句柄和限制 | 适配层组装 |
+| `Execution` | Harness 内的一次运行；独占 conversation、compression、tool state、deadline 与收尾状态 | agentcore `Agent`（一 Unit 一实例） |
+| `AgentLoop` | 在 Execution 内反复完成 context projection → model call → tool execution → stop decision | agentcore |
+| `ContextStrategy` | 决定消息如何投影、回收、压缩和降为 provider 输入；策略由调用方组合 | agentcore `ContextManager` 接口；review 策略由适配层实现 |
+| `Budget` | 为模型请求提供 lease 并按真实 usage 结算；可以由多个 Execution 共享 | 暂缓（见关键设计 3） |
+| `Tool` / `ToolGate` / `Hook` | 工具能力、调用前门禁和调用前后扩展点；领域语义由外围 Hook 持有 | agentcore |
+| `Guard` | 判断领域是否完成，以及预算、时间或外部信号是否要求停止或收尾 | agentcore `StopGuard`；完成条件由适配层注入 |
+| `Event` | 执行过程的事实流，供 session、telemetry、eval 和 UI 消费 | agentcore |
+| `ExecutionResult` | 唯一终态、usage 与必要的运行记录；不包含 Unit coverage 或 Finding | 适配层基于 Event 与 Guard 裁决 |
 
 Runner 可以为一个 Unit 建立领域侧的 `UnitExecution`，但它进入 Harness 后只是一条
 `ExecutionSpec`。Harness 返回 `ExecutionResult`，Runner 再结合领域 Hook 产出 `UnitResult`。
@@ -133,6 +133,10 @@ Harness 的 Budget 只回答“这次请求能否发出、发出后花了多少�
 Runner 决定快速/深度模式、Run 总预算、Unit admission、覆盖公平和最终裁决预留。Harness
 不能根据 Unit 类型私自改变额度，也不能在预算耗尽后绕过账本继续调用模型。
 
+> **首版暂缓 lease/settle**：usage 只做事后记账，请求前不拦截。机制设计保留——它是
+> Runner 侧总预算（`run-model.md`）落地时的既定接口，届时在适配层的 ChatModel 包装处
+> 回补 lease 点，不动 agentcore 内部。
+
 ### 4. 完成信号与停止原因正交
 
 Harness 不内建 `task_done`，而由调用方注入 Completion Guard 判断领域完成条件。通用结果至少
@@ -166,16 +170,27 @@ outcome 发出有序 Event。Session 持久化、telemetry、eval 导出和 UI �
 多少 token/时间、发生了几次回收或压缩、调用了哪些工具、是否完成以及为何停止。Finding
 正确性继续由 Runner/eval 量测，不能把“loop 顺利结束”当作质量提升。
 
-### 7. AgentCore 是设计参考，不是当前运行时依赖
+### 7. 执行内核采用 agentcore，`internal/harness` 是适配层
 
-Pi AgentCore 已验证的 `transformContext`、`convertToLlm`、tool hooks、turn stop 和 event flow
-值得作为接口参考。但它是 TypeScript 运行时，也不直接提供 CCR 需要的 token lease、
-review-aware compression 和完成纪律。Go 版 CCR 当前不引入 Node sidecar，也不为未来接入
-Codex/Claude 预建 Backend 抽象。
+本文概念表中的 AgentLoop、Execution 隔离、ContextManager、StopGuard、ToolGate 和 Event
+流，与 [`agentcore`](https://github.com/voocel/agentcore)（Go，Apache-2.0）的已有接口逐条
+对应。首版**不自研 Go agent loop**，直接以 agentcore 为执行内核；`internal/harness` 从
+自研 Core 变为适配层，持有且只持有以下 ccr 专属职责：
 
-首版在 `internal/harness` 内收敛一套小而深的 Go Core：借鉴 AgentCore 的边界，保留 CCR 已有
-的上下文、压缩和收尾能力。只有当执行运行时本身发生变化时，才重新评估外部 AgentCore 或
-Backend 适配。
+- **ChatModel 适配**：包 `internal/llm` 现有 client（含 LLMRouter failover），不替换
+  provider 层；agentcore 对 ccr 的路由与重试策略无感。
+- **review 完成纪律**：`task_done` 映射为 terminal tool + `StopGuard` 裁决，deadline/round
+  reserve 的 forced wrap-up 经 `Agent.Inject` 在 turn 边界注入（关键设计 4）。
+- **review ContextStrategy**：file dedup、file evict、保 confirmed fact 的压缩纪律，实现为
+  agentcore `ContextManager`/Strategy（关键设计 2）。
+- **Event 接线**：agentcore Event 流 → ccr 的 session 持久化、telemetry 与 viewer（关键
+  设计 6），以及基于 Event 与 Guard 的 `ExecutionResult` 领域裁决。
+- **Board/Review Team**：继续走领域 middleware/hook，不进适配层。
+
+**领域代码不直接 import agentcore，只经 `internal/harness` 适配层。** agentcore 是年轻的
+外部依赖，这条边界保证升级、替换或 vendor/fork 只动一层；同时沿用现有 boundary test 守住
+Harness 不 import review 域的方向，并加反向的 import 约束。仍不为未来接入 Codex/Claude
+预建 Backend 抽象——只有当执行运行时本身再次变化时才重新评估。
 
 ## References
 
