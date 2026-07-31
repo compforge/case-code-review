@@ -6,7 +6,9 @@
 
 **初衷**：一个文件一个 review loop 太死板，所以把评审基本单位下沉到 **unit**（一函数一 unit）；但函数级会炸出太多 loop，所以**必要时合并**——除了按文件合（成本），还按调用链合（一个需求天然横跨上下游几个 func/文件）。在此之上，再给每个 loop 喂**更合适的上下文**（spec-case 标注 + 上一轮 review history + caller/callee）。本文档管前半截（unit 的粒度与结构）；上下文那半截已落地（见 References）。
 
-ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一次 review loop 跑在一个 unit 上。它有两个层级、两个类型、两个流水线阶段：
+ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一次 review loop 跑在一个 unit 上。
+上游无论来自 git diff 还是 full-file scan，都先成为 `Change`；git source 负责采集，Unit
+拥有形成作用域所需的 change/hunk 事实。它有两个层级、两个类型、两个流水线阶段：
 
 - **Fragment（原子）**：单文件的一段变更——一个函数的 hunks，或函数外的残余。Splitter 产出。**纯数据**：无 context、无分组。
 - **Unit（作用域）**：1..N 个 Fragment 按某条轴成组 + 收齐的上下文（Clues）。Merger 产出，**review loop 真正跑的东西**。
@@ -16,7 +18,8 @@ ccr 区别于 ocr 的一等概念就是 **unit**——评审的作用域。一�
 ## 流程
 
 ```
-diff ─Splitter─▶ Fragment（每文件：每函数一个 + 残余一个）
+git change / full scan ─▶ Change
+     ─Splitter─▶ Fragment（diff：每文件每函数一个 + 残余；scan：整文件一个）
      ─Merger（两步顺序）─▶ Unit
           ① call-chain（语义轴）：跨文件、调用相邻、且都在 diff 里的 Fragment 成一簇
           ② file-coalesce（成本轴）：残余若超水位，按同文件并
@@ -64,6 +67,6 @@ func unit = 1 Fragment；file 粗化 = 1 Fragment（多符号、整文件 diff�
 
 - clue 后置那半截（unit 拿到后怎么收证据）：[`context-model.md`](context-model.md)（Clue / ClueFinder / Relation / Dossier，两轴正交）。
 - 实现锚点：`internal/unit`（`Fragment` / `Unit` / `Splitter` / `Merger`）及其
-  `spec`/`codegraph`/`history` 子包（finders）、`internal/runner`（`reviewUnit`、finder
-  装配与 clue 收集时机）。
+  `change`/`spec`/`codegraph`/`history` 子包，`internal/runner/source` 与
+  `internal/runner/scan`（输入），以及 `internal/runner`（finder 装配与 clue 收集时机）。
 - 上层定位：`AGENTS.md`（unit 一等概念）、`README.md`（理念）。

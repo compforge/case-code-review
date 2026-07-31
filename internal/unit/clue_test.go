@@ -3,7 +3,7 @@ package unit
 import (
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // CoalesceFile is the cost governor's function→file rung: it merges a file's
@@ -15,7 +15,7 @@ import (
 // Fragment then unioned. So this test asserts the symbol union only; the
 // post-merge clue gathering is covered by the agent package.
 func TestCoalesceFileUnionsSymbols(t *testing.T) {
-	d := diff.Diff{NewPath: "a.go", Diff: "@@ -1 +1 @@\n-a\n+b\n"}
+	d := change.Change{NewPath: "a.go", Diff: "@@ -1 +1 @@\n-a\n+b\n"}
 	f1 := Fragment{Path: "a.go", Symbols: []string{"a.go::F1"}}
 	f2 := Fragment{Path: "a.go", Symbols: []string{"a.go::F2"}}
 

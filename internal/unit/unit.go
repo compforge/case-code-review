@@ -13,8 +13,8 @@ package unit
 import (
 	"strings"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/go-stdx/slicesx"
 )
 
@@ -60,7 +60,7 @@ type Fragment struct {
 
 // Unit is the review scope and the currency of the pipeline: the loop runs once
 // per Unit. It groups Fragments and carries the Clues found for that scope.
-// diff.Diff is upstream of this (the Splitter consumes it) and does not flow
+// change.Change is upstream of this (the Splitter consumes it) and does not flow
 // past the split.
 type Unit struct {
 	// ID is a stable identity for telemetry/span naming.
@@ -146,13 +146,13 @@ func (u Unit) Diff() string {
 // Splitter turns one file's diff into Fragments — one per changed function plus a
 // residual, or a single whole-file Fragment when the file can't be parsed.
 type Splitter interface {
-	Split(d diff.Diff) ([]Fragment, error)
+	Split(d change.Change) ([]Fragment, error)
 }
 
 // FileSplitter is the degenerate Splitter: a single whole-file Fragment.
 type FileSplitter struct{}
 
-func (FileSplitter) Split(d diff.Diff) ([]Fragment, error) {
+func (FileSplitter) Split(d change.Change) ([]Fragment, error) {
 	return []Fragment{{
 		Path:       d.NewPath,
 		Diff:       d.Diff,
@@ -173,7 +173,7 @@ func UnitOf(f Fragment) Unit {
 // CoalesceFile merges a file's Fragments into one ScopeFile Unit reviewing the
 // whole-file diff while retaining every Fragment's Symbols — the cost governor's
 // function→file rung (caps loop count, not context).
-func CoalesceFile(d diff.Diff, frags []Fragment) Unit {
+func CoalesceFile(d change.Change, frags []Fragment) Unit {
 	whole := Fragment{Path: d.NewPath, Diff: d.Diff, Insertions: d.Insertions, Deletions: d.Deletions}
 	for _, f := range frags {
 		whole.Symbols = append(whole.Symbols, f.Symbols...)

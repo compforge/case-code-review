@@ -11,15 +11,14 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
-	"github.com/qiankunli/case-code-review/internal/diff"
-	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
+	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/stdout"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // commonContext bundles the state that both `ocr review` and `ocr scan`
@@ -114,7 +113,7 @@ type llmRuntime struct {
 	Model        string
 	PlanToolDefs []llm.ToolDef
 	MainToolDefs []llm.ToolDef
-	Collector    *tool.CommentCollector
+	Findings     *finding.Collector
 	AppCfg       *Config
 }
 
@@ -188,7 +187,7 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath, modelOverride string
 		Model:        eps[0].Model,
 		PlanToolDefs: planToolDefs,
 		MainToolDefs: mainToolDefs,
-		Collector:    tool.NewCommentCollector(),
+		Findings:     finding.NewCollector(),
 		AppCfg:       appCfg,
 	}, nil
 }
@@ -248,10 +247,10 @@ func (h *quietHandle) Restore() {
 }
 
 // ResultProvider abstracts the metadata both internal/runner.Runner and
-// internal/scan.Agent expose post-run, so emitRunResult can finalize
+// internal/runner/scan.Runner expose post-run, so emitRunResult can finalize
 // either without knowing which kind it has.
 type ResultProvider interface {
-	Diffs() []diff.Diff
+	Changes() []change.Change
 	FilesReviewed() int64
 	TotalInputTokens() int64
 	TotalOutputTokens() int64
@@ -284,7 +283,7 @@ func emitRunResult(
 	outputFormat, audience string,
 	q *quietHandle,
 ) error {
-	comments = finding.ResolveLineNumbers(comments, ag.Diffs())
+	comments = finding.ResolveLineNumbers(comments, ag.Changes())
 
 	duration := time.Since(startTime)
 	telemetry.RecordReviewDuration(ctx, duration)

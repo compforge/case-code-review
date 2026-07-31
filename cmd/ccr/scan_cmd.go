@@ -9,7 +9,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/scan"
+	"github.com/qiankunli/case-code-review/internal/runner/scan"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -178,9 +178,9 @@ func runScan(args []string) error {
 		Mode:    tool.ModeWorkspace,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Collector, fileReader)
+	tools := buildToolRegistry(rt.Findings, fileReader)
 
-	ag := scan.NewAgent(scan.Args{
+	ag := scan.New(scan.Args{
 		RepoDir:               cc.RepoDir,
 		Paths:                 scanPaths,
 		Template:              *scanTpl,
@@ -189,8 +189,8 @@ func runScan(args []string) error {
 		LLMClient:             rt.Client,
 		Tools:                 tools,
 		MainToolDefs:          scanToolDefs,
-		CommentCollector:      rt.Collector,
-		CommentWorkerPool:     llmloop.NewCommentWorkerPool(opts.concurrency),
+		Findings:              rt.Findings,
+		WorkerPool:            llmloop.NewWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
@@ -224,7 +224,7 @@ func runScan(args []string) error {
 }
 
 func runScanPreview(cc *commonContext, scanTpl *template.ScanTemplate, scanPaths []string) error {
-	ag := scan.NewAgent(scan.Args{
+	ag := scan.New(scan.Args{
 		RepoDir:          cc.RepoDir,
 		Paths:            scanPaths,
 		FileFilter:       cc.FileFilter,
@@ -258,7 +258,7 @@ Examples:
   ccr scan --path internal/runner
 
   # Scan multiple files
-  ccr scan --path internal/runner/runner.go,internal/diff/scan.go
+  ccr scan --path internal/runner/runner.go,internal/runner/source/git.go
 
   # Exclude generated files / fixtures
   ccr scan --exclude '**/generated/*,**/testdata/*'

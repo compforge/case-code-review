@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/runner"
+	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/suggestdiff"
 )
 

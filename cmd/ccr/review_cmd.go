@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
+	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/history"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
@@ -69,7 +71,7 @@ func runReview(args []string) error {
 		Ref:     ref,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Collector, fileReader)
+	tools := buildToolRegistry(rt.Findings, fileReader)
 
 	// Loads the --spec path plus auto-discovered .casecodereview/spec.json layers, mirroring
 	// how rules are resolved. Nil when no layer exists.
@@ -94,8 +96,8 @@ func runReview(args []string) error {
 		Tools:                 tools,
 		PlanToolDefs:          rt.PlanToolDefs,
 		MainToolDefs:          rt.MainToolDefs,
-		CommentCollector:      rt.Collector,
-		CommentWorkerPool:     runner.NewCommentWorkerPool(opts.concurrency),
+		Findings:              rt.Findings,
+		WorkerPool:            llmloop.NewWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
@@ -254,12 +256,12 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	return nil
 }
 
-func buildToolRegistry(collector *tool.CommentCollector, fr *tool.FileReader) *tool.Registry {
+func buildToolRegistry(findings *finding.Collector, fr *tool.FileReader) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewFileRead(fr))
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
 	reg.Register(tool.NewCodeSearch(fr))
-	reg.Register(&tool.CodeCommentProvider{Collector: collector})
+	reg.Register(&finding.ToolProvider{Collector: findings})
 	return reg
 }

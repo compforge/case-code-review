@@ -63,7 +63,7 @@ func countClues(clues unit.Dossier) map[string]int {
 // filtering, spec.json / call-graph coverage and map injection can all be
 // inspected in one pass, for free.
 func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, error) {
-	if err := a.loadDiffs(ctx); err != nil {
+	if err := a.loadChanges(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("load diffs: %w", err)
 	}
 	preview := a.buildPreview()

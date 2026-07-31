@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/pathutil"
 )
 
 const (
@@ -125,7 +125,7 @@ func (p *FileFindProvider) listGitFiles(parentCtx context.Context) ([]string, er
 // fails because the directory is not a git repository.
 func (p *FileFindProvider) listWalkFiles(ctx context.Context) ([]string, error) {
 	root := p.FileReader.RepoDir
-	gitignorePatterns := diff.LoadGitignorePatterns(root)
+	gitignorePatterns := pathutil.LoadGitignorePatterns(root)
 	var files []string
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -145,7 +145,7 @@ func (p *FileFindProvider) listWalkFiles(ctx context.Context) ([]string, error) 
 		rel = filepath.ToSlash(rel)
 
 		if d.IsDir() {
-			if diff.IsPathExcluded(root, rel, gitignorePatterns) {
+			if pathutil.IsPathExcluded(rel, gitignorePatterns) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -153,7 +153,7 @@ func (p *FileFindProvider) listWalkFiles(ctx context.Context) ([]string, error) 
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if diff.IsPathExcluded(root, rel, gitignorePatterns) {
+		if pathutil.IsPathExcluded(rel, gitignorePatterns) {
 			return nil
 		}
 		if shouldSkipFile(rel) {

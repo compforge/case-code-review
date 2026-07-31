@@ -1,9 +1,15 @@
-# Runner 模型：以 Unit 为调度与恢复货币
+# Runner 模型：在预算内提高质量、减少误报
 
-> 绿地改造设计，尚未描述当前实现。目标是把 OCR 的并发压缩、总 token 预算、断点续审等
-> case 收敛为 CCR 自己的运行模型，而不是在 file-oriented runtime 上逐项打补丁。
+> 绿地演进设计。当前优先级是质量、上下文、压缩和预算；断点续审与接入外部 Agent
+> Backend 是后续能力，不牵引当前内核边界。
 
 ## 理念
+
+CCR 的演进主线是：**在 token 与时间预算可控的背景下，为单个 Unit 提供更多有效 context，
+在 context 变长后可靠压缩，并以快速/深度等模式控制成本，从而提升质量、减少误报。**
+
+token 直接对应费用，长 context 也会增加时延；review 耗时过长会降低它在开发闭环中的价值。
+因此“更多上下文”不能脱离压缩和预算单独设计，“减少误报”也不能靠无限堆 token 获得。
 
 CCR 已把 **Unit** 建模为一次 review loop 的评审作用域，但运行层仍混合了两种生命周期：
 
@@ -16,7 +22,8 @@ CCR 已把 **Unit** 建模为一次 review loop 的评审作用域，但运行�
 1. **Runner**：拥有一次评审的全局生命周期。
 2. **UnitExecution**：拥有一个 Unit 的执行生命周期。
 
-Unit 由此不仅是评审作用域，也是调度、预算、checkpoint 和恢复的统一货币。Runner
+Unit 由此不仅是评审作用域，也是调度、预算和质量量测的统一货币；未来 checkpoint 和恢复
+也沿用同一货币。Runner
 只共享只读代码服务、LLM client、TokenBudget 与 Board；conversation、compression 和
 异步收尾必须由单个 UnitExecution 独占。
 
@@ -62,6 +69,11 @@ Runner（TokenBudget + Board + Attempt + deterministic scheduling）
                           ▼
                     ReviewResult
 ```
+
+输入与输出也服从 Runner 边界：workspace/range/commit 由 Runner source 采集，full-file
+scan 是 Runner 的另一输入模式；两者归一为 `Change` 后形成 Unit。Harness 只看到一次通用
+Execution，通过 tool hook 把领域输出交还 Runner；`CandidateFinding` 与最终 `Finding`
+始终属于 Runner，不进入 Harness Core。
 
 主流程分为五步：
 
@@ -192,7 +204,7 @@ spec/case/rule/requirement；语言或库行为优先交给确定性分析器或
 file review-filter 自己也有 checkpoint，其复用键覆盖 path、candidate/evidence digest、
 SourceSnapshot 与 adjudicator engine digest；candidate、证据或裁决环境变化时必须重跑。
 
-### 6. Resume 继续同一 Runner，不做跨 run 缓存
+### 6. Resume 继续同一 Runner，不做跨 run 缓存（后续）
 
 ReviewPlan 在 Runner 内不可变。中断恢复创建新 Attempt，并依次：
 
@@ -217,14 +229,14 @@ delegate host 的任意工具和 shell/文件写能力不得进入主 loop。未
 
 ## 落地顺序
 
-1. 建立 ReviewPlan、UnitResult、ReviewResult 与正交 outcome 类型。
-2. 重建 SourceSnapshot 和 diff 状态机，补 merge/root/binary/特殊 hunk case。
-3. 将共享的 loop 执行状态下沉为 UnitExecution，移除 run 级 conversation/compression
+1. 收敛内核边界：Runner 拥有 source/scan/finding，Unit 拥有 Change，Harness 用通用
+   tool hook 接收领域扩展且不依赖 Runner/Unit/Finding。
+2. 将共享的 loop 执行状态下沉为 UnitExecution，移除 run 级 conversation/compression
    可变状态。
+3. 建立快速/深度模式与 TokenBudget 的 admission、lease、settle、压缩和 finalization reserve。
 4. 建立带证据的 CandidateFinding → evidence adjudicator → final finding 结果管道。
-5. 引入 TokenBudget 的 admission、lease、settle 与 finalization reserve。
-6. 引入 Runner / Attempt、Unit 与 file-filter checkpoint，完成 resume。
-7. 核心模型稳定后再接 Responses API、streaming、traceparent 与 background-file。
+5. 建立 ReviewPlan、UnitResult、ReviewResult 与正交 outcome 类型，并强化 SourceSnapshot。
+6. 质量、成本和健壮性指标稳定后，再引入 Attempt/checkpoint/resume。
 
 跨 run cache/reuse、MCP、delegate mode 和启发式价值调度不在本轮范围。
 

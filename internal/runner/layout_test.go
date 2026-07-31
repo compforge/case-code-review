@@ -9,7 +9,7 @@ import (
 )
 
 func TestLegacyTopLevelBucketsStayRemoved(t *testing.T) {
-	for _, name := range []string{"feature", "model"} {
+	for _, name := range []string{"diff", "feature", "finding", "model", "scan"} {
 		path := filepath.Join("..", name)
 		_, err := os.Stat(path)
 		if errors.Is(err, fs.ErrNotExist) {

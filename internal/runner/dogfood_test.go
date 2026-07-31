@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/diff"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
@@ -59,7 +59,7 @@ func TestDogfoodContextAssembly(t *testing.T) {
 		costlyFinders: []unit.ClueFinder{
 			codegraph.CallerFinder{RepoDir: repo, Index: idx, Kinds: spec.KindGates{Spec: true}},
 		},
-		diffs: []diff.Diff{
+		changes: []change.Change{
 			{NewPath: "handler.go", NewFileContent: files["handler.go"], Insertions: 1, Deletions: 1,
 				Diff: "@@ -4,1 +4,1 @@\n-\treturn doCreate(req)\n+\treturn doCreate(req) // audited\n"},
 			{NewPath: "service.go", NewFileContent: files["service.go"], Insertions: 1, Deletions: 1,

@@ -1,7 +1,7 @@
 package preview
 
 // ExcludeReason describes why a file was excluded from review. Shared by
-// both diff review (internal/runner) and full-file scan (internal/scan).
+// both diff review (internal/runner) and full-file scan (internal/runner/scan).
 type ExcludeReason string
 
 const (

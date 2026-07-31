@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
 
 func TestStripEmptyPlanBlock(t *testing.T) {

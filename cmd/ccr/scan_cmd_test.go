@@ -122,11 +122,11 @@ func TestParseScanFlags_DefaultsValid(t *testing.T) {
 }
 
 func TestParseScanFlags_PathNarrowsScope(t *testing.T) {
-	opts, err := parseScanFlags([]string{"--path", "internal/runner,internal/diff"})
+	opts, err := parseScanFlags([]string{"--path", "internal/runner,internal/runner/source"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := splitPaths(opts.paths); !reflect.DeepEqual(got, []string{"internal/runner", "internal/diff"}) {
+	if got := splitPaths(opts.paths); !reflect.DeepEqual(got, []string{"internal/runner", "internal/runner/source"}) {
 		t.Errorf("splitPaths(opts.paths) = %v", got)
 	}
 }

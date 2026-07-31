@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
-	"github.com/qiankunli/case-code-review/internal/diff"
 	previewmodel "github.com/qiankunli/case-code-review/internal/runner/preview"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 type ExcludeReason = previewmodel.ExcludeReason
@@ -23,7 +23,7 @@ const (
 
 // whyExcluded applies the filter algorithm as shouldReview but
 // returns the specific reason a file is excluded.
-func (a *Runner) whyExcluded(d diff.Diff) ExcludeReason {
+func (a *Runner) whyExcluded(d change.Change) ExcludeReason {
 	if d.IsBinary {
 		return ExcludeBinary
 	}
@@ -54,7 +54,7 @@ func (a *Runner) whyExcluded(d diff.Diff) ExcludeReason {
 // Preview loads diffs and applies the filter algorithm, returning structured
 // preview data without dispatching any LLM calls.
 func (a *Runner) Preview(ctx context.Context) (*Preview, error) {
-	if err := a.loadDiffs(ctx); err != nil {
+	if err := a.loadChanges(ctx); err != nil {
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
 	return a.buildPreview(), nil
@@ -67,10 +67,10 @@ func (a *Runner) buildPreview() *Preview {
 	result := &Preview{
 		TotalInsertions: a.totalInsertions,
 		TotalDeletions:  a.totalDeletions,
-		TotalFiles:      len(a.diffs),
+		TotalFiles:      len(a.changes),
 	}
 
-	for _, d := range a.diffs {
+	for _, d := range a.changes {
 		path := effectivePath(d)
 		entry := previewmodel.Entry{
 			Path:       path,
@@ -99,14 +99,14 @@ func (a *Runner) buildPreview() *Preview {
 	return result
 }
 
-func effectivePath(d diff.Diff) string {
+func effectivePath(d change.Change) string {
 	if d.NewPath == "/dev/null" {
 		return d.OldPath
 	}
 	return d.NewPath
 }
 
-func diffStatus(d diff.Diff) string {
+func diffStatus(d change.Change) string {
 	switch {
 	case d.IsBinary:
 		return "binary"

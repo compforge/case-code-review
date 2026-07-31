@@ -16,9 +16,10 @@ review 质量并减少误报。**
 | **Unit** | 评审作用域，以及围绕作用域汇总的 Clue、Dossier、Briefing | LLM 调用、工具执行、压缩和运行预算 |
 | **Harness** | Agent 执行、工具调度、上下文生命周期、压缩、预算、事件与终态 | 源码语义、Unit 形成规则和 finding 业务判断 |
 
-三个中心之外保留一个薄的 **Runner** 编排入口：它把源码变化组织成 Unit，选择 review
-模式和总预算，将每个 Unit 交给 Harness 执行，再聚合、裁决和持久化结果。Runner 串联
-能力，但不吞并它们的事实和生命周期。
+三个中心之外保留一个薄的 **Runner** 编排入口：它拥有输入模式与评审结果。git diff 和
+full-file scan 都先归一为 Unit 的 `Change` 输入；最终 `CandidateFinding` / `Finding`、
+行号定位、重定位与裁决都属于 Runner 结果管道。Runner 将每个 Unit 交给 Harness 执行，
+但不把这些 review 语义下沉到 Harness Core。
 
 这里的“通用 Harness”是指**不含 review 领域分支的执行内核**，不等于建设多 Backend 或
 多 Agent 平台。首版可以直接以 AgentCore 作为内部执行引擎，不为未来可能接入 Codex、Claude
@@ -27,10 +28,12 @@ review 质量并减少误报。**
 ## 流程
 
 ```text
-Source / Diff
+Runner Source
+  ├── git change（workspace / range / commit）
+  └── full-file scan
     │
     ▼
-Language Facts
+Change + Language Facts
     │
     ▼
 Fragment ──merge──▶ Unit
@@ -43,7 +46,7 @@ Fragment ──merge──▶ Unit
                     Runner
                        │
                        ▼
-              Review Harness Extension
+              Runner Review Extension
                  ├── read-only tools
                  ├── review compaction
                  ├── completion guard
@@ -58,7 +61,7 @@ Fragment ──merge──▶ Unit
                  └── execution outcome
                        │
                        ▼
-              UnitResult ──aggregate / adjudicate──▶ ReviewResult
+              UnitResult ──aggregate / adjudicate──▶ Finding[]
 ```
 
 这一流程使用两种不同的货币：
@@ -70,6 +73,11 @@ Fragment ──merge──▶ Unit
 
 Runner 负责把 Unit 转成 Execution 输入，并把 Execution 结果还原成 UnitResult；跨边界的
 转换不进入 Language、Unit 或 Harness Core。
+
+代码所有权与数据流一致：`internal/runner/source` 和 `internal/runner/scan` 是两类输入，
+`internal/unit/change` 是形成 Unit 的统一源材料，`internal/runner/finding` 是结果与
+`code_comment` hook。不存在平铺的 `internal/diff`、`internal/scan`、`internal/finding`，
+也不允许 Harness 反向依赖这些领域包。
 
 ## 关键设计
 
@@ -101,6 +109,9 @@ Review 能力通过 Tool、ToolGate、Hook、Middleware、Context Strategy、Sto
 
 Core 不出现 `if review`。当现有扩展点表达不了需求时，先提炼领域无关的机制，再由 Review
 扩展实现策略；不 fork 第二套 loop。
+
+tool 名称不是 Harness 的封闭枚举：Core 只按 Registry 判断工具是否可用，领域工具通过稳定
+名称注入。异步 Tool 后处理使用 Harness 的通用 WorkerPool，但结果存储仍由领域 Hook 拥有。
 
 ### 4. 预算机制属于 Harness，预算策略属于 Runner
 

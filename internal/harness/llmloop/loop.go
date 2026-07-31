@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/diff"
-	"github.com/qiankunli/case-code-review/internal/finding"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -44,10 +42,7 @@ const (
 	maxBulletinTextRunes = 300
 )
 
-// wrapUpPrompt forces an explicit verdict when a budget is nearly gone. It
-// must demand task_done: chains ending without it are recorded as
-// unit_incomplete and their silence must not read as a clean review.
-const wrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. Based only on the evidence you already gathered: call code_comment for each issue you are confident about, then call task_done. If you found no issues in what you managed to review, call task_done and state explicitly which parts you reviewed. Do not call any other tools."
+const defaultWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. Report any confident results with the available result tool, then call task_done. State explicitly which parts you completed. Do not call investigation tools."
 
 // Outcome is how a unit's main loop terminated — the terminal state a debrief
 // records. RunPerFile computes it anyway (completed / truncation reason /
@@ -69,21 +64,21 @@ const (
 	OutcomeLLMError  = "llm_error" // a completion call failed terminally
 )
 
-// Deps bundles all per-call dependencies the Runner needs. Both
-// internal/runner (diff review) and internal/scan (full-file scan) build a
-// Deps from their own state and hand it to NewRunner.
+// Deps bundles the generic execution dependencies for one Harness loop.
 type Deps struct {
-	LLMClient         llm.LLMClient
-	Model             string
-	Template          template.Template
-	Tools             *tool.Registry
-	MainToolDefs      []llm.ToolDef
-	CommentCollector  *tool.CommentCollector
-	CommentWorkerPool *CommentWorkerPool
-	Session           *session.SessionHistory
-	// RelocationEnabled gates the LLM re-location sub-call (ablation feature gate).
-	// When false, an unresolved comment keeps its model-reported line (no extra LLM).
-	RelocationEnabled bool
+	LLMClient    llm.LLMClient
+	Model        string
+	Template     template.Template
+	Tools        *tool.Registry
+	MainToolDefs []llm.ToolDef
+	Session      *session.SessionHistory
+	// WrapUpPrompt is injected by the domain when its result tool needs
+	// specific instructions. The default only assumes task_done.
+	WrapUpPrompt string
+	// ToolCallHook lets a domain extension intercept a parsed tool call. The
+	// Harness remains responsible for loop control, while the hook owns domain
+	// semantics such as turning code_comment arguments into findings.
+	ToolCallHook ToolCallHook
 	// FileDedupEnabled gates file_read result deduplication (the file_dedup
 	// feature gate): a later read covering an earlier one stubs the earlier
 	// copy in place, so the model pays for file content once.
@@ -102,11 +97,6 @@ type Deps struct {
 	// def from MainToolDefs when either is missing, so the model never sees a
 	// tool it cannot use.
 	PostBulletinEnabled bool
-	// DiffLookup is consulted by the code_comment tool path to resolve
-	// line numbers against the file's diff (or against full file content
-	// in scan mode — scan adapters return a synthetic Diff whose
-	// NewFileContent is the whole file and Diff is empty).
-	DiffLookup func(path string) *diff.Diff
 }
 
 // Runner is a per-session (across files) executor of the LLM tool-use
@@ -130,6 +120,9 @@ type Runner struct {
 
 // NewRunner returns a Runner bound to the given dependencies.
 func NewRunner(deps Deps) *Runner {
+	if deps.WrapUpPrompt == "" {
+		deps.WrapUpPrompt = defaultWrapUpPrompt
+	}
 	// post_bulletin only exists as a callable tool when there is a board to post
 	// to AND the gate is on; otherwise drop its def so the tool list matches
 	// reality (a def without a handler would burn rounds on NotAvailable).
@@ -239,16 +232,6 @@ func (r *Runner) RecordUsage(u *llm.UsageInfo) {
 	atomic.AddInt64(&r.totalCacheWriteTokens, u.CacheWriteTokens)
 }
 
-// CollectPendingComments awaits any async comment-processing workers and
-// returns the aggregated comments from the collector. Safe to call once
-// per session at the end.
-func (r *Runner) CollectPendingComments() []finding.Finding {
-	if r.deps.CommentWorkerPool != nil {
-		r.deps.CommentWorkerPool.Await()
-	}
-	return r.deps.CommentCollector.Comments()
-}
-
 // RunPerFile drives the main LLM conversation loop for a single file.
 // It sends messages with the configured tool definitions, executes any
 // tool calls returned by the model, and collects review comments until
@@ -267,7 +250,7 @@ func (r *Runner) CollectPendingComments() []finding.Finding {
 // still budget to say it), and any chain that still ends without task_done
 // records a unit_incomplete warning instead of returning silently.
 func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.Scope) (Outcome, error) {
-	newPath := sc.Path() // representative path for logging / code_comment anchoring
+	newPath := sc.Path() // representative path for logging
 	toolReqCount := r.deps.Template.MaxToolRequestTimes
 	const maxConsecutiveEmptyRounds = 3
 	consecutiveEmptyRounds := 0
@@ -301,11 +284,11 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 				if toolReqCount > wrapUpMaxRounds {
 					toolReqCount = wrapUpMaxRounds
 				}
-				messages = append(messages, msg.Text("user", wrapUpPrompt))
+				messages = append(messages, msg.Text("user", r.deps.WrapUpPrompt))
 				fmt.Fprintf(stdout.Writer(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (deadline)\n", newPath)
 			} else if toolReqCount == wrapUpRoundReserve {
 				wrapUpIssued = true
-				messages = append(messages, msg.Text("user", wrapUpPrompt))
+				messages = append(messages, msg.Text("user", r.deps.WrapUpPrompt))
 				fmt.Fprintf(stdout.Writer(), "[ccr] Budget nearly exhausted for %s — forcing wrap-up (rounds)\n", newPath)
 			}
 		}
@@ -424,7 +407,11 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 		// never spends a round on it). v0 publishes read + flag facts, keyed by
 		// path so peers watching the same file receive them.
 		if r.deps.Board != nil {
-			for _, b := range extractFacts(sc, turn, calls) {
+			facts := extractFacts(sc, turn, calls)
+			if hook, ok := r.deps.ToolCallHook.(ToolFactHook); ok {
+				facts = append(facts, hook.Facts(sc, turn, calls)...)
+			}
+			for _, b := range facts {
 				r.deps.Board.Publish(b)
 				boardPosted++
 			}
@@ -467,13 +454,9 @@ func (r *Runner) RunPerFile(ctx context.Context, messages []msg.Msg, sc session.
 }
 
 // executeToolCall dispatches a single tool call from the LLM response and
-// records the result in session history. code_comment handling includes
-// optional async dispatch through CommentWorkerPool plus line-number
-// resolution / re-location.
-// alias is the routing alias of the model that produced this tool call's response;
-// it is stamped onto any comments parsed here so multi-model output can be compared.
+// records the result in session history. Domain-specific tools may be
+// intercepted by ToolCallHook after their arguments are decoded.
 func (r *Runner) executeToolCall(ctx context.Context, sc session.Scope, call llm.ToolCall, rec *session.TaskRecord, alias string) tool.TaskCheckpoint {
-	newPath := sc.Path() // representative path; code_comment anchors to it
 	t := tool.OfName(call.Function.Name)
 	if !t.IsKnown() {
 		return tool.Of(tool.NotAvailableMsg)
@@ -495,98 +478,16 @@ func (r *Runner) executeToolCall(ctx context.Context, sc session.Scope, call llm
 		return tool.Of(fmt.Sprintf("Error parsing tool arguments for %s: %v", t.Name(), err))
 	}
 
-	// Snap code_comment's path back into the scope when the model hallucinated
-	// one — but keep any path that IS a scope member: a multi-file (call-chain)
-	// unit legitimately comments on members beyond the representative first
-	// path, and re-anchoring those pins the finding on the wrong file.
-	if t == tool.CodeComment && newPath != "" {
-		if p, _ := args["path"].(string); p == "" || !slices.Contains(sc.Paths, p) {
-			args["path"] = newPath
+	if r.deps.ToolCallHook != nil {
+		if result, handled := r.deps.ToolCallHook.Handle(ctx, HookCall{
+			Scope: sc, Tool: t, Call: call, Args: args, Record: rec, Alias: alias,
+		}); handled {
+			return result
 		}
-	}
-
-	startTime := time.Now()
-
-	if t == tool.CodeComment {
-		telemetry.PrintToolCallStarted(t.Name(), args)
-
-		comments, errMsg := tool.ParseComments(args)
-		if errMsg != "" {
-			telemetry.RecordToolCall(ctx, t.Name(), time.Since(startTime), false)
-			return tool.Of(errMsg)
-		}
-		// Attribute each finding to the model that produced it (for multi-model compare).
-		for i := range comments {
-			comments[i].Alias = alias
-		}
-
-		resolveAndCollect := func(rctx context.Context) {
-			for i := range comments {
-				cm := &comments[i]
-				var d *diff.Diff
-				if r.deps.DiffLookup != nil {
-					d = r.deps.DiffLookup(cm.Path)
-				}
-				if d != nil {
-					if !finding.ResolveComment(cm, d) && r.deps.RelocationEnabled && r.deps.Template.ReLocationTask != nil {
-						rlStart := time.Now()
-						_, resp, msgs := finding.ReLocateComment(rctx, cm, d, r.deps.LLMClient, r.deps.Template.ReLocationTask, r.deps.Model, r.deps.Template.MaxTokens)
-						if msgs != nil {
-							// Re-location happens inside this Unit's review loop, so it
-							// records under the same scope (not the comment's file path).
-							fs := r.deps.Session.GetOrCreateScope(sc)
-							rlRec := fs.AppendTaskRecord(session.ReLocationTask, msgs)
-							if resp != nil {
-								rlRec.SetResponse(resp, time.Since(rlStart))
-								if resp.Usage != nil {
-									atomic.AddInt64(&r.totalInputTokens, resp.Usage.PromptTokens)
-									atomic.AddInt64(&r.totalOutputTokens, resp.Usage.CompletionTokens)
-									atomic.AddInt64(&r.totalCacheReadTokens, resp.Usage.CacheReadTokens)
-									atomic.AddInt64(&r.totalCacheWriteTokens, resp.Usage.CacheWriteTokens)
-								}
-							} else {
-								rlRec.SetError(fmt.Errorf("re-location LLM call failed"), time.Since(rlStart))
-							}
-						}
-					}
-				}
-				r.deps.CommentCollector.Add(*cm)
-			}
-		}
-
-		if r.deps.CommentWorkerPool != nil {
-			if rec != nil {
-				rec.AddToolResult(t.Name(), call.Function.Arguments, "(async)")
-			}
-			pool := r.deps.CommentWorkerPool
-			asyncCtx := context.WithoutCancel(ctx)
-			toolName := t.Name()
-			// Register with the scope's lifecycle BEFORE submitting: the async
-			// worker may append relocation records to this scope, so the scope
-			// must not finalize its debrief until this task ends.
-			ss := r.deps.Session.GetOrCreateScope(sc)
-			ss.BeginAsync()
-			pool.Submit(func() ([]finding.Finding, error) {
-				defer ss.EndAsync()
-				resolveAndCollect(asyncCtx)
-				telemetry.PrintToolCallFinished(toolName, time.Since(startTime))
-				return []finding.Finding{}, nil
-			})
-			telemetry.RecordToolCall(asyncCtx, toolName, time.Since(startTime), true)
-			return tool.Of(tool.CommentSucceed)
-		}
-
-		resolveAndCollect(ctx)
-		dur := time.Since(startTime)
-		telemetry.RecordToolCall(ctx, t.Name(), dur, true)
-		telemetry.PrintToolCallFinished(t.Name(), dur)
-		if rec != nil {
-			rec.AddToolResult(t.Name(), call.Function.Arguments, tool.CommentSucceed)
-		}
-		return tool.Of(tool.CommentSucceed)
 	}
 
 	// Synchronous path for all other tools
+	startTime := time.Now()
 	telemetry.PrintToolCallStarted(t.Name(), args)
 	result, err := p.Execute(ctx, args)
 	dur := time.Since(startTime)
@@ -675,27 +576,18 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 }
 
 // extractFacts turns a turn's tool calls into board bulletins — the auto
-// publish layer (docs/cross-unit.md D2): the engine harvests facts the model
-// produced anyway, so publishing costs no round. v0 harvests two, both keyed by
-// the file path so peers watching that file receive them:
-//   - file_read → "read <path>" (the cross-unit dedup signal)
-//   - code_comment → "flagged an issue in <path>" (cross-unit awareness)
-//
-// All confirmed-level (they are things that happened, not suspicions).
-// post_bulletin is NOT harvested here: it publishes at execution time, where
-// validation and the per-loop budget decide whether it lands at all.
+// publish layer (docs/cross-unit.md D2). Core harvests generic file reads;
+// domain tools contribute their own facts through ToolFactHook.
 func extractFacts(sc session.Scope, turn int, calls []llm.ToolCall) []board.Bulletin {
 	var out []board.Bulletin
 	for _, c := range calls {
 		var args struct {
 			FilePath  string `json:"file_path"`
-			Path      string `json:"path"`
 			StartLine int    `json:"start_line"`
 			EndLine   int    `json:"end_line"`
 		}
 		_ = json.Unmarshal([]byte(c.Function.Arguments), &args)
-		switch c.Function.Name {
-		case "file_read":
+		if c.Function.Name == tool.FileRead.Name() {
 			if args.FilePath == "" {
 				continue
 			}
@@ -705,21 +597,6 @@ func extractFacts(sc session.Scope, turn int, calls []llm.ToolCall) []board.Bull
 			}
 			out = append(out, board.Bulletin{From: sc.ID, Turn: turn, Level: board.LevelConfirmed,
 				Paths: []string{args.FilePath}, Text: text})
-		case "code_comment":
-			// The comment's raw arguments usually carry no "path" at all — the
-			// LLM-facing schema only has the comments array; the anchor path is
-			// injected into the parsed args by executeToolCall. Mirror its
-			// snap-to-scope rule here on the raw value: keep a path that IS a
-			// scope member, anchor everything else to the representative path.
-			path := args.Path
-			if path == "" || !slices.Contains(sc.Paths, path) {
-				path = sc.Path()
-			}
-			if path == "" {
-				continue
-			}
-			out = append(out, board.Bulletin{From: sc.ID, Turn: turn, Level: board.LevelConfirmed,
-				Paths: []string{path}, Text: "flagged an issue in " + path})
 		}
 	}
 	return out
@@ -748,7 +625,7 @@ func (r *Runner) handlePostBulletin(scopeID string, turn int, call llm.ToolCall,
 		return "Error: post_bulletin requires at least one routing key (paths or symbols) — without one the note cannot reach the peers reviewing that code.", false
 	}
 	if *budget <= 0 {
-		return "Bulletin budget for this unit is exhausted — note NOT posted. Continue your review; report findings in this unit's diff with code_comment.", false
+		return "Bulletin budget for this unit is exhausted — note NOT posted. Continue the current task and use its result tool for final output.", false
 	}
 	*budget--
 	// Keep the card a card: the board digest is byte-capped, and one verbose

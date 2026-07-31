@@ -50,11 +50,10 @@ func newWrapUpRunner(client *scriptedClient, maxRounds int) *Runner {
 	reg.Register(echoProvider{})
 	reg.Freeze()
 	return NewRunner(Deps{
-		LLMClient:        client,
-		Template:         template.Template{MaxToolRequestTimes: maxRounds, MaxTokens: 100},
-		Tools:            reg,
-		CommentCollector: tool.NewCommentCollector(),
-		Session:          session.New(".", "test", "m", session.SessionOptions{}),
+		LLMClient: client,
+		Template:  template.Template{MaxToolRequestTimes: maxRounds, MaxTokens: 100},
+		Tools:     reg,
+		Session:   session.New(".", "test", "m", session.SessionOptions{}),
 	})
 }
 

@@ -4,19 +4,19 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
-	"github.com/qiankunli/case-code-review/internal/diff"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func TestWhyExcluded_BinaryFile(t *testing.T) {
 	agent := New(Args{})
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "binary file returns ExcludeBinary",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath:  "image.png",
 				IsBinary: true,
 			},
@@ -24,14 +24,14 @@ func TestWhyExcluded_BinaryFile(t *testing.T) {
 		},
 		{
 			name: "non-binary go file returns ExcludeNone",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "binary file with valid extension still excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath:  "document.pdf",
 				IsBinary: true,
 			},
@@ -58,26 +58,26 @@ func TestWhyExcluded_UserExcludePattern(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "file matching exclude pattern",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "vendor/foo/bar.go",
 			},
 			expected: ExcludeUserRule,
 		},
 		{
 			name: "generated file excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "api.gen.go",
 			},
 			expected: ExcludeUserRule,
 		},
 		{
 			name: "regular file not excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main.go",
 			},
 			expected: ExcludeNone,
@@ -99,47 +99,47 @@ func TestWhyExcluded_ExtensionFilter(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "unsupported extension txt",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "README.txt",
 			},
 			expected: ExcludeExtension,
 		},
 		{
 			name: "unsupported extension md",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "docs/guide.md",
 			},
 			expected: ExcludeExtension,
 		},
 		{
 			name: "supported extension go",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "supported extension java",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/Main.java",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "supported extension ts",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "app.ts",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "file without extension",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "Makefile",
 			},
 			expected: ExcludeNone,
@@ -161,33 +161,33 @@ func TestWhyExcluded_DefaultPathFilter(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "test file excluded by default path",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "foo_test.go",
 			},
 			expected: ExcludeDefaultPath,
 		},
 		{
 			name: "java test file excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/test/java/com/example/FooTest.java",
 			},
 			expected: ExcludeDefaultPath,
 		},
 		{
 			name: "regular source file not excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/main/java/com/example/Foo.java",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "go source file not excluded",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "handler.go",
 			},
 			expected: ExcludeNone,
@@ -213,27 +213,27 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		// --- Files matching include patterns bypass default-path checks ---
 		{
 			name: "file matching first include pattern is reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/foo/bar.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "file matching second include pattern is reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "pkg/util/helper.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "include pattern bypasses default-path exclusion for test files",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/foo/bar_test.go",
 			},
 			// IMPORTANT: Even though *_test.go is excluded by IsExcludedPath,
@@ -246,7 +246,7 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 		// path is not default-excluded, they are still reviewed.
 		{
 			name: "non-included file with valid extension still reviewed (additive semantics)",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "vendor/baz.go",
 			},
 			// .go is a supported extension and vendor/baz.go does not hit
@@ -255,21 +255,21 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 		},
 		{
 			name: "non-included file in non-excluded directory still reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "internal/handler.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "include check overrides extension exclusion",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "internal/test.supportedext",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "unsupported extension even if path looks like include dir",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/notes.txt",
 			},
 			expected: ExcludeExtension,
@@ -277,7 +277,7 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 		// --- Default-path exclusion still applies to non-included files ---
 		{
 			name: "non-included test file excluded by default path",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "internal/handler_test.go",
 			},
 			// Does not match include patterns, falls through.
@@ -308,19 +308,19 @@ func TestWhyExcluded_IncludeBypassesDefaultPath(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "test file explicitly included overrides default-path exclusion",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "foo_test.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "non-test file still reviewed via default checks",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main.go",
 			},
 			expected: ExcludeNone,
@@ -349,26 +349,26 @@ func TestWhyExcluded_IncludeAndExcludeInteraction(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected ExcludeReason
 	}{
 		{
 			name: "included file is reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/handler.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
 			name: "file matching both include and exclude is excluded (exclude wins)",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "src/generated/api.go",
 			},
 			expected: ExcludeUserRule,
 		},
 		{
 			name: "file outside include with valid ext still reviewed (additive)",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "lib/utils.go",
 			},
 			expected: ExcludeNone,
@@ -393,7 +393,7 @@ func TestWhyExcluded_PriorityOrder(t *testing.T) {
 	})
 
 	// Binary check should happen first, even if excluded by user pattern
-	diff := diff.Diff{
+	diff := change.Change{
 		NewPath:  "vendor/image.png",
 		IsBinary: true,
 	}
@@ -409,12 +409,12 @@ func TestShouldReview(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected bool
 	}{
 		{
 			name: "binary file should not be reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath:  "image.png",
 				IsBinary: true,
 			},
@@ -422,21 +422,21 @@ func TestShouldReview(t *testing.T) {
 		},
 		{
 			name: "regular go file should be reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main.go",
 			},
 			expected: true,
 		},
 		{
 			name: "test file should not be reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "main_test.go",
 			},
 			expected: false,
 		},
 		{
 			name: "unsupported extension should not be reviewed",
-			diff: diff.Diff{
+			diff: change.Change{
 				NewPath: "README.md",
 			},
 			expected: false,
@@ -456,12 +456,12 @@ func TestShouldReview(t *testing.T) {
 func TestEffectivePath(t *testing.T) {
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected string
 	}{
 		{
 			name: "normal new path",
-			diff: diff.Diff{
+			diff: change.Change{
 				OldPath: "old.go",
 				NewPath: "new.go",
 			},
@@ -469,7 +469,7 @@ func TestEffectivePath(t *testing.T) {
 		},
 		{
 			name: "new path is dev/null (deleted file)",
-			diff: diff.Diff{
+			diff: change.Change{
 				OldPath: "deleted.go",
 				NewPath: "/dev/null",
 			},
@@ -477,7 +477,7 @@ func TestEffectivePath(t *testing.T) {
 		},
 		{
 			name: "renamed file uses new path",
-			diff: diff.Diff{
+			diff: change.Change{
 				OldPath: "old_name.go",
 				NewPath: "new_name.go",
 			},
@@ -498,33 +498,33 @@ func TestEffectivePath(t *testing.T) {
 func TestDiffStatus(t *testing.T) {
 	tests := []struct {
 		name     string
-		diff     diff.Diff
+		diff     change.Change
 		expected string
 	}{
 		{
 			name: "binary file",
-			diff: diff.Diff{
+			diff: change.Change{
 				IsBinary: true,
 			},
 			expected: "binary",
 		},
 		{
 			name: "new file",
-			diff: diff.Diff{
+			diff: change.Change{
 				IsNew: true,
 			},
 			expected: "added",
 		},
 		{
 			name: "deleted file",
-			diff: diff.Diff{
+			diff: change.Change{
 				IsDeleted: true,
 			},
 			expected: "deleted",
 		},
 		{
 			name: "renamed file",
-			diff: diff.Diff{
+			diff: change.Change{
 				OldPath: "old.go",
 				NewPath: "new.go",
 			},
@@ -532,7 +532,7 @@ func TestDiffStatus(t *testing.T) {
 		},
 		{
 			name: "modified file",
-			diff: diff.Diff{
+			diff: change.Change{
 				OldPath: "main.go",
 				NewPath: "main.go",
 			},

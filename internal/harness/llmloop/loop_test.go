@@ -1,60 +1,13 @@
 package llmloop
 
 import (
-	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
-	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
-
-func TestExecuteToolCall_CodeCommentOverridesHallucinatedPath(t *testing.T) {
-	collector := tool.NewCommentCollector()
-	reg := tool.NewRegistry()
-	reg.Register(&tool.CodeCommentProvider{Collector: collector})
-	reg.Freeze()
-
-	r := NewRunner(Deps{
-		Tools:            reg,
-		CommentCollector: collector,
-	})
-
-	args := map[string]any{
-		"path": "wrong.go",
-		"comments": []any{
-			map[string]any{
-				"content":       "issue",
-				"existing_code": "foo",
-			},
-		},
-	}
-	argsJSON, err := json.Marshal(args)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cp := r.executeToolCall(context.Background(), session.Scope{ID: "correct.go", Kind: "file", Type: "file", Paths: []string{"correct.go"}}, llm.ToolCall{
-		Function: llm.FunctionCall{
-			Name:      "code_comment",
-			Arguments: string(argsJSON),
-		},
-	}, nil, "")
-	if cp.Data != tool.CommentSucceed {
-		t.Fatalf("unexpected result: %+v", cp)
-	}
-
-	comments := collector.Comments()
-	if len(comments) != 1 {
-		t.Fatalf("expected 1 comment, got %d", len(comments))
-	}
-	if comments[0].Path != "correct.go" {
-		t.Errorf("path override: got %q, want %q", comments[0].Path, "correct.go")
-	}
-}
 
 func TestRunnerModelsUsed(t *testing.T) {
 	r := NewRunner(Deps{})
@@ -77,68 +30,18 @@ func TestRunnerModelsUsed(t *testing.T) {
 	}
 }
 
-func TestExecuteToolCall_CodeCommentKeepsScopeMemberPath(t *testing.T) {
-	collector := tool.NewCommentCollector()
-	reg := tool.NewRegistry()
-	reg.Register(&tool.CodeCommentProvider{Collector: collector})
-	reg.Freeze()
-
-	r := NewRunner(Deps{Tools: reg, CommentCollector: collector})
-
-	// A call-chain scope spans two files; a comment on the SECOND member
-	// must keep its path instead of being re-anchored to the first.
-	args, err := json.Marshal(map[string]any{
-		"path": "b.go",
-		"comments": []any{
-			map[string]any{"content": "issue", "existing_code": "foo"},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cp := r.executeToolCall(context.Background(), session.Scope{ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"}}, llm.ToolCall{
-		Function: llm.FunctionCall{Name: "code_comment", Arguments: string(args)},
-	}, nil, "")
-	if cp.Data != tool.CommentSucceed {
-		t.Fatalf("unexpected result: %+v", cp)
-	}
-	comments := collector.Comments()
-	if len(comments) != 1 || comments[0].Path != "b.go" {
-		t.Fatalf("member path must be kept, got %+v", comments)
-	}
-}
-
 func TestExtractFacts_ToolSpecificPathArgs(t *testing.T) {
 	sc := session.Scope{ID: "u1", Kind: "unit", Type: "file", Paths: []string{"main.go", "b.go"}}
 	calls := []llm.ToolCall{
 		{Function: llm.FunctionCall{Name: "file_read",
 			Arguments: `{"file_path":"a.go","start_line":3,"end_line":9}`}},
-		// The common shape: code_comment's raw arguments carry NO path (the
-		// anchor path is injected post-parse by executeToolCall) — the flag
-		// fact must anchor to the scope's representative path, not vanish
-		// (regression: zero flag facts ever reached the board).
-		{Function: llm.FunctionCall{Name: "code_comment",
-			Arguments: `{"comments":[{"content":"issue","existing_code":"x"}]}`}},
-		// A raw path that IS a scope member is kept (multi-file units comment
-		// beyond the representative path).
-		{Function: llm.FunctionCall{Name: "code_comment",
-			Arguments: `{"path":"b.go","comments":[]}`}},
-		// A hallucinated non-member path snaps to the representative path,
-		// mirroring executeToolCall's rule.
-		{Function: llm.FunctionCall{Name: "code_comment",
-			Arguments: `{"path":"elsewhere.go","comments":[]}`}},
 	}
 	facts := extractFacts(sc, 2, calls)
-	if len(facts) != 4 {
-		t.Fatalf("want 4 facts, got %d: %+v", len(facts), facts)
+	if len(facts) != 1 {
+		t.Fatalf("want 1 fact, got %d: %+v", len(facts), facts)
 	}
 	if facts[0].Text != "read a.go:3-9" || facts[0].Paths[0] != "a.go" {
 		t.Fatalf("unexpected read fact: %+v", facts[0])
-	}
-	for i, want := range map[int]string{1: "main.go", 2: "b.go", 3: "main.go"} {
-		if facts[i].Paths[0] != want || facts[i].Text != "flagged an issue in "+want {
-			t.Fatalf("flag fact %d: want path %s, got %+v", i, want, facts[i])
-		}
 	}
 }
 
