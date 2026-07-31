@@ -14,6 +14,7 @@ var (
 	Unknown      = Tool{name: "unknown"}
 	TaskDone     = Tool{name: "task_done"}
 	FileRead     = Tool{name: "file_read"}
+	FileReadBase = Tool{name: "file_read_base"}
 	FileFind     = Tool{name: "file_find"}
 	FileReadDiff = Tool{name: "file_read_diff"}
 	CodeSearch   = Tool{name: "code_search"}
@@ -39,7 +40,7 @@ func (t Tool) Name() string { return t.name }
 
 // IsKnown reports whether the tool is not UNKNOWN.
 func (t Tool) IsKnown() bool {
-	return t != Unknown
+	return t.name != "" && t != Unknown
 }
 
 // Provider is the interface that all concrete tool implementations satisfy.

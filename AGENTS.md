@@ -54,7 +54,7 @@ full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 
 5. **通用操作不就地手写**：先查 stdlib（`slices`/`maps`/内置 `min`/`max`），stdlib 没有的查/进 [`go-stdx`](https://github.com/qiankunli/go-stdx)（自 `pkg/stdx` 孵化毕业，收录纪律见其 AGENTS.md）；第三方 common 库（samber/lo、bytedance/gopkg 等）已评估过暂不引——出现第三个"纯 transform 链"调用点再议。
 
-6. **review loop 结构上只读——是受守护的信任边界**：领域代码不得直接 import agentcore，只经 `internal/harness` 适配层接入；Harness 不内建 review 分支，Runner 通过 tool/hook 注册封闭只读集（`file_read`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，Unit Review 的 `report_hypothesis` 和 Hypothesis Review 的 `submit_assessments` 只形成内存结果，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**。
+6. **review loop 结构上只读——是受守护的信任边界**：领域代码不得直接 import agentcore，只经 `internal/harness` 适配层接入；Harness 不内建 review 分支，Runner 通过 tool/hook 注册封闭只读集（`file_read`/`file_read_base`/`code_search`/`file_find`/`file_read_diff` 全走 git 只读动词，Unit Review 的 `report_hypothesis` 和 Hypothesis Review 的 `submit_assessments` 只形成内存结果，`task_done` 是控制信号），无 shell/exec、无 git 写动词、无文件写、`file_read` 有仓根沙箱防穿越。Hypothesis Review 的工具调用由 Runner 签发 evidence receipt，Trial 只交付证据支持、归因本次变更、有交付价值且未重复的 Hypothesis。**给评审 loop 新增任何能写文件 / 改仓库状态 / 跑 shell 的工具，即破坏这条边界**。
 
 7. **`VERSION` 是发布版本的事实源**：每个独立变更 / PR 都按 SemVer bump 一次；release tag 必须与文件内容一致，具体 build identity 继续由 commit 补充。
 

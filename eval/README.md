@@ -112,6 +112,8 @@ eval/data/datasets/review-comments-private.jsonl
 
 这里的 `public/private` 是按 forge 来源分桶，两个文件都属于真实数据，都会被 gitignore。
 session finding 只用于补齐早期没有在 forge comment 中保存正文、但仍有 fingerprint 的记录。
+新 session 还会按 fingerprint 与时间连接生成该 Finding 的 Hypothesis、Assessment 和执行身份；
+找不到对应旧 session 时这些字段为空，不影响历史标签入集。
 
 快速检查：
 
@@ -139,9 +141,32 @@ jq -s 'group_by(.label) | map({label: .[0].label, count: length})' \
   "comment_url": "thread URL",
   "reply_id": "forge reply id",
   "by": "reviewer",
-  "at": "RFC3339 timestamp"
+  "at": "RFC3339 timestamp",
+  "engine": {
+    "session_id": "session id",
+    "tool_version": "ccr version",
+    "model": "model id",
+    "features": {},
+    "params": {},
+    "git_head": "reviewed HEAD",
+    "hypothesis": {},
+    "assessment": {}
+  }
 }
 ```
+
+`engine` 让同一个 human verdict 能追溯到 generator、reviewer、feature 与 Trial 输入，避免把不同
+引擎版本的结果混成同一组效果数据。若只比较收敛式 Hypothesis Review，不要重新运行 Unit Review；
+先冻结候选集：
+
+```bash
+python3 eval/build_hypothesis_dataset.py
+```
+
+默认从两个 finding 数据集提取带阶段产物的样本，生成
+`eval/data/datasets/review-hypotheses.jsonl`。其中 `expected_delivery` 由人工标签推导：
+`important/minor` 应通过，其余标签应被拦截；后续 reviewer/Trial 实验必须消费同一批 Hypothesis，
+才能把收敛精度变化与 Unit Review 的召回变化分开。
 
 ## 可选：采集本地 review trajectory
 
@@ -221,6 +246,7 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
 python3 -m py_compile \
   eval/labels.py \
   eval/build_label_dataset.py \
+  eval/build_hypothesis_dataset.py \
   eval/collect.py \
   eval/posterior.py \
   eval/replay.py \

@@ -48,6 +48,9 @@ func TestAgentcoreDependencyStaysInsideHarness(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
+			if path != repoRoot && strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
 			if path == harnessRoot {
 				return filepath.SkipDir
 			}
@@ -82,6 +85,9 @@ func TestLegacyLLMLoopHasNoExternalImports(t *testing.T) {
 			return err
 		}
 		if entry.IsDir() {
+			if path != repoRoot && strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
 			if path == legacyRoot {
 				return filepath.SkipDir
 			}

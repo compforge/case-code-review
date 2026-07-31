@@ -8,3 +8,10 @@ func TestNamedAllowsDomainTools(t *testing.T) {
 		t.Fatalf("domain tool must remain a stable Harness identity: %+v", domainTool)
 	}
 }
+
+func TestZeroToolIsUnknown(t *testing.T) {
+	var zero Tool
+	if zero.IsKnown() {
+		t.Fatal("zero-value Tool must not be treated as a registered identity")
+	}
+}

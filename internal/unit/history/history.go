@@ -18,8 +18,11 @@ import (
 // (e.g. devloop, from its review history) — already filtered to trustworthy
 // (successfully-reviewed) findings.
 type Finding struct {
-	Msg string `json:"msg"`
-	Sha string `json:"sha,omitempty"`
+	Msg         string `json:"msg"`
+	Sha         string `json:"sha,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	CommentID   string `json:"comment_id,omitempty"`
+	URL         string `json:"url,omitempty"`
 }
 
 // Index maps a symbol-id or repo-relative path to prior findings.
@@ -79,16 +82,26 @@ func (f Finder) Find(u unit.Unit) []unit.Clue {
 	return clues
 }
 
-// render frames the prior findings as an adjudication task for the reviewer:
-// confirm fixes, re-raise survivors, don't re-flag what's resolved.
+// render frames Forge history as prior delivery, not as a backlog to re-raise.
+// Whether the old issue remains is useful evidence, but a durable MR thread is
+// already its delivery channel; a new Finding would only create repetition.
 func render(symbolID string, fs []Finding) string {
 	var b strings.Builder
-	b.WriteString("A previous review flagged " + symbolID +
-		" — for each, check whether the current code addresses it: if fixed, say so briefly; if still present, re-raise it; do not re-flag what's resolved.\n")
+	b.WriteString("PRIOR DELIVERY for " + symbolID +
+		": these issues already have a durable comment on this MR. Use them to understand the current revision, but do not create a new Hypothesis for the same underlying issue, whether it is fixed or still present. Only report a distinct regression with a different trigger or impact.\n")
 	for _, fnd := range fs {
 		b.WriteString("- " + fnd.Msg)
 		if fnd.Sha != "" {
 			b.WriteString(" (at " + fnd.Sha + ")")
+		}
+		if fnd.Fingerprint != "" {
+			b.WriteString(" [fingerprint=" + fnd.Fingerprint + "]")
+		}
+		if fnd.CommentID != "" {
+			b.WriteString(" [comment=" + fnd.CommentID + "]")
+		}
+		if fnd.URL != "" {
+			b.WriteString(" [url=" + fnd.URL + "]")
 		}
 		b.WriteString("\n")
 	}

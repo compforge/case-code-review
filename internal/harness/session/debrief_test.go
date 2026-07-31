@@ -110,20 +110,25 @@ func TestWriteFindings(t *testing.T) {
 	repoDir := t.TempDir()
 	sh := New(repoDir, "main", "test-model", SessionOptions{GitHead: "abc123def456"})
 	sh.WriteFindings([]Finding{
-		{Path: "a.go", StartLine: 3, EndLine: 5, SymbolID: "a.go::F", Fingerprint: "0123456789ab", Alias: "m1", Content: "off-by-one"},
+		{HypothesisID: "h-123", Path: "a.go", StartLine: 3, EndLine: 5, SymbolID: "a.go::F", Fingerprint: "0123456789ab", Alias: "m1", Content: "off-by-one"},
 		{Path: "b.go", StartLine: 9, EndLine: 9, Fingerprint: "ba9876543210", Content: "nil deref"},
+	})
+	sh.WriteArtifact("review_assessment", map[string]any{
+		"hypothesis_id": "h-123", "passed_trial": true,
 	})
 	sh.Finalize()
 
 	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
 	var start map[string]any
-	var findings []map[string]any
+	var findings, artifacts []map[string]any
 	for _, r := range records {
 		switch r["type"] {
 		case "session_start":
 			start = r
 		case "finding":
 			findings = append(findings, r)
+		case "artifact":
+			artifacts = append(artifacts, r)
 		}
 	}
 	// The posterior tier walks forward from the manifest's git_head anchor.
@@ -135,8 +140,13 @@ func TestWriteFindings(t *testing.T) {
 	}
 	f := findings[0]
 	if f["path"] != "a.go" || f["symbol_id"] != "a.go::F" || f["fingerprint"] != "0123456789ab" ||
-		f["start_line"].(float64) != 3 || f["content"] != "off-by-one" || f["alias"] != "m1" {
+		f["start_line"].(float64) != 3 || f["content"] != "off-by-one" || f["alias"] != "m1" ||
+		f["hypothesis_id"] != "h-123" {
 		t.Fatalf("finding record off: %v", f)
+	}
+	if len(artifacts) != 1 || artifacts[0]["artifact_kind"] != "review_assessment" ||
+		artifacts[0]["data"].(map[string]any)["passed_trial"] != true {
+		t.Fatalf("artifact record off: %v", artifacts)
 	}
 	// Optional fields are omitted, not empty-stringed.
 	if _, ok := findings[1]["symbol_id"]; ok {

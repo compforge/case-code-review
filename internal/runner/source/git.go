@@ -88,6 +88,28 @@ func (p *Provider) MergeBase(ctx context.Context) string {
 	return p.mergeBase
 }
 
+// BaseRef returns the tree immediately before the reviewed change. Range mode
+// uses the merge base (matching GetDiff), workspace uses HEAD, and commit mode
+// uses the first parent. Empty means an empty-tree baseline (root commit).
+func (p *Provider) BaseRef(ctx context.Context) string {
+	switch p.mode {
+	case ModeRange:
+		return p.MergeBase(ctx)
+	case ModeWorkspace:
+		return "HEAD"
+	case ModeCommit:
+		out, err := p.runGit(
+			ctx, "rev-parse", "--verify", "--end-of-options", p.commit+"^1^{commit}",
+		)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(out)
+	default:
+		return ""
+	}
+}
+
 // GetDiff returns all changes as parsed Diff structs.
 func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	var combined strings.Builder

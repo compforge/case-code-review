@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -21,24 +22,46 @@ const (
 	Insufficient Support = "insufficient"
 )
 
-type Actionability string
+type Attribution string
 
 const (
-	Actionable Actionability = "actionable"
-	LowValue   Actionability = "low_value"
-	Unknown    Actionability = "unknown"
+	// Caused is factual causation, not intent or blame: reverting the current
+	// diff would remove or materially change the hypothesis' trigger or impact.
+	Caused             Attribution = "caused"
+	PreExisting        Attribution = "pre_existing"
+	AttributionUnknown Attribution = "unknown"
+)
+
+type DeliveryValue string
+
+const (
+	Actionable   DeliveryValue = "actionable"
+	LowValue     DeliveryValue = "low_value"
+	ValueUnknown DeliveryValue = "unknown"
+)
+
+type Novelty string
+
+const (
+	Novel            Novelty = "new"
+	DuplicateInCase  Novelty = "duplicate_in_case"
+	AlreadyDelivered Novelty = "already_delivered"
 )
 
 // Assessment is the convergent Review's judgment of one Hypothesis. Support
-// and Actionability stay orthogonal so a real but low-value issue is not
-// mislabeled as factually wrong.
+// answers whether the claim is true; attribution, value, and novelty separately
+// answer whether this review should deliver it. EvidenceReceipts are populated
+// by Runner from actual read-only tool executions, never trusted model text.
 type Assessment struct {
-	HypothesisID  string        `json:"hypothesis_id"`
-	Support       Support       `json:"support"`
-	Actionability Actionability `json:"actionability"`
-	Reason        string        `json:"reason"`
-	Evidence      []string      `json:"evidence,omitempty"`
-	ReviewerAlias string        `json:"reviewer_alias,omitempty"`
+	HypothesisID     string            `json:"hypothesis_id"`
+	Support          Support           `json:"support"`
+	Attribution      Attribution       `json:"attribution"`
+	Value            DeliveryValue     `json:"value"`
+	Novelty          Novelty           `json:"novelty"`
+	Reason           string            `json:"reason"`
+	Evidence         []string          `json:"evidence,omitempty"`
+	EvidenceReceipts []EvidenceReceipt `json:"evidence_receipts,omitempty"`
+	ReviewerAlias    string            `json:"reviewer_alias,omitempty"`
 }
 
 var SubmitAssessments = tool.Named("submit_assessments")
@@ -68,6 +91,7 @@ func (c *AssessmentCollector) Assessments() []Assessment {
 	for _, assessment := range c.assessments {
 		out = append(out, assessment)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].HypothesisID < out[j].HypothesisID })
 	return out
 }
 
@@ -75,6 +99,7 @@ func (c *AssessmentCollector) Assessments() []Assessment {
 // continues through Harness's read-only Registry.
 type AssessmentHook struct {
 	Collector *AssessmentCollector
+	Evidence  *EvidenceLedger
 }
 
 func (h *AssessmentHook) HandleTool(
@@ -90,6 +115,9 @@ func (h *AssessmentHook) HandleTool(
 	}
 	for _, assessment := range assessments {
 		assessment.ReviewerAlias = request.Alias
+		if h.Evidence != nil {
+			assessment.EvidenceReceipts = h.Evidence.Receipts()
+		}
 		h.Collector.Add(assessment)
 	}
 	return tool.Of(AssessmentSubmitted), true
@@ -116,14 +144,18 @@ func ParseAssessments(args map[string]any) ([]Assessment, string) {
 			continue
 		}
 		assessment := Assessment{
-			HypothesisID:  stringValue(item, "hypothesis_id"),
-			Support:       Support(strings.ToLower(stringValue(item, "support"))),
-			Actionability: Actionability(strings.ToLower(stringValue(item, "actionability"))),
-			Reason:        stringValue(item, "reason"),
-			Evidence:      stringSlice(item["evidence"]),
+			HypothesisID: stringValue(item, "hypothesis_id"),
+			Support:      Support(strings.ToLower(stringValue(item, "support"))),
+			Attribution:  Attribution(strings.ToLower(stringValue(item, "attribution"))),
+			Value:        DeliveryValue(strings.ToLower(stringValue(item, "value"))),
+			Novelty:      Novelty(strings.ToLower(stringValue(item, "novelty"))),
+			Reason:       stringValue(item, "reason"),
+			Evidence:     stringSlice(item["evidence"]),
 		}
 		if assessment.HypothesisID == "" || assessment.Reason == "" ||
-			!validSupport(assessment.Support) || !validActionability(assessment.Actionability) {
+			!validSupport(assessment.Support) || !validAttribution(assessment.Attribution) ||
+			!validValue(assessment.Value) || !validNovelty(assessment.Novelty) ||
+			(assessment.Support != Insufficient && len(assessment.Evidence) == 0) {
 			continue
 		}
 		out = append(out, assessment)
@@ -138,12 +170,33 @@ func validSupport(value Support) bool {
 	return value == Supported || value == Contradicted || value == Insufficient
 }
 
-func validActionability(value Actionability) bool {
-	return value == Actionable || value == LowValue || value == Unknown
+func validAttribution(value Attribution) bool {
+	return value == Caused || value == PreExisting || value == AttributionUnknown
 }
 
-// Trial is deliberately deterministic. Missing, contradicted, insufficient,
-// unknown, and low-value assessments cannot become public Findings.
+func validValue(value DeliveryValue) bool {
+	return value == Actionable || value == LowValue || value == ValueUnknown
+}
+
+func validNovelty(value Novelty) bool {
+	return value == Novel || value == DuplicateInCase || value == AlreadyDelivered
+}
+
+// PassesTrial is the single delivery policy. A model judgment is not enough:
+// the reviewer must have actually read the hypothesis' diff, and all four
+// independent gates must pass.
+func PassesTrial(hypothesis Hypothesis, assessment Assessment) bool {
+	return assessment.Support == Supported &&
+		assessment.Attribution == Caused &&
+		assessment.Value == Actionable &&
+		assessment.Novelty == Novel &&
+		len(assessment.Evidence) > 0 &&
+		hasDiffReceipt(assessment.EvidenceReceipts, hypothesis.Path)
+}
+
+// Trial is deliberately deterministic. Missing evidence receipts, unsupported
+// claims, pre-existing behavior, low-value observations, and repeated delivery
+// cannot become public Findings.
 func Trial(hypotheses []Hypothesis, assessments []Assessment) []finding.Finding {
 	byID := make(map[string]Assessment, len(assessments))
 	for _, assessment := range assessments {
@@ -157,7 +210,7 @@ func Trial(hypotheses []Hypothesis, assessments []Assessment) []finding.Finding 
 		}
 		seen[hypothesis.ID] = true
 		assessment, ok := byID[hypothesis.ID]
-		if !ok || assessment.Support != Supported || assessment.Actionability != Actionable {
+		if !ok || !PassesTrial(hypothesis, assessment) {
 			continue
 		}
 		out = append(out, hypothesis.Finding())
@@ -200,9 +253,17 @@ func AssessmentToolDef() llm.ToolDef {
 									"type": "string",
 									"enum": []string{string(Supported), string(Contradicted), string(Insufficient)},
 								},
-								"actionability": map[string]any{
+								"attribution": map[string]any{
 									"type": "string",
-									"enum": []string{string(Actionable), string(LowValue), string(Unknown)},
+									"enum": []string{string(Caused), string(PreExisting), string(AttributionUnknown)},
+								},
+								"value": map[string]any{
+									"type": "string",
+									"enum": []string{string(Actionable), string(LowValue), string(ValueUnknown)},
+								},
+								"novelty": map[string]any{
+									"type": "string",
+									"enum": []string{string(Novel), string(DuplicateInCase), string(AlreadyDelivered)},
 								},
 								"reason": map[string]any{
 									"type":        "string",
@@ -214,7 +275,7 @@ func AssessmentToolDef() llm.ToolDef {
 									"description": "Source locations, contracts, or tool observations actually checked.",
 								},
 							},
-							"required": []string{"hypothesis_id", "support", "actionability", "reason", "evidence"},
+							"required": []string{"hypothesis_id", "support", "attribution", "value", "novelty", "reason", "evidence"},
 						},
 					},
 				},

@@ -33,9 +33,22 @@ func NewDiffPaths(renamedTo map[string]string, deleted map[string]bool) DiffPath
 type FileReadProvider struct {
 	FileReader *FileReader
 	diffPaths  DiffPaths
+	identity   Tool
 }
 
 func NewFileRead(fr *FileReader) *FileReadProvider { return &FileReadProvider{FileReader: fr} }
+
+// NewFileReadBase creates the baseline counterpart of file_read. Runner sets
+// its immutable base ref after resolving workspace/range/commit semantics and
+// before freezing the registry.
+func NewFileReadBase(fr *FileReader) *FileReadProvider {
+	return &FileReadProvider{FileReader: fr, identity: FileReadBase}
+}
+
+func (p *FileReadProvider) SetRef(ref string) {
+	p.FileReader.Mode = ModeCommit
+	p.FileReader.Ref = ref
+}
 
 // SetDiffPaths installs the rename/delete map for this run. Must be called
 // before concurrent access begins (same contract as FileReadDiffProvider.SetDiffMap).
@@ -43,12 +56,20 @@ func (p *FileReadProvider) SetDiffPaths(dp DiffPaths) {
 	p.diffPaths = dp
 }
 
-func (p *FileReadProvider) Tool() Tool { return FileRead }
+func (p *FileReadProvider) Tool() Tool {
+	if p.identity.IsKnown() {
+		return p.identity
+	}
+	return FileRead
+}
 
 func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (string, error) {
 	filePath, _ := args["file_path"].(string)
 	if filePath == "" {
 		return "Error: file_path is required", nil
+	}
+	if p.Tool() == FileReadBase && p.FileReader.Ref == "" {
+		return "Baseline is the empty tree; the requested file did not exist before this change.", nil
 	}
 
 	startLine, hasStart := args["start_line"].(float64)
@@ -88,6 +109,9 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 			return fmt.Sprintf("File %q was deleted in this diff; it no longer exists at the review ref. Use file_read_diff to see the removed content.", filePath), nil
 		}
 	}
+	if err != nil && p.Tool() == FileReadBase {
+		return fmt.Sprintf("File %q did not exist at baseline ref %s.", filePath, p.FileReader.Ref), nil
+	}
 	if err != nil {
 		return "", fmt.Errorf("file %q not found: %w", filePath, err)
 	}
@@ -106,6 +130,9 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 	displayEnd := int(startLine) - 1 + len(lines)
 
 	var sb strings.Builder
+	if p.Tool() == FileReadBase {
+		sb.WriteString(fmt.Sprintf("Baseline ref: %s\n", p.FileReader.Ref))
+	}
 	sb.WriteString(renameNote)
 	sb.WriteString(fmt.Sprintf("File: %s (Total lines: %d)\n", filePath, totalLines))
 	sb.WriteString(fmt.Sprintf("IS_TRUNCATED: %t\n", truncated))

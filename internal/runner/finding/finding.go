@@ -3,6 +3,9 @@ package finding
 // Finding is a code issue approved for public delivery. Diff review reaches it
 // only through Trial; full-file scan produces it directly.
 type Finding struct {
+	// HypothesisID joins a diff-review result to its pre-Trial claim and
+	// Assessment in the session transcript. Full-file scan leaves it empty.
+	HypothesisID   string `json:"hypothesis_id,omitempty"`
 	Path           string `json:"path"`
 	Content        string `json:"content"`
 	SuggestionCode string `json:"suggestion_code,omitempty"`

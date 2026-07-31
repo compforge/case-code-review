@@ -199,7 +199,15 @@ type ViewSession struct {
 	Summary       SessionSummary
 	TokenUsage    TokenUsageSummary
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
-	Units         []*UnitGroup   // review scopes: units first, then run/file-level passes
+	Artifacts     []ReviewArtifact
+	Units         []*UnitGroup // review scopes: units first, then run/file-level passes
+}
+
+// ReviewArtifact is a domain-owned intermediate decision rendered without
+// teaching the viewer the evolving Hypothesis or Assessment schemas.
+type ReviewArtifact struct {
+	Kind string
+	Data string
 }
 
 // DisplayMessage is one message of an LLM request with its text content
@@ -369,6 +377,17 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			tc := &TaskCard{Request: reqMsgs, RequestNo: reqNo}
 			fg := groupFor(rec)
 			fg.Tasks[TaskType(tt)] = append(fg.Tasks[TaskType(tt)], tc)
+
+		case "artifact":
+			kind, _ := rec["artifact_kind"].(string)
+			if kind == "" {
+				continue
+			}
+			data, err := json.MarshalIndent(rec["data"], "", "  ")
+			if err != nil {
+				continue
+			}
+			vs.Artifacts = append(vs.Artifacts, ReviewArtifact{Kind: kind, Data: string(data)})
 
 		case "llm_response":
 			content, _ := rec["content"].(string)

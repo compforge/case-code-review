@@ -183,15 +183,16 @@ type SessionOptions struct {
 // git_head as the anchor). Investigative result-tool calls in llm_response
 // records are pre-Trial and don't reflect what the review delivered.
 type Finding struct {
-	Path        string
-	StartLine   int
-	EndLine     int
-	SymbolID    string
-	Fingerprint string
-	Alias       string
-	Content     string
-	Category    string // engine-declared class (bug/security/…) — see finding.Finding
-	Severity    string // engine-declared importance (critical/high/medium/low)
+	HypothesisID string
+	Path         string
+	StartLine    int
+	EndLine      int
+	SymbolID     string
+	Fingerprint  string
+	Alias        string
+	Content      string
+	Category     string // engine-declared class (bug/security/…) — see finding.Finding
+	Severity     string // engine-declared importance (critical/high/medium/low)
 }
 
 // WriteFindings persists the run's delivered findings, one "finding" record each.
@@ -205,6 +206,19 @@ func (sh *SessionHistory) WriteFindings(findings []Finding) {
 	for _, f := range findings {
 		p.WriteFinding(f)
 	}
+}
+
+// WriteArtifact persists a domain-owned structured artifact without teaching
+// Harness session storage its schema. Runner uses this for intermediate review
+// results so eval can inspect or replay stages independently.
+func (sh *SessionHistory) WriteArtifact(kind string, data map[string]any) {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p == nil || kind == "" {
+		return
+	}
+	p.WriteArtifact(kind, data)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,

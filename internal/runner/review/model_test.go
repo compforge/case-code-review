@@ -36,7 +36,7 @@ func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 	}
 }
 
-func TestTrialOnlyPublishesSupportedActionableAndDeduplicates(t *testing.T) {
+func TestTrialRequiresEveryDeliveryGateAndDiffReceipt(t *testing.T) {
 	approved := Hypothesis{Path: "a.go", Content: "real issue", ExistingCode: "x"}
 	approved.ID = IDFor(approved)
 	lowValue := Hypothesis{Path: "a.go", Content: "minor issue", ExistingCode: "y"}
@@ -47,8 +47,18 @@ func TestTrialOnlyPublishesSupportedActionableAndDeduplicates(t *testing.T) {
 	findings := Trial(
 		[]Hypothesis{approved, approved, lowValue, missing},
 		[]Assessment{
-			{HypothesisID: approved.ID, Support: Supported, Actionability: Actionable},
-			{HypothesisID: lowValue.ID, Support: Supported, Actionability: LowValue},
+			{
+				HypothesisID: approved.ID, Support: Supported,
+				Attribution: Caused, Value: Actionable, Novelty: Novel,
+				Evidence:         []string{"a.go:10"},
+				EvidenceReceipts: []EvidenceReceipt{{Kind: "diff", Ref: "a.go"}},
+			},
+			{
+				HypothesisID: lowValue.ID, Support: Supported,
+				Attribution: Caused, Value: LowValue, Novelty: Novel,
+				Evidence:         []string{"a.go:20"},
+				EvidenceReceipts: []EvidenceReceipt{{Kind: "diff", Ref: "a.go"}},
+			},
 		},
 	)
 	if len(findings) != 1 || findings[0].Content != approved.Content {
@@ -60,7 +70,8 @@ func TestHypothesisReviewToolDefsAreConvergent(t *testing.T) {
 	defs := []struct {
 		name string
 	}{
-		{"task_done"}, {"code_comment"}, {"post_bulletin"}, {"file_read"}, {"code_search"},
+		{"task_done"}, {"code_comment"}, {"post_bulletin"}, {"file_read"},
+		{"file_read_base"}, {"code_search"},
 	}
 	var input []llm.ToolDef
 	for _, def := range defs {
@@ -74,7 +85,9 @@ func TestHypothesisReviewToolDefsAreConvergent(t *testing.T) {
 	if got["code_comment"] || got["post_bulletin"] || got[ReportHypothesis.Name()] {
 		t.Fatalf("convergent review exposed divergent tools: %v", got)
 	}
-	for _, required := range []string{"task_done", "file_read", "code_search", SubmitAssessments.Name()} {
+	for _, required := range []string{
+		"task_done", "file_read", "file_read_base", "code_search", SubmitAssessments.Name(),
+	} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
 		}

@@ -126,6 +126,30 @@ func TestCommitDiffSurvivesExternalDiffTool(t *testing.T) {
 	}
 }
 
+func TestBaseRefMatchesReviewMode(t *testing.T) {
+	repo := initRepoWithChange(t)
+	runner := gitcmd.New(0)
+
+	workspace := NewWorkspaceProvider(repo, runner)
+	if got := workspace.BaseRef(context.Background()); got != "HEAD" {
+		t.Fatalf("workspace base = %q, want HEAD", got)
+	}
+
+	runGitTest(t, repo, "add", "sample.txt")
+	runGitTest(t, repo, "commit", "-q", "-m", "second commit")
+	cmd := exec.Command("git", "rev-parse", "HEAD^")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := strings.TrimSpace(string(out))
+	commit := NewCommitProvider(repo, "HEAD", runner)
+	if got := commit.BaseRef(context.Background()); got != want {
+		t.Fatalf("commit base = %q, want %q", got, want)
+	}
+}
+
 func TestCommitDiffTreatsOptionLikeRefAsRevision(t *testing.T) {
 	repo := initRepoWithChange(t)
 	pagerPath := filepath.Join(repo, "pwn.sh")

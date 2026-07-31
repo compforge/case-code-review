@@ -431,3 +431,14 @@ func TestExecute_MissWithoutDiffPaths_StillErrors(t *testing.T) {
 		t.Fatal("expected not-found error for a path absent from the diff maps")
 	}
 }
+
+func TestFileReadBaseIdentifiesEmptyTree(t *testing.T) {
+	p := NewFileReadBase(&FileReader{RepoDir: t.TempDir(), Mode: ModeCommit})
+	if p.Tool() != FileReadBase {
+		t.Fatalf("tool = %s, want %s", p.Tool().Name(), FileReadBase.Name())
+	}
+	out, err := p.Execute(context.Background(), map[string]any{"file_path": "new.go"})
+	if err != nil || !strings.Contains(out, "empty tree") {
+		t.Fatalf("empty baseline result = %q, %v", out, err)
+	}
+}

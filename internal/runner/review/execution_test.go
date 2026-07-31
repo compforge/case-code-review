@@ -17,7 +17,9 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		reviewToolResponse("call-1", SubmitAssessments.Name(), `{"assessments":[{
 			"hypothesis_id":"`+hypothesis.ID+`",
 			"support":"supported",
-			"actionability":"actionable",
+			"attribution":"caused",
+			"value":"actionable",
+			"novelty":"new",
 			"reason":"the checked caller reaches this path",
 			"evidence":["caller.go:12"]
 		}]}`),
