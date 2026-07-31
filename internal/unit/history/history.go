@@ -1,8 +1,9 @@
 // Package history feeds a previous review's findings back into the next review
 // as per-unit context, so the reviewer can judge whether the current change
 // addresses what an earlier round flagged. It is the review-history counterpart
-// of spec/rule — another symbol-id-keyed input, which ccr can express because it
-// treats the unit as a first-class concept.
+// of spec/rule — another unit-keyed input, which ccr can express because it
+// treats the unit as a first-class concept. Symbol IDs are preferred; file paths
+// are the fallback for callers that only have forge comment anchors.
 package history
 
 import (
@@ -21,12 +22,12 @@ type Finding struct {
 	Sha string `json:"sha,omitempty"`
 }
 
-// Index maps a symbol-id to the findings a previous review raised on it.
+// Index maps a symbol-id or repo-relative path to prior findings.
 type Index map[string][]Finding
 
-// Load reads a --history JSON file (symbol-id -> []Finding). An empty path (or an
-// empty file) yields nil — no history, finders no-op. A malformed file is an
-// error for the caller to surface.
+// Load reads a --history JSON file (symbol-id/path -> []Finding). An empty path
+// (or an empty file) yields nil — no history, finders no-op. A malformed file is
+// an error for the caller to surface.
 func Load(path string) (Index, error) {
 	if path == "" {
 		return nil, nil
@@ -57,16 +58,22 @@ func (f Finder) Find(u unit.Unit) []unit.Clue {
 		return nil
 	}
 	var clues []unit.Clue
-	for _, sym := range u.AllSymbols() {
-		fs := f.Index[sym]
+	seen := make(map[string]bool)
+	keys := append(u.AllSymbols(), u.Paths()...)
+	for _, key := range keys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		fs := f.Index[key]
 		if len(fs) == 0 {
 			continue
 		}
 		clues = append(clues, unit.Clue{
 			Kind:     unit.ClueHistory,
 			Relation: unit.RelSelf,
-			Text:     render(sym, fs),
-			Ref:      sym,
+			Text:     render(key, fs),
+			Ref:      key,
 		})
 	}
 	return clues

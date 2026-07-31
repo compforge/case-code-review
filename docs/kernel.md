@@ -57,6 +57,8 @@ Clue 只有经过核查并与某个 Hypothesis 建立支持或反驳关系后，
 
 类比只用来区分“形成怀疑、独立复核、最终认定”三段责任，不把公安、检察院或法院建成代码类型。
 
+![CCR 两阶段证据评审内核](kernel-pipeline.svg)
+
 ### 更快与更准来自两次不同方向的聚合
 
 两次 Review 面对的对象和优化目标不同：
@@ -88,7 +90,8 @@ Hypothesis / CaseFile == Hypothesis Review ==> Assessment == Trial ==> Finding
 
 因此，“更快”来自更少的无谓拆分、重复探索和补证调用；“更准”来自行为完整的 Unit、相关
 Clue，以及独立的 CaseFile 复核与确定性 Trial。两者是需要通过 eval 验证的设计假设：
-分别观察 Unit/CaseFile 数、token、工具调用和耗时，以及 important/minor/wrong 的保留与拦截，
+分别观察 Unit/CaseFile 数、token、工具调用和耗时，以及 important/minor/wrong 的保留与拦截、
+repeat 的重复交付率，
 不能只用 loop 数或 context 长度代替最终效果。
 
 ## 流程

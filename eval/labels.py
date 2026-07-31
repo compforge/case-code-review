@@ -3,7 +3,7 @@
 
 Convention (eval/README "在 PR/MR 上形成 ground truth"): a ccr-posted review
 comment carries a `ccr:fp=<fingerprint>` footer; a human replies to it with a line starting
-`ccr:label=<important|minor|debatable|wrong>` (free-text rationale may follow,
+`ccr:label=<important|minor|debatable|wrong|repeat>` (free-text rationale may follow,
 on the same line or below — it becomes `note`; `#tag`s in the note are extracted
 into `tags`, using the vocabulary documented in README). Additionally a
 human may comment `ccr:missed — <desc>` directly on any diff line (NOT a reply)
@@ -48,11 +48,14 @@ import urllib.request
 from pathlib import Path
 
 FP_RE = re.compile(r"ccr:fp=([0-9a-f]{6,40})")
-LABEL_RE = re.compile(r"^\s*ccr:label=(important|minor|debatable|wrong)\b[ \t:—-]*(.*)$", re.M)
+LABEL_RE = re.compile(
+    r"^\s*ccr:label=(important|minor|debatable|wrong|repeat)\b[ \t:—-]*(.*)$",
+    re.M,
+)
 # missed 是"ccr 没报、人发现了"的负样本——对 diff 任意行直接评论，不是对 ccr 评论的回复。
 # 它没有 fingerprint（没有 finding 可指），靠 path/line + 描述入册，补齐召回侧 ground truth。
 MISSED_RE = re.compile(r"^\s*ccr:missed\b[ \t:—-]*(.*)$", re.M)
-# 病因 tag：note 里的 #tag（如 #textbook #padding #pre-existing #cross-file），
+# 病因 tag：note 里的 #tag（如 #textbook #padding #out-of-diff #cross-file），
 # 推荐词表见 eval/README；开放集合，不在此枚举校验。
 TAG_RE = re.compile(r"#([a-z][a-z0-9-]+)")
 CCR_HEAD = "devloop code-review"  # fp-less fallback: recognize ccr comments by header

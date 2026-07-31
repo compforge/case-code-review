@@ -123,7 +123,7 @@ type reviewOptions struct {
 	audience       string // --audience: "human" (default) or "agent"
 	background     string // --background: optional requirement context
 	specPath       string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
-	historyPath    string // --history: path to prior-findings JSON (symbol-id -> findings); injected per-unit so the reviewer reconciles them
+	historyPath    string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
 	model          string // --model: override resolved LLM model for this review
 	concurrency    int
 	perFileTimeout int
@@ -154,7 +154,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the review")
 	a.StringVar(&opts.specPath, "spec", "", "path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json — injects each changed function's spec/case as a contract checklist")
-	a.StringVar(&opts.historyPath, "history", "", "path to a prior-findings JSON (symbol-id -> findings); injected per review unit so the reviewer reconciles whether the change addresses them")
+	a.StringVar(&opts.historyPath, "history", "", "path to a prior-findings JSON (symbol-id or repo-relative path -> findings); injected per review unit so the reviewer reconciles whether the change addresses them")
 	a.StringVar(&opts.model, "model", "", "override LLM model for this review (e.g., claude-opus-4-6)")
 	a.IntVar(&opts.maxTools, "max-tools", 0, "max tool call rounds per file (0 = template default; min 10)")
 	a.IntVar(&opts.maxGitProcs, "max-git-procs", 16, "max concurrent git subprocesses")
@@ -262,7 +262,7 @@ Flags:
   --repo string           root directory of the git repository (default: current dir)
   --rule string           path to JSON file with system review rules
   --spec string           path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
-  --history string        path to a prior-findings JSON (symbol-id → findings); injected per unit so the reviewer reconciles them
+  --history string        path to prior-findings JSON (symbol-id/path → findings); injected per unit so the reviewer reconciles them
   --timeout int           concurrent task timeout in minutes (default 10)
   --to string             target ref to end diff at (e.g., 'feature-branch')
   --tools string          path to JSON tools config file (default: embedded)`)

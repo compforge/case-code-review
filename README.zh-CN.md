@@ -16,7 +16,7 @@ diff review 中,Unit review 负责发散调查,产出可证伪的 Hypothesis,不
 
 评审质量盯三个互相拉扯的追求——**健壮性、准确性、成本**;落地手段以 review loop 为核心,分能力 / 粒度 / context 三个抓手。展开见 `AGENTS.md`。
 
-![CCR 两阶段证据评审流水线](docs/kernel-pipeline.svg)
+![CCR 从 Diff 到 Finding 的评审流水线](docs/review-pipeline.svg)
 
 ## 上下文模型:证据种类 × 关系
 
@@ -83,6 +83,11 @@ ccr review --format json                # 机器可读输出(CI、bot)
 ccr review --background "$(cat mr.md)"  # 注入需求/业务背景以提准
 ccr review --history prior.json         # 上轮 findings,对新 diff 复核
 ```
+
+连续评审 PR/MR 时,Forge comments 才是持久 history。每个 revision 由调用方临时拉取当前
+PR/MR comments,生成一次性的 `prior.json` 并传给 ccr；devloop 与 review-harness 会自动完成。
+key 优先用 symbol-id；Forge 只保留文件锚点时可退化为仓库相对 path,例如
+`{"path/to/file.go::Symbol":[{"msg":"prior finding","sha":"abc123"}]}`。
 
 ### 花 token 之前先看装配
 

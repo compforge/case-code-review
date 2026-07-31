@@ -41,7 +41,10 @@ func TestLoad(t *testing.T) {
 }
 
 func TestFinder(t *testing.T) {
-	idx := Index{"a.go::F": {{Msg: "missing nil check", Sha: "abc1234"}}}
+	idx := Index{
+		"a.go::F": {{Msg: "missing nil check", Sha: "abc1234"}},
+		"b.go":    {{Msg: "missing file-level test", Sha: "def5678"}},
+	}
 
 	u := unit.UnitOf(unit.Fragment{Path: "a.go", Symbols: []string{"a.go::F"}})
 	clues := Finder{Index: idx}.Find(u)
@@ -63,5 +66,16 @@ func TestFinder(t *testing.T) {
 	// nil index -> nil
 	if got := (Finder{}).Find(u); got != nil {
 		t.Errorf("nil index -> nil, got %+v", got)
+	}
+
+	// Forge comments may only retain a file anchor. Path-keyed history still
+	// reaches a file unit with no symbol metadata.
+	fileUnit := unit.UnitOf(unit.Fragment{Path: "b.go"})
+	pathClues := (Finder{Index: idx}).Find(fileUnit)
+	if len(pathClues) != 1 || pathClues[0].Ref != "b.go" {
+		t.Fatalf("want path-keyed history clue, got %+v", pathClues)
+	}
+	if !strings.Contains(pathClues[0].Text, "missing file-level test") {
+		t.Errorf("path clue missing finding: %q", pathClues[0].Text)
 	}
 }

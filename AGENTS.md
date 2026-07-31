@@ -7,7 +7,7 @@
 1. **捕获更多 context**——从 diff 定位到改动**函数**，收集它的 caller/callee 邻域 + 作者附着的 **spec/case/rule/link**。
 2. **按 *review unit* 触发 review loop**——unit 是评审作用域，粒度是一条阶梯（函数 → 类 → 文件 → 模块/目录）。
 
-> **与 ocr 的本质区别 = 把 unit 当一等概念**。一切按 unit 走：`--spec`(契约) / `--rule`(准则) / `--history`(上轮评审反馈) 都是按 symbol-id 注入的 **per-unit 上下文**，`Clue`/`ClueFinder` 把 context 挂到 unit。ocr 停在 file 级、没有 unit。判断一个新能力是否"对味"，就看它有没有让 unit 更一等。
+> **与 ocr 的本质区别 = 把 unit 当一等概念**。一切按 unit 走：`--spec`(契约) / `--rule`(准则) / `--history`(上轮评审反馈) 都是 **per-unit 上下文**；history 优先按 symbol-id、Forge 只保留文件锚点时按 path 退化，`Clue`/`ClueFinder` 把 context 挂到 unit。ocr 停在 file 级、没有 unit。判断一个新能力是否"对味"，就看它有没有让 unit 更一等。
 
 **三追求 × 三抓手**——评估任何改动方向的坐标系：
 
