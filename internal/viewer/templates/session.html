@@ -140,7 +140,7 @@
 {{define "reviewRow"}}
 <tr>
     <td>
-        <a class="review-link" href="review?scope={{urlquery .ID}}">{{if .ID}}{{.ID | truncate 54}}{{else}}{{.FilePath | truncate 54}}{{end}}</a>
+        <a class="review-link" href="/r/{{.EncodedRepo}}/{{.SessionID}}/review?scope={{urlquery .ID}}">{{if .ID}}{{.ID | truncate 54}}{{else}}{{.FilePath | truncate 54}}{{end}}</a>
         {{if gt (len .Paths) 1}}<div class="review-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</div>{{end}}
     </td>
     <td><span class="badge badge-scope">{{if .Scope}}{{.Scope}}{{else}}{{.Stage.Label}}{{end}}</span></td>
