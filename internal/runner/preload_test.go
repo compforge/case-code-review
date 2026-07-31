@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -215,7 +214,7 @@ func TestAssembleTypedBriefing(t *testing.T) {
 	}
 
 	// Just under the full size: related dropped first, its pointer gone.
-	fullTokens := llmloop.CountMessagesTokens(msg.Lower(domain))
+	fullTokens := llm.CountMessagesTokens(msg.Lower(domain))
 	deb = session.Debrief{}
 	domain = a.assembleTypedBriefing(build, pieces, fullTokens-1, &deb)
 	if len(domain) != 3 || len(deb.Degradations) != 1 || deb.Degradations[0] != "related_source_dropped" {

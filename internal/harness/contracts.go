@@ -72,3 +72,10 @@ type EventSink interface {
 type EventSinkFunc func(ExecutionEvent)
 
 func (f EventSinkFunc) OnExecutionEvent(event ExecutionEvent) { f(event) }
+
+// Warning describes a non-fatal warning recorded around an execution.
+type Warning struct {
+	File    string `json:"file"`
+	Message string `json:"message"`
+	Type    string `json:"type"`
+}

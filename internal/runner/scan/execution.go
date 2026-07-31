@@ -11,7 +11,6 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -42,7 +41,7 @@ type scanExecutor struct {
 	totalCacheWriteTokens int64
 
 	warningsMu sync.Mutex
-	warnings   []llmloop.Warning
+	warnings   []harness.Warning
 	toolMu     sync.Mutex
 	toolCalls  map[string]int64
 	modelMu    sync.Mutex
@@ -165,13 +164,13 @@ func (e *scanExecutor) TotalTokensUsed() int64 {
 
 func (e *scanExecutor) RecordWarning(warningType, file, message string) {
 	e.warningsMu.Lock()
-	e.warnings = append(e.warnings, llmloop.Warning{
+	e.warnings = append(e.warnings, harness.Warning{
 		Type: warningType, File: file, Message: message,
 	})
 	e.warningsMu.Unlock()
 }
 
-func (e *scanExecutor) Warnings() []llmloop.Warning {
+func (e *scanExecutor) Warnings() []harness.Warning {
 	e.warningsMu.Lock()
 	defer e.warningsMu.Unlock()
 	return slices.Clone(e.warnings)

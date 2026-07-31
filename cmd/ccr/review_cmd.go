@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/llmloop"
+	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
@@ -97,7 +97,7 @@ func runReview(args []string) error {
 		PlanToolDefs:          rt.PlanToolDefs,
 		MainToolDefs:          rt.MainToolDefs,
 		Findings:              rt.Findings,
-		WorkerPool:            llmloop.NewWorkerPool(opts.concurrency),
+		WorkerPool:            harness.NewWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
