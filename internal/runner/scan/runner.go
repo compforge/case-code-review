@@ -99,16 +99,16 @@ func (a *Runner) summaryEnabled() bool {
 	return !a.args.SkipSummary && a.args.Template.ProjectSummaryTask != nil && len(a.args.Template.ProjectSummaryTask.Messages) > 0
 }
 
-// Runner orchestrates full-file code review. It delegates the per-file LLM
-// tool-use loop to llmloop.Runner and owns only scan-specific concerns
-// (file enumeration, FULL_SCAN_TASK rendering, per-file filtering).
+// Runner orchestrates full-file code review. It owns scan-specific concerns
+// (file enumeration, FULL_SCAN_TASK rendering, per-file filtering) and
+// delegates each file's tool-use loop to a Harness Execution.
 type Runner struct {
 	args           Args
 	items          []Item
 	currentDate    string
 	session        *session.SessionHistory
 	subtaskFailed  int64 // atomic
-	runner         *llmloop.Runner
+	executor       *scanExecutor
 	projectSummary string // populated post-run by maybeRunProjectSummary
 }
 
@@ -135,42 +135,27 @@ func New(args Args) *Runner {
 		args:    args,
 		session: args.Session,
 	}
-	loopTemplate := toLoopTemplate(args.Template)
+	findingTemplate := toFindingTemplate(args.Template)
 	findingHook := &finding.Hook{
 		Collector:    args.Findings,
 		WorkerPool:   args.WorkerPool,
 		Session:      args.Session,
 		ChangeLookup: a.lookupChange,
 		LLMClient:    args.LLMClient,
-		Template:     loopTemplate,
+		Template:     findingTemplate,
 		Model:        args.Model,
 		Relocation:   true,
 	}
-	a.runner = llmloop.NewRunner(llmloop.Deps{
-		LLMClient:    args.LLMClient,
-		Model:        args.Model,
-		Template:     loopTemplate,
-		Tools:        args.Tools,
-		MainToolDefs: args.MainToolDefs,
-		Session:      args.Session,
-		WrapUpPrompt: finding.WrapUpPrompt,
-		ToolCallHook: findingHook,
-	})
-	findingHook.RecordUsage = a.runner.RecordUsage
+	a.executor = newScanExecutor(args, findingHook)
+	findingHook.RecordUsage = a.executor.RecordUsage
 	return a
 }
 
-// toLoopTemplate maps the scan-specific ScanTemplate onto the subset of
-// fields llmloop.Runner reads from template.Template. llmloop only needs
-// MaxTokens / MaxToolRequestTimes / MemoryCompressionTask / ReLocationTask,
-// so we leave the diff-only fields (MainTask / PlanTask / ReviewFilterTask)
-// at their zero values.
-func toLoopTemplate(s template.ScanTemplate) template.Template {
+// toFindingTemplate maps the relocation settings consumed by Finding's hook.
+func toFindingTemplate(s template.ScanTemplate) template.Template {
 	return template.Template{
-		MemoryCompressionTask: s.MemoryCompressionTask,
-		MaxTokens:             s.MaxTokens,
-		MaxToolRequestTimes:   s.MaxToolRequestTimes,
-		ReLocationTask:        s.ReLocationTask,
+		MaxTokens:      s.MaxTokens,
+		ReLocationTask: s.ReLocationTask,
 	}
 }
 
@@ -189,24 +174,24 @@ func (a *Runner) Changes() []change.Change {
 	return out
 }
 
-// TotalTokensUsed / TotalInputTokens / ... delegate to the underlying runner.
-func (a *Runner) TotalTokensUsed() int64      { return a.runner.TotalTokensUsed() }
-func (a *Runner) TotalInputTokens() int64     { return a.runner.TotalInputTokens() }
-func (a *Runner) TotalOutputTokens() int64    { return a.runner.TotalOutputTokens() }
-func (a *Runner) TotalCacheReadTokens() int64 { return a.runner.TotalCacheReadTokens() }
+// TotalTokensUsed / TotalInputTokens / ... expose the scan execution aggregate.
+func (a *Runner) TotalTokensUsed() int64      { return a.executor.TotalTokensUsed() }
+func (a *Runner) TotalInputTokens() int64     { return a.executor.TotalInputTokens() }
+func (a *Runner) TotalOutputTokens() int64    { return a.executor.TotalOutputTokens() }
+func (a *Runner) TotalCacheReadTokens() int64 { return a.executor.TotalCacheReadTokens() }
 func (a *Runner) TotalCacheWriteTokens() int64 {
-	return a.runner.TotalCacheWriteTokens()
+	return a.executor.TotalCacheWriteTokens()
 }
-func (a *Runner) ModelsUsed() map[string]int { return a.runner.ModelsUsed() }
+func (a *Runner) ModelsUsed() map[string]int { return a.executor.ModelsUsed() }
 
-// Warnings returns the warnings recorded by the LLM runner.
-func (a *Runner) Warnings() []llmloop.Warning { return a.runner.Warnings() }
+// Warnings returns the warnings recorded by scan executions.
+func (a *Runner) Warnings() []llmloop.Warning { return a.executor.Warnings() }
 
 // ToolCalls returns per-tool call counts accumulated during scan.
-func (a *Runner) ToolCalls() map[string]int64 { return a.runner.ToolCalls() }
+func (a *Runner) ToolCalls() map[string]int64 { return a.executor.ToolCalls() }
 
 func (a *Runner) recordWarning(warningType, file, message string) {
-	a.runner.RecordWarning(warningType, file, message)
+	a.executor.RecordWarning(warningType, file, message)
 }
 
 // Run executes the full-scan pipeline: enumerate → filter → token-filter →
@@ -484,7 +469,7 @@ func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) 
 		// Per-file budget look-ahead. Stop before acquiring a slot so we
 		// don't even queue work that would blow the budget.
 		if a.args.MaxTokensBudget > 0 {
-			used := a.runner.TotalTokensUsed()
+			used := a.executor.TotalTokensUsed()
 			projected := used + estimateFileTokens(batch[i], a.planEnabled())
 			if projected > a.args.MaxTokensBudget {
 				fmt.Fprintf(stdout.Writer(), "[ccr] token budget reached (used %s + next-file est ≈ %s > budget %s) — skipping %s and remaining files\n",
@@ -577,7 +562,7 @@ func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
 
 	// Full-file scan forms one Unit per item, so Harness lifecycle and
 	// incomplete-result semantics are identical to diff-derived Units.
-	_, err := a.runner.RunPerFile(ctx, msg.Wrap(messages), unitScope(it.AsUnit()))
+	_, err := a.executor.Run(ctx, msg.Wrap(messages), unitScope(it.AsUnit()))
 	return err
 }
 
@@ -621,7 +606,7 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 		return noPlan
 	}
 	rec.SetResponse(resp, time.Since(startTime))
-	a.runner.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Usage)
 
 	guidance := formatPlanGuidance(resp.Content())
 	if guidance == "" {
@@ -674,7 +659,7 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 		return
 	}
 	rec.SetResponse(resp, time.Since(startTime))
-	a.runner.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Usage)
 
 	body := strings.TrimSpace(llmloop.StripMarkdownFences(resp.Content()))
 	if body == "" {
@@ -749,7 +734,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 		return
 	}
 	rec.SetResponse(resp, time.Since(startTime))
-	a.runner.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Usage)
 
 	deduped, ok := applyDedupGroups(resp.Content(), batchComments)
 	if !ok {

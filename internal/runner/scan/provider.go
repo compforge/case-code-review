@@ -1,8 +1,7 @@
 // Package scan implements `ccr scan` — full-file code review. It owns the
 // file-enumeration provider, the per-file orchestrator, and the FULL_SCAN
-// prompt-template plumbing. Shared LLM tool-use loop / memory compression
-// lives in internal/harness/llmloop; this package only handles scan-specific
-// concerns (enumeration, FULL_SCAN_TASK rendering, scan-specific filter).
+// prompt-template plumbing. Each file's generic tool-use loop runs as an
+// internal/harness Execution.
 package scan
 
 import (
