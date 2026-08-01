@@ -21,9 +21,9 @@ var sessionSubDir = "sessions"
 
 // schemaVersion stamps every session_start so longitudinal analysis survives
 // record-format changes. Bump when a record type's meaning changes (not for
-// additive fields). v3 names source preloads directly instead of exposing the
-// removed briefing/material assembly concepts.
-const schemaVersion = 3
+// additive fields). v4 records each Assessment submission independently and
+// moves final pass/fail into a separate Trial decision artifact.
+const schemaVersion = 4
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,

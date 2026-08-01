@@ -61,26 +61,49 @@ type Assessment struct {
 	Evidence         []string          `json:"evidence,omitempty"`
 	EvidenceReceipts []EvidenceReceipt `json:"evidence_receipts,omitempty"`
 	ReviewerAlias    string            `json:"reviewer_alias,omitempty"`
+	DossierID        string            `json:"dossier_id,omitempty"`
+	SubmissionIndex  int               `json:"submission_index,omitempty"`
 }
 
 var SubmitAssessments = tool.Named("submit_assessments")
 
-const AssessmentSubmitted = "Assessments recorded for Trial."
+// AssessmentSubmission is the append-only observation emitted whenever
+// Review 2 accepts or replaces one judgment. Trial later consumes only the
+// collector's latest value for each hypothesis.
+type AssessmentSubmission struct {
+	Assessment Assessment
+	Replaced   bool
+}
 
 // AssessmentCollector is scoped to one run-level Hypothesis Review.
 type AssessmentCollector struct {
 	mu          sync.Mutex
 	assessments map[string]Assessment
+	expected    map[string]bool
+	nextIndex   int
 }
 
-func NewAssessmentCollector() *AssessmentCollector {
-	return &AssessmentCollector{assessments: make(map[string]Assessment)}
+func NewAssessmentCollector(expected ...string) *AssessmentCollector {
+	want := make(map[string]bool, len(expected))
+	for _, id := range expected {
+		if id != "" {
+			want[id] = true
+		}
+	}
+	return &AssessmentCollector{assessments: make(map[string]Assessment), expected: want}
 }
 
-func (c *AssessmentCollector) Add(a Assessment) {
+func (c *AssessmentCollector) Add(a Assessment) (AssessmentSubmission, bool) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.expected) > 0 && !c.expected[a.HypothesisID] {
+		return AssessmentSubmission{}, false
+	}
+	_, replaced := c.assessments[a.HypothesisID]
+	c.nextIndex++
+	a.SubmissionIndex = c.nextIndex
 	c.assessments[a.HypothesisID] = a
-	c.mu.Unlock()
+	return AssessmentSubmission{Assessment: a, Replaced: replaced}, true
 }
 
 func (c *AssessmentCollector) Assessments() []Assessment {
@@ -94,11 +117,28 @@ func (c *AssessmentCollector) Assessments() []Assessment {
 	return out
 }
 
+func (c *AssessmentCollector) Missing() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	missing := make([]string, 0, len(c.expected))
+	for id := range c.expected {
+		if _, ok := c.assessments[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func (c *AssessmentCollector) Complete() bool { return len(c.Missing()) == 0 }
+
 // AssessmentHook captures the result tool while every evidence-gathering tool
 // continues through Harness's read-only Registry.
 type AssessmentHook struct {
-	Collector *AssessmentCollector
-	Evidence  *EvidenceLedger
+	Collector  *AssessmentCollector
+	Evidence   *EvidenceLedger
+	DossierID  string
+	OnAccepted func(AssessmentSubmission)
 }
 
 func (h *AssessmentHook) HandleTool(
@@ -112,14 +152,33 @@ func (h *AssessmentHook) HandleTool(
 	if errMsg != "" {
 		return tool.Of(errMsg), true
 	}
+	var accepted, replaced, rejected []string
 	for _, assessment := range assessments {
 		assessment.ReviewerAlias = request.Alias
+		assessment.DossierID = h.DossierID
 		if h.Evidence != nil {
 			assessment.EvidenceReceipts = h.Evidence.Receipts()
 		}
-		h.Collector.Add(assessment)
+		submission, ok := h.Collector.Add(assessment)
+		if !ok {
+			rejected = append(rejected, assessment.HypothesisID)
+			continue
+		}
+		accepted = append(accepted, assessment.HypothesisID)
+		if submission.Replaced {
+			replaced = append(replaced, assessment.HypothesisID)
+		}
+		if h.OnAccepted != nil {
+			h.OnAccepted(submission)
+		}
 	}
-	return tool.Of(AssessmentSubmitted), true
+	result, _ := json.Marshal(map[string]any{
+		"accepted":         accepted,
+		"replaced":         replaced,
+		"rejected_unknown": rejected,
+		"remaining":        h.Collector.Missing(),
+	})
+	return tool.Of(string(result)), true
 }
 
 func ParseAssessments(args map[string]any) ([]Assessment, string) {
@@ -186,8 +245,9 @@ func AssessmentToolDef() llm.ToolDef {
 		Type: "function",
 		Function: llm.FunctionDef{
 			Name: SubmitAssessments.Name(),
-			Description: "Submit the independent assessment of every supplied hypothesis. " +
-				"This records review judgments for deterministic Trial; it does not publish comments.",
+			Description: "Submit one or more completed hypothesis assessments as soon as they are decided. " +
+				"Call this tool repeatedly for partial batches; later valid submissions replace earlier judgments for the same hypothesis. " +
+				"This records review judgments for deterministic Trial and does not publish comments.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

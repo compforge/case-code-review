@@ -15,37 +15,22 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-// runHypothesisReviews transfers the run's complete investigative output into
-// one CaseFile, then delegates the convergent loop to Hypothesis Review.
-func (a *Runner) runHypothesisReviews(
+// reviewDossier delegates one immutable packet to the convergent Review 2
+// loop. Dossier formation and scheduling stay in Runner; the review package
+// owns only evidence gathering and Assessment production.
+func (a *Runner) reviewDossier(
 	ctx context.Context,
-	units []unit.Unit,
+	dossier hypothesisreview.Dossier,
 ) (assessments []hypothesisreview.Assessment) {
 	task := a.args.Template.HypothesisReviewTask
-	if task == nil || len(task.Messages) == 0 {
-		if len(a.hypotheses.Hypotheses()) > 0 {
-			a.recordWarning(
-				"hypothesis_review_unavailable", "",
-				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
-			)
-		}
+	if task == nil || len(task.Messages) == 0 || len(dossier.Hypotheses) == 0 {
 		return nil
-	}
-	hypotheses := a.hypotheses.Hypotheses()
-	if len(hypotheses) == 0 {
-		return nil
-	}
-	caseFile := hypothesisreview.CaseFile{
-		ID:         "change_set",
-		Changes:    a.changes,
-		Hypotheses: hypotheses,
-		Clues:      collectCaseFileClues(units),
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic: %v\n%s\n", recovered, debug.Stack())
+			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s: %v\n%s\n", dossier.ID, recovered, debug.Stack())
 			telemetry.ErrorEvent(ctx, "hypothesis_review.panic", fmt.Errorf("panic: %v", recovered))
-			a.recordWarning("hypothesis_review_error", "", fmt.Sprintf("panic: %v", recovered))
+			a.recordWarning("hypothesis_review_error", "", fmt.Sprintf("dossier %s panic: %v", dossier.ID, recovered))
 			assessments = nil
 		}
 	}()
@@ -66,11 +51,12 @@ func (a *Runner) runHypothesisReviews(
 		ResolveRule:             a.resolveSystemRule,
 		RecordUsage:             a.executor.RecordUsage,
 		RecordWarning:           a.recordWarning,
+		OnAssessment:            a.persistAssessmentSubmission,
 		Events:                  a.hypothesisReviewEvents(ctx),
-	}, caseFile)
+	}, dossier)
 }
 
-func collectCaseFileClues(units []unit.Unit) []unit.Clue {
+func collectDossierClues(units []unit.Unit) []unit.Clue {
 	seen := make(map[string]bool)
 	var out []unit.Clue
 	for _, reviewUnit := range units {
@@ -86,6 +72,32 @@ func collectCaseFileClues(units []unit.Unit) []unit.Clue {
 		}
 	}
 	return out
+}
+
+func (a *Runner) persistDossier(dossier hypothesisreview.Dossier, reason string) {
+	ids := make([]string, 0, len(dossier.Hypotheses))
+	for _, hypothesis := range dossier.Hypotheses {
+		ids = append(ids, hypothesis.ID)
+	}
+	a.session.WriteArtifact("review_dossier", map[string]any{
+		"id": dossier.ID, "hypothesis_ids": ids, "paths": dossier.Paths(),
+		"prior_dossier_ids": dossier.PriorDossierIDs, "sealed_by": reason,
+	})
+}
+
+func (a *Runner) persistAssessmentSubmission(submission hypothesisreview.AssessmentSubmission) {
+	assessment := submission.Assessment
+	a.session.WriteArtifact("review_assessment", map[string]any{
+		"dossier_id":       assessment.DossierID,
+		"submission_index": assessment.SubmissionIndex,
+		"replaced":         submission.Replaced,
+		"hypothesis_id":    assessment.HypothesisID,
+		"support":          assessment.Support, "attribution": assessment.Attribution,
+		"value": assessment.Value, "novelty": assessment.Novelty,
+		"reason": assessment.Reason, "evidence": assessment.Evidence,
+		"evidence_receipts": assessment.EvidenceReceipts,
+		"reviewer_alias":    assessment.ReviewerAlias,
+	})
 }
 
 func (a *Runner) hypothesisReviewEvents(ctx context.Context) harness.EventSink {

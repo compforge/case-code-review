@@ -248,8 +248,9 @@ type ViewSession struct {
 // ReviewArtifact is a domain-owned intermediate decision rendered without
 // teaching the viewer the evolving Hypothesis or Assessment schemas.
 type ReviewArtifact struct {
-	Kind string
-	Data string
+	Kind   string
+	Data   string
+	Status string // assessment only: current | superseded
 }
 
 // DisplayMessage is one message of an LLM request with its text content
@@ -364,6 +365,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
+	latestAssessment := make(map[string]int)
 	for scanner.Scan() {
 		var rec map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
@@ -432,7 +434,19 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			if err != nil {
 				continue
 			}
-			vs.Artifacts = append(vs.Artifacts, ReviewArtifact{Kind: kind, Data: string(data)})
+			artifact := ReviewArtifact{Kind: kind, Data: string(data)}
+			if kind == "review_assessment" {
+				if payload, ok := rec["data"].(map[string]any); ok {
+					if hypothesisID, _ := payload["hypothesis_id"].(string); hypothesisID != "" {
+						if previous, exists := latestAssessment[hypothesisID]; exists {
+							vs.Artifacts[previous].Status = "superseded"
+						}
+						artifact.Status = "current"
+						latestAssessment[hypothesisID] = len(vs.Artifacts)
+					}
+				}
+			}
+			vs.Artifacts = append(vs.Artifacts, artifact)
 
 		case "llm_response":
 			content, _ := rec["content"].(string)

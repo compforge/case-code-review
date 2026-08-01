@@ -68,7 +68,7 @@ func TestWriteDebrief(t *testing.T) {
 	}
 
 	// Manifest: the transcript self-describes its configuration and population.
-	if start["schema_version"].(float64) != 3 || start["tool_version"] != "v1.7.1 (abc123)" ||
+	if start["schema_version"].(float64) != 4 || start["tool_version"] != "v1.7.1 (abc123)" ||
 		start["eval_tag"] != "corpus-v1" || start["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("manifest fields off: %v", start)
 	}
@@ -123,6 +123,9 @@ func TestWriteFindings(t *testing.T) {
 		{Path: "b.go", StartLine: 9, EndLine: 9, Fingerprint: "ba9876543210", Content: "nil deref"},
 	})
 	sh.WriteArtifact("review_assessment", map[string]any{
+		"hypothesis_id": "h-123", "support": "supported",
+	})
+	sh.WriteArtifact("trial_decision", map[string]any{
 		"hypothesis_id": "h-123", "passed_trial": true,
 	})
 	sh.Finalize()
@@ -153,8 +156,9 @@ func TestWriteFindings(t *testing.T) {
 		f["hypothesis_id"] != "h-123" {
 		t.Fatalf("finding record off: %v", f)
 	}
-	if len(artifacts) != 1 || artifacts[0]["artifact_kind"] != "review_assessment" ||
-		artifacts[0]["data"].(map[string]any)["passed_trial"] != true {
+	if len(artifacts) != 2 || artifacts[0]["artifact_kind"] != "review_assessment" ||
+		artifacts[1]["artifact_kind"] != "trial_decision" ||
+		artifacts[1]["data"].(map[string]any)["passed_trial"] != true {
 		t.Fatalf("artifact record off: %v", artifacts)
 	}
 	// Optional fields are omitted, not empty-stringed.

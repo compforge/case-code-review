@@ -33,7 +33,20 @@ class BuildLabelDatasetTest(unittest.TestCase):
                 {
                     "type": "artifact",
                     "artifact_kind": "review_assessment",
-                    "data": {"hypothesis_id": "h-1", "passed_trial": True},
+                    "data": {
+                        "hypothesis_id": "h-1",
+                        "submission_index": 1,
+                        "support": "supported",
+                    },
+                },
+                {
+                    "type": "artifact",
+                    "artifact_kind": "trial_decision",
+                    "data": {
+                        "hypothesis_id": "h-1",
+                        "assessment_submission_index": 1,
+                        "passed_trial": True,
+                    },
                 },
                 {
                     "type": "finding",
@@ -65,7 +78,8 @@ class BuildLabelDatasetTest(unittest.TestCase):
             engine = example["engine"]
             self.assertEqual(engine["tool_version"], "v1.13.2 (abc123)")
             self.assertEqual(engine["hypothesis"]["id"], "h-1")
-            self.assertTrue(engine["assessment"]["passed_trial"])
+            self.assertEqual(engine["assessment"]["support"], "supported")
+            self.assertTrue(engine["trial"]["passed_trial"])
 
 
 if __name__ == "__main__":

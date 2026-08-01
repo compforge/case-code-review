@@ -195,7 +195,8 @@ type Runner struct {
 	board *board.Registry
 	// hypotheses contains the divergent Unit Review output. It is separate from
 	// args.Findings so unassessed suspicions can never leak into public results.
-	hypotheses *unitreview.Collector
+	hypotheses     *unitreview.Collector
+	hypothesisHook *unitreview.HypothesisHook
 }
 
 // sourceAnalyzer preserves the useful zero-value shape of Runner in focused
@@ -307,6 +308,7 @@ func New(args Args) *Runner {
 		Relocation:   f.Enabled(feature.Relocation),
 	}
 	a.hypotheses = hypotheses
+	a.hypothesisHook = hypothesisHook
 	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
 	a.executor = unitreview.NewExecutor(unitreview.ExecutorConfig{
 		LLMClient:               args.LLMClient,
@@ -542,6 +544,21 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		}
 	}
 
+	var dossierCoordinator *dossierCoordinator
+	if a.features.Enabled(feature.HypothesisReview) {
+		task := a.args.Template.HypothesisReviewTask
+		if task != nil && len(task.Messages) > 0 {
+			dossierCoordinator = newDossierCoordinator(dossierCoordinatorConfig{
+				Context: ctx, Units: units, Changes: a.changes, Selections: a.fileSelections,
+				QuietWindow: dossierQuietWindow, MaxWait: dossierMaxWait,
+				MaxHypotheses: dossierMaxHypotheses, Concurrency: dossierReviewWorkers,
+				ReadPaths: a.executor.ReadPaths, Review: a.reviewDossier,
+				OnHypothesis: a.persistHypothesis, OnSealed: a.persistDossier,
+			})
+			a.hypothesisHook.OnResolved = dossierCoordinator.Submit
+		}
+	}
+
 	var wg sync.WaitGroup
 
 	concurrency := a.args.MaxConcurrency
@@ -604,6 +621,9 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	wg.Wait()
 
 	if dispatched == 0 {
+		if dossierCoordinator != nil {
+			dossierCoordinator.Finish()
+		}
 		return []finding.Finding{}, nil
 	}
 
@@ -612,23 +632,34 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		a.args.WorkerPool.Await()
 	}
 
+	var hypotheses []unitreview.Hypothesis
+	var assessments []hypothesisreview.Assessment
+	if dossierCoordinator != nil {
+		hypotheses, assessments = dossierCoordinator.Finish()
+	} else {
+		hypotheses = a.hypotheses.Hypotheses()
+		a.persistHypotheses(hypotheses)
+	}
+
 	failed := atomic.LoadInt64(&a.unitFailed)
 	if failed > 0 && failed == dispatched {
 		return nil, fmt.Errorf("all %d unit review(s) failed — check your LLM configuration and API key", dispatched)
 	}
 
-	hypotheses := a.hypotheses.Hypotheses()
-	a.persistHypotheses(hypotheses)
 	var comments []finding.Finding
-	var assessments []hypothesisreview.Assessment
 	if a.features.Enabled(feature.HypothesisReview) {
-		assessments = a.runHypothesisReviews(ctx, units)
+		if dossierCoordinator == nil && len(hypotheses) > 0 {
+			a.recordWarning(
+				"hypothesis_review_unavailable", "",
+				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
+			)
+		}
 		comments = trial.Run(hypotheses, assessments)
 	} else {
 		// Gate-off is the one-stage baseline used by eval ablations.
 		comments = trial.Bypass(hypotheses)
 	}
-	a.persistAssessments(hypotheses, assessments)
+	a.persistTrialDecisions(hypotheses, assessments)
 	for _, comment := range comments {
 		a.args.Findings.Add(comment)
 	}
@@ -694,19 +725,23 @@ func (a *Runner) persistFindings(comments []finding.Finding) {
 
 func (a *Runner) persistHypotheses(hypotheses []unitreview.Hypothesis) {
 	for _, h := range hypotheses {
-		a.session.WriteArtifact("review_hypothesis", map[string]any{
-			"id": h.ID, "origin_unit": h.OriginUnit, "path": h.Path,
-			"content": h.Content, "existing_code": h.ExistingCode,
-			"start_line": h.StartLine, "end_line": h.EndLine,
-			"trigger": h.Trigger, "impact": h.Impact,
-			"change_attribution": h.ChangeAttribution,
-			"evidence":           h.Evidence, "uncertainty": h.Uncertainty,
-			"alias": h.Alias, "category": h.Category, "severity": h.Severity,
-		})
+		a.persistHypothesis(h)
 	}
 }
 
-func (a *Runner) persistAssessments(
+func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
+	a.session.WriteArtifact("review_hypothesis", map[string]any{
+		"id": h.ID, "origin_unit": h.OriginUnit, "path": h.Path,
+		"content": h.Content, "existing_code": h.ExistingCode,
+		"start_line": h.StartLine, "end_line": h.EndLine,
+		"trigger": h.Trigger, "impact": h.Impact,
+		"change_attribution": h.ChangeAttribution,
+		"evidence":           h.Evidence, "uncertainty": h.Uncertainty,
+		"alias": h.Alias, "category": h.Category, "severity": h.Severity,
+	})
+}
+
+func (a *Runner) persistTrialDecisions(
 	hypotheses []unitreview.Hypothesis,
 	assessments []hypothesisreview.Assessment,
 ) {
@@ -716,14 +751,11 @@ func (a *Runner) persistAssessments(
 	}
 	for _, assessment := range assessments {
 		hypothesis, ok := byID[assessment.HypothesisID]
-		a.session.WriteArtifact("review_assessment", map[string]any{
-			"hypothesis_id": assessment.HypothesisID,
-			"support":       assessment.Support, "attribution": assessment.Attribution,
-			"value": assessment.Value, "novelty": assessment.Novelty,
-			"reason": assessment.Reason, "evidence": assessment.Evidence,
-			"evidence_receipts": assessment.EvidenceReceipts,
-			"reviewer_alias":    assessment.ReviewerAlias,
-			"passed_trial":      ok && trial.Passes(hypothesis, assessment),
+		a.session.WriteArtifact("trial_decision", map[string]any{
+			"dossier_id":                  assessment.DossierID,
+			"assessment_submission_index": assessment.SubmissionIndex,
+			"hypothesis_id":               assessment.HypothesisID,
+			"passed_trial":                ok && trial.Passes(hypothesis, assessment),
 		})
 	}
 }

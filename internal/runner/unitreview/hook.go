@@ -28,6 +28,9 @@ type HypothesisHook struct {
 	Model        string
 	Relocation   bool
 	RecordUsage  func(*llm.UsageInfo)
+	// OnResolved runs after anchoring/relocation and collection, when the
+	// Hypothesis is stable enough to enter downstream Dossier formation.
+	OnResolved func(Hypothesis)
 }
 
 var _ harness.ToolHandler = (*HypothesisHook)(nil)
@@ -78,6 +81,9 @@ func (h *HypothesisHook) HandleTool(
 			hypothesis.ID = IDFor(*hypothesis)
 			if h.Collector != nil {
 				h.Collector.Add(*hypothesis)
+			}
+			if h.OnResolved != nil {
+				h.OnResolved(*hypothesis)
 			}
 		}
 	}

@@ -106,6 +106,34 @@ func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 	}
 }
 
+func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("done-1", "task_done", `{}`, nil),
+		toolCallResponseID("done-2", "task_done", `{}`, nil),
+	}}
+	checks := 0
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages:  []msg.Msg{msg.Text("user", "assess every item")},
+		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
+		MaxTurns:  2,
+		CompletionCheck: func(context.Context) (bool, string) {
+			checks++
+			return checks > 1, "one item is still missing"
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 2 {
+		t.Fatalf("result = %+v, want completion on second task_done", result)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 || !strings.Contains(requests[1].Messages[len(requests[1].Messages)-1].ExtractText(), "one item is still missing") {
+		t.Fatalf("rejection was not returned to the model: %+v", requests)
+	}
+}
+
 func TestExecutionReportsTurnBudgetAsTruncation(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		textResponse("I am finished."),

@@ -6,7 +6,7 @@ import (
 )
 
 const WrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop gathering evidence now. " +
-	"Submit one assessment for every supplied hypothesis using only the evidence already gathered, " +
+	"Submit assessments for every still-unassessed hypothesis using only the evidence already gathered, " +
 	"then call task_done. Use insufficient/unknown when a decisive fact is still missing; do not " +
 	"claim support without the required diff evidence receipt."
 
