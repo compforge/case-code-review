@@ -29,6 +29,7 @@ type RepoInfo struct {
 	EncodedPath  string // encoded directory name on disk
 	SessionCount int
 	LastModified time.Time
+	LatestBizID  string
 }
 
 // DiscoverRepos walks the sessions root and returns one entry per subdirectory.
@@ -48,6 +49,7 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 		}
 		repoDir := filepath.Join(root, e.Name())
 		info := RepoInfo{EncodedPath: e.Name()}
+		latestSessionPath := ""
 
 		subEntries, err := os.ReadDir(repoDir)
 		if err != nil {
@@ -59,11 +61,13 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 				if fi, err := se.Info(); err == nil {
 					if fi.ModTime().After(info.LastModified) {
 						info.LastModified = fi.ModTime()
+						latestSessionPath = filepath.Join(repoDir, se.Name())
 					}
 				}
 			}
 		}
 		if info.SessionCount > 0 {
+			info.LatestBizID = readSessionBizID(latestSessionPath)
 			repos = append(repos, info)
 		}
 	}
@@ -72,6 +76,25 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 		return repos[i].LastModified.After(repos[j].LastModified)
 	})
 	return repos, nil
+}
+
+func readSessionBizID(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	if !scanner.Scan() {
+		return ""
+	}
+	var record map[string]any
+	if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+		return ""
+	}
+	bizID, _ := record["biz_id"].(string)
+	return bizID
 }
 
 // SessionSummary is built from session_start and session_end records.

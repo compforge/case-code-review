@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -84,6 +85,34 @@ func TestNoMatch_SuggestsSimilarIdentifiers(t *testing.T) {
 	}
 	if !strings.Contains(result, "runCommand") && !strings.Contains(result, "StartCommand") {
 		t.Errorf("expected similar identifiers suggested, got: %s", result)
+	}
+}
+
+func TestNoMatch_PrefersLanguageDefinitions(t *testing.T) {
+	dir := setupSuggestRepo(t)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Ref: "", Mode: ModeWorkspace}).
+		WithDefinitionSource(func(_ context.Context, paths []string) []CodeSearchDefinition {
+			if !slices.Contains(paths, "cmd.go") {
+				t.Fatalf("candidate paths = %v, want cmd.go", paths)
+			}
+			return []CodeSearchDefinition{
+				{Name: "StartCommand", Path: "cmd.go", Line: 5},
+				{Name: "runCommand", Path: "cmd.go", Line: 3},
+			}
+		})
+
+	result, err := p.gitGrep(context.Background(), "HandleCommand", false, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "Similar definitions from Language Knowledge") {
+		t.Fatalf("expected language definition suggestions, got: %s", result)
+	}
+	if !strings.Contains(result, "StartCommand — cmd.go:5") {
+		t.Errorf("expected definition location, got: %s", result)
+	}
+	if strings.Contains(result, "occurrence(s)") {
+		t.Errorf("language definitions should replace text-only candidates, got: %s", result)
 	}
 }
 

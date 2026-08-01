@@ -18,10 +18,18 @@ const (
 
 // CodeSearchProvider performs text search across the repository using git grep.
 type CodeSearchProvider struct {
-	FileReader *FileReader
+	FileReader       *FileReader
+	definitionSource CodeSearchDefinitionSource
 }
 
 func NewCodeSearch(fr *FileReader) *CodeSearchProvider { return &CodeSearchProvider{FileReader: fr} }
+
+// WithDefinitionSource adds language-owned definitions to empty-search
+// recovery without making the generic Harness depend on a source parser.
+func (p *CodeSearchProvider) WithDefinitionSource(source CodeSearchDefinitionSource) *CodeSearchProvider {
+	p.definitionSource = source
+	return p
+}
 
 func (p *CodeSearchProvider) Tool() Tool { return CodeSearch }
 

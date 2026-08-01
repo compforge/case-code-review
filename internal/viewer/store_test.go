@@ -5,7 +5,39 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestDiscoverReposIncludesLatestBizID(t *testing.T) {
+	root := t.TempDir()
+	repoDir := filepath.Join(root, "example-repo")
+	if err := os.MkdirAll(repoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(repoDir, "old.jsonl")
+	newPath := filepath.Join(repoDir, "new.jsonl")
+	if err := os.WriteFile(oldPath, []byte("{\"type\":\"session_start\",\"biz_id\":\"pr:old\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, []byte("{\"type\":\"session_start\",\"biz_id\":\"pr:new\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := os.Chtimes(oldPath, now.Add(-time.Minute), now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newPath, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	repos, err := DiscoverRepos(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 1 || repos[0].LatestBizID != "pr:new" {
+		t.Fatalf("repos = %+v, want latest biz id pr:new", repos)
+	}
+}
 
 func TestLoadSessionKeepsAgentcorePromptsAndReviewArtifacts(t *testing.T) {
 	root := t.TempDir()

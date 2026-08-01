@@ -19,9 +19,22 @@ import (
 const (
 	suggestMaxParts      = 2    // longest identifier fragments to probe
 	suggestMaxCandidates = 5    // suggestions returned to the model
+	suggestMaxFiles      = 20   // candidate files handed to Language Knowledge
 	suggestMaxScanLines  = 5000 // hard cap on grep output processed
 	suggestMinScore      = 0.3  // bigram-dice floor to avoid noise
 )
+
+// CodeSearchDefinition is the small source-fact shape needed to turn a text
+// search miss into an actionable definition candidate.
+type CodeSearchDefinition struct {
+	Name string
+	Path string
+	Line int
+}
+
+// CodeSearchDefinitionSource is injected by Runner: Harness owns search
+// recovery, while Language Knowledge remains the owner of source facts.
+type CodeSearchDefinitionSource func(context.Context, []string) []CodeSearchDefinition
 
 // identLikeRe matches queries that look like a (possibly qualified)
 // identifier — the only shape worth fuzzy-matching. Phrases, operators and
@@ -36,14 +49,26 @@ func (p *CodeSearchProvider) noMatchesWithSuggestions(ctx context.Context, searc
 	if usePerlRegexp || !identLikeRe.MatchString(searchText) {
 		return plain
 	}
-	cands := p.suggestIdentifiers(ctx, searchText, pathspec)
-	if len(cands) == 0 {
+	probe := p.suggestIdentifiers(ctx, searchText, pathspec)
+	if p.definitionSource != nil && len(probe.paths) > 0 {
+		definitions := rankDefinitions(searchText, p.definitionSource(ctx, probe.paths))
+		if len(definitions) > 0 {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "No matches found for %q.\n", searchText)
+			sb.WriteString("Similar definitions from Language Knowledge — retry with the exact name:\n")
+			for _, definition := range definitions {
+				fmt.Fprintf(&sb, "  %s — %s:%d\n", definition.Name, definition.Path, definition.Line)
+			}
+			return sb.String()
+		}
+	}
+	if len(probe.candidates) == 0 {
 		return plain
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "No matches found for %q.\n", searchText)
 	sb.WriteString("Similar identifiers that DO exist in this repo — retry with one of these:\n")
-	for _, c := range cands {
+	for _, c := range probe.candidates {
 		fmt.Fprintf(&sb, "  %s (%d occurrence(s))\n", c.name, c.count)
 	}
 	return sb.String()
@@ -55,21 +80,30 @@ type candidate struct {
 	score float64
 }
 
+type suggestionProbe struct {
+	candidates []candidate
+	paths      []string
+}
+
 // suggestIdentifiers greps for the query's longest fragments and collects
 // whole identifiers containing them, ranked by bigram similarity to the
 // original query. Fragments (not the full query) are probed because the
 // full query just returned zero hits — its parts are the recoverable signal.
-func (p *CodeSearchProvider) suggestIdentifiers(ctx context.Context, query string, pathspec []string) []candidate {
+func (p *CodeSearchProvider) suggestIdentifiers(ctx context.Context, query string, pathspec []string) suggestionProbe {
 	parts := identifierParts(query)
 	if len(parts) == 0 {
-		return nil
+		return suggestionProbe{}
 	}
 	counts := map[string]int{}
+	seenPaths := map[string]bool{}
+	var paths []string
 	for _, part := range parts {
 		// -o prints only the matched token; the pattern extends the fragment
 		// to full identifier boundaries so we collect real symbol names.
+		// -z separates the path from the token without making valid ':' path
+		// characters ambiguous.
 		pattern := `[A-Za-z0-9_]*` + part + `[A-Za-z0-9_]*`
-		cmdArgs := []string{"--no-pager", "grep", "-I", "-i", "-o", "-h", "-E",
+		cmdArgs := []string{"--no-pager", "grep", "-I", "-i", "-o", "-z", "-E",
 			"--max-count", "20", "-e", pattern}
 		if p.FileReader.Ref != "" {
 			cmdArgs = append(cmdArgs, "--end-of-options", p.FileReader.Ref)
@@ -87,8 +121,11 @@ func (p *CodeSearchProvider) suggestIdentifiers(ctx context.Context, query strin
 		if len(lines) > suggestMaxScanLines {
 			lines = lines[:suggestMaxScanLines]
 		}
-		for _, tok := range lines {
-			tok = strings.TrimSpace(tok)
+		for _, line := range lines {
+			path, tok, ok := parseSuggestionMatch(line, p.FileReader.Ref)
+			if !ok {
+				continue
+			}
 			// Skip the degenerate world: empty, the fragment itself as a bare
 			// word is fine, but tokens identical to the failed query would
 			// have matched the original search already.
@@ -96,6 +133,10 @@ func (p *CodeSearchProvider) suggestIdentifiers(ctx context.Context, query strin
 				continue
 			}
 			counts[tok]++
+			if !seenPaths[path] && len(paths) < suggestMaxFiles {
+				seenPaths[path] = true
+				paths = append(paths, path)
+			}
 		}
 	}
 
@@ -119,7 +160,69 @@ func (p *CodeSearchProvider) suggestIdentifiers(ctx context.Context, query strin
 	if len(cands) > suggestMaxCandidates {
 		cands = cands[:suggestMaxCandidates]
 	}
-	return cands
+	return suggestionProbe{candidates: cands, paths: paths}
+}
+
+func parseSuggestionMatch(line, ref string) (path, token string, ok bool) {
+	i := strings.IndexByte(line, 0)
+	if i < 1 || i+1 >= len(line) {
+		return "", "", false
+	}
+	path = line[:i]
+	if ref != "" {
+		path = strings.TrimPrefix(path, ref+":")
+	}
+	if path == "" {
+		return "", "", false
+	}
+	return path, strings.TrimSpace(line[i+1:]), true
+}
+
+type rankedDefinition struct {
+	CodeSearchDefinition
+	score float64
+}
+
+func rankDefinitions(query string, definitions []CodeSearchDefinition) []CodeSearchDefinition {
+	lowerQuery := strings.ToLower(query)
+	seen := map[string]bool{}
+	var ranked []rankedDefinition
+	for _, definition := range definitions {
+		if definition.Name == "" || definition.Path == "" || definition.Line < 1 {
+			continue
+		}
+		name := strings.ToLower(definition.Name)
+		score := diceBigram(lowerQuery, name)
+		if i := strings.LastIndexByte(name, '.'); i >= 0 {
+			score = max(score, diceBigram(lowerQuery, name[i+1:]))
+		}
+		key := fmt.Sprintf("%s:%d:%s", definition.Path, definition.Line, definition.Name)
+		if score < suggestMinScore || seen[key] {
+			continue
+		}
+		seen[key] = true
+		ranked = append(ranked, rankedDefinition{CodeSearchDefinition: definition, score: score})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		if ranked[i].Name != ranked[j].Name {
+			return ranked[i].Name < ranked[j].Name
+		}
+		if ranked[i].Path != ranked[j].Path {
+			return ranked[i].Path < ranked[j].Path
+		}
+		return ranked[i].Line < ranked[j].Line
+	})
+	if len(ranked) > suggestMaxCandidates {
+		ranked = ranked[:suggestMaxCandidates]
+	}
+	out := make([]CodeSearchDefinition, len(ranked))
+	for i := range ranked {
+		out[i] = ranked[i].CodeSearchDefinition
+	}
+	return out
 }
 
 // identifierParts splits an identifier query on case/underscore/dot
