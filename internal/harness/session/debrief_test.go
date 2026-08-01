@@ -14,6 +14,7 @@ func TestWriteDebrief(t *testing.T) {
 	repoDir := t.TempDir()
 	sh := New(repoDir, "main", "test-model", SessionOptions{
 		ReviewMode:  ReviewModeWorkspace,
+		BizID:       "github:org/repo#148",
 		Features:    map[string]bool{"usage_sites": true},
 		ToolVersion: "v1.7.1 (abc123)",
 		Params:      map[string]any{"unit_watermark": 10},
@@ -68,7 +69,7 @@ func TestWriteDebrief(t *testing.T) {
 
 	// Manifest: the transcript self-describes its configuration and population.
 	if start["schema_version"].(float64) != 2 || start["tool_version"] != "v1.7.1 (abc123)" ||
-		start["eval_tag"] != "corpus-v1" {
+		start["eval_tag"] != "corpus-v1" || start["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("manifest fields off: %v", start)
 	}
 	if feats, _ := start["features"].(map[string]any); feats["usage_sites"] != true {

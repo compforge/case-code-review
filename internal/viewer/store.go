@@ -85,6 +85,7 @@ type SessionSummary struct {
 	DiffFrom      string
 	DiffTo        string
 	DiffCommit    string
+	BizID         string
 	FilesReviewed []string
 	DurationSec   float64
 	FileCount     int
@@ -165,6 +166,9 @@ func peekSession(path string) (SessionSummary, error) {
 			}
 			if v, ok := rec["diffCommit"].(string); ok {
 				summary.DiffCommit = v
+			}
+			if v, ok := rec["biz_id"].(string); ok {
+				summary.BizID = v
 			}
 		}
 	}
@@ -354,6 +358,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 			if v, ok := rec["diffCommit"].(string); ok {
 				vs.Summary.DiffCommit = v
+			}
+			if v, ok := rec["biz_id"].(string); ok {
+				vs.Summary.BizID = v
 			}
 
 		case "llm_request":

@@ -16,7 +16,7 @@ func TestLoadSessionKeepsAgentcorePromptsAndReviewArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	transcript := strings.Join([]string{
-		`{"type":"session_start","sessionId":"session-1","model":"test-model"}`,
+		`{"type":"session_start","sessionId":"session-1","model":"test-model","biz_id":"github:org/repo#148"}`,
 		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"}]}`,
 		`{"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"}}`,
 		`{"type":"llm_request","scope_id":"hypothesis_review:case-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify evidence"},{"role":"user","content":"assess h-1"}]}`,
@@ -32,6 +32,9 @@ func TestLoadSessionKeepsAgentcorePromptsAndReviewArtifacts(t *testing.T) {
 	}
 	if len(got.SystemPrompts) != 2 {
 		t.Fatalf("system prompts = %d, want 2", len(got.SystemPrompts))
+	}
+	if got.Summary.BizID != "github:org/repo#148" {
+		t.Fatalf("biz id = %q", got.Summary.BizID)
 	}
 	if len(got.Reviews) != 2 || got.Reviews[0].Stage != Review1Stage || got.Reviews[1].Stage != Review2Stage {
 		t.Fatalf("reviews = %+v, want Review 1 plus Review 2", got.Reviews)

@@ -26,6 +26,9 @@ ExecutionSpec ──▶ Execution.Run ──▶ ExecutionResult
 | `ExecutionResult` | 返回完成状态、usage、工具统计和错误 |
 | `Session` | 以稳定 JSONL 持久化实际发生的执行事实 |
 
+调用方可以用 `biz_id` 给整次 CCR 执行附加不透明业务身份。Harness 只在 `session_start` 持久化，
+Viewer 只展示；它不解释格式、不改变评审行为，也不进入模型 prompt。需求内容仍通过 `background` 提供。
+
 Runner 可以用 Harness 执行 Unit Review 或 Hypothesis Review；Harness 不反向 import Runner、Unit、
 Assessment 等评审领域对象。领域语义通过消息、工具、hook 和 event 适配进入。
 

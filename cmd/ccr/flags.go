@@ -122,6 +122,7 @@ type reviewOptions struct {
 	outputFormat   string
 	audience       string // --audience: "human" (default) or "agent"
 	background     string // --background: optional requirement context
+	bizID          string // --biz-id: caller-owned execution identity, persisted only
 	specPath       string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
 	historyPath    string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
 	model          string // --model: override resolved LLM model for this review
@@ -153,6 +154,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the review")
+	a.StringVar(&opts.bizID, "biz-id", "", "opaque caller-owned business identity persisted with the session")
 	a.StringVar(&opts.specPath, "spec", "", "path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json — injects each changed function's spec/case as a contract checklist")
 	a.StringVar(&opts.historyPath, "history", "", "path to a prior-findings JSON (symbol-id or repo-relative path -> findings); injected per review unit so the reviewer reconciles whether the change addresses them")
 	a.StringVar(&opts.model, "model", "", "override LLM model for this review (e.g., claude-opus-4-6)")
@@ -249,6 +251,7 @@ Examples:
 Flags:
   --audience string       output audience: human (show progress) or agent (summary only) (default "human")
   -b, --background string optional requirement/business context for the review
+  --biz-id string         opaque caller-owned business identity persisted with the session
   -c, --commit string     single commit hash or tag to review (vs its parent)
   -f, --format string     output format: text or json (default "text")
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env

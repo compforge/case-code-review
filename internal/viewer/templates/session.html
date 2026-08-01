@@ -19,6 +19,7 @@
     <div class="meta">
         <span><strong>CWD:</strong> {{.Session.Summary.CWD}}</span>
         <span><strong>Branch:</strong> {{.Session.Summary.GitBranch}}</span>
+        {{if .Session.Summary.BizID}}<span><strong>Biz ID:</strong> <code>{{.Session.Summary.BizID}}</code></span>{{end}}
         <span><strong>Mode:</strong> {{if .Session.Summary.ReviewMode}}{{.Session.Summary.ReviewMode}}{{else}}-{{end}}</span>
         {{if eq .Session.Summary.ReviewMode "range"}}
         <span><strong>From:</strong> <code>{{.Session.Summary.DiffFrom}}</code></span>

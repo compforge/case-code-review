@@ -109,6 +109,10 @@ type Args struct {
 	// injected into plan and main_task prompts via {{requirement_background}}.
 	Background string
 
+	// BizID is an opaque caller-owned identity persisted for observability.
+	// It never changes review behavior or enters model prompts.
+	BizID string
+
 	// Specs is the loaded spec knowledge: this repo's entries by symbol-id plus
 	// dependency entries by fqn (two address spaces — see spec.Catalog). A review
 	// Unit's related symbols are looked up here and injected as the contract
@@ -222,6 +226,7 @@ func New(args Args) *Runner {
 			DiffFrom:   args.From,
 			DiffTo:     args.To,
 			DiffCommit: args.Commit,
+			BizID:      args.BizID,
 			// Run manifest: transcripts self-describe their configuration so eval
 			// joins on gates/version/knobs instead of guessing.
 			Features:    args.Features.Resolved(),

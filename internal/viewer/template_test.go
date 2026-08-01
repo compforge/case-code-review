@@ -43,7 +43,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		FileReads:       FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, MaterialFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
 	}
 	vs := &ViewSession{
-		Summary: SessionSummary{SessionID: "session-1", CWD: "/repo"},
+		Summary: SessionSummary{SessionID: "session-1", CWD: "/repo", BizID: "github:org/repo#148"},
 		Reviews: []*ReviewRun{review},
 		SystemPrompts: []SystemPrompt{
 			{TaskTypes: []TaskType{MainTask}, Text: "investigate"},
@@ -72,6 +72,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			}
 			if tt.name == "session.html" && !strings.Contains(out.String(), `href="/r/repo/session-1/review?scope=internal%2Fviewer%2Fstore.go"`) {
 				t.Fatal("session review link does not preserve the repo and session path")
+			}
+			if tt.name == "session.html" && !strings.Contains(out.String(), "github:org/repo#148") {
+				t.Fatal("session template does not show biz id")
 			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Already covered") || !strings.Contains(out.String(), "Same-path repeats")) {
 				t.Fatal("review page does not separate covered and repeated file reads")
