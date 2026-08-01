@@ -76,20 +76,24 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 
 // SessionSummary is built from session_start and session_end records.
 type SessionSummary struct {
-	SessionID     string
-	Timestamp     time.Time
-	CWD           string
-	GitBranch     string
-	Model         string
-	ReviewMode    string
-	DiffFrom      string
-	DiffTo        string
-	DiffCommit    string
-	BizID         string
-	FilesReviewed []string
-	DurationSec   float64
-	FileCount     int
-	LLMFailures   int
+	SessionID      string
+	Timestamp      time.Time
+	CWD            string
+	GitBranch      string
+	Model          string
+	ReviewMode     string
+	DiffFrom       string
+	DiffTo         string
+	DiffCommit     string
+	BizID          string
+	FilesReviewed  []string
+	DiffFileCount  int
+	DiffInsertions int
+	DiffDeletions  int
+	HasDiffStats   bool
+	DurationSec    float64
+	FileCount      int
+	LLMFailures    int
 }
 
 // ListSessions returns lightweight summaries for all sessions in a repo subdir.
@@ -187,6 +191,16 @@ func peekSession(path string) (SessionSummary, error) {
 							summary.FilesReviewed = append(summary.FilesReviewed, s)
 						}
 					}
+				}
+				if n, ok := rec["diff_files"].(float64); ok {
+					summary.DiffFileCount = int(n)
+					summary.HasDiffStats = true
+				}
+				if n, ok := rec["diff_insertions"].(float64); ok {
+					summary.DiffInsertions = int(n)
+				}
+				if n, ok := rec["diff_deletions"].(float64); ok {
+					summary.DiffDeletions = int(n)
 				}
 				if f, ok := rec["llm_failures"].(float64); ok {
 					summary.LLMFailures = int(f)
@@ -526,6 +540,16 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 						vs.Summary.FilesReviewed = append(vs.Summary.FilesReviewed, s)
 					}
 				}
+			}
+			if n, ok := rec["diff_files"].(float64); ok {
+				vs.Summary.DiffFileCount = int(n)
+				vs.Summary.HasDiffStats = true
+			}
+			if n, ok := rec["diff_insertions"].(float64); ok {
+				vs.Summary.DiffInsertions = int(n)
+			}
+			if n, ok := rec["diff_deletions"].(float64); ok {
+				vs.Summary.DiffDeletions = int(n)
 			}
 			vs.Summary.FileCount = len(vs.Summary.FilesReviewed)
 			if f, ok := rec["llm_failures"].(float64); ok {

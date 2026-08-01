@@ -12,7 +12,7 @@
 <h2>Sessions: {{.RepoName}}</h2>
 {{if .Sessions}}
 <table class="table">
-    <thead><tr><th>Session ID</th><th>Biz ID</th><th>Branch</th><th>Mode</th><th>Model</th><th>Files</th><th>Duration</th><th>Started At</th></tr></thead>
+    <thead><tr><th>Session ID</th><th>Biz ID</th><th>Branch</th><th>Mode</th><th>Model</th><th>Diff / Review Files</th><th>Duration</th><th>Started At</th></tr></thead>
     <tbody>
     {{range .Sessions}}
         <tr>
@@ -21,7 +21,7 @@
             <td>{{.GitBranch}}</td>
             <td>{{if .ReviewMode}}{{.ReviewMode}}{{else}}-{{end}}</td>
             <td><code>{{.Model}}</code></td>
-            <td>{{.FileCount}}</td>
+            <td>{{if .HasDiffStats}}{{.DiffFileCount}}{{else}}-{{end}} / {{.FileCount}}</td>
             <td>{{formatDuration .DurationSec}}</td>
             <td>{{formatTime .Timestamp}}</td>
         </tr>
