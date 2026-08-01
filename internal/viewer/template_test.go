@@ -19,6 +19,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			{Role: "system", Text: "investigate"},
 			{Role: "user", Text: "review"},
 		},
+		ResponseContent: "I will inspect the file.",
+		Reasoning:       "The changed path needs context.",
+		StopReason:      "tool_calls",
 	}
 	review := &ReviewRun{
 		ID:          "internal/viewer/store.go",
@@ -32,6 +35,10 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		Tasks:       map[TaskType][]*TaskCard{MainTask: {turn}},
 		Calls:       []*TaskCard{turn},
 		Turns:       []*TaskCard{turn},
+		Conversation: []ConversationNode{
+			{ID: "conversation-1", Kind: "system", Label: "System", Preview: "investigate", Text: "investigate"},
+			{ID: "conversation-2", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
+		},
 		Metrics: ReviewMetrics{
 			LLMCalls:        1,
 			TurnCount:       1,
@@ -84,6 +91,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Already covered") || !strings.Contains(out.String(), "Same-path repeats")) {
 				t.Fatal("review page does not separate covered and repeated file reads")
+			}
+			if tt.name == "review.html" && (!strings.Contains(out.String(), "Conversation") || !strings.Contains(out.String(), `data-conversation-node="conversation-1"`) || !strings.Contains(out.String(), "Reasoning")) {
+				t.Fatal("review page does not render the conversation inspector")
 			}
 		})
 	}

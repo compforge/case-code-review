@@ -285,6 +285,8 @@ type TaskCard struct {
 	PromptDelta      int
 	MessageDelta     int
 	ResponseContent  string
+	Reasoning        string
+	StopReason       string
 	ToolCalls        []ToolCallInfo
 	DurationMs       int64
 	Error            string
@@ -298,10 +300,12 @@ type TaskCard struct {
 
 // ToolCallInfo summarizes a single tool call.
 type ToolCallInfo struct {
+	ID         string
 	Name       string
 	Arguments  string
 	Result     string
 	Ok         bool
+	HasResult  bool
 	DurationMs int64
 }
 
@@ -409,6 +413,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 
 		case "llm_response":
 			content, _ := rec["content"].(string)
+			reasoning, _ := rec["reasoning"].(string)
+			stopReason, _ := rec["stop_reason"].(string)
 			durationMs := int64(0)
 			if d, ok := rec["duration_ms"].(float64); ok {
 				durationMs = int64(d)
@@ -442,6 +448,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				if len(cards) > 0 && !cards[len(cards)-1].HasResponse {
 					card := cards[len(cards)-1]
 					card.ResponseContent = content
+					card.Reasoning = reasoning
+					card.StopReason = stopReason
 					card.HasResponse = true
 					card.DurationMs = durationMs
 					card.Model = model
@@ -461,11 +469,13 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 					card := cards[len(cards)-1]
 					for _, tc := range tcs {
 						if tm, ok := tc.(map[string]any); ok {
+							id, _ := tm["id"].(string)
 							name, _ := tm["name"].(string)
 							args, _ := tm["arguments"].(string)
-							info := ToolCallInfo{Name: name, Arguments: args}
+							info := ToolCallInfo{ID: id, Name: name, Arguments: args}
 							if name == "task_done" {
 								info.Ok = true
+								info.HasResult = true
 							}
 							card.ToolCalls = append(card.ToolCalls, info)
 						}
@@ -492,6 +502,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "tool_call":
+			toolCallID, _ := rec["tool_call_id"].(string)
+			toolName, _ := rec["tool_name"].(string)
 			result, _ := rec["result"].(string)
 			okVal := true
 			if b, hasOk := rec["ok"].(bool); hasOk {
@@ -507,13 +519,22 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				cards := fg.Tasks[TaskType(tt)]
 				if len(cards) > 0 {
 					card := cards[len(cards)-1]
+					match := -1
 					for ti := range card.ToolCalls {
-						if card.ToolCalls[ti].Result == "" && !card.ToolCalls[ti].Ok {
-							card.ToolCalls[ti].Result = result
-							card.ToolCalls[ti].Ok = okVal
-							card.ToolCalls[ti].DurationMs = durationMs
+						call := &card.ToolCalls[ti]
+						if toolCallID != "" && call.ID == toolCallID {
+							match = ti
 							break
 						}
+						if toolCallID == "" && match == -1 && !call.HasResult && call.Name == toolName {
+							match = ti
+						}
+					}
+					if match >= 0 {
+						card.ToolCalls[match].Result = result
+						card.ToolCalls[match].Ok = okVal
+						card.ToolCalls[match].HasResult = true
+						card.ToolCalls[match].DurationMs = durationMs
 					}
 				}
 			}

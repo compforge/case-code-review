@@ -103,6 +103,52 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 	}
 }
 
+func TestLoadSessionBuildsConversationAndMatchesToolsByID(t *testing.T) {
+	root := t.TempDir()
+	repo := "example-repo"
+	sessionID := "session-conversation"
+	dir := filepath.Join(root, repo)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"}]}`,
+		`{"type":"llm_response","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","content":"read both","reasoning":"the paths are independent","stop_reason":"tool_calls","tool_calls":[{"id":"call-a","name":"file_read","arguments":"{\"file_path\":\"a.go\"}"},{"id":"call-b","name":"file_read","arguments":"{\"file_path\":\"b.go\"}"}]}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_call_id":"call-b","tool_name":"file_read","result":"file b","ok":true,"duration_ms":7}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_call_id":"call-a","tool_name":"file_read","result":"file a","ok":true,"duration_ms":5}`,
+		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":2,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"},{"role":"assistant","content":"read both"},{"role":"tool","content":"file a"},{"role":"tool","content":"file b"},{"role":"user","content":"finish now"}]}`,
+		`{"type":"llm_response","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","content":"done","stop_reason":"stop"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadSession(root, repo, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(got.Reviews))
+	}
+	review := got.Reviews[0]
+	if len(review.Conversation) != 7 {
+		t.Fatalf("conversation = %+v, want 7 nodes", review.Conversation)
+	}
+	firstTurn := review.Turns[0]
+	if firstTurn.Reasoning != "the paths are independent" || firstTurn.StopReason != "tool_calls" {
+		t.Fatalf("response metadata = %+v", firstTurn)
+	}
+	if firstTurn.ToolCalls[0].ID != "call-a" || firstTurn.ToolCalls[0].Result != "file a" {
+		t.Fatalf("first tool = %+v", firstTurn.ToolCalls[0])
+	}
+	if firstTurn.ToolCalls[1].ID != "call-b" || firstTurn.ToolCalls[1].Result != "file b" {
+		t.Fatalf("second tool = %+v", firstTurn.ToolCalls[1])
+	}
+	if review.Conversation[5].Kind != "user" || review.Conversation[5].Text != "finish now" {
+		t.Fatalf("new user message = %+v", review.Conversation[5])
+	}
+}
+
 func TestPeekSessionLoadsDiffAndReviewFileCounts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	transcript := strings.Join([]string{

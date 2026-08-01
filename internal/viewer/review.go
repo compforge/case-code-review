@@ -1,7 +1,10 @@
 package viewer
 
 import (
+	"encoding/json"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -44,6 +47,7 @@ type ReviewRun struct {
 	Tasks           map[TaskType][]*TaskCard
 	Calls           []*TaskCard
 	Turns           []*TaskCard
+	Conversation    []ConversationNode
 	Metrics         ReviewMetrics
 	Tools           []ToolUsage
 	Materials       []string
@@ -79,6 +83,31 @@ type ToolUsage struct {
 	Calls      int
 	Failures   int
 	DurationMs int64
+}
+
+// ConversationNode is one selectable event in the compact agent-loop view.
+// Tool calls are children of the assistant turn that requested them; their
+// result stays on the same node so the left rail remains easy to scan.
+type ConversationNode struct {
+	ID               string
+	Kind             string
+	Label            string
+	Preview          string
+	Text             string
+	Reasoning        string
+	Arguments        string
+	Result           string
+	ToolCallID       string
+	Model            string
+	StopReason       string
+	Error            string
+	TurnNo           int
+	Depth            int
+	DurationMs       int64
+	PromptTokens     int
+	CompletionTokens int
+	OK               bool
+	HasResult        bool
 }
 
 func (r *ReviewRun) observeTimestamp(raw any) {
@@ -135,6 +164,7 @@ func finalizeReview(r *ReviewRun) {
 	}
 
 	r.Metrics.TurnCount = len(r.Turns)
+	r.Conversation = buildConversation(r.Turns)
 	r.Tools = sortedTools(toolIdx)
 	for _, tool := range r.Tools {
 		r.Metrics.ToolCalls += tool.Calls
@@ -149,6 +179,102 @@ func finalizeReview(r *ReviewRun) {
 	if r.Stage == Review1Stage {
 		r.FileReads = analyzeFileReads(r)
 	}
+}
+
+func buildConversation(turns []*TaskCard) []ConversationNode {
+	var nodes []ConversationNode
+	seenMessages := make(map[string]int)
+	nextID := 1
+	appendNode := func(node ConversationNode) {
+		node.ID = fmt.Sprintf("conversation-%d", nextID)
+		nextID++
+		nodes = append(nodes, node)
+	}
+
+	for _, turn := range turns {
+		requestCounts := make(map[string]int)
+		for _, message := range turn.Request {
+			role := strings.ToLower(message.Role)
+			if role != "system" && role != "user" {
+				continue
+			}
+			key := role + "\x00" + message.Text
+			requestCounts[key]++
+			if requestCounts[key] <= seenMessages[key] {
+				continue
+			}
+			appendNode(ConversationNode{
+				Kind:    role,
+				Label:   strings.ToUpper(role[:1]) + role[1:],
+				Preview: firstLine(message.Text),
+				Text:    message.Text,
+			})
+		}
+		for key, count := range requestCounts {
+			if count > seenMessages[key] {
+				seenMessages[key] = count
+			}
+		}
+
+		preview := firstLine(turn.ResponseContent)
+		if preview == "" {
+			preview = firstLine(turn.Reasoning)
+		}
+		if preview == "" && len(turn.ToolCalls) > 0 {
+			preview = fmt.Sprintf("requested %d tool call(s)", len(turn.ToolCalls))
+		}
+		appendNode(ConversationNode{
+			Kind:             "assistant",
+			Label:            fmt.Sprintf("Assistant · Turn %d", turn.TurnNo),
+			Preview:          preview,
+			Text:             turn.ResponseContent,
+			Reasoning:        turn.Reasoning,
+			Model:            turn.Model,
+			StopReason:       turn.StopReason,
+			Error:            turn.Error,
+			TurnNo:           turn.TurnNo,
+			DurationMs:       turn.DurationMs,
+			PromptTokens:     turn.PromptTokens,
+			CompletionTokens: turn.CompletionTokens,
+		})
+
+		for _, call := range turn.ToolCalls {
+			appendNode(ConversationNode{
+				Kind:       "tool",
+				Label:      call.Name,
+				Preview:    toolTarget(call.Arguments),
+				Arguments:  call.Arguments,
+				Result:     call.Result,
+				ToolCallID: call.ID,
+				TurnNo:     turn.TurnNo,
+				Depth:      1,
+				DurationMs: call.DurationMs,
+				OK:         call.Ok,
+				HasResult:  call.HasResult,
+			})
+		}
+	}
+	return nodes
+}
+
+func firstLine(text string) string {
+	text = strings.TrimSpace(text)
+	if i := strings.IndexByte(text, '\n'); i >= 0 {
+		return text[:i]
+	}
+	return text
+}
+
+func toolTarget(arguments string) string {
+	var args map[string]any
+	if json.Unmarshal([]byte(arguments), &args) == nil {
+		for _, key := range []string{"file_path", "search_text", "query_name", "path"} {
+			if value, ok := args[key].(string); ok && value != "" {
+				return value
+			}
+		}
+	}
+	return firstLine(arguments)
 }
 
 func classifyReview(r *ReviewRun) ReviewStage {

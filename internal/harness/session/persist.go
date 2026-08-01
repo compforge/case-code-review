@@ -227,8 +227,9 @@ func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, taskType TaskType, requ
 	return uuid
 }
 
-// WriteLLMResponse writes a response entry with model, content, tool calls, usage.
-func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, taskType TaskType, content string, toolCalls []map[string]any, model string, usage TokenUsage, duration time.Duration) string {
+// WriteLLMResponse writes a response entry with model, content, optional
+// provider reasoning, stop reason, tool calls, and usage.
+func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, taskType TaskType, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -250,6 +251,12 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, taskType TaskType, con
 			"cache_read_tokens":  usage.CacheReadTokens,
 			"cache_write_tokens": usage.CacheWriteTokens,
 		},
+	}
+	if reasoning != "" {
+		rec["reasoning"] = reasoning
+	}
+	if stopReason != "" {
+		rec["stop_reason"] = stopReason
 	}
 	addScopeFields(rec, ss)
 	jw.writeRecordLocked(rec)
@@ -281,7 +288,7 @@ func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, taskType TaskType, reques
 }
 
 // WriteToolCall writes a tool call result entry.
-func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, taskType TaskType, toolName, arguments, result string, ok bool, duration time.Duration) string {
+func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -298,6 +305,9 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, taskType TaskType, toolNa
 		"result":      result,
 		"ok":          ok,
 		"duration_ms": duration.Milliseconds(),
+	}
+	if toolCallID != "" {
+		rec["tool_call_id"] = toolCallID
 	}
 	addScopeFields(rec, ss)
 	jw.writeRecordLocked(rec)

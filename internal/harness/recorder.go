@@ -150,10 +150,10 @@ func (r *executionRecorder) finishTool(id, name string, result []byte, isError b
 	}
 	r.mu.Unlock()
 
-	if call.record == nil || isError {
+	if call.record == nil {
 		return
 	}
-	call.record.AddToolResult(name, call.arguments, toolResultText(result))
+	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration)
 }
 
 func toolResultText(raw []byte) string {
