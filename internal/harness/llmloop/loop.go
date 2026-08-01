@@ -549,7 +549,8 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 		var m msg.Msg = msg.Raw{M: llm.NewToolResultMessage(rs.ToolCallID, rs.Result)}
 		// file_read results carry a path+range identity — keep it (typed File)
 		// so covered re-reads can be deduplicated below.
-		if f, ok := msg.FileFromToolResult(rs.Name, rs.ToolCallID, rs.Result); ok {
+		f := &msg.File{}
+		if f.FromLLM(msg.LLMToolResult{Tool: rs.Name, ToolCallID: rs.ToolCallID, Content: rs.Result}) {
 			m = f
 		}
 		*messages = append(*messages, m)

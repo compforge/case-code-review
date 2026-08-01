@@ -1,3 +1,7 @@
+<review_task>
+Investigate the changed behavior in <current_file_diff>. Use the attached file messages and knowledge before fetching more context. Report only concrete issue Hypotheses worth independent review, then call `task_done`.
+</review_task>
+
 // The following is the list of other files changed in this update.
 <other_changed_files>
 {{change_files}}
@@ -9,16 +13,14 @@
 {{diff}}
 </current_file_diff>
 
-// The full post-change source of the reviewed file(s), in file_read's numbered-line
-// format. It is ALREADY provided — do NOT call file_read on these paths again; spend
-// tool calls only on OTHER files you actually need.
+// The full post-change source of the reviewed file(s) is attached after this task as
+// labeled File messages. The runtime also appends an exact inventory of visible ranges.
 <current_file_source>
 {{unit_source}}
 </current_file_source>
 
-// Bodies of functions related to this change (callers/callees outside the reviewed
-// file(s)), pre-fetched for context. They are NOT under review — do not comment on
-// them, and do NOT re-fetch these exact ranges.
+// Related caller/callee bodies are attached as labeled File messages. They are context,
+// not review targets; do not comment on them.
 <related_source>
 {{related_source}}
 </related_source>
@@ -60,5 +62,4 @@ Everywhere else in the repository the changed function(s) are referenced, as pre
 ### Review Plan (Optional)
 {{plan_guidance}}
 
-Investigate the code changes in <current_file_diff>. Report the concrete issue Hypotheses worth independent review, then call `task_done`.
 </user_task>

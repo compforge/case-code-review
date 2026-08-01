@@ -10,7 +10,7 @@ import (
 
 // Usage is one repository reference to a changed symbol outside the reviewed
 // files — a raw `git grep` hit, kept as text (not resolved to an enclosing
-// function): the briefing shows it as a blast-radius map, and session traces
+// function): the initial context shows it as a blast-radius map, and session traces
 // show impact scans ("who else uses this name") are the review loop's largest
 // remaining tool expense.
 type Usage struct {

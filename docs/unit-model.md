@@ -21,7 +21,7 @@ Component。Component 是静态项目边界，Unit 是一次 diff 动态形成�
 
 ```text
 Git Change ─▶ Component / FileRole
-                   ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues} ─▶ Briefing
+                   ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues} ─▶ Review Messages
                    │     └─ entrypoint / handler ─▶ project Clue ─────▲
                    ├─ manifest / lock ────────────▶ project Clue ─────▲
                    └─ version ─▶ no Unit Review
@@ -35,7 +35,6 @@ Git Change ─▶ Component / FileRole
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
-| `Briefing` | 从 Unit 投影出的本轮只读上下文，不改变 Unit 的领域语义 |
 
 FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
 事实。角色不是互斥分类：`main.go` 可以同时是 `source + entrypoint`；Python 文件中存在
@@ -94,20 +93,22 @@ Clue 用两个正交维度表达上下文：
 - **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`、`project`。
 
 因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
-不决定 prompt 排版；Unit 保存完整的 Fragments 与 Clues，Briefing 再按预算、优先级和消息形状投影。
+不决定 prompt 排版；Unit 保存完整的 Fragments 与 Clues，Runner 再按预算、优先级和消息形状投影为
+Review Messages。
 
 ```text
 Unit
   └─ ClueFinder[]
        └─ Clue{Relation, Kind, Ref, Content}
             └─ Unit.Clues
-                 └─ Briefing / typed file messages
+                 └─ Review Messages
 ```
 
-### 2.4 静态 Briefing 与按需工具
+### 2.4 初始消息与按需工具
 
-Briefing 只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
-未知路径和低概率细节由 Unit Review 通过只读工具按需获取。
+初始消息只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
+未知路径和低概率细节由 Unit Review 通过只读工具按需获取。Review Messages 是从 Unit 到 Execution
+的直接投影，不再引入额外领域对象。
 
 这条边界同时控制两个风险：
 
@@ -142,7 +143,7 @@ Language 负责产出 definition、reference、call edge 等源码事实；Unit 
 
 ### 3.3 Unit 在一次 run 内是有生命周期的对象
 
-Unit 在形成后保持稳定身份，并沿主链路逐步获得 Clues、Briefing、Execution 结果和 Hypothesis。
+Unit 在形成后保持稳定身份，并沿主链路逐步获得 Clues、Execution 结果和 Hypothesis。
 并发调度只改变执行时机，不改变 Unit 的语义归属。跨 Unit 共享的信息由 Unit Review 的 Board /
 Bulletin 机制表达，不反向修改已确定的静态 Unit 边界。
 

@@ -25,25 +25,8 @@ type UnitContext struct {
 	SeeAlso        string         `json:"see_also,omitempty"`        // curated @link pointers
 	Prior          string         `json:"prior,omitempty"`           // a previous review's findings on this unit (to reconcile)
 	ProjectContext string         `json:"project_context,omitempty"` // changed manifest/lock pointers from the same Component
-	Materials      []string       `json:"materials,omitempty"`       // briefing materials (descriptors, not content): own source + related bodies
+	SourcePreloads []string       `json:"source_preloads,omitempty"` // descriptors, not content: own source + related bodies
 	UsageSites     string         `json:"usage_sites,omitempty"`     // pre-grepped use sites of the changed symbols
-}
-
-// describeMaterials renders a briefer's materials as one-line descriptors so
-// --dry-run shows what the briefing would inline without reading any file.
-func describeMaterials(mats []material) []string {
-	out := make([]string, 0, len(mats))
-	for _, m := range mats {
-		switch {
-		case m.whole && len(m.symbols) > 0:
-			out = append(out, m.path+" (whole; ranged fallback: "+strings.Join(m.symbols, ", ")+")")
-		case m.whole:
-			out = append(out, m.path+" (whole)")
-		default:
-			out = append(out, m.label+" (body)")
-		}
-	}
-	return out
 }
 
 // countClues tallies a Unit's Clues on the relation×kind matrix, keyed
@@ -103,7 +86,7 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 			SeeAlso:        seeAlso,
 			Prior:          prior,
 			ProjectContext: renderProjectContext(u.Clues),
-			Materials:      describeMaterials(a.brieferFor(u.Scope).materials(u)),
+			SourcePreloads: a.describePreloadedSources(u),
 			UsageSites:     usageSites,
 		})
 	}

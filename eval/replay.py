@@ -4,10 +4,10 @@
 「同工作负载重放」的固化：corpus 是一组冻结的评审范围（merge 双亲），
 arm 是一组 feature gate 配置。趋势对比只能在固定 corpus 上做（生产 session
 的 diff 各不相同，不可比）；单项归因只能在同 corpus 的 arm 间做（gate 消融）。
-典型用途：给 typed_briefing 这类默认关的形状变更发"翻转许可证"。
+典型用途：为 feature gate 变更提供固定工作负载下的对照证据。
 
   python3 eval/replay.py eval/data/corpus/ccr-self.json \\
-      --arm base --arm typed:typed_briefing=on [--only "#93"] [--runs 2]
+      --arm base --arm no-plan:plan=off [--only "#93"] [--runs 2]
 
 每个 run 打唯一 CCR_EVAL_TAG，事后从 session 目录按 tag 捞回 transcript，
 聚合 finding（指纹精确匹配 + path/symbol 宽松匹配两档——模型措辞会漂，

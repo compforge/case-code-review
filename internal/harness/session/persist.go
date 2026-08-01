@@ -21,8 +21,9 @@ var sessionSubDir = "sessions"
 
 // schemaVersion stamps every session_start so longitudinal analysis survives
 // record-format changes. Bump when a record type's meaning changes (not for
-// additive fields). v2: debrief records + run manifest.
-const schemaVersion = 2
+// additive fields). v3 names source preloads directly instead of exposing the
+// removed briefing/material assembly concepts.
+const schemaVersion = 3
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -358,8 +359,8 @@ func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
 	if d.ContextPaths != nil {
 		rec["context_paths"] = d.ContextPaths
 	}
-	if len(d.Materials) > 0 {
-		rec["materials"] = d.Materials
+	if len(d.SourcePreloads) > 0 {
+		rec["source_preloads"] = d.SourcePreloads
 	}
 	if len(d.ToolCalls) > 0 {
 		rec["tool_calls"] = d.ToolCalls

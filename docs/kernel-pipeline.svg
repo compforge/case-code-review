@@ -128,13 +128,13 @@
   <rect x="735" y="325" width="270" height="130" rx="14" fill="#ffffff" class="soft-box"/>
   <text x="870" y="358" text-anchor="middle" class="label">Investigate broadly</text>
   <text x="870" y="387" text-anchor="middle" class="small">理解 diff · 重建行为 · 检查契约</text>
-  <text x="870" y="415" text-anchor="middle" class="small">只读代码工具 · Clue / Briefing</text>
+  <text x="870" y="415" text-anchor="middle" class="small">只读代码工具 · Clue / Messages</text>
   <text x="870" y="442" text-anchor="middle" class="tiny">report_hypothesis · task_done</text>
 
   <path d="M585 799 H630 V375 H685" class="flow"/>
   <text x="638" y="594" text-anchor="middle" class="tiny" transform="rotate(-90 638 594)">Unit</text>
   <path d="M585 898 H645 V465 H685" class="evidence-flow"/>
-  <text x="654" y="682" text-anchor="middle" class="tiny" transform="rotate(-90 654 682)">Clue / Briefing</text>
+  <text x="654" y="682" text-anchor="middle" class="tiny" transform="rotate(-90 654 682)">Clue / Messages</text>
 
   <line x1="870" y1="530" x2="870" y2="575" class="review-flow"/>
 

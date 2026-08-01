@@ -45,7 +45,7 @@ Change ─▶ Component / FileRole
                   │     └─ entrypoint / handler ──────────▶ Clue
                   └─ manifest / lock ─────────────────────▶ Clue
                                       │
-                         ClueFinder ─▶ Unit.Clues ─▶ Briefing
+                         ClueFinder ─▶ Unit.Clues ─▶ Review Messages
                                       │
                                       ▼
                               Unit Review (Review 1)
@@ -108,7 +108,7 @@ CCR 相比 file-only review 的优势来自两部分：
 1. Unit 在 loop 前携带可确定的 diff、Clue、契约和调用邻域；
 2. agent 在 loop 内用只读工具验证未知事实。
 
-全预载会放大成本，只给 diff 又会诱发猜测。Briefing 与工具必须形成分工，并由统一上下文生命周期
+全预载会放大成本，只给 diff 又会诱发猜测。初始消息与工具必须形成分工，并由统一上下文生命周期
 控制重复读取、淘汰和压缩。
 
 ### 3.4 发散与收敛使用不同完成契约

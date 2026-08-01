@@ -7,7 +7,7 @@ import (
 	"github.com/qiankunli/go-stdx/slicesx"
 )
 
-// CaseFile is the material packet transferred from divergent Unit Reviews to
+// CaseFile is the evidence packet transferred from divergent Unit Reviews to
 // one convergent Hypothesis Review. The first implementation deliberately puts
 // the whole ChangeSet in one CaseFile; future partitioning must follow
 // behavioral/evidence relationships rather than comment-anchor files.

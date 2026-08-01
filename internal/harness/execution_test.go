@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/voocel/agentcore"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -295,7 +297,69 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	}
 }
 
-func TestExecutionSkipsFileReadAlreadyCoveredByBriefing(t *testing.T) {
+func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
+	result := "File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|package a\n"
+	wire := wireToAgentMessage(llm.NewToolResultMessage("call-1", result))
+	wire.Metadata = map[string]any{
+		"tool_name":    msg.FileReadToolName,
+		"tool_call_id": "call-1",
+	}
+
+	normalized, _ := normalizeContextMessages([]agentcore.AgentMessage{wire})
+	if len(normalized) != 1 {
+		t.Fatalf("normalized messages = %d", len(normalized))
+	}
+	domain, ok := normalized[0].(domainMessage)
+	if !ok {
+		t.Fatalf("file_read result stayed wire-shaped: %T", normalized[0])
+	}
+	file, ok := domain.value.(*msg.File)
+	if !ok || file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 || !file.IsToolResult() {
+		t.Fatalf("promoted message = %#v", domain.value)
+	}
+}
+
+func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
+	assistant := wireToAgentMessage(llm.NewToolCallMessage("", []llm.ToolCall{{
+		ID: "search-1", Type: "function",
+		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"search_text":"NewExecution"}`},
+	}}))
+	result := wireToAgentMessage(llm.NewToolResultMessage(
+		"search-1", "File: internal/harness/execution.go\nMatch lines: 1\n10|func NewExecution\n",
+	))
+	result.Metadata = map[string]any{"tool_call_id": "search-1"}
+
+	normalized, changed := normalizeContextMessages([]agentcore.AgentMessage{assistant, result})
+	if !changed || len(normalized) != 2 {
+		t.Fatalf("normalized=%d changed=%t", len(normalized), changed)
+	}
+	domain := normalized[1].(domainMessage)
+	search, ok := domain.value.(*msg.SearchResult)
+	if !ok || search.Query != "NewExecution" {
+		t.Fatalf("promoted search = %#v", domain.value)
+	}
+}
+
+func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
+	result := "Baseline ref: abc123\nFile: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|old\n"
+	baseline := &msg.File{}
+	if !baseline.FromLLM(msg.LLMToolResult{
+		Tool: msg.FileReadBaseToolName, ToolCallID: "base-1", Content: result,
+	}) {
+		t.Fatal("baseline result was not promoted")
+	}
+	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
+	projection, err := manager.Project(context.Background(), wrapDomainMessages([]msg.Msg{baseline}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.remember(nil, projection.Messages, projection.Usage, "test", false)
+	if _, covered := manager.coveredFileRead(map[string]any{"file_path": "pkg/a.go"}); covered {
+		t.Fatal("baseline source must not suppress a current-snapshot file_read")
+	}
+}
+
+func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	body := "File: pkg/a.go (Total lines: 3)\n1|package a\n2|\n3|func F() {}\n"
 	registry := tool.NewRegistry()
 	provider := &fileReadProvider{body: body}
@@ -310,7 +374,8 @@ func TestExecutionSkipsFileReadAlreadyCoveredByBriefing(t *testing.T) {
 		LLMClient: client,
 		Messages: []msg.Msg{
 			msg.Text("user", "review this unit"),
-			msg.NewFile("pkg/a.go", 1, 3, 3, body),
+			msg.NewFile("pkg/a.go", 1, 3, 3, body).
+				ConfigurePresentation("code under review", ""),
 		},
 		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
 		Tools:            registry,
@@ -324,12 +389,107 @@ func TestExecutionSkipsFileReadAlreadyCoveredByBriefing(t *testing.T) {
 	if result.State != OutcomeCompleted || provider.calls != 0 {
 		t.Fatalf("result=%+v provider calls=%d, want completed without executing file_read", result, provider.calls)
 	}
-	if !strings.Contains(requestText(client.Requests()[1]), "Already available in the current context from the initial briefing") {
-		t.Fatalf("second request lacks briefing coverage notice: %#v", client.Requests()[1].Messages)
+	if !strings.Contains(requestText(client.Requests()[1]), "Already available in the current context from the initial source context") {
+		t.Fatalf("second request lacks preload coverage notice: %#v", client.Requests()[1].Messages)
+	}
+	if first := requestText(client.Requests()[0]); !strings.Contains(first, "Available file content already present") ||
+		!strings.Contains(first, "pkg/a.go lines 1-3 — code under review") {
+		t.Fatalf("first request lacks visible-file inventory: %q", first)
 	}
 }
 
-func TestExecutionRunsFileReadWhenBriefingOnlyPartiallyCoversRange(t *testing.T) {
+func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
+	content := func(path string) string {
+		return fmt.Sprintf("File: %s (Total lines: 80)\n%s", path, strings.Repeat("1|source evidence for review\n", 80))
+	}
+	messages := []agentcore.AgentMessage{
+		domainMessage{value: msg.Text("system", "stable system")},
+		domainMessage{value: msg.Text("user", "stable task")},
+		domainMessage{value: msg.NewFile("a.go", 1, 80, 80, content("a.go"))},
+		domainMessage{value: msg.NewFile("b.go", 1, 80, 80, content("b.go"))},
+		domainMessage{value: msg.NewFile("c.go", 1, 80, 80, content("c.go"))},
+	}
+	full := countContextTokens(messages)
+	tail := append([]agentcore.AgentMessage(nil), messages...)
+	last := tail[len(tail)-1].(domainMessage)
+	last.compaction = msg.CompactionReference
+	tail[len(tail)-1] = last
+	afterTail := countContextTokens(tail)
+	limit := (full + afterTail) / 2
+	manager := newContextManager(ExecutionSpec{
+		ContextWindow:    limit * 5 / 4,
+		FileEvictEnabled: true,
+	}, nil)
+
+	projection, err := manager.Project(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := projection.CommitMessages
+	if !projection.ShouldCommit || len(committed) != len(messages) {
+		t.Fatalf("projection did not commit compaction: %+v", projection)
+	}
+	for i := 2; i < 4; i++ {
+		if got := committed[i].(domainMessage).compaction; got != msg.CompactionNone {
+			t.Fatalf("message %d compacted before tail: %v", i, got)
+		}
+	}
+	if got := committed[4].(domainMessage).compaction; got != msg.CompactionReference {
+		t.Fatalf("tail compaction = %v, want reference", got)
+	}
+
+	second, err := manager.Project(context.Background(), committed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstWire := manager.ConvertToLLM(projection.CommitMessages)
+	secondWire := manager.ConvertToLLM(second.Messages)
+	if firstWire[0].TextContent() != secondWire[0].TextContent() ||
+		firstWire[1].TextContent() != secondWire[1].TextContent() {
+		t.Fatal("stable prompt prefix changed after committed compaction")
+	}
+}
+
+func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: "unexpected"}
+	registry.Register(provider)
+	registry.Freeze()
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go"}`, nil),
+		toolCallResponseID("call-2", "task_done", `{}`, nil),
+	}}
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:          client,
+		Messages:           []msg.Msg{msg.Text("user", "review")},
+		ToolDefs:           []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		Tools:              registry,
+		MaxTurns:           2,
+		WrapUpPrompt:       "wrap up now",
+		WrapUpAllowedTools: []string{"task_done"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || provider.calls != 0 {
+		t.Fatalf("result=%+v provider calls=%d", result, provider.calls)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 || len(requests[0].Tools) != len(requests[1].Tools) {
+		t.Fatalf("tool schemas changed across wrap-up: %#v", requests)
+	}
+	for i := range requests[0].Tools {
+		if requests[0].Tools[i].Function.Name != requests[1].Tools[i].Function.Name {
+			t.Fatalf("tool schema order changed: %#v vs %#v", requests[0].Tools, requests[1].Tools)
+		}
+	}
+	if !strings.Contains(requestText(requests[1]), "Investigation is closed") {
+		t.Fatalf("blocked tool result missing from next turn: %q", requestText(requests[1]))
+	}
+}
+
+func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) {
 	body := "File: pkg/a.go (Total lines: 30)\nIS_TRUNCATED: false\nLINE_RANGE: 1-20\n1|package a\n"
 	registry := tool.NewRegistry()
 	provider := &fileReadProvider{body: body}
@@ -389,14 +549,14 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("requests = %d, want 1", len(requests))
 	}
-	var evicted bool
+	var compacted bool
 	for _, message := range requests[0].Messages {
-		if strings.Contains(message.ExtractText(), "elided to fit the context budget") {
-			evicted = true
+		if strings.Contains(message.ExtractText(), "compacted to a reference") {
+			compacted = true
 		}
 	}
-	if !evicted {
-		t.Fatalf("projected request did not evict the large file: %#v", requests[0].Messages)
+	if !compacted {
+		t.Fatalf("projected request did not compact the large file: %#v", requests[0].Messages)
 	}
 }
 

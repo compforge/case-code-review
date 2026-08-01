@@ -29,23 +29,27 @@ const (
 // ExecutionSpec is the immutable input for one Harness execution. It uses CCR
 // types at the boundary so callers never need to import agentcore directly.
 type ExecutionSpec struct {
-	LLMClient               llm.LLMClient
-	Model                   string
-	Messages                []msg.Msg
-	ToolDefs                []llm.ToolDef
-	Tools                   *tool.Registry
-	ToolHandler             ToolHandler
-	Session                 *session.SessionHistory
-	Scope                   session.Scope
-	TaskType                session.TaskType
-	Events                  EventSink
-	TurnContext             TurnContextProvider
-	MaxTurns                int
-	MaxTokens               int
-	ContextWindow           int
-	FileDedupEnabled        bool
-	FileEvictEnabled        bool
-	WrapUpPrompt            string
+	LLMClient        llm.LLMClient
+	Model            string
+	Messages         []msg.Msg
+	ToolDefs         []llm.ToolDef
+	Tools            *tool.Registry
+	ToolHandler      ToolHandler
+	Session          *session.SessionHistory
+	Scope            session.Scope
+	TaskType         session.TaskType
+	Events           EventSink
+	TurnContext      TurnContextProvider
+	MaxTurns         int
+	MaxTokens        int
+	ContextWindow    int
+	FileDedupEnabled bool
+	FileEvictEnabled bool
+	WrapUpPrompt     string
+	// WrapUpAllowedTools hard-closes investigation after WrapUpPrompt is
+	// injected without changing the advertised tool schemas. Nil leaves tool
+	// execution unchanged for callers that only need a textual reminder.
+	WrapUpAllowedTools      []string
 	CompletionPrompt        string
 	CompressionSystemPrompt string
 	CompressionPrompt       string
@@ -75,6 +79,7 @@ type Execution struct {
 	model            *chatModel
 	tools            []agentcore.Tool
 	completionPrompt string
+	wrapUpAllowed    map[string]bool
 
 	started   atomic.Bool
 	completed atomic.Bool
@@ -121,6 +126,13 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	}
 	e.contextManager = newContextManager(spec, contextModel)
 	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed)
+	if len(spec.WrapUpAllowedTools) > 0 {
+		e.wrapUpAllowed = make(map[string]bool, len(spec.WrapUpAllowedTools))
+		for _, name := range spec.WrapUpAllowedTools {
+			e.wrapUpAllowed[name] = true
+		}
+		e.wrapUpAllowed[tool.TaskDone.Name()] = true
+	}
 	return e, nil
 }
 
@@ -182,6 +194,11 @@ func (e *Execution) toolMiddleware() agentcore.ToolMiddleware {
 		defer func() {
 			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
+		if e.contextManager.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
+			return json.RawMessage(
+				"Investigation is closed. Submit the results already supported by the current context, then finish the task.",
+			), nil
+		}
 		var args map[string]any
 		if err := json.Unmarshal(call.Args, &args); err != nil {
 			return next(ctx, call.Args)
