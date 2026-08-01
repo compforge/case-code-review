@@ -2,8 +2,10 @@ package hypothesisreview
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -44,7 +46,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		},
 		ToolHandler: &AssessmentHook{Collector: collector},
 		Session:     &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		Scope:       session.Scope{ID: "hypothesis_review:change_set", Kind: "run"},
+		Scope:       session.Scope{ID: "hypothesis_review:dossier", Kind: "run"},
 		MaxTurns:    2,
 		MaxTokens:   1_000,
 	})
@@ -64,8 +66,81 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	}
 }
 
+func TestReviewRequiresEveryHypothesisAndAcceptsIncrementalSubmissions(t *testing.T) {
+	one := completeHypothesis("h-1", "a.go")
+	two := completeHypothesis("h-2", "b.go")
+	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+		reviewAssessmentResponse("call-1", one.ID),
+		reviewToolResponse("call-2", "task_done", `{}`),
+		reviewAssessmentResponse("call-3", two.ID),
+		reviewToolResponse("call-4", "task_done", `{}`),
+	}}
+	assessments := Review(context.Background(), Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"},
+			{Role: "user", Content: "{{hypotheses}} {{dossier}} {{clues}} {{prior_assessments}}"},
+		}},
+		LLMClient: client,
+		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  4,
+		MaxTokens: 2_000,
+	}, Dossier{ID: "d-1", Hypotheses: []unitreview.Hypothesis{one, two}})
+	if len(assessments) != 2 {
+		t.Fatalf("assessments = %+v, want both hypotheses", assessments)
+	}
+	if len(client.responses) != 0 {
+		t.Fatalf("Review stopped before completion guard was satisfied")
+	}
+}
+
+func TestReviewReturnsAcceptedAssessmentsAfterLLMFailure(t *testing.T) {
+	hypothesis := completeHypothesis("h-1", "a.go")
+	client := &failingAssessmentClient{first: reviewAssessmentResponse("call-1", hypothesis.ID)}
+	assessments := Review(context.Background(), Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"}, {Role: "user", Content: "{{hypotheses}}"},
+		}},
+		LLMClient: client,
+		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  2,
+		MaxTokens: 2_000,
+	}, Dossier{ID: "d-1", Hypotheses: []unitreview.Hypothesis{hypothesis}})
+	if len(assessments) != 1 || assessments[0].HypothesisID != hypothesis.ID {
+		t.Fatalf("accepted partial assessment was lost: %+v", assessments)
+	}
+}
+
+func completeHypothesis(id, path string) unitreview.Hypothesis {
+	return unitreview.Hypothesis{
+		ID: id, Path: path, Content: "issue", ExistingCode: "x", Trigger: "call",
+		Impact: "failure", ChangeAttribution: "changed", Evidence: []string{path + ":1"},
+	}
+}
+
+func reviewAssessmentResponse(callID, hypothesisID string) *llm.ChatResponse {
+	return reviewToolResponse(callID, SubmitAssessments.Name(), `{"assessments":[{
+		"hypothesis_id":"`+hypothesisID+`","support":"insufficient","attribution":"unknown",
+		"value":"unknown","novelty":"new","reason":"missing decisive evidence","evidence":[]
+	}]}`)
+}
+
 type assessmentScriptedClient struct {
 	responses []*llm.ChatResponse
+}
+
+type failingAssessmentClient struct {
+	first *llm.ChatResponse
+	calls int
+}
+
+func (c *failingAssessmentClient) CompletionsWithCtx(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	c.calls++
+	if c.calls == 1 {
+		return c.first, nil
+	}
+	return nil, errors.New("provider unavailable")
 }
 
 func (c *assessmentScriptedClient) CompletionsWithCtx(

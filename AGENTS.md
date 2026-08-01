@@ -8,7 +8,7 @@
 
 ```text
 Project / Language Knowledge ─▶ Unit ─Review 1─▶ Hypothesis
-    ─CaseFile / Review 2─▶ Assessment ─Trial─▶ Finding
+    ─Dossier / Review 2─▶ Assessment ─Trial─▶ Finding
 ```
 
 Project Knowledge 解释 Repository / Component / FileRole，Language Knowledge 提供源码事实；它们共同
@@ -42,7 +42,7 @@ case-code-review/
 ```
 git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Merger─▶ Unit
                                       └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
-    ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis ─▶ CaseFile
+    ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis ─▶ Dossier
     ─▶ Hypothesis Review ─▶ Assessment ─Trial─▶ Finding
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
@@ -75,6 +75,6 @@ Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥�
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
 - Unit Review：Review 1 的有界探索、原子完成、上下文治理与 Board/Bulletin 跨 Unit 协作
   ——`docs/unit_review.md`
-- Hypothesis Review：CaseFile、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial
+- Hypothesis Review：Dossier、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial
   ——`docs/hypothesis_review.md`
 - 上游归属（Apache-2.0 衍生）：`NOTICE`

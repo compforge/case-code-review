@@ -2,8 +2,8 @@
   <title>CCR two-stage evidence review pipeline</title>
   <desc>
     CCR forms review Units from a ChangeSet, enriches them with Clues, and runs
-    divergent Unit Reviews that produce falsifiable Hypotheses. A CaseFile then
-    carries all hypotheses into an independent convergent review. Deterministic
+    divergent Unit Reviews that produce falsifiable Hypotheses. Related bounded
+    Dossiers then feed independent convergent reviews. Deterministic
     Trial publishes only supported and actionable Findings.
   </desc>
   <defs>
@@ -48,7 +48,7 @@
   <rect width="1800" height="1050" fill="#ffffff"/>
   <text x="900" y="48" text-anchor="middle" class="title">CCR · 两阶段证据评审</text>
   <text x="900" y="78" text-anchor="middle" class="small">
-    Unit Review 负责发散，CaseFile Review 负责收敛，Trial 只交付证据支持且值得行动的 Finding
+    Unit Review 负责发散，Dossier Review 负责收敛，Trial 只交付证据支持且值得行动的 Finding
   </text>
 
   <!-- Source and Unit formation -->
@@ -163,7 +163,7 @@
   </text>
 
   <path d="M1160 225 H1300 L1325 200 H1720 V385 H1160 Z" fill="#fff0bf" class="box"/>
-  <text x="1190" y="252" class="label">CaseFile · 案卷</text>
+  <text x="1190" y="252" class="label">Dossier · 案卷</text>
   <text x="1690" y="252" text-anchor="end" class="tiny">跨 Unit、跨文件统一复核</text>
 
   <rect x="1190" y="280" width="145" height="62" rx="11" fill="#ffffff" class="soft-box"/>

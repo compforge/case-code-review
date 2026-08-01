@@ -2,6 +2,8 @@ package unitreview
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
 	"sync"
 	"testing"
 
@@ -11,6 +13,19 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
+
+func TestExecutorTracksSuccessfulRepositoryReadPathsPerUnit(t *testing.T) {
+	executor := &Executor{}
+	executor.recordReadPaths("unit-1", tool.FileRead.Name(), json.RawMessage(`{"file_path":"a.go"}`))
+	executor.recordReadPaths("unit-1", tool.FileReadBase.Name(), json.RawMessage(`{"file_path":"base.go"}`))
+	executor.recordReadPaths("unit-1", tool.FileReadDiff.Name(), json.RawMessage(`{"path_array":["a.go","b.go"]}`))
+	executor.recordReadPaths("unit-2", tool.FileRead.Name(), json.RawMessage(`{"file_path":"other.go"}`))
+	got := executor.ReadPaths("unit-1")
+	want := []string{"a.go", "b.go", "base.go"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("read paths = %v, want %v", got, want)
+	}
+}
 
 func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	registry := tool.NewRegistry()

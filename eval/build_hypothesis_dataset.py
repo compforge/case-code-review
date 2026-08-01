@@ -39,6 +39,7 @@ def build_case(record: dict) -> dict | None:
         "rationale": record.get("rationale") or "",
         "hypothesis": hypothesis,
         "previous_assessment": engine.get("assessment"),
+        "previous_trial": engine.get("trial"),
         "engine": {
             key: engine.get(key)
             for key in ("session_id", "tool_version", "model", "features", "git_head")

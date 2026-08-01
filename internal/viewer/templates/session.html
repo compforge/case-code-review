@@ -94,10 +94,10 @@
 {{else}}<p class="empty-state">No Review 1 runs.</p>{{end}}
 
 <h3>Review 2 <span class="heading-count">{{len $review2}}</span></h3>
-<p class="section-note">以 CaseFile 为粒度收敛全部 Hypothesis，产出 Assessment。</p>
+<p class="section-note">以多个有界 Dossier 收敛相关 Hypothesis，增量产出 Assessment。</p>
 {{if $review2}}
 <table class="review-table">
-    <thead><tr><th>CaseFile</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <thead><tr><th>Dossier</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
     <tbody>{{range $review2}}{{template "reviewRow" .}}{{end}}</tbody>
 </table>
 {{else}}<p class="empty-state">No Review 2 runs.</p>{{end}}
@@ -138,6 +138,7 @@
     <summary class="system-prompt-header">
         <span class="chevron"></span>
         <span class="system-prompt-label">{{.Kind}}</span>
+        {{if .Status}}<span class="badge badge-scope">{{.Status}}</span>{{end}}
     </summary>
     <pre class="msg-text">{{.Data}}</pre>
 </details>

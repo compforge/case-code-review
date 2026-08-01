@@ -9,7 +9,7 @@ Unit Review（Review 1）的职责是从一个代码行为作用域中发现**�
 问题主张**，不是在一个 loop 内完成终审：
 
 ```text
-Clue / Unit == Review 1 ==> Hypothesis ==> CaseFile
+Clue / Unit == Review 1 ==> Hypothesis ==> Dossier
                                         == Review 2 ==> Assessment == Trial ==> Finding
 ```
 
@@ -22,7 +22,7 @@ Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 R
 - 以相关上下文密度换效果，不以无限搜索和无限预载换安全感。
 
 这里的 lead 只是 Review 1 内部的临时调查状态，不新增公开领域对象。第一个需要持久化、进入
-CaseFile 和 eval 的结果仍然是 Hypothesis。
+Dossier 和 eval 的结果仍然是 Hypothesis。
 
 ## 问题画像
 
@@ -281,7 +281,7 @@ Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/calle
 - Bulletin 区分 `intent`、`observation`、`confirmed`，并携带 path / symbol 供相关 Unit 路由；
 - 注入使用增量、相关性排序和数量上限，避免每轮广播整块 Board；
 - 自动 file-read 记录等操作日志默认不共享，它们只说明“做过什么”，不说明“发现了什么”；
-- 最终 Hypothesis 进入 CaseFile 和 Session；Board 只是一轮 run 内的临时协作读模型。
+- 最终 Hypothesis 进入 Dossier 和 Session；Board 只是一轮 run 内的临时协作读模型。
 
 Board 的语义属于 Runner Review 扩展；Harness 只提供通用 event 和 turn-context provider。这样既能
 让 Unit 像队友一样交换材料，又不把“代码评审团队”固化进执行内核。

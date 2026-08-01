@@ -49,8 +49,12 @@ type ExecutionSpec struct {
 	// WrapUpAllowedTools hard-closes investigation after WrapUpPrompt is
 	// injected without changing the advertised tool schemas. Nil leaves tool
 	// execution unchanged for callers that only need a textual reminder.
-	WrapUpAllowedTools      []string
-	CompletionPrompt        string
+	WrapUpAllowedTools []string
+	CompletionPrompt   string
+	// CompletionCheck lets a domain reject task_done until its required
+	// outputs exist. Harness owns the stop mechanics but does not interpret
+	// what "complete" means for the caller's execution.
+	CompletionCheck         func(context.Context) (complete bool, guidance string)
 	CompressionSystemPrompt string
 	CompressionPrompt       string
 	CompressionUpdatePrompt string
@@ -149,7 +153,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		ContextManager: e.contextManager,
 		ConvertToLLM:   e.contextManager.ConvertToLLM,
 		StopAfterTool: func(name string) bool {
-			return name == tool.TaskDone.Name()
+			return name == tool.TaskDone.Name() && e.completed.Load()
 		},
 		StopGuard: func(_ context.Context, _ agentcore.StopInfo) agentcore.StopDecision {
 			if e.completed.Load() {
@@ -198,6 +202,15 @@ func (e *Execution) toolMiddleware() agentcore.ToolMiddleware {
 			return json.RawMessage(
 				"Investigation is closed. Submit the results already supported by the current context, then finish the task.",
 			), nil
+		}
+		if call.Name == tool.TaskDone.Name() && e.spec.CompletionCheck != nil {
+			complete, guidance := e.spec.CompletionCheck(ctx)
+			if !complete {
+				if guidance == "" {
+					guidance = e.completionPrompt
+				}
+				return json.RawMessage(guidance), nil
+			}
 		}
 		var args map[string]any
 		if err := json.Unmarshal(call.Args, &args); err != nil {

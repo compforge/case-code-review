@@ -28,9 +28,10 @@ Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Un
 
 评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
 Repository / Component 提供项目边界、可组合 FileRole（如 source + entrypoint / handler）和 manifest
-等项目知识，未来也可承接文档与规则。
+等项目知识，未来也可承接文档与规则。长期看，一个 Repository 还应提供开发与 review 共同消费的
+记忆文件，使项目约定、历史决策和业务背景不必分别维护两份；具体存储协议不属于当前 Kernel 契约。
 它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 将 Clue 汇入 Unit，Review 2
-将来可面向 CaseFile 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
+将来可面向 Dossier 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
 
 ## 2. 总体流程
 
@@ -53,7 +54,7 @@ Change ─▶ Component / FileRole
                                       ▼
                                   Hypothesis
                                       │
-                              group into CaseFile
+                              group into Dossier
                                       │
                                       ▼
                            Hypothesis Review (Review 2)
@@ -70,12 +71,12 @@ Change ─▶ Component / FileRole
 这条链路借用了“调查—复核—裁决”的比喻，但对象是工程契约，不是角色扮演：
 
 - `Clue / Unit == Review 1 ==> Hypothesis`：在一个行为范围内探索，提出可证伪的怀疑；
-- `Hypothesis / CaseFile == Review 2 ==> Assessment`：跨 Unit 归案，独立复核已有假设；
+- `Hypothesis / Dossier == Review 2 ==> Assessment`：跨 Unit 归案，独立复核已有假设；
 - `Assessment == Trial ==> Finding`：确定性规则决定是否值得向开发者交付。
 
 两次 Review 的聚合维度不同：Review 1 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；Review 2
-当前把整次 run 的 Hypothesis 汇入一个 change-set CaseFile，以比较重复、矛盾和共同证据。未来需要
-分案时，应按问题关系而不是文件边界划分。
+把流式到达且关系紧密的 Hypothesis 归入多个有界 Dossier，以比较重复、矛盾和共同证据。归案依据
+行为与证据关系，Project 目录距离只作加权，不把文件边界误当成问题边界。
 
 ## 3. 关键设计
 
@@ -113,8 +114,9 @@ CCR 相比 file-only review 的优势来自两部分：
 
 ### 3.4 发散与收敛使用不同完成契约
 
-Review 1 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Review 2 只收敛，并必须为
-CaseFile 中每个 Hypothesis 提交 Assessment。`task_done`、空文本或 0 Finding 都不能单独证明完成。
+Review 1 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Review 2 只收敛，并为 Dossier
+中的 Hypothesis 边判断边提交 Assessment。只有全部成员已有判断时 `task_done` 才能完成；空文本或
+0 Finding 都不能单独证明完成。
 
 partial/incomplete 是一等结果。任何未完成 Unit 或未评估 Hypothesis 都应出现在输出和 session 中，
 不能混进 “Looks good to me”。
@@ -128,7 +130,7 @@ support、causation、value、novelty 分轴；Runner 签发真实 evidence rece
 ### 3.6 Harness 保持领域中立
 
 Harness 可以提供 typed messages、context、tools、hooks、events、budget、completion 和 session，
-但不 import Unit / Finding，也不内建“代码评审团队”。Review Team、CaseFile、Assessment 等能力是
+但不 import Unit / Finding，也不内建“代码评审团队”。Review Team、Dossier、Assessment 等能力是
 Runner 上的 review extension，通过通用机制接入。
 
 旧 `llmloop` 可以保留作隔离参考，但新的领域链路只依赖统一 Harness execution，避免两套运行时同时
@@ -165,7 +167,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 |---|---|
 | [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue、上下文与图消费 |
 | [`unit_review.md`](unit_review.md) | Review 1 的探索、收敛、跨 Unit 协作和效果优化 |
-| [`hypothesis_review.md`](hypothesis_review.md) | CaseFile、Review 2、Assessment、receipt 与 Trial |
+| [`hypothesis_review.md`](hypothesis_review.md) | Dossier、Review 2、Assessment、receipt 与 Trial |
 | [`harness.md`](harness.md) | Execution、上下文生命周期、工具、Session JSONL 与 Viewer |
 | [`language.md`](language.md) | 多语言源码事实、身份、索引与置信度 |
 

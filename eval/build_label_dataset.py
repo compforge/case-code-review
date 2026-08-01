@@ -86,6 +86,13 @@ def load_session_findings(sessions_dir: Path) -> dict[str, list[dict]]:
             and record.get("artifact_kind") == "review_assessment"
             and record.get("data", {}).get("hypothesis_id")
         }
+        trial_decisions = {
+            str(record.get("data", {}).get("hypothesis_id")): record.get("data", {})
+            for record in records
+            if record.get("type") == "artifact"
+            and record.get("artifact_kind") == "trial_decision"
+            and record.get("data", {}).get("hypothesis_id")
+        }
         for record in records:
             fingerprint = record.get("fingerprint")
             content = record.get("content")
@@ -104,6 +111,7 @@ def load_session_findings(sessions_dir: Path) -> dict[str, list[dict]]:
                         "git_head": manifest.get("git_head"),
                         "hypothesis": hypotheses.get(hypothesis_id),
                         "assessment": assessments.get(hypothesis_id),
+                        "trial": trial_decisions.get(hypothesis_id),
                     },
                 })
     return by_fingerprint

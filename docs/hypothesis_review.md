@@ -3,10 +3,12 @@
 ## 1. 理念 / 概念
 
 Unit Review 负责发散：在每个行为范围内提出值得核实的 Hypothesis。Hypothesis Review 负责收敛：
-把相关假设归入同一 CaseFile，复核证据、变化归因、交付价值和重复性，再交给确定性的 Trial。
+把相关假设归入同一 Dossier，复核证据、变化归因、交付价值和重复性，再交给确定性的 Trial。
+拆成两阶段的重要原因是 LLM 领域里“生成候选”通常比“验证给定候选”更难：前者需要开放搜索并追求
+召回，后者面对封闭集合查找支持与反证并追求精度。两者需要不同的 role、上下文和完成契约。
 
 ```text
-Hypothesis[] ─▶ CaseFile ─▶ Hypothesis Review ─▶ Assessment[] ─▶ Trial ─▶ Finding[]
+Hypothesis[] ─▶ Dossier ─▶ Hypothesis Review ─▶ Assessment[] ─▶ Trial ─▶ Finding[]
   怀疑与线索       同一案件             独立复核             结构化判断      确定裁决
 ```
 
@@ -17,23 +19,30 @@ Hypothesis[] ─▶ CaseFile ─▶ Hypothesis Review ─▶ Assessment[] ─▶
 
 Finding 不是“模型又说了一遍同样的话”，而是 Assessment 通过 Trial 后的领域结果。
 
+Review 2 是可替换的验证策略，不是 Hypothesis 或 Dossier 的所有者。若未来模型能在一次 Unit Review
+中稳定完成发现与验证，可以缩短或移除 Review 2，让 Trial 直接消费同一批 Hypothesis；当前不为此
+预设统一的大产出类型，避免把尚未验证的演进方向固化进核心模型。
+
 ## 2. 流程
 
-### 2.1 形成 CaseFile
+### 2.1 形成 Dossier
 
-CaseFile 是 Review 2 的输入边界。它按问题关系而不是文件边界组织假设，包含：
+Dossier 是 Review 2 的输入边界。它按问题关系而不是文件边界组织假设，包含：
 
 - 待复核的 Hypothesis 及其 trigger、impact、锚点和已有证据；
+- 形成这些假设时涉及的 Unit 输入、结构化 evidence 和实际文件读取路径；
 - review snapshot 的 diff 与 baseline 读取能力；
 - 同一 case 内可用于识别重复或互相矛盾的假设；
 - 已经向当前 PR/MR 交付过的 finding，作为 prior delivery。
 
-当前实现尚未分案：所有 Unit Review 产生的 `0..N` 个 Hypothesis 汇入唯一的 `change_set` CaseFile，
-形成 `N 个 Unit Review → 1 个 Hypothesis Review`。CaseFile 同时携带完整 ChangeSet 和各 Unit 去重后的
-Clue；Hypothesis 的 `OriginUnit` 只用于追溯来源，不参与分组。
+Hypothesis 完成锚点解析后立即进入归案协调器，不等待所有 Unit Review 结束。协调器按同一行为范围、
+改动符号、结构化 evidence 和高重合的实际读取路径识别强关系；Repository / Component 和目录公共祖先
+只在多个候选案卷间加权，不能单独触发合案。这样既不会形成一个无法完成的巨型 Review 2，也不退化
+为一个 Review 1 对应一个 Review 2。
 
-这是第一版基线，不是最终归并规则。CaseFile 不应无限增长；未来分案应按同一根因、同一行为路径、
-共同证据或明显重复关系聚合，而不是按 comment 锚点文件切分，并给每案设置可完成的数量和证据预算。
+开放 Dossier 在一段静默、最长等待、成员容量到达或 Review 1 全部结束时封案。封案后不可变；迟到的
+强相关 Hypothesis 形成新 Dossier，引用并等待前案结果后再复核。等待发生在获取 Review 2 并发槽之前，
+避免后案占满执行容量。屏障式“全部 Review 1 完成后再 Review 2”只是同一协调模型只在最终 flush 的特例。
 
 ### 2.2 独立复核
 
@@ -58,15 +67,48 @@ Assessment，至少包含四个正交判断：
 该机制把两件事分开：模型负责判断“证据意味着什么”，执行层负责证明“这些证据确实被读取过”。
 它不能保证判断一定正确，但能挡住未检查 baseline 就声称 `caused` 的明显 padding。
 
-### 2.4 原子完成
+### 2.4 增量提交与完整完成
 
-Review 2 的完成条件不是模型说 `task_done`，而是 CaseFile 中每个 Hypothesis 都有一个合法 Assessment。
-推荐使用原子的 `submit_assessments` 作为终态动作：缺项、重复 ID 或非法枚举均不能被当成成功完成。
+Review 2 的完成条件不是模型说 `task_done`，而是 Dossier 中每个 Hypothesis 都有一个合法 Assessment。
+Reviewer 应在判断完成时立即调用 `submit_assessments`，可以单条或小批量多次提交，避免把所有结果押在
+最后一轮。对同一 Hypothesis 的后续合法提交替换前值；Session 保留每次提交，Trial 只消费最终判断。
+未知 ID 不进入案卷结果，缺项或非法枚举也不能被当成成功完成。
 
 接近预算上限时，应停止继续取证，用 `insufficient` / `unknown` 完成剩余判断。**未评估不是 clean**；
-若执行中断，run 必须报告未评估数量，并阻止这些 Hypothesis 进入 Trial。
+若执行中断，已提交 Assessment 仍可进入 Trial，未评估项必须出现在 warning 中并被阻止进入 Trial。
 
-### 2.5 Trial
+### 2.5 Prompt 上下文形状
+
+Review 2 的初始案卷和后续工具结果都作为 typed message 进入 Harness；压缩可以收短 Change / Clue /
+前案摘要，但不能删除任何待评估 Hypothesis。大致组装过程是：
+
+```text
+system: <Review 2 convergence rules / closed-set contract>
+
+user: Dossier(
+  dossier_id,
+  hypotheses=[完整待评估集合],
+  changes=[相关 diff 元信息],
+  clues=[相关上下文],
+  prior_dossiers=[前案 Assessment 摘要]
+)
+
+assistant: reasoning + tool calls
+tool: File / Diff / Base / Search messages
+assistant: reasoning
+tool: submit_assessments([已完成的部分判断])
+
+...继续核查剩余 Hypothesis...
+
+user: <hard wrap-up：只允许 submit_assessments / task_done>
+tool: submit_assessments([剩余判断])
+tool: task_done
+```
+
+稳定的 system / Dossier 前缀有利于 provider cache；新增证据和提交回执追加在尾部。Review 2 只能验证
+Dossier 里的既有 Hypothesis，不能通过 message 或工具重新发散出新问题。
+
+### 2.6 Trial
 
 Trial 是确定性规则，不再发起 LLM 推理。只有同时满足以下条件的 Assessment 才能产出 Finding：
 
@@ -91,7 +133,7 @@ Hypothesis，但 canonical 自身尚未评估，不能据此宣布整个 case cl
 
 ### 3.2 Review 2 只收敛，不补做 Review 1
 
-Review 2 若被允许不断新造问题，就会再次发散，CaseFile 无法形成完成契约，Trial 也失去稳定输入。
+Review 2 若被允许不断新造问题，就会再次发散，Dossier 无法形成完成契约，Trial 也失去稳定输入。
 发现材料暗示另一个问题时，只能作为现有 Hypothesis 的证据或不足理由；新问题应由 Review 1 在其
 负责的 Unit 中提出。
 
@@ -107,18 +149,19 @@ Review 2 若被允许不断新造问题，就会再次发散，CaseFile 无法�
 
 - Review 1 产生的 Hypothesis 数和对应 Unit 完成率；
 - 四个 Assessment 轴及 receipt 各拦截多少；
-- 未评估 Hypothesis 数、CaseFile 大小、Review 2 工具轮次和耗时；
+- 未评估 Hypothesis 数、Dossier 大小、Review 2 工具轮次和耗时；
 - 最终 `important/minor/debatable/wrong/repeat` 标签；
 - 被拦截样本中的 missed，防止通过少报制造虚假准确率。
 
-Session 应持久化 Hypothesis、Assessment、Trial 结果和引擎身份，使同一批固定 Hypothesis 可以独立
-重放 Review 2，而不必每次重跑昂贵的 Unit Review。
+Session 应在 Hypothesis 解析完成、Dossier 封案和每次 Assessment 提交时立即追加 artifact；Trial
+decision 另行记录并引用最终采用的 submission。这样进程中断后仍能还原部分进展，同一批固定
+Hypothesis 也可以独立重放 Review 2，而不必每次重跑昂贵的 Unit Review。
 
 ## 4. 待验证方向：按判断视角拆分 Review 2
 
 > 这是一项尚未成熟的设计假设，先记录问题与实验方向，不代表当前执行契约。
 
-当前设计把同一 CaseFile 交给一次收敛 Review，要求它同时核查技术事实、业务语义、跨模块影响和
+当前设计把同一 Dossier 交给一次收敛 Review，要求它同时核查技术事实、业务语义、跨模块影响和
 交付价值。另一种可能是：**Review 2 的 loop 粒度不按文件或 Hypothesis 数量划分，而按判断视角
 划分，一个视角对应一个独立 review loop。**
 
@@ -131,7 +174,7 @@ Session 应持久化 Hypothesis、Assessment、Trial 结果和引擎身份，使
 | 跨业务影响 | caller、callee、共享协议、配置和其它业务是否因当前变化受到破坏 |
 | 交付判断 | 问题是否 actionable、是否已经交付、是否值得形成公开 Finding |
 
-这些 loop 读取同一个 CaseFile，但只提交自己视角下的证据和局部判断；随后由聚合步骤合成每个
+这些 loop 读取同一个 Dossier，但只提交自己视角下的证据和局部判断；随后由聚合步骤合成每个
 Hypothesis 的完整 Assessment，再进入 Trial。视角之间可以并行，也可以让低成本的技术检查先行，
 只把未决问题交给业务视角。
 
@@ -139,16 +182,16 @@ Hypothesis 的完整 Assessment，再进入 Trial。视角之间可以并行，�
 
 - 同一份源码和 diff 被多个 loop 重复读取，显著增加成本；
 - 各视角边界重叠，对同一 Hypothesis 给出冲突判断；
-- CaseFile 很小时，拆 loop 的固定开销大于聚焦收益；
+- Dossier 很小时，拆 loop 的固定开销大于聚焦收益；
 - “业务正确性”缺少足够 spec / requirement 时，只是把同一种猜测复制多次。
 
 需要先回答的粒度问题包括：
 
-1. 每个视角审整个 CaseFile，还是只接收与该视角相关的 Hypothesis？
+1. 每个视角审整个 Dossier，还是只接收与该视角相关的 Hypothesis？
 2. 技术正确性中哪些应由确定性工具完成，哪些确实需要 LLM loop？
 3. 多视角输出是 evidence contribution，还是各自产出完整 Assessment？
 4. 视角冲突由规则聚合、额外复核，还是保留为 `insufficient/unknown`？
-5. 是否只有大型或跨模块 CaseFile 才值得启用多视角？
+5. 是否只有大型或跨模块 Dossier 才值得启用多视角？
 
 验证时应固定同一批 Hypothesis，对比“单一收敛 loop”和“按视角多个 loop”，同时观察 Assessment
 完成率、重复工具读取、token / wall time、视角冲突率，以及最终 wrong / missed。只有在召回或准确性

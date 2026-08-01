@@ -158,7 +158,8 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 - 每轮实际发送的 prompt、LLM response、stop reason 和 usage；
 - tool call 参数、结果、耗时、成功状态和所属 request；
 - warning、completion 状态和 Execution 级统计；
-- Hypothesis、Assessment、Trial 等由领域层写入的 artifact。
+- Hypothesis、Dossier、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
+  与 Trial 分开记录，使中断前已完成的判断和后续覆盖过程仍可还原。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化
 发生在 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。

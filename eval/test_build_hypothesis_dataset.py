@@ -18,6 +18,7 @@ class BuildHypothesisDatasetTest(unittest.TestCase):
                 "git_head": "deadbeef",
                 "hypothesis": {"id": "h-1", "path": "a.go"},
                 "assessment": {"support": "supported"},
+                "trial": {"passed_trial": False},
             },
         }
 
@@ -26,6 +27,7 @@ class BuildHypothesisDatasetTest(unittest.TestCase):
         self.assertFalse(case["expected_delivery"])
         self.assertEqual(case["hypothesis"]["id"], "h-1")
         self.assertEqual(case["previous_assessment"]["support"], "supported")
+        self.assertFalse(case["previous_trial"]["passed_trial"])
         self.assertEqual(case["engine"]["tool_version"], "v1.13.2")
 
     def test_skips_legacy_record_without_hypothesis_artifact(self):
