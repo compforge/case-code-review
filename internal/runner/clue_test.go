@@ -3,6 +3,7 @@ package runner
 import (
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -32,7 +33,7 @@ func TestSplitUnits_CostlyFindersGatedByBudget(t *testing.T) {
 	var over int
 	ao := &Runner{
 		splitter:      unit.AutoSplitter{},
-		changes:       []change.Change{goDiff("p.go", defaultUnitWatermark+2)},
+		changes:       []change.Change{goDiff("p.go", formation.DefaultWatermark+2)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&over}},
 	}
 	if _, err := ao.splitUnits(); err != nil {

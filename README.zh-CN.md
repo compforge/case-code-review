@@ -20,7 +20,7 @@ diff review 中,Unit review 负责发散调查,产出可证伪的 Hypothesis,不
 
 ## 上下文模型:证据种类 × 关系
 
-ccr 为每个 review unit 汇集一份证据卷(dossier)。一条线索(clue)= 一种**证据种类**,经某种**关系**到达——两条正交轴(详见 [`docs/unit-model.md`](docs/unit-model.md)):
+ccr 为每个 review unit 汇集一组线索(clue)。一条线索 = 一种**证据种类**,经某种**关系**到达——两条正交轴(详见 [`docs/unit-model.md`](docs/unit-model.md)):
 
 | 种类 | 是什么 | 来源 |
 |---|---|---|

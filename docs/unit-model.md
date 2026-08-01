@@ -49,7 +49,7 @@ Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不�
 
 Unit 粒度是一条从小到大的阶梯，而不是固定按函数或文件：
 
-1. 语言层只把选为 target 的 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
+1. `runner/formation` 调用语言层，把选为 target 的 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
 2. 若 Unit Review 只有一个 target 文件，直接收为一个 file Unit。一次 loop 共同理解同文件内的相关改动，
    通常比机械地逐函数启动多个 loop 更快、更完整。
 3. 若改动跨多个文件，先用高置信调用关系合并真正协作的 Fragment。例如 `func1` 调用另一文件

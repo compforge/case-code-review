@@ -23,7 +23,7 @@
 case-code-review/
 ├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
 └── internal/
-    ├── runner/     ★ 顶层编排：选择 git-change / full-scan 输入，形成 Unit，交给 Harness；`review` 持有 Hypothesis → CaseFile → Assessment → Trial，`finding` 只承载最终结果
+    ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、manifest 定义的 Component 与 FileRole；提供项目结构知识，决定 source 进入 Unit、manifest/lock 成为项目 Clue
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
     ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 将 Clue 汇入 Unit，再投影为 Briefing。详见 `docs/unit-model.md`

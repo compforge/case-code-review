@@ -81,6 +81,9 @@ Change ─▶ Component / FileRole
 - Review 2 拥有 Assessment；
 - Trial 拥有 Assessment 到 Finding 的确定性门禁。
 
+这些 owner 在 `internal/runner` 中分别落为 `formation`、`unitreview`、`hypothesisreview` 和
+`trial`；根 Runner 只串联阶段并处理 run 级持久化。Trial 不依赖 Harness、LLM 或 prompt。
+
 同一概念若在多个模块各自表示一次，最终会出现 diff、prompt、session 和 viewer 对不上。Kernel 的
 首要职责不是添加更多层，而是保持这些 owner 清晰。
 

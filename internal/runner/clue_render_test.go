@@ -6,19 +6,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-func TestDedupClues(t *testing.T) {
-	in := []unit.Clue{
-		{Kind: unit.ClueSpec, Relation: unit.RelSelf, Text: "contract"},
-		{Kind: unit.ClueSpec, Relation: unit.RelSelf, Text: "contract"},  // exact dup → dropped
-		{Kind: unit.ClueSpec, Relation: unit.RelOwner, Text: "contract"}, // same text, diff relation → kept
-		{Kind: unit.ClueRule, Relation: unit.RelUsed, Text: "per-request"},
-	}
-	got := dedupClues(in)
-	if len(got) != 3 {
-		t.Fatalf("want 3 after dedup, got %d: %+v", len(got), got)
-	}
-}
-
 // clueLabel is the relation×kind label table: raw clue Text gets its "how it
 // reached the unit" wording at render time.
 func TestClueLabel_RelationKindTable(t *testing.T) {

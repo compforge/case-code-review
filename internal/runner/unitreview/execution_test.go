@@ -1,40 +1,16 @@
-package runner
+package unitreview
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/runner/feature"
-	"github.com/qiankunli/case-code-review/internal/runner/review"
 )
-
-func TestReviewCompressionPromptsAdaptTemplateContext(t *testing.T) {
-	system, instruction := reviewCompressionPrompts(Args{
-		Template: template.Template{
-			MemoryCompressionTask: template.LlmConversation{
-				Messages: []template.ChatMessage{
-					{Role: "system", Content: "preserve confirmed findings"},
-					{Role: "user", Content: "{{context}}"},
-				},
-			},
-		},
-	})
-	if system != "preserve confirmed findings" {
-		t.Fatalf("system prompt = %q", system)
-	}
-	if strings.Contains(instruction, "{{context}}") ||
-		!strings.Contains(instruction, "conversation supplied above") {
-		t.Fatalf("instruction was not adapted for agentcore: %q", instruction)
-	}
-}
 
 func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	registry := tool.NewRegistry()
@@ -47,19 +23,17 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		unitToolResponse("call-2", "task_done", `{}`, "route-a", 3),
 	}}
 	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
-	executor := newUnitExecutor(Args{
+	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
 		Model:     "review-model",
 		Tools:     registry,
-		MainToolDefs: []llm.ToolDef{
+		ToolDefs: []llm.ToolDef{
 			unitToolDef("echo"),
 			unitToolDef("task_done"),
 		},
-		Session: history,
-		Template: template.Template{
-			MaxToolRequestTimes: 2,
-			MaxTokens:           1_000,
-		},
+		Session:   history,
+		MaxTurns:  2,
+		MaxTokens: 1_000,
 	}, nil, nil)
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
@@ -89,13 +63,11 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitTextResponse("finished without task_done"),
 	}}
-	executor := newUnitExecutor(Args{
+	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
-		Template: template.Template{
-			MaxToolRequestTimes: 1,
-			MaxTokens:           1_000,
-		},
-		Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  1,
+		MaxTokens: 1_000,
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, nil, nil)
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
@@ -124,18 +96,16 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 		unitToolResponse("call-1", "post_bulletin", `{"text":"check the callee","paths":["a.go"]}`, "", 0),
 		unitToolResponse("call-2", "task_done", `{}`, "", 0),
 	}}
-	executor := newUnitExecutor(Args{
+	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
-		MainToolDefs: []llm.ToolDef{
+		ToolDefs: []llm.ToolDef{
 			unitToolDef("post_bulletin"),
 			unitToolDef("task_done"),
 		},
-		Features: feature.Set{feature.PostBulletin: true},
-		Template: template.Template{
-			MaxToolRequestTimes: 2,
-			MaxTokens:           1_000,
-		},
-		Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		PostBulletin: true,
+		MaxTurns:     2,
+		MaxTokens:    1_000,
+		Session:      &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, nil, sharedBoard)
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
@@ -162,11 +132,11 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 	sharedBoard := board.New()
 	run := &unitExecution{
-		executor: &unitExecutor{board: sharedBoard},
+		executor: &Executor{board: sharedBoard},
 		scope:    session.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
 		turn:     2,
 	}
-	run.publishToolFact(review.ReportHypothesis.Name(), []byte(`{"path":"b.go"}`))
+	run.publishToolFact(ReportHypothesis.Name(), []byte(`{"path":"b.go"}`))
 	if posts := sharedBoard.Posted(); len(posts) != 0 {
 		t.Fatalf("an unassessed hypothesis must not become a confirmed board fact: %+v", posts)
 	}

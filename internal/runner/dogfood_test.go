@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
@@ -52,7 +53,7 @@ func TestDogfoodContextAssembly(t *testing.T) {
 
 	a := &Runner{
 		splitter: unit.AutoSplitter{},
-		merger:   unit.WatermarkMerger{Watermark: defaultUnitWatermark},
+		merger:   unit.WatermarkMerger{Watermark: formation.DefaultWatermark},
 		finders: []unit.ClueFinder{
 			spec.NewRelatedFinder(spec.Catalog{Local: idx}, repo, spec.KindGates{Spec: true, Rule: true, Link: true, Doc: true}),
 		},

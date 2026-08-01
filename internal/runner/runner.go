@@ -27,8 +27,11 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
-	"github.com/qiankunli/case-code-review/internal/runner/review"
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
+	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
+	"github.com/qiankunli/case-code-review/internal/runner/trial"
+	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -153,7 +156,7 @@ type Runner struct {
 	currentDate      string
 	session          *session.SessionHistory
 	unitFailed       int64 // count of failed unit reviews, accessed atomically
-	executor         *unitExecutor
+	executor         *unitreview.Executor
 	// splitter turns each changed file's diff into diff units (one per changed
 	// function); merger consolidates those into review units (what actually
 	// triggers a review loop). Both set in New().
@@ -188,7 +191,7 @@ type Runner struct {
 	board *board.Registry
 	// hypotheses contains the divergent Unit Review output. It is separate from
 	// args.Findings so unassessed suspicions can never leak into public results.
-	hypotheses *review.Collector
+	hypotheses *unitreview.Collector
 }
 
 // sourceAnalyzer preserves the useful zero-value shape of Runner in focused
@@ -224,7 +227,7 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"unit_watermark":       defaultUnitWatermark,
+				"unit_watermark":       formation.DefaultWatermark,
 				"preload_budget_bytes": preloadSourceBudget,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
@@ -276,7 +279,7 @@ func New(args Args) *Runner {
 		// degrading to file scope when its parser is unavailable;
 		// WatermarkMerger coalesces them into review units above the watermark.
 		splitter:      unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
-		merger:        unit.WatermarkMerger{Watermark: defaultUnitWatermark},
+		merger:        unit.WatermarkMerger{Watermark: formation.DefaultWatermark},
 		finders:       finders,       // cheap spec.json / history clues, gated per kind
 		costlyFinders: costlyFinders, // call-graph caller/callee clues (gated + budget-gated)
 		typedGraph:    typed,
@@ -287,8 +290,8 @@ func New(args Args) *Runner {
 	if f.Enabled(feature.ReviewTeam) {
 		a.board = board.New()
 	}
-	hypotheses := review.NewCollector()
-	hypothesisHook := &review.HypothesisHook{
+	hypotheses := unitreview.NewCollector()
+	hypothesisHook := &unitreview.HypothesisHook{
 		Collector:    hypotheses,
 		WorkerPool:   args.WorkerPool,
 		Session:      args.Session,
@@ -299,7 +302,21 @@ func New(args Args) *Runner {
 		Relocation:   f.Enabled(feature.Relocation),
 	}
 	a.hypotheses = hypotheses
-	a.executor = newUnitExecutor(args, hypothesisHook, a.board)
+	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
+	a.executor = unitreview.NewExecutor(unitreview.ExecutorConfig{
+		LLMClient:               args.LLMClient,
+		Model:                   args.Model,
+		Tools:                   args.Tools,
+		ToolDefs:                args.MainToolDefs,
+		Session:                 args.Session,
+		MaxTurns:                args.Template.MaxToolRequestTimes,
+		MaxTokens:               args.Template.MaxTokens,
+		FileDedup:               f.Enabled(feature.FileDedup),
+		FileEvict:               f.Enabled(feature.FileEvict),
+		PostBulletin:            f.Enabled(feature.PostBulletin),
+		CompressionSystemPrompt: compressionSystemPrompt,
+		CompressionPrompt:       compressionPrompt,
+	}, hypothesisHook, a.board)
 	hypothesisHook.RecordUsage = a.executor.RecordUsage
 	return a
 }
@@ -598,13 +615,13 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	hypotheses := a.hypotheses.Hypotheses()
 	a.persistHypotheses(hypotheses)
 	var comments []finding.Finding
-	var assessments []review.Assessment
+	var assessments []hypothesisreview.Assessment
 	if a.features.Enabled(feature.HypothesisReview) {
 		assessments = a.runHypothesisReviews(ctx, units)
-		comments = review.Trial(hypotheses, assessments)
+		comments = trial.Run(hypotheses, assessments)
 	} else {
 		// Gate-off is the one-stage baseline used by eval ablations.
-		comments = review.BypassTrial(hypotheses)
+		comments = trial.Bypass(hypotheses)
 	}
 	a.persistAssessments(hypotheses, assessments)
 	for _, comment := range comments {
@@ -670,7 +687,7 @@ func (a *Runner) persistFindings(comments []finding.Finding) {
 	a.session.WriteFindings(findings)
 }
 
-func (a *Runner) persistHypotheses(hypotheses []review.Hypothesis) {
+func (a *Runner) persistHypotheses(hypotheses []unitreview.Hypothesis) {
 	for _, h := range hypotheses {
 		a.session.WriteArtifact("review_hypothesis", map[string]any{
 			"id": h.ID, "origin_unit": h.OriginUnit, "path": h.Path,
@@ -685,10 +702,10 @@ func (a *Runner) persistHypotheses(hypotheses []review.Hypothesis) {
 }
 
 func (a *Runner) persistAssessments(
-	hypotheses []review.Hypothesis,
-	assessments []review.Assessment,
+	hypotheses []unitreview.Hypothesis,
+	assessments []hypothesisreview.Assessment,
 ) {
-	byID := make(map[string]review.Hypothesis, len(hypotheses))
+	byID := make(map[string]unitreview.Hypothesis, len(hypotheses))
 	for _, hypothesis := range hypotheses {
 		byID[hypothesis.ID] = hypothesis
 	}
@@ -701,7 +718,7 @@ func (a *Runner) persistAssessments(
 			"reason": assessment.Reason, "evidence": assessment.Evidence,
 			"evidence_receipts": assessment.EvidenceReceipts,
 			"reviewer_alias":    assessment.ReviewerAlias,
-			"passed_trial":      ok && review.PassesTrial(hypothesis, assessment),
+			"passed_trial":      ok && trial.Passes(hypothesis, assessment),
 		})
 	}
 }
@@ -724,69 +741,29 @@ func (a *Runner) tagSymbolIDs(comments []finding.Finding) {
 	}
 }
 
-// defaultUnitWatermark is the high-water mark on review Units (≈ LLM loops) for
-// one review: once the total rises above it, the cost governor coarsens
-// granularity to bring the loop count back down.
-const defaultUnitWatermark = 10
-
-// splitUnits produces the review units for the review in two stages: the Splitter
-// turns each non-deleted file's diff into diff units (one per changed function),
-// then the Merger consolidates them into review units — coalescing up the
-// granularity ladder when there are too many (the cost governor). Deleted files
-// are skipped.
+// splitUnits delegates Unit creation to Formation, then registers the stable
+// scopes with the optional run-level Review Team board.
 func (a *Runner) splitUnits() ([]unit.Unit, error) {
-	// Stage 1 — split: each non-deleted file's diff → Fragments (one per function
-	// plus a residual).
-	var files []unit.FileFragments
-	total := 0
-	for i := range a.changes {
-		if a.changes[i].IsDeleted {
-			continue
-		}
-		frags, err := a.splitter.Split(a.changes[i])
-		if err != nil {
-			return nil, fmt.Errorf("split units for %s: %w", a.changes[i].NewPath, err)
-		}
-		files = append(files, unit.FileFragments{Diff: a.changes[i], Fragments: frags})
-		total += len(frags)
+	finders := append([]unit.ClueFinder(nil), a.finders...)
+	finders = append(finders, componentFinder{
+		selections: a.fileSelections,
+		clues:      a.componentClues,
+	})
+	units, costly, err := formation.Form(formation.Config{
+		RepoDir:       a.args.RepoDir,
+		Changes:       a.changes,
+		Splitter:      a.splitter,
+		Merger:        a.merger,
+		Finders:       finders,
+		CostlyFinders: a.costlyFinders,
+		GitRunner:     a.args.GitRunner,
+		TypedGraph:    a.typedGraph,
+		CallChain:     a.features.Enabled(feature.CallChain),
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	merger := a.merger
-	if merger == nil {
-		merger = unit.WatermarkMerger{Watermark: defaultUnitWatermark}
-	}
-
-	// Stage 2 — merge. A single-file change stays one file Unit: splitting it
-	// into several loops adds scheduling cost without exposing any cross-file
-	// behavior that semantic grouping could recover. Multiple files use two axes:
-	//   - call-chain (semantic): group call-adjacent changed functions across files
-	//     into one Unit — a requirement's change reviewed along its call chain.
-	//   - file-coalesce (cost): coarsen the residual when there are still too many.
-	// Call-chain adjacency is costly (call-graph greps), so it runs only in the
-	// function-grained regime (≤ watermark); above it a change is large enough that
-	// we skip straight to cost coarsening (the same gate as the costly finders).
-	costly := total <= defaultUnitWatermark
-	a.costlyContext = costly // briefing's usage-sites grep rides the same budget gate
-	var units []unit.Unit
-	if len(files) == 1 {
-		units = append(units, unit.CoalesceFile(files[0].Diff, files[0].Fragments))
-	} else if costly && a.features.Enabled(feature.CallChain) {
-		adj := codegraph.CallAdjacency(a.args.RepoDir, a.args.GitRunner, a.typedGraph, funcIDsOf(files))
-		chains, residual := clusterByCallChain(files, adj)
-		units = append(units, chains...)
-		units = append(units, merger.Merge(residual)...)
-	} else {
-		// callchain off (or budget exceeded): only the cost axis — func/file units.
-		units = merger.Merge(files)
-	}
-
-	// Stage 3 — find context: fill each review Unit's Clues post-merge, against its
-	// full symbol set. Context belongs to the scope, so it's gathered once on the
-	// final Unit (for a chain Unit, walkForSpecs seeds visited with all member
-	// symbols, so a member never surfaces as another member's caller/callee clue).
-	for i := range units {
-		units[i].Clues = a.findClues(units[i], costly)
-	}
+	a.costlyContext = costly
 
 	// Review Team: register each unit's board interest before dispatch — its
 	// files + covered symbols + clue neighbors (the Relation axis reused as
@@ -823,31 +800,6 @@ func unitInterest(u unit.Unit) board.Interest {
 		}
 	}
 	return in
-}
-
-// findClues assembles a Unit's Clues: the cheap ClueFinders run always, the
-// costly ones (call-graph grep) only when includeCostly, then dedup makes the
-// result idempotent (see docs/unit-model.md; each finder already carries its
-// own relation label in the clue's Text).
-func (a *Runner) findClues(u unit.Unit, includeCostly bool) []unit.Clue {
-	var clues []unit.Clue
-	for _, f := range a.finders {
-		clues = append(clues, f.Find(u)...)
-	}
-	if includeCostly {
-		for _, f := range a.costlyFinders {
-			clues = append(clues, f.Find(u)...)
-		}
-	}
-	clues = append(clues, (componentFinder{selections: a.fileSelections, clues: a.componentClues}).Find(u)...)
-	return dedupClues(clues)
-}
-
-// dedupClues drops duplicate clues (same relation+kind+text), keeping first seen.
-func dedupClues(clues []unit.Clue) []unit.Clue {
-	return slicesx.UniqBy(clues, func(c unit.Clue) string {
-		return string(c.Relation) + "\x00" + string(c.Kind) + "\x00" + c.Text
-	})
 }
 
 // renderClues groups a Unit's Clues into prompt context blocks by Kind: the

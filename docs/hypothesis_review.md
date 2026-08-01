@@ -74,6 +74,9 @@ supported + caused + actionable + new + matching diff evidence receipt
 Hypothesis，但 canonical 自身尚未评估，不能据此宣布整个 case clean；它应显式暴露为未完成或先
 完成 canonical assessment。
 
+代码边界与流程一致：`internal/runner/hypothesisreview` 到 Assessment 为止；
+`internal/runner/trial` 只接收 Hypothesis 与 Assessment，执行确定性门禁，不依赖 Harness 或 LLM。
+
 ## 3. 关键设计
 
 ### 3.1 真实性、归因、价值、重复必须分轴
