@@ -28,8 +28,12 @@ CaseFile 是 Review 2 的输入边界。它按问题关系而不是文件边界�
 - 同一 case 内可用于识别重复或互相矛盾的假设；
 - 已经向当前 PR/MR 交付过的 finding，作为 prior delivery。
 
-CaseFile 不应无限增长。过大的案卷会让 Review 2 把轮次花在导航上，最后只评估少数假设。分案应
-优先保持同一根因、同一行为路径或明显重复的假设在一起，同时给每案设置可完成的数量和证据预算。
+当前实现尚未分案：所有 Unit Review 产生的 `0..N` 个 Hypothesis 汇入唯一的 `change_set` CaseFile，
+形成 `N 个 Unit Review → 1 个 Hypothesis Review`。CaseFile 同时携带完整 ChangeSet 和各 Unit 去重后的
+Clue；Hypothesis 的 `OriginUnit` 只用于追溯来源，不参与分组。
+
+这是第一版基线，不是最终归并规则。CaseFile 不应无限增长；未来分案应按同一根因、同一行为路径、
+共同证据或明显重复关系聚合，而不是按 comment 锚点文件切分，并给每案设置可完成的数量和证据预算。
 
 ### 2.2 独立复核
 

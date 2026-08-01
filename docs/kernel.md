@@ -74,7 +74,8 @@ Change ─▶ Component / FileRole
 - `Assessment == Trial ==> Finding`：确定性规则决定是否值得向开发者交付。
 
 两次 Review 的聚合维度不同：Review 1 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；Review 2
-按问题关系形成 CaseFile，以比较重复、矛盾和共同证据。两者都不应退化成固定按文件处理。
+当前把整次 run 的 Hypothesis 汇入一个 change-set CaseFile，以比较重复、矛盾和共同证据。未来需要
+分案时，应按问题关系而不是文件边界划分。
 
 ## 3. 关键设计
 
