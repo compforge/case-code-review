@@ -15,9 +15,9 @@ CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文
 协作改动通过 call-chain 合并后可以进一步减少 loop。
 
 一个 Git Repository 可以包含多个 manifest 定义的 **Component**，例如 `backend/pyproject.toml`
-定义 Python Component、仓根 `go.mod` 定义 Go Component。Component 是静态项目边界，Unit 是一次
-diff 动态形成的评审边界；一个 Component 可以产生多个 Unit，Repository 级文件也可以不属于任何
-Component。
+定义 Python Component、仓根 `go.mod` 定义 Go Component、`cli/package.json` 定义 TypeScript
+Component。Component 是静态项目边界，Unit 是一次 diff 动态形成的评审边界；一个 Component
+可以产生多个 Unit，Repository 级文件也可以不属于任何 Component。
 
 ```text
 Git Change ─▶ Component / FileRole
@@ -50,14 +50,18 @@ Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不�
 ### 2.1 先区分 Unit target 与项目上下文
 
 每个 Change 先按最近的 Component 与 FileRole 分类。Component 身份来自项目 manifest，而不是任意
-构建文件：Python 使用 `pyproject.toml` / `setup.py`，Go 使用 `go.mod`。历史 range / commit review
-必须在被评审的目标 tree 上判断，不能借用当前工作区状态。
+构建文件：Python 使用 `pyproject.toml` / `setup.py`，Go 使用 `go.mod`，TypeScript 使用
+`package.json`（同一 Component 内的 JavaScript / JSX 也属于 source）。历史 range / commit review
+必须在被评审的目标 tree 上判断，不能借用当前工作区状态。monorepo 中嵌套的 `package.json` 会形成
+更近的 Component；多语言 Repository 也按各自最近的 manifest 归属，不把项目上下文跨 Component
+传播。
 
 当前只启用 Unit Review，因此 source 是 target；同 Component 中发生变化的 manifest / lock 形成
 `project/project` Clue，只向该 Component 的 Unit 提供路径、角色和按需 diff 指针。若只变化
-`pyproject.toml` 或 `go.mod`，CCR 明确报告没有 Unit Review target，不启动一个无意义的 agent loop。
-Go Component 根目录的 `VERSION` 是发布版本元数据：保留 `version` 角色用于观测，但既不是 target，
-也不作为业务代码的上下文；仅修改它时不会启动 agent loop。
+`pyproject.toml`、`go.mod` 或 `package.json`，CCR 明确报告没有 Unit Review target，不启动一个无意义
+的 agent loop。TypeScript 的 `tsconfig*.json` 与常见 package-manager lockfile 同样只作为 Component
+上下文。Go / TypeScript Component 根目录的 `VERSION` 是发布版本元数据：保留 `version` 角色用于
+观测，但既不是 target，也不作为业务代码的上下文；仅修改它时不会启动 agent loop。
 用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
 扩展名规则，保持已有行为。
 

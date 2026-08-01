@@ -81,6 +81,44 @@ func TestProjectFilesBecomeContextInsteadOfUnits(t *testing.T) {
 	}
 }
 
+func TestTypeScriptProjectFilesBecomeContextInsteadOfUnits(t *testing.T) {
+	repo := t.TempDir()
+	for _, path := range []string{"package.json", "tsconfig.json", "bun.lock", "src/main.ts"} {
+		writeSelectionFile(t, repo, path)
+	}
+
+	a := &Runner{
+		args: Args{RepoDir: repo},
+		changes: []change.Change{
+			{NewPath: "src/main.ts"},
+			{NewPath: "package.json"},
+			{NewPath: "tsconfig.json"},
+			{NewPath: "bun.lock"},
+		},
+	}
+	a.prepareFileSelections(context.Background())
+
+	if got := a.countReviewable(a.changes); got != 1 {
+		t.Fatalf("reviewable files = %d, want only src/main.ts", got)
+	}
+	preview := a.buildPreview()
+	if preview.ReviewableCount != 1 || preview.ContextCount != 3 || preview.ExcludedCount != 0 {
+		t.Fatalf("preview counts = review:%d context:%d excluded:%d",
+			preview.ReviewableCount, preview.ContextCount, preview.ExcludedCount)
+	}
+
+	selection, ok := a.selectionFor(a.changes[0])
+	if !ok || selection.Component.Kind != project.TypeScript ||
+		!selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
+		t.Fatalf("TypeScript entrypoint selection = %+v", selection)
+	}
+	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
+	clues := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "src/main.ts"}}})
+	if len(clues) != 4 {
+		t.Fatalf("TypeScript project clues = %+v, want entrypoint + 3 context files", clues)
+	}
+}
+
 func TestProjectContextDoesNotLeakAcrossComponents(t *testing.T) {
 	repo := t.TempDir()
 	for _, path := range []string{

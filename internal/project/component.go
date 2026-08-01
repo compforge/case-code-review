@@ -4,8 +4,9 @@ package project
 type Kind string
 
 const (
-	Python Kind = "python"
-	Go     Kind = "go"
+	Python     Kind = "python"
+	Go         Kind = "go"
+	TypeScript Kind = "typescript"
 )
 
 // Component is one manifest-defined project boundary inside a Repository.
@@ -21,7 +22,7 @@ type profile struct {
 	classify func(root, file string) FileRoles
 }
 
-var profiles = []profile{pythonProfile, goProfile}
+var profiles = []profile{pythonProfile, goProfile, typeScriptProfile}
 
 // EnrichFileRoles projects source-language facts into Component semantics.
 // Language owns extraction; Project owns what those facts mean to review.
