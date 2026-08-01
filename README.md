@@ -4,21 +4,32 @@
 
 ## Philosophy
 
-A diff alone is too little to review well — it can't tell whether a change breaks the requirement it serves or the code that depends on it. ccr's two ideas:
+A diff alone is too little to review well: it cannot tell whether a change breaks the requirement it serves or the code that depends on it. ccr is built around three ideas:
 
-**1. Capture more context.** ccr locates the *functions* a diff changes, then gathers the context the diff doesn't carry — along typed relations, from two sources (see below).
+**1. Capture relevant knowledge.** Language Knowledge supplies definitions, references, calls and source documentation. Project Knowledge identifies repository components and file roles such as source, entrypoint, handler, manifest and lock. Authored specs, cases, rules and links add explicit contracts.
 
-**2. Review per *unit*, with a merge step.** A *unit* is the scope of one review loop, and its granularity is a ladder: **function → class → file → module / directory**. A single-file change remains one file unit. For multi-file changes, ccr first locates changed functions and then **merges** them into the units that actually trigger loops: functions changed together along a call chain become one cross-file unit, while a sweeping change coalesces into file-level units. The result preserves semantic focus without multiplying loops unnecessarily — one loop per merged unit.
+**2. Review per *Unit*, not per file.** A Unit is one behavioral review scope: a function, a file, or a cross-file call chain. When the diff has only one reviewable file, it becomes one file Unit. When changed functions across files call each other, ccr merges them into one call-chain Unit because separate file loops would read the same code anyway. The goal is no more Review 1 loops than reviewable files, and fewer when the change crosses file boundaries.
 
-In diff review, Unit reviews investigate broadly and produce falsifiable hypotheses, not public comments. A separate evidence review then examines the change as one case, uses read-only code tools to verify or refute every hypothesis, and publishes only supported, actionable findings.
+**3. Separate discovery from decision.** Each Unit Review produces zero or more falsifiable Hypotheses, not public comments. Today, all Hypotheses from one run enter a single change-set CaseFile; Hypothesis Review verifies them with read-only evidence and produces Assessments. Deterministic Trial rules publish only supported, actionable and non-duplicate Findings caused by the current change.
 
-The payoff: ccr finds the bugs that need background — a change quietly breaking a caller's assumption, or violating an invariant the diff doesn't show — checklist-checked against the function's real contract. (Syntax stays lint's job.)
+ccr does not try to read the whole repository or enumerate every possible issue. It uses relevant, bounded context to catch concrete mistakes that are easy to miss while implementing a requirement — boundary handling, error paths, API misuse, or a broken caller assumption. Hidden business constraints need explicit background, specs, cases or rules; loading more unrelated code cannot manufacture that knowledge. Syntax stays lint's job.
 
 Review quality is judged on three goals that pull against each other — **robustness, accuracy, cost** — pursued through three levers all centered on the review loop: its capability, its granularity, and its context. See `AGENTS.md` for the full frame.
 
 ![CCR review pipeline from Diff to Finding](docs/review-pipeline.svg)
 
-## The context model: evidence kinds × relations
+Design details: [`Kernel`](docs/kernel.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness and observability`](docs/harness.md)
+
+## Knowledge and context
+
+Project Knowledge first decides how a changed file participates in review:
+
+| file role | review behavior |
+|---|---|
+| **source** | may become a Unit target |
+| **entrypoint / handler** | remains source and adds project-specific review focus |
+| **manifest / lock** | accompanies source changes as project context; alone it does not start a Unit Review |
+| **version** | release metadata for observability; alone it does not start a Unit Review |
 
 For each review unit, ccr assembles a set of *clues*. A clue is one piece of evidence of a **kind**, reached along a **relation** — two orthogonal axes (see [`docs/unit-model.md`](docs/unit-model.md)):
 
@@ -29,6 +40,8 @@ For each review unit, ccr assembles a set of *clues*. A clue is one piece of evi
 | **rule** | review criteria — what to watch for | authored |
 | **link** | curated "see also" — a doc or another function | authored |
 | **doc** | the symbol's docstring / doc comment | **derived from source** |
+| **history** | a finding delivered by an earlier revision | forge input |
+| **project** | component, file-role or project-structure knowledge | derived from the repository |
 
 | relation | the symbol it reaches |
 |---|---|
@@ -37,6 +50,7 @@ For each review unit, ccr assembles a set of *clues*. A clue is one piece of evi
 | **caller** | who uses it — walking up to the nearest authored spec (the governing contract) |
 | **callee** | what it relies on — direct dependencies' contracts |
 | **used** | a type/func the diff references (import-resolved, so same-named symbols disambiguate) |
+| **project** | the component or project fact that contextualizes the Unit |
 
 Two properties worth knowing:
 
@@ -48,7 +62,7 @@ Two properties worth knowing:
 ### Install
 
 ```bash
-git clone https://github.com/qiankunli/case-code-review && cd case-code-review
+git clone https://github.com/compforge/case-code-review && cd case-code-review
 make install        # builds and installs `ccr` into ~/.local/bin (re-signs on macOS)
 # or: go install github.com/qiankunli/case-code-review/cmd/ccr@latest
 ```
@@ -124,12 +138,12 @@ Mark functions/classes with [`spec-case`](https://github.com/qiankunli/spec-case
 ```bash
 ccr scan                        # review whole files, no diff required (--path to narrow)
 ccr rules                       # inspect which review rules apply to which paths
-ccr viewer                      # WebUI: browse past review sessions, per-unit prompts and replies
+ccr viewer                      # WebUI: Diff→Review 1 funnel, run totals, prompt timelines and decisions
 ```
 
 ## Status
 
-Actively developed. In: function-level splitting (Go + Python), call-chain merge + cost governor, the full kind×relation context model above (authored + derived, local + dependency), feature gates, dry-run metrics, history reconciliation, session viewer.
+Actively developed. In: Project and Language Knowledge, project-aware file roles, Unit formation (function / file / call chain), two-stage evidence review, feature gates, dry-run metrics, cross-revision history reconciliation, and an observable session viewer.
 
 ## License
 
