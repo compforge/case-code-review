@@ -72,10 +72,10 @@ type Unit struct {
 	// Fragments are the changed regions reviewed together (one for a function or
 	// file Unit; several across files for a call-chain Unit).
 	Fragments []Fragment
-	// Dossier is the deduped set of Clues assembled for this Unit (spec/rule/link/
-	// doc/history/project across the self/owner/caller/callee/used/project relations), gathered
-	// post-merge against AllSymbols. See docs/unit-model.md.
-	Dossier Dossier
+	// Clues are the deduped project and language facts assembled for this Unit
+	// after formation, across the self/owner/caller/callee/used/project relations.
+	// See docs/unit-model.md.
+	Clues []Clue
 }
 
 // AllSymbols returns every symbol-id this Unit covers across its Fragments — the

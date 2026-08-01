@@ -14,7 +14,7 @@ type CaseFile struct {
 	ID         string
 	Changes    []change.Change
 	Hypotheses []Hypothesis
-	Clues      unit.Dossier
+	Clues      []unit.Clue
 }
 
 func (c CaseFile) Paths() []string {

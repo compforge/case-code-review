@@ -23,7 +23,7 @@ Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Un
 
 评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
 Repository / Component 提供项目边界、FileRole 和 manifest 等项目知识，未来也可承接文档与规则。
-它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 面向 Unit 组织 Dossier，Review 2
+它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 将 Clue 汇入 Unit，Review 2
 将来可面向 CaseFile 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
 
 ## 2. 总体流程
@@ -38,7 +38,7 @@ Change ─▶ Component / FileRole
                   ├─ source ─Splitter─▶ Fragment ─Merger─▶ Unit
                   └─ manifest / lock ─────────────────────▶ Clue
                                       │
-                         ClueFinder ─▶ Dossier / Briefing
+                         ClueFinder ─▶ Unit.Clues ─▶ Briefing
                                       │
                                       ▼
                               Unit Review (Review 1)
@@ -94,7 +94,7 @@ Unit 是评审领域作用域；Execution 是 Harness 的一次 agent 运行。�
 
 CCR 相比 file-only review 的优势来自两部分：
 
-1. Unit / Dossier 在 loop 前注入可确定的 diff、源码、契约和调用邻域；
+1. Unit 在 loop 前携带可确定的 diff、Clue、契约和调用邻域；
 2. agent 在 loop 内用只读工具验证未知事实。
 
 全预载会放大成本，只给 diff 又会诱发猜测。Briefing 与工具必须形成分工，并由统一上下文生命周期
@@ -141,7 +141,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 任何新能力都应明确落在以下一个问题上：
 
 1. 它是否补充可靠的 Project / Language Knowledge，而没有把评审策略塞进事实层？
-2. 它是否让 Unit 更接近一个行为变化，或让 Dossier 更准确？
+2. 它是否让 Unit 更接近一个行为变化，或让 Unit.Clues 更准确？
 3. 它是否让 Execution 更容易完成、成本更可控、失败更可见？
 4. 它是否提高 Hypothesis / Assessment 的证据质量，而不是只增加 prompt？
 5. 它是否能用 session 和人工标签验证，并同时观察 wrong 与 missed？
@@ -152,7 +152,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 
 | 文档 | 唯一 owner |
 |---|---|
-| [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue / Dossier、上下文与图消费 |
+| [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue、上下文与图消费 |
 | [`unit_review.md`](unit_review.md) | Review 1 的探索、收敛、跨 Unit 协作和效果优化 |
 | [`hypothesis_review.md`](hypothesis_review.md) | CaseFile、Review 2、Assessment、receipt 与 Trial |
 | [`harness.md`](harness.md) | Execution、上下文生命周期、工具、Session JSONL 与 Viewer |

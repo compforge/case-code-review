@@ -16,13 +16,12 @@ import (
 )
 
 // The briefing is what a review Unit's loop starts from: the shared user-message
-// skeleton (one template for every scope) filled with the unit's diff, its
-// dossier's clues, and the source MATERIALS assembled here. Materials exist
+// skeleton (one template for every scope) filled with the Unit's diff, Clues,
+// and the source MATERIALS assembled here. Materials exist
 // because session traces show the loop's early rounds are otherwise spent
-// fetching content ccr already knows the unit needs (file_read of the reviewed
-// file, code_search for callers/usages). Metaphor chain: Clue(线索) is gathered
-// evidence, Dossier(卷宗) is the Unit's deduped context, Briefing(交底) is what's
-// laid on the reviewer's desk before they start.
+// fetching content ccr already knows the Unit needs (file_read of the reviewed
+// file, code_search for callers/usages). Briefing is the budgeted prompt
+// projection laid on the reviewer's desk before execution starts.
 
 // material is one piece of source content the briefing wants inlined — the
 // render protocol's data contract between the per-scope briefer (which decides
@@ -78,7 +77,7 @@ func (ownSourceBriefer) materials(u unit.Unit) []material {
 const maxNeighborMaterials = 6
 
 // chainBriefer presents member source first, then the bodies of the
-// caller/callee neighbors the dossier already resolved (clue Refs): a chain
+// caller/callee neighbors the Unit's clues already resolved: a chain
 // review reasons across call edges, so the far side of each edge should be
 // visible without a search. Only bodies of functions OUTSIDE the chain — a
 // member is never its sibling's neighbor (walkNeighbors seeds visited).
@@ -97,7 +96,7 @@ func (b chainBriefer) materials(u unit.Unit) []material {
 	}
 	seen := map[string]bool{}
 	count := 0
-	for _, c := range u.Dossier {
+	for _, c := range u.Clues {
 		if c.Relation != unit.RelCaller && c.Relation != unit.RelCallee {
 			continue
 		}
@@ -161,7 +160,7 @@ func (a *Runner) renderPieces(ctx context.Context, mats []material) (pieces []pi
 	}
 
 	// Stable fill order: essentials before aux. Sort is by prio only (slice order
-	// within a prio is already meaningful: member files, then dossier order).
+	// within a prio is already meaningful: member files, then clue order).
 	ordered := make([]material, len(mats))
 	copy(ordered, mats)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].prio < ordered[j].prio })

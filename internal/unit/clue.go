@@ -48,13 +48,9 @@ type Clue struct {
 	Ref      string
 }
 
-// Dossier is a Unit's assembled, deduped set of Clues — the review loop's evidence
-// input (docs/unit-model.md).
-type Dossier = []Clue
-
 // ClueFinder finds the Clues relevant to reviewing one Unit — one implementation
 // per (relation, source) it covers. Returning nil is fine. An expensive finder's
 // bounding strategy (e.g. how far to walk callers) lives inside the finder.
 type ClueFinder interface {
-	Find(u Unit) Dossier
+	Find(u Unit) []Clue
 }

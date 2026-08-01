@@ -36,9 +36,9 @@ type Debrief struct {
 	// related bodies first, then own source). Budget misses during assembly are
 	// per-material entries in Materials instead.
 	Degradations []string
-	// Clues is the dossier tally on the relation×kind matrix ("caller/spec" -> n).
+	// Clues is the Unit's clue tally on the relation×kind matrix ("caller/spec" -> n).
 	Clues map[string]int
-	// ClueRefs are the deduped symbol-ids the dossier points at — kept because
+	// ClueRefs are the deduped symbol-ids the Unit's clues point at — kept because
 	// coverage COUNTS can stay flat while the pointed-at symbols all change
 	// (the typed-graph lesson: compare content, not counts).
 	ClueRefs []string

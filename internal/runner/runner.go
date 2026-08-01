@@ -146,7 +146,7 @@ type Runner struct {
 	args             Args
 	changes          []change.Change // parsed diffs
 	fileSelections   map[string]fileSelection
-	componentClues   map[string]unit.Dossier
+	componentClues   map[string][]unit.Clue
 	contextFileCount int
 	totalInsertions  int64
 	totalDeletions   int64
@@ -785,7 +785,7 @@ func (a *Runner) splitUnits() ([]unit.Unit, error) {
 	// final Unit (for a chain Unit, walkForSpecs seeds visited with all member
 	// symbols, so a member never surfaces as another member's caller/callee clue).
 	for i := range units {
-		units[i].Dossier = a.findClues(units[i], costly)
+		units[i].Clues = a.findClues(units[i], costly)
 	}
 
 	// Review Team: register each unit's board interest before dispatch — its
@@ -809,7 +809,7 @@ func unitInterest(u unit.Unit) board.Interest {
 	for _, s := range u.AllSymbols() {
 		in.Symbols[s] = true
 	}
-	for _, clue := range u.Dossier {
+	for _, clue := range u.Clues {
 		if clue.Ref == "" {
 			continue
 		}
@@ -825,12 +825,12 @@ func unitInterest(u unit.Unit) board.Interest {
 	return in
 }
 
-// findClues assembles a Unit's Dossier: the cheap ClueFinders run always, the
+// findClues assembles a Unit's Clues: the cheap ClueFinders run always, the
 // costly ones (call-graph grep) only when includeCostly, then dedup makes the
-// result idempotent (the Dossier's one invariant — see docs/unit-model.md; each
-// finder already carries its own relation label in the clue's Text).
-func (a *Runner) findClues(u unit.Unit, includeCostly bool) unit.Dossier {
-	var clues unit.Dossier
+// result idempotent (see docs/unit-model.md; each finder already carries its
+// own relation label in the clue's Text).
+func (a *Runner) findClues(u unit.Unit, includeCostly bool) []unit.Clue {
+	var clues []unit.Clue
 	for _, f := range a.finders {
 		clues = append(clues, f.Find(u)...)
 	}
@@ -844,19 +844,19 @@ func (a *Runner) findClues(u unit.Unit, includeCostly bool) unit.Dossier {
 }
 
 // dedupClues drops duplicate clues (same relation+kind+text), keeping first seen.
-func dedupClues(clues unit.Dossier) unit.Dossier {
+func dedupClues(clues []unit.Clue) []unit.Clue {
 	return slicesx.UniqBy(clues, func(c unit.Clue) string {
 		return string(c.Relation) + "\x00" + string(c.Kind) + "\x00" + c.Text
 	})
 }
 
-// renderClues groups a Dossier into the prompt's context blocks by clue Kind: the
+// renderClues groups a Unit's Clues into prompt context blocks by Kind: the
 // spec/case contract + docstrings ({{spec_cases}}), the @rule criteria, the see-also
 // links ({{see_also}}), and a previous review's findings ({{prior_findings}}). Clue
 // Text is raw content; how it reached the unit is worded here via clueLabel — one
 // place to change, and dedup upstream compares raw content. The rule.json text is
 // merged with rules by the caller.
-func renderClues(clues unit.Dossier) (specCases, rules, seeAlso, priorFindings string) {
+func renderClues(clues []unit.Clue) (specCases, rules, seeAlso, priorFindings string) {
 	var specBlocks, ruleLines, linkLines, historyBlocks []string
 	for _, c := range clues {
 		switch c.Kind {
@@ -886,7 +886,7 @@ func renderClues(clues unit.Dossier) (specCases, rules, seeAlso, priorFindings s
 	return strings.Join(specBlocks, "\n"), strings.Join(ruleLines, "\n"), strings.Join(linkLines, "\n"), strings.Join(historyBlocks, "\n")
 }
 
-func renderProjectContext(clues unit.Dossier) string {
+func renderProjectContext(clues []unit.Clue) string {
 	var lines []string
 	for _, clue := range clues {
 		if clue.Kind == unit.ClueProject {
@@ -959,8 +959,8 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	changeFilesExcludingCurrent := a.buildChangeFilesExcept(u.Paths()...)
 
 	// Render this unit's found context (clues) into the prompt blocks.
-	specCases, specRules, seeAlso, priorFindings := renderClues(u.Dossier)
-	projectContext := renderProjectContext(u.Dossier)
+	specCases, specRules, seeAlso, priorFindings := renderClues(u.Clues)
+	projectContext := renderProjectContext(u.Clues)
 	// Pre-grep where else the repo references the changed symbols ({{usage_sites}}).
 	usageSites, usageCount := a.renderUsageSites(u)
 	// Per-function @rule (from clues) augments the path-glob rule.json criteria;
@@ -1053,8 +1053,8 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		Fragments:  len(u.Fragments),
 		Insertions: u.Insertions(),
 		Deletions:  u.Deletions(),
-		Clues:      countClues(u.Dossier),
-		ClueRefs:   clueRefs(u.Dossier),
+		Clues:      countClues(u.Clues),
+		ClueRefs:   clueRefs(u.Clues),
 		UsageSites: usageCount,
 	}
 
@@ -1117,10 +1117,10 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	return err
 }
 
-// clueRefs collects the deduped symbol-ids a dossier points at, in dossier
+// clueRefs collects the deduped symbol-ids a Unit's clues point at, in clue
 // order — the debrief keeps content, not just counts (coverage counts can stay
 // flat while every pointed-at symbol changes).
-func clueRefs(clues unit.Dossier) []string {
+func clueRefs(clues []unit.Clue) []string {
 	var refs []string
 	for _, c := range clues {
 		if c.Ref != "" {

@@ -86,5 +86,5 @@ Language 解决“代码事实是什么”，不解决：
 ## References
 
 - [`kernel.md`](kernel.md) — Language 在 CCR Kernel 中的位置
-- [`unit-model.md`](unit-model.md) — 源码事实如何形成 Unit 与 Dossier
+- [`unit-model.md`](unit-model.md) — 源码事实如何形成 Unit 与 Clue
 - [`harness.md`](harness.md) — `file_read` / `code_search` 等只读工具的执行边界
