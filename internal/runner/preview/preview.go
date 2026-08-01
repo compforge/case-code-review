@@ -5,12 +5,13 @@ package preview
 type ExcludeReason string
 
 const (
-	ExcludeNone        ExcludeReason = ""
-	ExcludeUserRule    ExcludeReason = "user_exclude"
-	ExcludeExtension   ExcludeReason = "unsupported_ext"
-	ExcludeDefaultPath ExcludeReason = "default_path"
-	ExcludeDeleted     ExcludeReason = "deleted"
-	ExcludeBinary      ExcludeReason = "binary"
+	ExcludeNone          ExcludeReason = ""
+	ExcludeUserRule      ExcludeReason = "user_exclude"
+	ExcludeExtension     ExcludeReason = "unsupported_ext"
+	ExcludeDefaultPath   ExcludeReason = "default_path"
+	ExcludeDeleted       ExcludeReason = "deleted"
+	ExcludeBinary        ExcludeReason = "binary"
+	ExcludeNonReviewRole ExcludeReason = "non_review_role"
 )
 
 // Entry is one file's preview record (mode-agnostic).

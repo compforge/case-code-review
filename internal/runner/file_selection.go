@@ -127,6 +127,10 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 		selection.Context = true
 		return selection
 	}
+	if selection.HasComponent && selection.Roles.Has(project.RoleVersion) {
+		selection.Reason = ExcludeNonReviewRole
+		return selection
+	}
 	if reason := a.whyExcluded(d); reason != ExcludeNone {
 		selection.Reason = reason
 		return selection

@@ -14,14 +14,15 @@ Component。
 Git Change ─▶ Component / FileRole
                    ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues} ─▶ Briefing
                    │     └─ entrypoint / handler ─▶ project Clue ─────▲
-                   └─ manifest / lock ────────────▶ project Clue ─────▲
+                   ├─ manifest / lock ────────────▶ project Clue ─────▲
+                   └─ version ─▶ no Unit Review
 ```
 
 | 对象 | 语义 |
 |---|---|
 | `Change` | Git 层的一份文件变更 |
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
-| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、entrypoint、handler、manifest、lock |
+| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、entrypoint、handler、manifest、lock、version |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
@@ -46,6 +47,8 @@ Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不�
 当前只启用 Unit Review，因此 source 是 target；同 Component 中发生变化的 manifest / lock 形成
 `project/project` Clue，只向该 Component 的 Unit 提供路径、角色和按需 diff 指针。若只变化
 `pyproject.toml` 或 `go.mod`，CCR 明确报告没有 Unit Review target，不启动一个无意义的 agent loop。
+Go Component 根目录的 `VERSION` 是发布版本元数据：保留 `version` 角色用于观测，但既不是 target，
+也不作为业务代码的上下文；仅修改它时不会启动 agent loop。
 用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
 扩展名规则，保持已有行为。
 

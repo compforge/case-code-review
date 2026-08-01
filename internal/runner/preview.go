@@ -13,12 +13,13 @@ type ExcludeReason = previewmodel.ExcludeReason
 type Preview = previewmodel.Preview
 
 const (
-	ExcludeNone        = previewmodel.ExcludeNone
-	ExcludeUserRule    = previewmodel.ExcludeUserRule
-	ExcludeExtension   = previewmodel.ExcludeExtension
-	ExcludeDefaultPath = previewmodel.ExcludeDefaultPath
-	ExcludeDeleted     = previewmodel.ExcludeDeleted
-	ExcludeBinary      = previewmodel.ExcludeBinary
+	ExcludeNone          = previewmodel.ExcludeNone
+	ExcludeUserRule      = previewmodel.ExcludeUserRule
+	ExcludeExtension     = previewmodel.ExcludeExtension
+	ExcludeDefaultPath   = previewmodel.ExcludeDefaultPath
+	ExcludeDeleted       = previewmodel.ExcludeDeleted
+	ExcludeBinary        = previewmodel.ExcludeBinary
+	ExcludeNonReviewRole = previewmodel.ExcludeNonReviewRole
 )
 
 // whyExcluded applies the filter algorithm as shouldReview but
