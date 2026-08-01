@@ -8,12 +8,19 @@ import (
 var goProfile = profile{
 	kind:    Go,
 	markers: []string{"go.mod"},
-	classify: func(_, file string) FileRoles {
+	classify: func(root, file string) FileRoles {
 		switch strings.ToLower(path.Base(file)) {
 		case "go.mod":
 			return FileRoles{RoleManifest}
 		case "go.sum":
 			return FileRoles{RoleLock}
+		case "version":
+			// VERSION is release bookkeeping for the Component, not a behavior
+			// change to send through Unit Review. Restrict it to the Component
+			// root so an unrelated nested file is not classified by name alone.
+			if path.Dir(file) == root {
+				return FileRoles{RoleVersion}
+			}
 		}
 		if strings.EqualFold(path.Ext(file), ".go") {
 			roles := FileRoles{RoleSource}

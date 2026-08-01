@@ -31,6 +31,8 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 		{"cmd/ccr/main.go", ".", Go, FileRoles{RoleSource, RoleEntrypoint}, true},
 		{"go.mod", ".", Go, FileRoles{RoleManifest}, true},
 		{"go.sum", ".", Go, FileRoles{RoleLock}, true},
+		{"VERSION", ".", Go, FileRoles{RoleVersion}, true},
+		{"docs/VERSION", ".", Go, FileRoles{RoleUnknown}, true},
 		{"README.md", ".", Go, FileRoles{RoleUnknown}, true},
 	}
 

@@ -12,6 +12,7 @@ const (
 	RoleSource     FileRole = "source"
 	RoleManifest   FileRole = "manifest"
 	RoleLock       FileRole = "lock"
+	RoleVersion    FileRole = "version"
 	RoleEntrypoint FileRole = "entrypoint"
 	RoleHandler    FileRole = "handler"
 )

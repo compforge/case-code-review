@@ -50,7 +50,7 @@ full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ## 关键约定（核心七条）
 
 1. **评审语义 = 契约守恒，不是找语法 bug**：核对 diff 有没有破坏函数的 spec/case/rule 不变量；**语法 / 静态检查交给 lint 类工具**（Python `ruff`、Go `go build`/`go vet` 之类），不是 ccr 的活。
-2. **Component、FileRole、Unit 别混**：Component 是 manifest 定义的静态项目边界；FileRole 可组合，`source` 决定进入 Splitter，`entrypoint` / `handler` 补充源码职责，manifest/lock 成为同 Component 的项目 Clue；Unit 才是触发 loop 的动态行为边界。只有一个 target 文件时直接收为 File Unit；多文件才按调用链重组——**降 loop 粒度、不降 context**。
+2. **Component、FileRole、Unit 别混**：Component 是 manifest 定义的静态项目边界；FileRole 可组合，`source` 决定进入 Splitter，`entrypoint` / `handler` 补充源码职责，manifest/lock 成为同 Component 的项目 Clue，version 只标识发布元数据、不触发 review；Unit 才是触发 loop 的动态行为边界。只有一个 target 文件时直接收为 File Unit；多文件才按调用链重组——**降 loop 粒度、不降 context**。
 3. **边界现场算、`spec.json` 只语义**：函数边界评审时由 `internal/language` 现场解析、**永不落盘**（不 stale）；parser / compiler / gotreesitter 不得泄漏到 unit/codegraph，使用方只消费语言事实；`spec.json` 只有 `FuncID → spec/cases/rules/links`、**无行号**；join key 是 symbol-id `<relpath>::<symbol>`（与 spec-case 一致）。
 4. **上下文分廉价 / 昂贵两档，重活有闸**：廉价 finder（spec.json 查 spec/case/rule/link）总跑；昂贵 finder（caller/callee 的 call-graph grep）走**预算闸门**——diff unit 数超水位就跳（反正要归并、per-func 上下文也被稀释）。link 指向的 doc/函数**内容**仍按需 tool 取，不预塞。
 

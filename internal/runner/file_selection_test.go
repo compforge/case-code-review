@@ -183,6 +183,27 @@ func TestOnlyManifestProducesNoUnitTarget(t *testing.T) {
 	}
 }
 
+func TestVersionRoleProducesNoUnitOrContext(t *testing.T) {
+	repo := t.TempDir()
+	writeSelectionFile(t, repo, "go.mod")
+	writeSelectionFile(t, repo, "VERSION")
+	a := &Runner{
+		args:    Args{RepoDir: repo},
+		changes: []change.Change{{NewPath: "VERSION"}},
+	}
+	a.prepareFileSelections(context.Background())
+
+	if got := a.filterDiffs(a.changes); len(got) != 0 {
+		t.Fatalf("VERSION unexpectedly became Unit target: %+v", got)
+	}
+	preview := a.buildPreview()
+	entry := preview.Entries[0]
+	if preview.ExcludedCount != 1 || entry.FileRole != "version" || entry.ProvidesContext ||
+		entry.ExcludeReason != ExcludeNonReviewRole {
+		t.Fatalf("VERSION preview = %+v", preview)
+	}
+}
+
 func TestExplicitIncludeCanForceManifestUnit(t *testing.T) {
 	repo := t.TempDir()
 	writeSelectionFile(t, repo, "pyproject.toml")
