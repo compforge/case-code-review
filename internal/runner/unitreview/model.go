@@ -1,4 +1,4 @@
-package review
+package unitreview
 
 import (
 	"crypto/sha256"

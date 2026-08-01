@@ -1,4 +1,4 @@
-package review
+package hypothesisreview
 
 import (
 	"context"
@@ -27,20 +27,5 @@ func TestReviewHandlerReceiptsComeFromExecutedReadTools(t *testing.T) {
 	receipts := ledger.Receipts()
 	if len(receipts) != 1 || receipts[0].Kind != "diff" || receipts[0].Ref != "a.go" {
 		t.Fatalf("unexpected receipts: %+v", receipts)
-	}
-}
-
-func TestPassesTrialRejectsModelEvidenceWithoutReceipt(t *testing.T) {
-	hypothesis := Hypothesis{Path: "a.go"}
-	assessment := Assessment{
-		Support: Supported, Attribution: Caused,
-		Value: Actionable, Novelty: Novel, Evidence: []string{"a.go:10"},
-	}
-	if PassesTrial(hypothesis, assessment) {
-		t.Fatal("model-authored evidence must not replace a CCR receipt")
-	}
-	assessment.EvidenceReceipts = []EvidenceReceipt{{Kind: "diff", Ref: "a.go"}}
-	if !PassesTrial(hypothesis, assessment) {
-		t.Fatal("complete assessment with a matching diff receipt should pass")
 	}
 }

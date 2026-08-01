@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -64,12 +65,12 @@ func TestSplitUnits_MultipleFilesBelowWatermarkKeepFunctions(t *testing.T) {
 }
 
 func TestSplitUnits_SingleFileRetainsSymbolsAboveWatermark(t *testing.T) {
-	units := splitWith(t, goDiff("p.go", defaultUnitWatermark+2))
+	units := splitWith(t, goDiff("p.go", formation.DefaultWatermark+2))
 	if len(units) != 1 || units[0].Scope != unit.ScopeFile {
 		t.Fatalf("want 1 coalesced file unit, got %d (%+v)", len(units), units)
 	}
-	if len(units[0].AllSymbols()) != defaultUnitWatermark+2 {
-		t.Errorf("coalesced unit should retain all %d func ids, got %d", defaultUnitWatermark+2, len(units[0].AllSymbols()))
+	if len(units[0].AllSymbols()) != formation.DefaultWatermark+2 {
+		t.Errorf("coalesced unit should retain all %d func ids, got %d", formation.DefaultWatermark+2, len(units[0].AllSymbols()))
 	}
 }
 

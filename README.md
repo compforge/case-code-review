@@ -20,7 +20,7 @@ Review quality is judged on three goals that pull against each other — **robus
 
 ## The context model: evidence kinds × relations
 
-For each review unit, ccr assembles a dossier of *clues*. A clue is one piece of evidence of a **kind**, reached along a **relation** — two orthogonal axes (see [`docs/unit-model.md`](docs/unit-model.md)):
+For each review unit, ccr assembles a set of *clues*. A clue is one piece of evidence of a **kind**, reached along a **relation** — two orthogonal axes (see [`docs/unit-model.md`](docs/unit-model.md)):
 
 | kind | what it is | source |
 |---|---|---|

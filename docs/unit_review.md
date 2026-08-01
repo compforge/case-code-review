@@ -186,7 +186,7 @@ truncated。改动规模是混杂因素，因此先以 `plan=off` 做固定 corp
 
 ```text
 directly_related_changed_files:
-  - path: internal/runner/review/model.go
+  - path: internal/runner/unitreview/model.go
     relation: changed symbol used here
 
 other_changed_files_count: 17
@@ -287,5 +287,5 @@ Review 1 的效果不能用 Hypothesis 数量单独衡量。固定 workload 至�
 - **把所有 changed files 合成一个 Unit**：会破坏相关上下文密度和覆盖公平。
 - **用 finding 数下降证明效果提升**：可能只是 incomplete 或漏报。
 
-实现以 `internal/runner` 的 Review 扩展和 `internal/harness` 的通用 execution 能力为准；评测与回放
+实现以 `internal/runner/unitreview` 和 `internal/harness` 的通用 execution 能力为准；评测与回放
 约定见 [`../eval/README.md`](../eval/README.md)。

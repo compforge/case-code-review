@@ -1,6 +1,7 @@
-package review
+package hypothesisreview
 
 import (
+	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/go-stdx/slicesx"
@@ -13,7 +14,7 @@ import (
 type CaseFile struct {
 	ID         string
 	Changes    []change.Change
-	Hypotheses []Hypothesis
+	Hypotheses []unitreview.Hypothesis
 	Clues      []unit.Clue
 }
 

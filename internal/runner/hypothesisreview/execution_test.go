@@ -1,4 +1,4 @@
-package review
+package hypothesisreview
 
 import (
 	"context"
@@ -8,11 +8,12 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 )
 
 func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
-	hypothesis := Hypothesis{Path: "a.go", Content: "issue", ExistingCode: "x"}
-	hypothesis.ID = IDFor(hypothesis)
+	hypothesis := unitreview.Hypothesis{Path: "a.go", Content: "issue", ExistingCode: "x"}
+	hypothesis.ID = unitreview.IDFor(hypothesis)
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
 		reviewToolResponse("call-1", SubmitAssessments.Name(), `{"assessments":[{
 			"hypothesis_id":"`+hypothesis.ID+`",

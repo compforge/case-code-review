@@ -1,4 +1,4 @@
-package runner
+package unitreview
 
 import (
 	"context"
@@ -15,8 +15,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/runner/feature"
-	"github.com/qiankunli/case-code-review/internal/runner/review"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -25,7 +23,7 @@ const (
 	maxBulletinTextRunes     = 300
 )
 
-type unitExecutionOutcome struct {
+type Outcome struct {
 	State               string
 	Reason              string
 	BoardPulled         int
@@ -33,10 +31,10 @@ type unitExecutionOutcome struct {
 	BoardPosted         int
 }
 
-// unitExecutor is the Runner-side assembly for one Harness execution. It owns
+// Executor is the Runner-side assembly for one Unit Review execution. It owns
 // review semantics such as Board publication and run-level aggregation; the
 // Harness receives only its domain-neutral interfaces.
-type unitExecutor struct {
+type Executor struct {
 	llmClient               llm.LLMClient
 	model                   string
 	tools                   *tool.Registry
@@ -59,50 +57,64 @@ type unitExecutor struct {
 	totalCacheWriteTokens int64
 
 	warningsMu sync.Mutex
-	warnings   []Warning
+	warnings   []harness.Warning
 	toolMu     sync.Mutex
 	toolCalls  map[string]int64
 	modelMu    sync.Mutex
 	models     map[string]int
 }
 
-func newUnitExecutor(
-	args Args,
+type ExecutorConfig struct {
+	LLMClient               llm.LLMClient
+	Model                   string
+	Tools                   *tool.Registry
+	ToolDefs                []llm.ToolDef
+	Session                 *session.SessionHistory
+	MaxTurns                int
+	MaxTokens               int
+	FileDedup               bool
+	FileEvict               bool
+	PostBulletin            bool
+	CompressionSystemPrompt string
+	CompressionPrompt       string
+}
+
+func NewExecutor(
+	config ExecutorConfig,
 	handler harness.ToolHandler,
 	sharedBoard *board.Registry,
-) *unitExecutor {
-	defs := review.InvestigationToolDefs(slices.Clone(args.MainToolDefs))
-	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
-	postBulletin := sharedBoard != nil && args.Features.Enabled(feature.PostBulletin)
+) *Executor {
+	defs := InvestigationToolDefs(slices.Clone(config.ToolDefs))
+	postBulletin := sharedBoard != nil && config.PostBulletin
 	if !postBulletin {
 		defs = slices.DeleteFunc(defs, func(def llm.ToolDef) bool {
 			return def.Function.Name == tool.PostBulletin.Name()
 		})
 	}
-	return &unitExecutor{
-		llmClient:               args.LLMClient,
-		model:                   args.Model,
-		tools:                   args.Tools,
+	return &Executor{
+		llmClient:               config.LLMClient,
+		model:                   config.Model,
+		tools:                   config.Tools,
 		toolDefs:                defs,
-		session:                 args.Session,
+		session:                 config.Session,
 		handler:                 handler,
 		board:                   sharedBoard,
 		postBulletin:            postBulletin,
-		maxTurns:                args.Template.MaxToolRequestTimes,
-		maxTokens:               args.Template.MaxTokens,
-		fileDedup:               args.Features.Enabled(feature.FileDedup),
-		fileEvict:               args.Features.Enabled(feature.FileEvict),
-		wrapUpPrompt:            review.InvestigationWrapUpPrompt,
-		compressionSystemPrompt: compressionSystemPrompt,
-		compressionPrompt:       compressionPrompt,
+		maxTurns:                config.MaxTurns,
+		maxTokens:               config.MaxTokens,
+		fileDedup:               config.FileDedup,
+		fileEvict:               config.FileEvict,
+		wrapUpPrompt:            InvestigationWrapUpPrompt,
+		compressionSystemPrompt: config.CompressionSystemPrompt,
+		compressionPrompt:       config.CompressionPrompt,
 	}
 }
 
-func (e *unitExecutor) Run(
+func (e *Executor) Run(
 	ctx context.Context,
 	messages []msg.Msg,
 	scope session.Scope,
-) (unitExecutionOutcome, error) {
+) (Outcome, error) {
 	run := &unitExecution{
 		executor:       e,
 		ctx:            ctx,
@@ -152,7 +164,7 @@ func (e *unitExecutor) Run(
 			fmt.Sprintf("review ended without task_done (%s); verdict is partial — do not read as clean", reason),
 		)
 	}
-	return unitExecutionOutcome{
+	return Outcome{
 		State:               result.State,
 		Reason:              reason,
 		BoardPulled:         int(atomic.LoadInt64(&run.boardPulled)),
@@ -161,28 +173,7 @@ func (e *unitExecutor) Run(
 	}, err
 }
 
-func reviewCompressionPrompts(args Args) (string, string) {
-	var system, instruction []string
-	for _, message := range args.Template.MemoryCompressionTask.Messages {
-		content := strings.TrimSpace(message.Content)
-		if content == "" {
-			continue
-		}
-		if message.Role == "system" {
-			system = append(system, content)
-			continue
-		}
-		content = strings.ReplaceAll(
-			content,
-			"{{context}}",
-			"Summarize the conversation supplied above according to the system instructions.",
-		)
-		instruction = append(instruction, content)
-	}
-	return strings.Join(system, "\n\n"), strings.Join(instruction, "\n\n")
-}
-
-func (e *unitExecutor) RecordUsage(usage *llm.UsageInfo) {
+func (e *Executor) RecordUsage(usage *llm.UsageInfo) {
 	if usage == nil {
 		return
 	}
@@ -192,41 +183,45 @@ func (e *unitExecutor) RecordUsage(usage *llm.UsageInfo) {
 	atomic.AddInt64(&e.totalCacheWriteTokens, usage.CacheWriteTokens)
 }
 
-func (e *unitExecutor) TotalInputTokens() int64 {
+func (e *Executor) TotalInputTokens() int64 {
 	return atomic.LoadInt64(&e.totalInputTokens)
 }
 
-func (e *unitExecutor) TotalOutputTokens() int64 {
+func (e *Executor) TotalOutputTokens() int64 {
 	return atomic.LoadInt64(&e.totalOutputTokens)
 }
 
-func (e *unitExecutor) TotalCacheReadTokens() int64 {
+func (e *Executor) TotalCacheReadTokens() int64 {
 	return atomic.LoadInt64(&e.totalCacheReadTokens)
 }
 
-func (e *unitExecutor) TotalCacheWriteTokens() int64 {
+func (e *Executor) TotalCacheWriteTokens() int64 {
 	return atomic.LoadInt64(&e.totalCacheWriteTokens)
 }
 
-func (e *unitExecutor) TotalTokensUsed() int64 {
+func (e *Executor) TotalTokensUsed() int64 {
 	return e.TotalInputTokens() + e.TotalOutputTokens()
 }
 
-func (e *unitExecutor) RecordWarning(warningType, file, message string) {
+func (e *Executor) CompressionSystemPrompt() string { return e.compressionSystemPrompt }
+
+func (e *Executor) CompressionPrompt() string { return e.compressionPrompt }
+
+func (e *Executor) RecordWarning(warningType, file, message string) {
 	e.warningsMu.Lock()
-	e.warnings = append(e.warnings, Warning{
+	e.warnings = append(e.warnings, harness.Warning{
 		Type: warningType, File: file, Message: message,
 	})
 	e.warningsMu.Unlock()
 }
 
-func (e *unitExecutor) Warnings() []Warning {
+func (e *Executor) Warnings() []harness.Warning {
 	e.warningsMu.Lock()
 	defer e.warningsMu.Unlock()
 	return slices.Clone(e.warnings)
 }
 
-func (e *unitExecutor) recordToolCall(name string) {
+func (e *Executor) RecordToolCall(name string) {
 	e.toolMu.Lock()
 	if e.toolCalls == nil {
 		e.toolCalls = make(map[string]int64)
@@ -235,7 +230,7 @@ func (e *unitExecutor) recordToolCall(name string) {
 	e.toolMu.Unlock()
 }
 
-func (e *unitExecutor) ToolCalls() map[string]int64 {
+func (e *Executor) ToolCalls() map[string]int64 {
 	e.toolMu.Lock()
 	defer e.toolMu.Unlock()
 	out := make(map[string]int64, len(e.toolCalls))
@@ -245,7 +240,7 @@ func (e *unitExecutor) ToolCalls() map[string]int64 {
 	return out
 }
 
-func (e *unitExecutor) recordModel(alias string) {
+func (e *Executor) RecordModel(alias string) {
 	if alias == "" {
 		return
 	}
@@ -257,7 +252,7 @@ func (e *unitExecutor) recordModel(alias string) {
 	e.modelMu.Unlock()
 }
 
-func (e *unitExecutor) ModelsUsed() map[string]int {
+func (e *Executor) ModelsUsed() map[string]int {
 	e.modelMu.Lock()
 	defer e.modelMu.Unlock()
 	out := make(map[string]int, len(e.models))
@@ -267,11 +262,11 @@ func (e *unitExecutor) ModelsUsed() map[string]int {
 	return out
 }
 
-func (e *unitExecutor) countableTool(name string) bool {
+func (e *Executor) countableTool(name string) bool {
 	if name == tool.TaskDone.Name() {
 		return false
 	}
-	if name == review.ReportHypothesis.Name() {
+	if name == ReportHypothesis.Name() {
 		return true
 	}
 	if name == tool.PostBulletin.Name() {
@@ -285,7 +280,7 @@ func (e *unitExecutor) countableTool(name string) bool {
 }
 
 type unitExecution struct {
-	executor *unitExecutor
+	executor *Executor
 	ctx      context.Context
 	scope    session.Scope
 
@@ -327,7 +322,7 @@ func (r *unitExecution) HandleTool(
 func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 	switch event.Type {
 	case harness.EventModelResponse:
-		r.executor.recordModel(event.Alias)
+		r.executor.RecordModel(event.Alias)
 		model := event.Model
 		if model == "" {
 			model = r.executor.model
@@ -339,7 +334,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 		telemetry.RecordLLMRequest(r.ctx, model, event.Duration, totalTokens, "ok")
 	case harness.EventToolStart:
 		if r.executor.countableTool(event.Tool) {
-			r.executor.recordToolCall(event.Tool)
+			r.executor.RecordToolCall(event.Tool)
 		}
 		if r.observesGenericTool(event.Tool) {
 			var args map[string]any
@@ -362,7 +357,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 
 func (r *unitExecution) observesGenericTool(name string) bool {
 	return r.executor.countableTool(name) &&
-		name != review.ReportHypothesis.Name() &&
+		name != ReportHypothesis.Name() &&
 		name != tool.PostBulletin.Name()
 }
 

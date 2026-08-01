@@ -1,4 +1,4 @@
-package review
+package hypothesisreview
 
 import (
 	"context"
@@ -78,15 +78,6 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 		return nil
 	}
 	return []EvidenceReceipt{base}
-}
-
-func hasDiffReceipt(receipts []EvidenceReceipt, path string) bool {
-	for _, receipt := range receipts {
-		if receipt.Kind == "diff" && receipt.Ref == path {
-			return true
-		}
-	}
-	return false
 }
 
 // ReviewHandler owns the convergent Review's complete tool boundary. Read-only

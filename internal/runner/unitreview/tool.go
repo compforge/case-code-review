@@ -1,4 +1,4 @@
-package review
+package unitreview
 
 import (
 	"strings"
@@ -14,10 +14,6 @@ const (
 	InvestigationWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. " +
 		"Report every concrete remaining issue claim with report_hypothesis, including its trigger, impact, " +
 		"change attribution, evidence, and uncertainty; then call task_done. Do not call other tools."
-	HypothesisReviewWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop gathering evidence now. " +
-		"Submit one assessment for every supplied hypothesis using only the evidence already gathered, " +
-		"then call task_done. Use insufficient/unknown when a decisive fact is still missing; do not " +
-		"claim support without the required diff evidence receipt."
 )
 
 func HypothesisToolDef() llm.ToolDef {
@@ -116,27 +112,5 @@ func InvestigationToolDefs(main []llm.ToolDef) []llm.ToolDef {
 	if !replaced {
 		out = append(out, HypothesisToolDef())
 	}
-	return out
-}
-
-// HypothesisReviewToolDefs is a structural allowlist: the convergent reviewer
-// can inspect code and submit assessments, but cannot publish comments, propose
-// new hypotheses, or write to the Review Team board.
-func HypothesisReviewToolDefs(main []llm.ToolDef) []llm.ToolDef {
-	allowed := map[string]bool{
-		tool.TaskDone.Name():     true,
-		tool.FileRead.Name():     true,
-		tool.FileReadBase.Name(): true,
-		tool.FileFind.Name():     true,
-		tool.FileReadDiff.Name(): true,
-		tool.CodeSearch.Name():   true,
-	}
-	out := make([]llm.ToolDef, 0, len(main)+1)
-	for _, def := range main {
-		if allowed[def.Function.Name] {
-			out = append(out, def)
-		}
-	}
-	out = append(out, AssessmentToolDef())
 	return out
 }

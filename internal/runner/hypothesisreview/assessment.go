@@ -1,4 +1,4 @@
-package review
+package hypothesisreview
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
 
 type Support string
@@ -180,57 +179,6 @@ func validValue(value DeliveryValue) bool {
 
 func validNovelty(value Novelty) bool {
 	return value == Novel || value == DuplicateInCase || value == AlreadyDelivered
-}
-
-// PassesTrial is the single delivery policy. A model judgment is not enough:
-// the reviewer must have actually read the hypothesis' diff, and all four
-// independent gates must pass.
-func PassesTrial(hypothesis Hypothesis, assessment Assessment) bool {
-	return assessment.Support == Supported &&
-		assessment.Attribution == Caused &&
-		assessment.Value == Actionable &&
-		assessment.Novelty == Novel &&
-		len(assessment.Evidence) > 0 &&
-		hasDiffReceipt(assessment.EvidenceReceipts, hypothesis.Path)
-}
-
-// Trial is deliberately deterministic. Missing evidence receipts, unsupported
-// claims, pre-existing behavior, low-value observations, and repeated delivery
-// cannot become public Findings.
-func Trial(hypotheses []Hypothesis, assessments []Assessment) []finding.Finding {
-	byID := make(map[string]Assessment, len(assessments))
-	for _, assessment := range assessments {
-		byID[assessment.HypothesisID] = assessment
-	}
-	seen := make(map[string]bool, len(hypotheses))
-	out := make([]finding.Finding, 0, len(hypotheses))
-	for _, hypothesis := range hypotheses {
-		if seen[hypothesis.ID] {
-			continue
-		}
-		seen[hypothesis.ID] = true
-		assessment, ok := byID[hypothesis.ID]
-		if !ok || !PassesTrial(hypothesis, assessment) {
-			continue
-		}
-		out = append(out, hypothesis.Finding())
-	}
-	return out
-}
-
-// BypassTrial is used only when the hypothesis_review feature gate is disabled
-// for ablation. It preserves the former one-stage delivery behavior.
-func BypassTrial(hypotheses []Hypothesis) []finding.Finding {
-	seen := make(map[string]bool, len(hypotheses))
-	out := make([]finding.Finding, 0, len(hypotheses))
-	for _, hypothesis := range hypotheses {
-		if seen[hypothesis.ID] {
-			continue
-		}
-		seen[hypothesis.ID] = true
-		out = append(out, hypothesis.Finding())
-	}
-	return out
 }
 
 func AssessmentToolDef() llm.ToolDef {
