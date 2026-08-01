@@ -96,6 +96,7 @@ type exportEvent struct {
 	Params       map[string]any   `json:"params"`
 	GitHead      string           `json:"git_head"`
 	EvalTag      string           `json:"eval_tag"`
+	BizID        string           `json:"biz_id"`
 	ArtifactKind string           `json:"artifact_kind"`
 	Data         map[string]any   `json:"data"`
 	ScopeID      string           `json:"scope_id"`
@@ -260,6 +261,9 @@ func exportSession(path string) (*atifTrajectory, error) {
 			}
 			if e.EvalTag != "" {
 				root.Extra["eval_tag"] = e.EvalTag
+			}
+			if e.BizID != "" {
+				root.Extra["biz_id"] = e.BizID
 			}
 		case "artifact":
 			reviewArtifacts = append(reviewArtifacts, map[string]any{

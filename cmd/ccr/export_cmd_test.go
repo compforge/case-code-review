@@ -7,7 +7,7 @@ import (
 )
 
 func TestExportSessionATIF(t *testing.T) {
-	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","timestamp":"2026-07-02T10:00:00Z"}
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z"}
 {"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"},"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"llm_request","scope_id":"u1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z"}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"","tool_calls":[{"id":"c1","name":"file_read","arguments":"{\"file_path\":\"a.go\"}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"duration_ms":5000,"timestamp":"2026-07-02T10:00:06Z"}
@@ -30,7 +30,7 @@ func TestExportSessionATIF(t *testing.T) {
 		t.Fatalf("root extra: %v", traj.Extra)
 	}
 	if traj.Agent.Version != "v1.13.2 (abc123)" || traj.Extra["git_head"] != "deadbeef" ||
-		traj.Extra["eval_tag"] != "replay:test" {
+		traj.Extra["eval_tag"] != "replay:test" || traj.Extra["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("engine identity missing: agent=%+v extra=%v", traj.Agent, traj.Extra)
 	}
 	artifacts, ok := traj.Extra["review_artifacts"].([]map[string]any)

@@ -103,6 +103,7 @@ func runReview(args []string) error {
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
 		Background:            opts.background,
+		BizID:                 opts.bizID,
 		Specs:                 specs,
 		HistoryIndex:          historyIndex,
 		GitRunner:             cc.GitRunner,

@@ -44,6 +44,7 @@ type SessionHistory struct {
 	DiffFrom    string
 	DiffTo      string
 	DiffCommit  string
+	BizID       string
 	StartTime   time.Time
 	EndTime     time.Time
 	persist     *jsonlWriter
@@ -163,6 +164,9 @@ type SessionOptions struct {
 	DiffFrom   string
 	DiffTo     string
 	DiffCommit string
+	// BizID is an opaque execution identity owned by the caller. Session
+	// persistence and viewers expose it without interpreting its format.
+	BizID string
 
 	// Features is the resolved feature-gate map (feature.Set.Resolved()).
 	Features map[string]bool
@@ -257,6 +261,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 		DiffFrom:   opts.DiffFrom,
 		DiffTo:     opts.DiffTo,
 		DiffCommit: opts.DiffCommit,
+		BizID:      opts.BizID,
 		StartTime:  time.Now(),
 		Scopes:     make(map[string]*ScopeSession),
 	}

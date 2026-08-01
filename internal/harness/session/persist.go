@@ -167,6 +167,9 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 	if jw.diffCommit != "" {
 		rec["diffCommit"] = jw.diffCommit
 	}
+	if jw.opts.BizID != "" {
+		rec["biz_id"] = jw.opts.BizID
+	}
 	// Run manifest: configuration the metrics must join on / be conditioned on.
 	if jw.opts.ToolVersion != "" {
 		rec["tool_version"] = jw.opts.ToolVersion
