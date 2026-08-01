@@ -16,7 +16,16 @@ try:
 except SyntaxError:
     sys.exit(2)
 lines = source.splitlines()
-definitions, calls, references = [], [], {}
+definitions, calls, decorators, references = [], [], [], {}
+def dotted_name(node):
+    if isinstance(node, ast.Call):
+        return dotted_name(node.func)
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = dotted_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return None
 def start(n):
     return n.decorator_list[0].lineno if getattr(n, "decorator_list", None) else n.lineno
 def signature(n):
@@ -43,6 +52,11 @@ def visit_scope(node, owners):
                         seen.add(called); calls.append({"caller": name, "name": called})
 visit_scope(tree, [])
 for node in ast.walk(tree):
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        for decorator in node.decorator_list:
+            name = dotted_name(decorator)
+            if name and name not in decorators:
+                decorators.append(name)
     name = None
     if isinstance(node, ast.Name) and len(node.id) >= 3:
         name = node.id
@@ -50,7 +64,7 @@ for node in ast.walk(tree):
         name = node.attr
     if name:
         references[name] = references.get(name, 0) + 1
-json.dump({"definitions": definitions, "calls": calls, "references": references}, sys.stdout)
+json.dump({"definitions": definitions, "calls": calls, "decorators": decorators, "references": references}, sys.stdout)
 `
 
 func analyzePython(parent context.Context, source Source) (Analysis, error) {
@@ -75,12 +89,16 @@ func analyzePython(parent context.Context, source Source) (Analysis, error) {
 			Caller string `json:"caller"`
 			Name   string `json:"name"`
 		} `json:"calls"`
+		Decorators []string       `json:"decorators"`
 		References map[string]int `json:"references"`
 	}
 	if err := json.Unmarshal(out, &payload); err != nil {
 		return Analysis{}, err
 	}
-	analysis := Analysis{Language: Python, Quality: QualitySyntax, References: payload.References}
+	analysis := Analysis{
+		Language: Python, Quality: QualitySyntax,
+		Decorators: payload.Decorators, References: payload.References,
+	}
 	for _, d := range payload.Definitions {
 		analysis.Definitions = append(analysis.Definitions, Definition{
 			SymbolID: SymbolID(source.Path, "", d.Name), Name: d.Name, Owner: d.Owner,

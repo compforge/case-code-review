@@ -6,6 +6,7 @@ import (
 
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/project"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -13,12 +14,12 @@ import (
 
 // fileSelection is Runner's projection of stable Component/FileRole facts onto
 // the current Unit Review strategy. Target/context are deliberately not stored
-// in project.FileRole: another reviewer may treat the same manifest as its
+// in project.FileRoles: another reviewer may treat the same manifest as its
 // primary target in the future.
 type fileSelection struct {
 	Component    project.Component
 	HasComponent bool
-	Role         project.FileRole
+	Roles        project.FileRoles
 	Target       bool
 	Context      bool
 	Reason       ExcludeReason
@@ -44,6 +45,7 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 		d := &a.changes[i]
 		path := effectivePath(*d)
 		selection := a.selectFile(*d, repository)
+		selection = a.enrichFileSelection(ctx, path, selection, reader)
 		a.fileSelections[path] = selection
 		if !selection.Context {
 			continue
@@ -56,19 +58,46 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 			Ref:      path,
 			Text: fmt.Sprintf(
 				"changed %s `%s` in this %s component; treat it as project context and inspect its diff with file_read_diff only when relevant",
-				selection.Role, path, selection.Component.Kind,
+				selection.Roles, path, selection.Component.Kind,
 			),
 		})
 	}
 }
 
+func (a *Runner) enrichFileSelection(
+	ctx context.Context,
+	path string,
+	selection fileSelection,
+	reader *tool.FileReader,
+) fileSelection {
+	if !selection.HasComponent || !selection.Roles.Has(project.RoleSource) {
+		return selection
+	}
+	content, err := reader.Read(ctx, path)
+	if err != nil {
+		return selection
+	}
+	analysis, err := a.sourceAnalyzer().Analyze(ctx, language.Source{Path: path, Content: content})
+	if err != nil {
+		return selection
+	}
+	calls := make([]string, 0, len(analysis.Calls))
+	for _, call := range analysis.Calls {
+		calls = append(calls, call.Name)
+	}
+	selection.Roles = project.EnrichFileRoles(
+		selection.Component, path, selection.Roles, analysis.Decorators, calls,
+	)
+	return selection
+}
+
 func (a *Runner) selectFile(d change.Change, repository *project.Repository) fileSelection {
 	path := effectivePath(d)
-	selection := fileSelection{Role: project.RoleUnknown}
-	if resolved, role, ok := repository.Resolve(path); ok {
+	selection := fileSelection{Roles: project.FileRoles{project.RoleUnknown}}
+	if resolved, roles, ok := repository.Resolve(path); ok {
 		selection.Component = resolved
 		selection.HasComponent = true
-		selection.Role = role
+		selection.Roles = roles
 	}
 
 	if d.IsBinary {
@@ -88,7 +117,7 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 		selection.Target = true
 		return selection
 	}
-	if selection.HasComponent && (selection.Role == project.RoleManifest || selection.Role == project.RoleLock) {
+	if selection.HasComponent && (selection.Roles.Has(project.RoleManifest) || selection.Roles.Has(project.RoleLock)) {
 		// Project context may bypass the global extension allowlist (.lock,
 		// .mod, .sum), but never the default path exclusions.
 		if allowedext.IsExcludedPath(path) {
@@ -135,12 +164,30 @@ func (f componentFinder) Find(u unit.Unit) []unit.Clue {
 		if !ok || !selection.HasComponent {
 			continue
 		}
+		clues = append(clues, sourceRoleClues(path, selection.Roles)...)
 		key := componentKey(selection.Component)
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 		clues = append(clues, f.clues[key]...)
+	}
+	return clues
+}
+
+func sourceRoleClues(path string, roles project.FileRoles) []unit.Clue {
+	var clues []unit.Clue
+	if roles.Has(project.RoleEntrypoint) {
+		clues = append(clues, unit.Clue{
+			Kind: unit.ClueProject, Relation: unit.RelSelf, Ref: path,
+			Text: "component role: executable entrypoint; prioritize startup, dependency wiring, configuration, lifecycle, and externally observable impact",
+		})
+	}
+	if roles.Has(project.RoleHandler) {
+		clues = append(clues, unit.Clue{
+			Kind: unit.ClueProject, Relation: unit.RelSelf, Ref: path,
+			Text: "component role: request handler; prioritize input contracts, authentication, validation, service calls, and response semantics",
+		})
 	}
 	return clues
 }

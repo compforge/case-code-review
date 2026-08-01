@@ -8,18 +8,49 @@ import (
 var pythonProfile = profile{
 	kind:    Python,
 	markers: []string{"pyproject.toml", "setup.py"},
-	classify: func(file string) FileRole {
+	classify: func(root, file string) FileRoles {
 		switch strings.ToLower(path.Base(file)) {
 		case "pyproject.toml", "setup.py":
-			return RoleManifest
+			return FileRoles{RoleManifest}
 		case "uv.lock":
-			return RoleLock
+			return FileRoles{RoleLock}
 		}
-		switch strings.ToLower(path.Ext(file)) {
+		extension := strings.ToLower(path.Ext(file))
+		switch extension {
 		case ".py", ".pyi":
-			return RoleSource
+			roles := FileRoles{RoleSource}
+			base := strings.ToLower(path.Base(file))
+			if extension == ".py" && base == "__main__.py" {
+				roles = append(roles, RoleEntrypoint)
+			}
+			return roles
 		default:
-			return RoleUnknown
+			return FileRoles{RoleUnknown}
 		}
 	},
+}
+
+func enrichPythonRoles(file string, roles FileRoles, decorators, calls []string) FileRoles {
+	if !roles.Has(RoleSource) || strings.ToLower(path.Ext(file)) != ".py" {
+		return roles
+	}
+	for _, decorator := range decorators {
+		parts := strings.Split(strings.ToLower(decorator), ".")
+		if len(parts) < 2 {
+			continue
+		}
+		switch parts[len(parts)-1] {
+		case "get", "post", "put", "patch", "delete", "options", "head", "trace", "api_route", "websocket", "websocket_route":
+			roles = roles.With(RoleHandler)
+		}
+	}
+	if strings.EqualFold(path.Base(file), "main.py") {
+		for _, call := range calls {
+			if call == "FastAPI" {
+				roles = roles.With(RoleEntrypoint)
+				break
+			}
+		}
+	}
+	return roles
 }

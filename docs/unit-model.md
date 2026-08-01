@@ -12,22 +12,26 @@ Component。
 
 ```text
 Git Change ─▶ Component / FileRole
-                   ├─ source ─▶ Fragment ───────────▶ Unit{Fragments, Clues} ─▶ Briefing
-                   └─ manifest / lock ─▶ project Clue ────────────────▲
+                   ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues} ─▶ Briefing
+                   │     └─ entrypoint / handler ─▶ project Clue ─────▲
+                   └─ manifest / lock ────────────▶ project Clue ─────▲
 ```
 
 | 对象 | 语义 |
 |---|---|
 | `Change` | Git 层的一份文件变更 |
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
-| `FileRole` | 文件在所属 Component 中的稳定职责，如 source、manifest、lock |
+| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、entrypoint、handler、manifest、lock |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
 | `Briefing` | 从 Unit 投影出的本轮只读上下文，不改变 Unit 的领域语义 |
 
 FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
-事实。FileRole 不等于证据强度；同一个 lockfile 对依赖问题可能关键，对业务状态流转则只是背景。
+事实。角色不是互斥分类：`main.go` 可以同时是 `source + entrypoint`；Python 文件中存在
+`@router.get/post/...` 或 `@app.get/post/...` 等路由装饰器时，可以同时是 `source + handler`。
+FileRole 也不等于证据强度；同一个 lockfile 对依赖问题可能
+关键，对业务状态流转则只是背景。
 Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Unit
 Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
 
@@ -44,6 +48,13 @@ Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不�
 `pyproject.toml` 或 `go.mod`，CCR 明确报告没有 Unit Review target，不启动一个无意义的 agent loop。
 用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
 扩展名规则，保持已有行为。
+
+`entrypoint` / `handler` 不替代 `source`，而是作为 `self/project` Clue 随 Unit 进入 Review 1，随后
+随 CaseFile 进入 Review 2。入口文件提示评审初始化、配置装配和生命周期；handler 提示评审输入契约、
+鉴权、校验、service 调用和响应语义。Language 只提取 decorator / call 等源码事实，Project 再把
+`@router.get/post/...`、`@app.get/post/...` 解释为 FastAPI handler；`routers/`、`routes.py`、
+`handlers/`、`views/` 等路径名本身不构成 handler 证据。角色是项目先验，不直接证明某条 Finding；
+无法可靠识别时保持普通 source，不能靠猜测扩大影响。
 
 ### 2.2 从 Fragment 形成 Unit
 

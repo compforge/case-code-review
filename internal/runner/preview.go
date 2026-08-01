@@ -82,7 +82,7 @@ func (a *Runner) buildPreview() *Preview {
 
 		selection, classified := a.selectionFor(d)
 		if classified {
-			entry.FileRole = string(selection.Role)
+			entry.FileRole = selection.Roles.String()
 			entry.ProvidesContext = selection.Context
 			entry.WillReview = selection.Target
 			entry.ExcludeReason = selection.Reason
