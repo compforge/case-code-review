@@ -42,6 +42,9 @@ type Debrief struct {
 	// coverage COUNTS can stay flat while the pointed-at symbols all change
 	// (the typed-graph lesson: compare content, not counts).
 	ClueRefs []string
+	// ContextPaths keeps the statically known source paths by relation. Unlike
+	// Materials, these files may only be pointers available for on-demand reads.
+	ContextPaths map[string][]string
 	// Materials records each briefing material's fate: "whole <path>",
 	// "ranged <path>", "budget_miss <path>", "dropped <label>".
 	Materials []string

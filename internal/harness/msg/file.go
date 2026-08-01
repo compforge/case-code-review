@@ -97,6 +97,11 @@ func (f *File) Covers(g *File) bool {
 // default-filling logic — the header states what was actually shown.
 var fileReadHeader = regexp.MustCompile(`^File: (.+) \(Total lines: (\d+)\)\nIS_TRUNCATED: (?:true|false)\nLINE_RANGE: (\d+)-(\d+)\n`)
 
+// visibleFileHeader recognizes both file_read results and briefing File
+// messages. Briefing files omit IS_TRUNCATED and, for whole files, LINE_RANGE;
+// in that shape the header's total is the visible 1..N range.
+var visibleFileHeader = regexp.MustCompile(`^File: (.+) \(Total lines: (\d+)\)\n(?:IS_TRUNCATED: (?:true|false)\n)?(?:LINE_RANGE: (\d+)-(\d+)\n)?`)
+
 // FileReadToolName is the tool whose results are promoted to File messages.
 const FileReadToolName = "file_read"
 
@@ -111,6 +116,37 @@ func NewFile(path string, start, end, total int, content string) *File {
 		Total:   total,
 		Content: content,
 	}
+}
+
+// IsToolResult reports whether this File entered through file_read rather than
+// the initial briefing. Harness uses the distinction only for diagnostics and
+// duplicate-read guidance; both sources share the same context lifecycle.
+func (f *File) IsToolResult() bool { return f.toolCallID != "" }
+
+// VisibleFileRange recovers the path and range visibly present in a lowered
+// File message. It is used after context projection, where the typed File may
+// already have been lowered by the compression engine.
+func VisibleFileRange(text string) (path string, start, end, total int, ok bool) {
+	m := visibleFileHeader.FindStringSubmatch(text)
+	if m == nil {
+		return "", 0, 0, 0, false
+	}
+	total, err := strconv.Atoi(m[2])
+	if err != nil || total < 1 {
+		return "", 0, 0, 0, false
+	}
+	start, end = 1, total
+	if m[3] != "" || m[4] != "" {
+		start, err = strconv.Atoi(m[3])
+		if err != nil {
+			return "", 0, 0, 0, false
+		}
+		end, err = strconv.Atoi(m[4])
+		if err != nil || start < 1 || end < start {
+			return "", 0, 0, 0, false
+		}
+	}
+	return strings.TrimSpace(m[1]), start, end, total, true
 }
 
 // FileFromToolResult promotes a file_read tool result into a *File carrying

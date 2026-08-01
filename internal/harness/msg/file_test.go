@@ -39,6 +39,20 @@ func TestFileFromToolResult(t *testing.T) {
 	}
 }
 
+func TestVisibleFileRange(t *testing.T) {
+	path, start, end, total, ok := VisibleFileRange("File: pkg/a.go (Total lines: 12)\n1|package a\n")
+	if !ok || path != "pkg/a.go" || start != 1 || end != 12 || total != 12 {
+		t.Fatalf("whole briefing range = %q %d-%d/%d ok=%t", path, start, end, total, ok)
+	}
+	path, start, end, total, ok = VisibleFileRange(fileResult("pkg/a.go", 120, 10, 40, "10|code\n"))
+	if !ok || path != "pkg/a.go" || start != 10 || end != 40 || total != 120 {
+		t.Fatalf("ranged file result = %q %d-%d/%d ok=%t", path, start, end, total, ok)
+	}
+	if _, _, _, _, ok := VisibleFileRange("File: pkg/a.go lines 1-12 — elided"); ok {
+		t.Fatal("stubbed file must not count as visible coverage")
+	}
+}
+
 func TestFileStubKeepsPairing(t *testing.T) {
 	f := mkFile(t, "pkg/a.go", 120, 10, 40)
 	f.Stub(StubSuperseded)

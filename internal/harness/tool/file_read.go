@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-const fileReadMaxLines = 500
+// FileReadMaxLines is the largest range returned by one file_read call.
+// Context coverage checks use the same limit to recognize an exact repeat of
+// an unbounded read without executing the provider again.
+const FileReadMaxLines = 500
 
 // DiffPaths records what this review's diff did to paths that no longer exist
 // at the review ref (renames and deletions). A file_read miss on such a path
@@ -81,7 +84,7 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		endLine = 0
 	}
 
-	maxLines := fileReadMaxLines
+	maxLines := FileReadMaxLines
 	if endLine > 0 {
 		requested := int(endLine) - int(startLine) + 1
 		if requested <= 0 {
@@ -125,7 +128,7 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		effectiveEnd = int(endLine)
 	}
 	fullRange := effectiveEnd - (int(startLine) - 1)
-	truncated := fullRange > fileReadMaxLines
+	truncated := fullRange > FileReadMaxLines
 
 	displayEnd := int(startLine) - 1 + len(lines)
 
@@ -141,7 +144,7 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		sb.WriteString(fmt.Sprintf("%d|%s\n", int(startLine)+i, line))
 	}
 	if truncated {
-		sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", fileReadMaxLines))
+		sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", FileReadMaxLines))
 	}
 	return sb.String(), nil
 }

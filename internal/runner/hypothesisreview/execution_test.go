@@ -27,7 +27,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		reviewToolResponse("call-2", "task_done", `{}`),
 	}}
 	collector := NewAssessmentCollector()
-	result, err := harness.Execute(context.Background(), harness.ExecutionSpec{
+	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review the case")},
 		ToolDefs: []llm.ToolDef{
@@ -48,6 +48,10 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		MaxTurns:    2,
 		MaxTokens:   1_000,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := execution.Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

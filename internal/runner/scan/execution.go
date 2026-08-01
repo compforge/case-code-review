@@ -71,7 +71,7 @@ func (e *scanExecutor) Run(
 	scope session.Scope,
 ) (harness.ExecutionResult, error) {
 	run := &scanExecution{executor: e, ctx: ctx}
-	result, err := harness.Execute(ctx, harness.ExecutionSpec{
+	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient:               e.llmClient,
 		Model:                   e.model,
 		Messages:                messages,
@@ -91,6 +91,10 @@ func (e *scanExecutor) Run(
 		CompressionUpdatePrompt: e.compressionPrompt,
 		CompressionPrefixPrompt: e.compressionPrompt,
 	})
+	if err != nil {
+		return harness.ExecutionResult{}, err
+	}
+	result, err := execution.Run(ctx)
 	e.RecordUsage(&result.Usage)
 
 	reason := result.Reason

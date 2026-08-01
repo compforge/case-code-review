@@ -93,3 +93,41 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 		t.Fatalf("session tools = %+v", got.ToolUsage)
 	}
 }
+
+func TestLoadSessionBuildsFileReadSignals(t *testing.T) {
+	root := t.TempDir()
+	repo := "example-repo"
+	sessionID := "session-file-reads"
+	dir := filepath.Join(root, repo)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"user","content":"review"}]}`,
+		`{"type":"llm_response","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","content":"reading","tool_calls":[{"name":"file_read","arguments":"{\"file_path\":\"a.go\"}"},{"name":"file_read","arguments":"{\"file_path\":\"caller.go\"}"},{"name":"file_read","arguments":"{\"file_path\":\"caller.go\",\"start_line\":20}"},{"name":"file_read","arguments":"{\"file_path\":\"other.go\"}"}]}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"Already available in the current context from the initial briefing: a.go lines 1-10.","ok":true}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"caller","ok":true}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"caller range","ok":true}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"other","ok":true}`,
+		`{"type":"debrief","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","materials":["whole a.go"],"context_paths":{"caller":["caller.go"],"callee":["callee.go"]}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadSession(root, repo, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Reviews) != 1 {
+		t.Fatalf("reviews = %d, want 1", len(got.Reviews))
+	}
+	review := got.Reviews[0]
+	want := FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, MaterialFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1}
+	if review.FileReads != want {
+		t.Fatalf("file read metrics = %+v, want %+v", review.FileReads, want)
+	}
+	if !review.HasMaterials || !review.HasContextPaths {
+		t.Fatalf("debrief coverage flags missing: %+v", review)
+	}
+}

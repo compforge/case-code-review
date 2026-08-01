@@ -125,7 +125,7 @@ func (e *Executor) Run(
 	if e.board != nil {
 		turnContext = run
 	}
-	result, err := harness.Execute(ctx, harness.ExecutionSpec{
+	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient:               e.llmClient,
 		Model:                   e.model,
 		Messages:                messages,
@@ -148,6 +148,10 @@ func (e *Executor) Run(
 		CompressionUpdatePrompt: e.compressionPrompt,
 		CompressionPrefixPrompt: e.compressionPrompt,
 	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	result, err := execution.Run(ctx)
 	e.RecordUsage(&result.Usage)
 
 	reason := result.Reason

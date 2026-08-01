@@ -1001,13 +1001,14 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// (formation, briefing fate, outcome) — post-hoc analysis can't rebuild it.
 	// Cost rollup is filled by WriteDebrief from the scope's task records.
 	deb := session.Debrief{
-		Formed:     string(u.Formed),
-		Fragments:  len(u.Fragments),
-		Insertions: u.Insertions(),
-		Deletions:  u.Deletions(),
-		Clues:      countClues(u.Clues),
-		ClueRefs:   clueRefs(u.Clues),
-		UsageSites: usageCount,
+		Formed:       string(u.Formed),
+		Fragments:    len(u.Fragments),
+		Insertions:   u.Insertions(),
+		Deletions:    u.Deletions(),
+		Clues:        countClues(u.Clues),
+		ClueRefs:     clueRefs(u.Clues),
+		ContextPaths: cluePaths(u.Clues),
+		UsageSites:   usageCount,
 	}
 
 	maxAllowed := a.args.Template.MaxTokens
@@ -1080,6 +1081,31 @@ func clueRefs(clues []unit.Clue) []string {
 		}
 	}
 	return slicesx.Uniq(refs)
+}
+
+// cluePaths preserves the relation that made a source file statically known
+// to the Unit. The viewer compares these paths with later file_read calls;
+// this is deliberately separate from Materials, which records what was
+// actually placed in the initial prompt.
+func cluePaths(clues []unit.Clue) map[string][]string {
+	paths := map[string][]string{}
+	for _, clue := range clues {
+		var filePath string
+		if clue.Relation == unit.RelProject {
+			filePath = clue.Ref
+		} else if path, _, ok := language.SplitSymbolID(clue.Ref); ok {
+			filePath = path
+		}
+		if filePath == "" {
+			continue
+		}
+		key := string(clue.Relation)
+		paths[key] = append(paths[key], filePath)
+	}
+	for relation, values := range paths {
+		paths[relation] = slicesx.Uniq(values)
+	}
+	return paths
 }
 
 // fileReader unwraps the file_read tool's FileReader so the preload reads exactly

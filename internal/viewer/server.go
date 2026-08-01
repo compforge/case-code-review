@@ -100,6 +100,12 @@ func parseTemplate(name string) (*template.Template, error) {
 		"formatDuration": formatDuration,
 		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },
 		"formatInt":      formatInt,
+		"formatRatio": func(value, total int) string {
+			if total == 0 {
+				return "-"
+			}
+			return fmt.Sprintf("%d/%d (%d%%)", value, total, value*100/total)
+		},
 		"formatSigned": func(n int) string {
 			if n > 0 {
 				return "+" + formatInt(n)

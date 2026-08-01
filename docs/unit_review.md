@@ -207,6 +207,17 @@ other_changed_files_count: 17
 
 目标是降低后续 prompt 的注意力噪声，而不是为了压缩再增加一轮昂贵 LLM summary。
 
+`file_read` 需要区分两个信号，不能合成一个“重复率”：
+
+- **已覆盖读取**：请求范围此刻仍完整存在于 briefing 或先前工具结果中。Harness 直接返回复用提示，
+  避免再次装入同一份内容；若范围只部分覆盖或内容已被淘汰，仍正常执行读取。
+- **同路径重复读取**：一个 Unit 内多次读取同一路径。它用于发现探索回环，但不同调用可能读取不同
+  行范围，不能仅凭路径相同判定为浪费。
+
+Session debrief 同时记录实际组装的 briefing materials，以及 Unit 按 caller/callee/project 等关系
+静态知道的路径。Viewer 将二者分别与 `file_read` 对比：前者判断预载是否命中，后者回答“静态分析
+本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
+
 ### 7. 跨 Unit 协作只交换高价值主张
 
 多个 Unit 可以通过 run 级 Board 共享已经确认的事实和可能影响其他 Unit 的主张，但 Board 不是
