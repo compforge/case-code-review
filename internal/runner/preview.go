@@ -57,6 +57,7 @@ func (a *Runner) Preview(ctx context.Context) (*Preview, error) {
 	if err := a.loadChanges(ctx); err != nil {
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
+	a.prepareFileSelections(ctx)
 	return a.buildPreview(), nil
 }
 
@@ -79,17 +80,31 @@ func (a *Runner) buildPreview() *Preview {
 			Status:     diffStatus(d),
 		}
 
-		reason := a.whyExcluded(d)
-		if reason == ExcludeNone && d.IsDeleted {
-			reason = ExcludeDeleted
+		selection, classified := a.selectionFor(d)
+		if classified {
+			entry.FileRole = string(selection.Role)
+			entry.ProvidesContext = selection.Context
+			entry.WillReview = selection.Target
+			entry.ExcludeReason = selection.Reason
+			if selection.HasComponent {
+				entry.ComponentRoot = selection.Component.Root
+				entry.ComponentKind = string(selection.Component.Kind)
+			}
+		} else {
+			reason := a.whyExcluded(d)
+			if reason == ExcludeNone && d.IsDeleted {
+				reason = ExcludeDeleted
+			}
+			entry.WillReview = reason == ExcludeNone
+			entry.ExcludeReason = reason
 		}
 
-		entry.WillReview = reason == ExcludeNone
-		entry.ExcludeReason = reason
-
-		if entry.WillReview {
+		switch {
+		case entry.WillReview:
 			result.ReviewableCount++
-		} else {
+		case entry.ProvidesContext:
+			result.ContextCount++
+		default:
 			result.ExcludedCount++
 		}
 

@@ -24,6 +24,7 @@ case-code-review/
 ├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
 └── internal/
     ├── runner/     ★ 顶层编排：选择 git-change / full-scan 输入，形成 Unit，交给 Harness；`review` 持有 Hypothesis → CaseFile → Assessment → Trial，`finding` 只承载最终结果
+    ├── project/    Repository、manifest 定义的 Component 与 FileRole；提供项目结构知识，决定 source 进入 Unit、manifest/lock 成为项目 Clue
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
     ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 汇总 Clue、Dossier 与 Briefing。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentcore 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`llmloop` 作为旧实现自包含保留，仓库其他包不再依赖。详见 `docs/harness.md`
@@ -35,7 +36,8 @@ case-code-review/
 **主链路**：
 
 ```
-git change ─▶ Change ─Splitter─▶ Fragment ─Merger─▶ Unit
+git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Merger─▶ Unit
+                                      └─▶ manifest/lock ─▶ project Clue
     ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis ─▶ CaseFile
     ─▶ Hypothesis Review ─▶ Assessment ─Trial─▶ Finding
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
@@ -48,7 +50,7 @@ full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ## 关键约定（核心七条）
 
 1. **评审语义 = 契约守恒，不是找语法 bug**：核对 diff 有没有破坏函数的 spec/case/rule 不变量；**语法 / 静态检查交给 lint 类工具**（Python `ruff`、Go `go build`/`go vet` 之类），不是 ccr 的活。
-2. **Fragment vs Unit 别混**：Splitter 从 Change 切出 Fragment；Merger 归并成 Unit（触发 loop 的那个，可能是单个、也可能是几个沿阶梯归并的更粗 Unit）。单文件变更直接收为一个 File Unit；多文件才按调用链重组，成本超水位再按文件归并——**降 loop 粒度、不降 context**。
+2. **Component、FileRole、Unit 别混**：Component 是 manifest 定义的静态项目边界，FileRole 决定本轮 source 进入 Splitter、manifest/lock 成为同 Component 的项目 Clue；Unit 才是触发 loop 的动态行为边界。只有一个 target 文件时直接收为 File Unit；多文件才按调用链重组——**降 loop 粒度、不降 context**。
 3. **边界现场算、`spec.json` 只语义**：函数边界评审时由 `internal/language` 现场解析、**永不落盘**（不 stale）；parser / compiler / gotreesitter 不得泄漏到 unit/codegraph，使用方只消费语言事实；`spec.json` 只有 `FuncID → spec/cases/rules/links`、**无行号**；join key 是 symbol-id `<relpath>::<symbol>`（与 spec-case 一致）。
 4. **上下文分廉价 / 昂贵两档，重活有闸**：廉价 finder（spec.json 查 spec/case/rule/link）总跑；昂贵 finder（caller/callee 的 call-graph grep）走**预算闸门**——diff unit 数超水位就跳（反正要归并、per-func 上下文也被稀释）。link 指向的 doc/函数**内容**仍按需 tool 取，不预塞。
 
@@ -69,7 +71,7 @@ full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
   与 HTML Viewer 可观测性——`docs/harness.md`
 - spec/case/rule/link 资产、各语言写法、`spec.json` schema、symbol-id 契约、**产 `spec.json` 的 `specgen`**（Go + Python）：[`spec-case`](https://github.com/qiankunli/spec-case)
 - 查覆盖 / 调试：`ccr review --dry-run` 打印每个 review unit 装配的上下文，不调 LLM（端到端：marker → specgen → spec.json → `--dry-run`）
-- Unit 与上下文：`Fragment` / `Unit` 作用域、Clue / Dossier 两轴上下文、图事实消费与 Briefing
+- Component、Unit 与上下文：`FileRole`、`Fragment` / `Unit` 作用域、Clue / Dossier 两轴上下文、图事实消费与 Briefing
   ——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
 - Unit Review：Review 1 的有界探索、原子完成、上下文治理与 Board/Bulletin 跨 Unit 协作

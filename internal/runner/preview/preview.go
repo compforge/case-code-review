@@ -15,12 +15,16 @@ const (
 
 // Entry is one file's preview record (mode-agnostic).
 type Entry struct {
-	Path          string        `json:"path"`
-	Status        string        `json:"status"`
-	Insertions    int64         `json:"insertions"`
-	Deletions     int64         `json:"deletions"`
-	WillReview    bool          `json:"will_review"`
-	ExcludeReason ExcludeReason `json:"exclude_reason,omitempty"`
+	Path            string        `json:"path"`
+	Status          string        `json:"status"`
+	Insertions      int64         `json:"insertions"`
+	Deletions       int64         `json:"deletions"`
+	WillReview      bool          `json:"will_review"`
+	ProvidesContext bool          `json:"provides_context,omitempty"`
+	ComponentRoot   string        `json:"component_root,omitempty"`
+	ComponentKind   string        `json:"component_kind,omitempty"`
+	FileRole        string        `json:"file_role,omitempty"`
+	ExcludeReason   ExcludeReason `json:"exclude_reason,omitempty"`
 }
 
 // Preview is the full preview result, mode-agnostic so cmd/ccr
@@ -31,5 +35,6 @@ type Preview struct {
 	TotalDeletions  int64   `json:"total_deletions"`
 	TotalFiles      int     `json:"total_files"`
 	ReviewableCount int     `json:"reviewable_count"`
+	ContextCount    int     `json:"context_count,omitempty"`
 	ExcludedCount   int     `json:"excluded_count"`
 }

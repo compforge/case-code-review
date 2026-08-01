@@ -5,30 +5,53 @@
 CCR 不把“文件”直接等同于评审任务。文件是源码的存储边界，**Unit 才是一次行为审查的边界**：
 它应尽量容纳理解同一项行为变化所需的改动，同时避免把互不相关的变化塞进同一个 agent loop。
 
+一个 Git Repository 可以包含多个 manifest 定义的 **Component**，例如 `backend/pyproject.toml`
+定义 Python Component、仓根 `go.mod` 定义 Go Component。Component 是静态项目边界，Unit 是一次
+diff 动态形成的评审边界；一个 Component 可以产生多个 Unit，Repository 级文件也可以不属于任何
+Component。
+
 ```text
-Git Change ─▶ Fragment ─▶ Unit ─▶ Dossier ─▶ Briefing
-                 改了什么    审什么     已知什么      本轮看到什么
+Git Change ─▶ Component / FileRole
+                   ├─ source ─▶ Fragment ─▶ Unit ─▶ Dossier ─▶ Briefing
+                   └─ manifest / lock ──────────────▶ Clue
 ```
 
 | 对象 | 语义 |
 |---|---|
 | `Change` | Git 层的一份文件变更 |
+| `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
+| `FileRole` | 文件在所属 Component 中的稳定职责，如 source、manifest、lock |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 应由一次 Unit Review 共同判断的行为范围 |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
 | `Dossier` | 按关系与种类组织后的 Unit 案卷，不受 prompt 形状限制 |
 | `Briefing` | 从 Dossier 投影出的本轮只读上下文 |
 
-Unit 与上下文是两个正交问题：Unit 决定“哪些改动一起审”，Dossier 决定“审它时带哪些事实”。
+FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
+事实。FileRole 不等于证据强度；同一个 lockfile 对依赖问题可能关键，对业务状态流转则只是背景。
+Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Dossier
+Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
 
 ## 2. 流程
 
-### 2.1 从 Fragment 形成 Unit
+### 2.1 先区分 Unit target 与项目上下文
+
+每个 Change 先按最近的 Component 与 FileRole 分类。Component 身份来自项目 manifest，而不是任意
+构建文件：Python 使用 `pyproject.toml` / `setup.py`，Go 使用 `go.mod`。历史 range / commit review
+必须在被评审的目标 tree 上判断，不能借用当前工作区状态。
+
+当前只启用 Unit Review，因此 source 是 target；同 Component 中发生变化的 manifest / lock 形成
+`project/project` Clue，只向该 Component 的 Unit 提供路径、角色和按需 diff 指针。若只变化
+`pyproject.toml` 或 `go.mod`，CCR 明确报告没有 Unit Review target，不启动一个无意义的 agent loop。
+用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
+扩展名规则，保持已有行为。
+
+### 2.2 从 Fragment 形成 Unit
 
 Unit 粒度是一条从小到大的阶梯，而不是固定按函数或文件：
 
-1. 语言层把 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
-2. 若一次 review 只改一个文件，直接收为一个 file Unit。一次 loop 共同理解同文件内的相关改动，
+1. 语言层只把选为 target 的 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
+2. 若 Unit Review 只有一个 target 文件，直接收为一个 file Unit。一次 loop 共同理解同文件内的相关改动，
    通常比机械地逐函数启动多个 loop 更快、更完整。
 3. 若改动跨多个文件，先用高置信调用关系合并真正协作的 Fragment。例如 `func1` 调用另一文件
    的 `func3`，两者可形成 call-chain Unit；无关的 `func2` 保持独立。
@@ -37,12 +60,12 @@ Unit 粒度是一条从小到大的阶梯，而不是固定按函数或文件：
 合并的目标不是追求更少 Unit，而是让每个 Unit 接近一个可独立判断的行为变化。调用图没有足够
 置信度时宁可保持分离，再通过 Clue 补充邻域；错误合并会同时放大 token、推理和归因成本。
 
-### 2.2 为 Unit 组织上下文
+### 2.3 为 Unit 组织上下文
 
 Clue 用两个正交维度表达上下文：
 
-- **Relation**：事实与 Unit 的关系，如 `self`、`owner`、`caller`、`callee`、`used`。
-- **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`。
+- **Relation**：事实与 Unit 的关系，如 `self`、`owner`、`caller`、`callee`、`used`、`project`。
+- **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`、`project`。
 
 因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
 不决定 prompt 排版；Dossier 先保存完整语义，Briefing 再按预算、优先级和消息形状投影。
@@ -55,7 +78,7 @@ Unit
                  └─ Briefing / typed file messages
 ```
 
-### 2.3 静态 Briefing 与按需工具
+### 2.4 静态 Briefing 与按需工具
 
 Briefing 只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
 未知路径和低概率细节由 Unit Review 通过只读工具按需获取。

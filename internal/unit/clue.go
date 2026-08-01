@@ -13,6 +13,9 @@ const (
 	ClueRule ClueKind = "rule" // review criterion (@rule)
 	ClueLink ClueKind = "link" // curated see-also pointer (@link)
 	ClueDoc  ClueKind = "doc"  // symbol docstring, read from source (adoption-free)
+	// ClueProject points at a changed manifest or lockfile belonging to the
+	// Unit's Component. It remains on-demand context rather than a review target.
+	ClueProject ClueKind = "project"
 	// ClueHistory carries a prior review's findings on this symbol, so the reviewer
 	// can judge whether the current change addresses them (the review-history
 	// feedback loop).
@@ -23,11 +26,12 @@ const (
 type Relation string
 
 const (
-	RelSelf   Relation = "self"   // the changed symbol itself
-	RelOwner  Relation = "owner"  // its enclosing type/func (a method's class)
-	RelCaller Relation = "caller" // a caller (upstream to the governing spec)
-	RelCallee Relation = "callee" // a callee (a depended-on contract)
-	RelUsed   Relation = "used"   // a type/func the diff references
+	RelSelf    Relation = "self"    // the changed symbol itself
+	RelOwner   Relation = "owner"   // its enclosing type/func (a method's class)
+	RelCaller  Relation = "caller"  // a caller (upstream to the governing spec)
+	RelCallee  Relation = "callee"  // a callee (a depended-on contract)
+	RelUsed    Relation = "used"    // a type/func the diff references
+	RelProject Relation = "project" // a project file in the same Component
 )
 
 // Clue is one piece of review context reached for a Unit: a contract, a review

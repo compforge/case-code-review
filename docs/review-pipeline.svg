@@ -3,7 +3,8 @@
   <desc>
     A diff is organized into review Units and enriched with Clues. Divergent
     Unit Review produces Hypotheses in a CaseFile. Independent Hypothesis Review
-    produces Assessments, and deterministic Trial publishes Findings.
+    produces Assessments, and deterministic Trial publishes Findings. Language
+    Knowledge and Project Knowledge support the whole review flow.
   </desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
@@ -21,6 +22,7 @@
       .box { stroke: #111827; stroke-width: 2.6; }
       .soft-box { stroke: #8a94a6; stroke-width: 1.8; }
       .flow { fill: none; stroke: #111827; stroke-width: 2.8; marker-end: url(#arrow); }
+      .knowledge-line { fill: none; stroke: #5b7f86; stroke-width: 1.8; }
     </style>
   </defs>
 
@@ -85,8 +87,16 @@
   <text x="1700" y="253" text-anchor="middle" class="label">Finding</text>
   <text x="1700" y="281" text-anchor="middle" class="tiny">最终交付</text>
 
-  <rect x="450" y="402" width="900" height="48" rx="24" fill="#f7f8fc" class="soft-box"/>
-  <text x="900" y="432" text-anchor="middle" class="small">
-    “侦查 / 复核 / 审判”只用于理解责任分工；CCR 的真实阶段是 Unit Review / Hypothesis Review / Trial
-  </text>
+  <!-- Knowledge foundations shared by Unit formation and both review stages. -->
+  <path d="M325 335 V375 H1150 M585 350 V375 M850 350 V375 M1120 350 V375" class="knowledge-line"/>
+  <line x1="650" y1="375" x2="650" y2="397" class="knowledge-line"/>
+  <line x1="1150" y1="375" x2="1150" y2="397" class="knowledge-line"/>
+
+  <rect x="440" y="397" width="420" height="88" rx="18" fill="#e8f4f6" class="soft-box"/>
+  <text x="650" y="430" text-anchor="middle" class="label">Language Knowledge</text>
+  <text x="650" y="459" text-anchor="middle" class="small">symbol · definition · reference · call</text>
+
+  <rect x="940" y="397" width="420" height="88" rx="18" fill="#e8f4f6" class="soft-box"/>
+  <text x="1150" y="430" text-anchor="middle" class="label">Project Knowledge</text>
+  <text x="1150" y="459" text-anchor="middle" class="small">Repository · Component · FileRole · manifest</text>
 </svg>

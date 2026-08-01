@@ -50,6 +50,7 @@ func TestRenderClues(t *testing.T) {
 		{Kind: unit.ClueRule, Text: "hot path"},
 		{Kind: unit.ClueLink, Text: "docs/x.md (doc)"},
 		{Kind: unit.ClueHistory, Text: "prior: missing nil check"},
+		{Kind: unit.ClueProject, Relation: unit.RelProject, Ref: "pyproject.toml", Text: "changed manifest"},
 	})
 	if specCases != "F spec\n  - case" {
 		t.Errorf("specCases: %q", specCases)
@@ -62,6 +63,12 @@ func TestRenderClues(t *testing.T) {
 	}
 	if prior != "prior: missing nil check" {
 		t.Errorf("prior: %q", prior)
+	}
+	project := renderProjectContext([]unit.Clue{
+		{Kind: unit.ClueProject, Relation: unit.RelProject, Ref: "pyproject.toml", Text: "changed manifest"},
+	})
+	if project != "- (same Component project context `pyproject.toml`) changed manifest" {
+		t.Errorf("project context: %q", project)
 	}
 
 	if s, r, l, h := renderClues(nil); s != "" || r != "" || l != "" || h != "" {

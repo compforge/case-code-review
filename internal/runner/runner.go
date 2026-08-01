@@ -143,14 +143,17 @@ type Args struct {
 // generic agent loop; this struct owns Unit formation, review extensions and
 // run-level aggregation.
 type Runner struct {
-	args            Args
-	changes         []change.Change // parsed diffs
-	totalInsertions int64
-	totalDeletions  int64
-	currentDate     string
-	session         *session.SessionHistory
-	unitFailed      int64 // count of failed unit reviews, accessed atomically
-	executor        *unitExecutor
+	args             Args
+	changes          []change.Change // parsed diffs
+	fileSelections   map[string]fileSelection
+	componentClues   map[string]unit.Dossier
+	contextFileCount int
+	totalInsertions  int64
+	totalDeletions   int64
+	currentDate      string
+	session          *session.SessionHistory
+	unitFailed       int64 // count of failed unit reviews, accessed atomically
+	executor         *unitExecutor
 	// splitter turns each changed file's diff into diff units (one per changed
 	// function); merger consolidates those into review units (what actually
 	// triggers a review loop). Both set in New().
@@ -321,6 +324,7 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 		diffSpan.End()
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
+	a.prepareFileSelections(ctx)
 	telemetry.SetAttr(diffSpan, "files.changed", len(a.changes))
 	telemetry.SetAttr(diffSpan, "lines.inserted", int64(a.totalInsertions))
 	telemetry.SetAttr(diffSpan, "lines.deleted", int64(a.totalDeletions))
@@ -333,12 +337,17 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 
 	totalChanged := len(a.changes)
 	reviewCount := a.countReviewable(a.changes)
-	fmt.Fprintf(console.Out(), "[ccr] %d file(s) changed, reviewing %d in %s\n", totalChanged, reviewCount, a.args.RepoDir)
+	fmt.Fprintf(console.Out(), "[ccr] %d file(s) changed, reviewing %d with %d project context file(s) in %s\n",
+		totalChanged, reviewCount, a.contextFileCount, a.args.RepoDir)
 
 	a.changes = a.filterDiffs(a.changes)
 
 	if len(a.changes) == 0 {
-		fmt.Fprintln(console.Out(), "[ccr] No supported files changed. Skipping review.")
+		if a.contextFileCount > 0 {
+			fmt.Fprintf(console.Out(), "[ccr] No Unit Review targets; %d project context file(s) changed. Skipping review.\n", a.contextFileCount)
+		} else {
+			fmt.Fprintln(console.Out(), "[ccr] No supported files changed. Skipping review.")
+		}
 		telemetry.Event(ctx, "no.files.changed")
 		a.session.Finalize()
 		return []finding.Finding{}, nil
@@ -800,9 +809,16 @@ func unitInterest(u unit.Unit) board.Interest {
 	for _, s := range u.AllSymbols() {
 		in.Symbols[s] = true
 	}
-	for _, ref := range clueRefs(u.Dossier) {
-		in.Symbols[ref] = true
-		if path, _, ok := language.SplitSymbolID(ref); ok {
+	for _, clue := range u.Dossier {
+		if clue.Ref == "" {
+			continue
+		}
+		if clue.Relation == unit.RelProject {
+			in.Paths[clue.Ref] = true
+			continue
+		}
+		in.Symbols[clue.Ref] = true
+		if path, _, ok := language.SplitSymbolID(clue.Ref); ok {
 			in.Paths[path] = true
 		}
 	}
@@ -823,6 +839,7 @@ func (a *Runner) findClues(u unit.Unit, includeCostly bool) unit.Dossier {
 			clues = append(clues, f.Find(u)...)
 		}
 	}
+	clues = append(clues, (componentFinder{selections: a.fileSelections, clues: a.componentClues}).Find(u)...)
 	return dedupClues(clues)
 }
 
@@ -856,6 +873,10 @@ func renderClues(clues unit.Dossier) (specCases, rules, seeAlso, priorFindings s
 			// Prior-review findings: not a contract — the reviewer reconciles them
 			// (already framed as an adjudication task by the history finder).
 			historyBlocks = append(historyBlocks, c.Text)
+		case unit.ClueProject:
+			// Project context has its own prompt section; it is neither a
+			// governing contract nor a review target.
+			continue
 		default:
 			// A new ClueKind added without a case here surfaces as context rather
 			// than being silently dropped.
@@ -863,6 +884,16 @@ func renderClues(clues unit.Dossier) (specCases, rules, seeAlso, priorFindings s
 		}
 	}
 	return strings.Join(specBlocks, "\n"), strings.Join(ruleLines, "\n"), strings.Join(linkLines, "\n"), strings.Join(historyBlocks, "\n")
+}
+
+func renderProjectContext(clues unit.Dossier) string {
+	var lines []string
+	for _, clue := range clues {
+		if clue.Kind == unit.ClueProject {
+			lines = append(lines, "- "+clueLabel(clue)+clue.Text)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // clueLabel words how a clue reached the unit, from (relation, kind, ref) — the
@@ -898,6 +929,8 @@ func clueLabel(c unit.Clue) string {
 			return "callee `" + c.Ref + "` (docstring): "
 		}
 		return "(depends on callee " + c.Ref + ", which guarantees)\n"
+	case unit.RelProject:
+		return "(same Component project context `" + c.Ref + "`) "
 	}
 	return ""
 }
@@ -927,6 +960,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 
 	// Render this unit's found context (clues) into the prompt blocks.
 	specCases, specRules, seeAlso, priorFindings := renderClues(u.Dossier)
+	projectContext := renderProjectContext(u.Dossier)
 	// Pre-grep where else the repo references the changed symbols ({{usage_sites}}).
 	usageSites, usageCount := a.renderUsageSites(u)
 	// Per-function @rule (from clues) augments the path-glob rule.json criteria;
@@ -986,6 +1020,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 			content = strings.ReplaceAll(content, "{{usage_sites}}", usageSites)
 			content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
 			content = strings.ReplaceAll(content, "{{spec_cases}}", specCases)
+			content = strings.ReplaceAll(content, "{{project_context}}", projectContext)
 			// Curated see-also pointers; the reviewer fetches content on demand.
 			content = strings.ReplaceAll(content, "{{see_also}}", seeAlso)
 			// Run-level ranked symbol map (real names, anti-guessing).
@@ -1193,6 +1228,9 @@ func (a *Runner) countReviewable(changes []change.Change) int {
 
 // shouldReview applies the filter algorithm via whyExcluded.
 func (a *Runner) shouldReview(d change.Change) bool {
+	if selection, ok := a.selectionFor(d); ok {
+		return selection.Target
+	}
 	return a.whyExcluded(d) == ExcludeNone
 }
 
@@ -1205,7 +1243,10 @@ func (a *Runner) filterDiffs(changes []change.Change) []change.Change {
 	for _, d := range changes {
 		path := effectivePath(d)
 		if !a.shouldReview(d) {
-			if d.IsBinary {
+			if selection, ok := a.selectionFor(d); ok && selection.Context {
+				fmt.Fprintf(console.Out(), "[ccr] Using %s as %s component context\n", path, selection.Role)
+				continue
+			} else if d.IsBinary {
 				fmt.Fprintf(console.Out(), "[ccr] Skipping %s — binary file\n", path)
 			} else {
 				fmt.Fprintf(console.Out(), "[ccr] Skipping %s — filtered by path/extension rules\n", path)
