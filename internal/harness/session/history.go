@@ -143,17 +143,22 @@ type TokenUsage struct {
 
 // ResponseRecord holds the parsed LLM response.
 type ResponseRecord struct {
-	Content   string
-	ToolCalls []llm.ToolCall
-	Model     string
-	Usage     *TokenUsage
+	Content    string
+	Reasoning  string
+	StopReason string
+	ToolCalls  []llm.ToolCall
+	Model      string
+	Usage      *TokenUsage
 }
 
 // ToolResultRecord records the result of a tool call executed after the LLM response.
 type ToolResultRecord struct {
-	ToolName  string
-	Arguments string
-	Result    string
+	ToolCallID string
+	ToolName   string
+	Arguments  string
+	Result     string
+	OK         bool
+	Duration   time.Duration
 }
 
 // SessionOptions holds optional metadata for a new session. The manifest
@@ -402,6 +407,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 	if choice.Message.Content != nil {
 		content = *choice.Message.Content
 	}
+	reasoning := choice.Message.ReasoningContent
 
 	var promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens int
 	if resp.Usage != nil {
@@ -413,7 +419,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		for _, m := range tr.RequestMessages {
 			promptTokens += llm.CountTokens(m.ExtractText())
 		}
-		completionTokens = llm.CountTokens(content)
+		completionTokens = llm.CountTokens(content + reasoning)
 	}
 
 	usage := &TokenUsage{
@@ -424,10 +430,12 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 	}
 
 	tr.Response = &ResponseRecord{
-		Content:   content,
-		ToolCalls: choice.Message.ToolCalls,
-		Model:     resp.Model,
-		Usage:     usage,
+		Content:    content,
+		Reasoning:  reasoning,
+		StopReason: choice.FinishReason,
+		ToolCalls:  choice.Message.ToolCalls,
+		Model:      resp.Model,
+		Usage:      usage,
 	}
 	tr.Duration = duration
 
@@ -441,7 +449,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 					"arguments": tc.Function.Arguments,
 				})
 			}
-			p.WriteLLMResponse(ss, tr.Type, content, toolCallsJSON, resp.Model, *usage, duration)
+			p.WriteLLMResponse(ss, tr.Type, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage, duration)
 		}
 	}
 }
@@ -477,15 +485,24 @@ func (sh *SessionHistory) LLMFailures() int64 {
 // AddToolResult appends a tool call result to this task record and writes a
 // tool_call record to the JSONL stream.
 func (tr *TaskRecord) AddToolResult(toolName, arguments, result string) {
+	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0)
+}
+
+// AddToolResultWithMetadata records the stable call identity and execution
+// outcome so concurrent calls to the same tool remain distinguishable.
+func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) {
 	tr.ToolResults = append(tr.ToolResults, ToolResultRecord{
-		ToolName:  toolName,
-		Arguments: arguments,
-		Result:    result,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		Arguments:  arguments,
+		Result:     result,
+		OK:         ok,
+		Duration:   duration,
 	})
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteToolCall(ss, tr.Type, toolName, arguments, result, true, 0)
+			p.WriteToolCall(ss, tr.Type, toolCallID, toolName, arguments, result, ok, duration)
 		}
 	}
 }

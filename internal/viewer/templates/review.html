@@ -89,6 +89,79 @@
 </table>
 {{end}}
 
+<h3>Agent Loop</h3>
+<div class="review-view-tabs" role="tablist" aria-label="Agent loop views">
+    <button class="review-view-tab is-active" type="button" role="tab" aria-selected="true" data-review-view="conversation">Conversation</button>
+    <button class="review-view-tab" type="button" role="tab" aria-selected="false" data-review-view="turns">Turns</button>
+</div>
+
+<section class="review-view" data-review-panel="conversation">
+{{if .Review.Conversation}}
+<div class="conversation-layout">
+    <div class="conversation-rail" role="tree" aria-label="Conversation events">
+    {{range $i, $node := .Review.Conversation}}
+        <button type="button" role="treeitem" class="conversation-node node-{{$node.Kind}} {{if $node.Depth}}node-child{{end}} {{if eq $i 0}}is-active{{end}}" data-conversation-node="{{$node.ID}}">
+            <span class="conversation-node-head">
+                <span class="conversation-kind">{{$node.Label}}</span>
+                {{if $node.DurationMs}}<span class="conversation-node-meta">{{formatMillis $node.DurationMs}}</span>{{end}}
+            </span>
+            {{if $node.Preview}}<span class="conversation-preview">{{$node.Preview | truncate 90}}</span>{{end}}
+        </button>
+    {{end}}
+    </div>
+    <div class="conversation-inspector">
+    {{range $i, $node := .Review.Conversation}}
+        <article class="conversation-detail" data-conversation-detail="{{$node.ID}}" {{if ne $i 0}}hidden{{end}}>
+            <div class="conversation-detail-header">
+                <div>
+                    <div class="conversation-detail-kicker">{{$node.Kind}}</div>
+                    <h4>{{$node.Label}}</h4>
+                </div>
+                <div class="call-meta conversation-detail-meta">
+                    {{if $node.Model}}<span class="badge badge-model">{{$node.Model}}</span>{{end}}
+                    {{if $node.TurnNo}}<span class="badge badge-scope">Turn {{$node.TurnNo}}</span>{{end}}
+                    {{if or $node.PromptTokens $node.CompletionTokens}}<span class="badge badge-tokens">P:{{formatInt $node.PromptTokens}} C:{{formatInt $node.CompletionTokens}}</span>{{end}}
+                    {{if $node.DurationMs}}<span class="badge badge-duration">{{formatMillis $node.DurationMs}}</span>{{end}}
+                    {{if $node.StopReason}}<span class="badge badge-scope">{{$node.StopReason}}</span>{{end}}
+                    {{if $node.Error}}<span class="badge badge-error">{{$node.Error}}</span>{{end}}
+                    {{if and (eq $node.Kind "tool") $node.HasResult (not $node.OK)}}<span class="badge badge-error">Failed</span>{{end}}
+                </div>
+            </div>
+            {{if $node.ToolCallID}}<div class="conversation-call-id">{{$node.ToolCallID}}</div>{{end}}
+            {{if $node.Text}}
+            <div class="conversation-section">
+                <div class="conversation-section-label">{{if eq $node.Kind "assistant"}}Response{{else}}Message{{end}}</div>
+                {{if eq $node.Kind "assistant"}}<div class="response-text">{{$node.Text}}</div>{{else}}<pre>{{$node.Text}}</pre>{{end}}
+            </div>
+            {{end}}
+            {{if $node.Reasoning}}
+            <div class="conversation-section">
+                <div class="conversation-section-label">Reasoning</div>
+                <pre>{{$node.Reasoning}}</pre>
+            </div>
+            {{end}}
+            {{if eq $node.Kind "tool"}}
+            <div class="conversation-section">
+                <div class="conversation-section-label">Arguments</div>
+                <pre>{{$node.Arguments}}</pre>
+            </div>
+            {{if $node.HasResult}}
+            <div class="conversation-section">
+                <div class="conversation-section-label">Output</div>
+                <pre>{{$node.Result}}</pre>
+            </div>
+            {{end}}
+            {{end}}
+        </article>
+    {{end}}
+    </div>
+</div>
+{{else}}
+<p class="empty-state">No agent conversation was recorded for this review.</p>
+{{end}}
+</section>
+
+<section class="review-view" data-review-panel="turns" hidden>
 {{$prompts := systemPromptsFor .Session.SystemPrompts .Review.Tasks}}
 {{if $prompts}}
 <h3>System Prompt</h3>
@@ -151,6 +224,7 @@
 {{end}}{{end}}
 </div>
 {{end}}
+</section>
 
 {{define "callBody"}}
 <div class="prompt-turn-body">
@@ -158,6 +232,7 @@
         {{if .Model}}<span class="badge badge-model">{{.Model}}</span>{{end}}
         <span class="badge badge-tokens">P:{{formatInt .PromptTokens}} C:{{formatInt .CompletionTokens}}{{if or .CacheReadTokens .CacheWriteTokens}} CR:{{formatInt .CacheReadTokens}} CW:{{formatInt .CacheWriteTokens}}{{end}}</span>
         {{if .DurationMs}}<span class="badge badge-duration">{{formatMillis .DurationMs}}</span>{{end}}
+        {{if .StopReason}}<span class="badge badge-scope">{{.StopReason}}</span>{{end}}
         {{if .Error}}<span class="badge badge-error">{{.Error}}</span>{{end}}
     </div>
     {{if .Request}}
@@ -177,6 +252,12 @@
         <div class="response-text">{{.}}</div>
     </div>
     {{end}}
+    {{with .Reasoning}}
+    <div class="conversation-section full-request">
+        <div class="conversation-section-label">Reasoning</div>
+        <pre class="msg-text">{{.}}</pre>
+    </div>
+    {{end}}
     {{if .ToolCalls}}
     <div class="tool-calls-section">
         <div class="tool-calls-label">Tool Calls ({{len .ToolCalls}})</div>
@@ -191,8 +272,9 @@
             <details class="tool-detail">
                 <summary class="tool-detail-toggle"><span class="chevron-sm"></span><span>Show Details</span></summary>
                 <div class="tool-detail-body">
+                    {{if .ID}}<div class="conversation-call-id">{{.ID}}</div>{{end}}
                     <div class="tool-section"><div class="tool-section-label">Arguments</div><pre>{{.Arguments}}</pre></div>
-                    {{if .Result}}<div class="tool-section"><div class="tool-section-label">Result</div><pre>{{.Result}}</pre></div>{{end}}
+                    {{if .HasResult}}<div class="tool-section"><div class="tool-section-label">Result</div><pre>{{.Result}}</pre></div>{{end}}
                 </div>
             </details>
         </div>
@@ -203,6 +285,32 @@
 {{end}}
 
 <script>
+document.querySelectorAll('[data-review-view]').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+        var target = tab.getAttribute('data-review-view');
+        document.querySelectorAll('[data-review-view]').forEach(function(item) {
+            var active = item === tab;
+            item.classList.toggle('is-active', active);
+            item.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        document.querySelectorAll('[data-review-panel]').forEach(function(panel) {
+            panel.hidden = panel.getAttribute('data-review-panel') !== target;
+        });
+    });
+});
+
+document.querySelectorAll('[data-conversation-node]').forEach(function(node) {
+    node.addEventListener('click', function() {
+        var target = node.getAttribute('data-conversation-node');
+        document.querySelectorAll('[data-conversation-node]').forEach(function(item) {
+            item.classList.toggle('is-active', item === node);
+        });
+        document.querySelectorAll('[data-conversation-detail]').forEach(function(detail) {
+            detail.hidden = detail.getAttribute('data-conversation-detail') !== target;
+        });
+    });
+});
+
 document.querySelectorAll('.response-text').forEach(function(el) {
     var text = el.textContent;
     var esc = function(s) {

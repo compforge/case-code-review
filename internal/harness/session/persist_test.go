@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/go-stdx/uuid"
 )
 
@@ -191,6 +192,47 @@ func TestSetErrorWritesJSONL(t *testing.T) {
 	}
 	if !found {
 		t.Error("no llm_error record found in JSONL")
+	}
+}
+
+func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
+	repoDir := t.TempDir()
+	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
+	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "unit", Type: "file", Paths: []string{"foo.go"}})
+	rec := fs.AppendTaskRecord(MainTask, nil)
+	content := "I will inspect both files."
+	rec.SetResponse(&llm.ChatResponse{
+		Model: "served-model",
+		Choices: []llm.Choice{{
+			Message: llm.ResponseMessage{
+				Content:          &content,
+				ReasoningContent: "The paths are independent.",
+				ToolCalls: []llm.ToolCall{{
+					ID: "call-1", Type: "function",
+					Function: llm.FunctionCall{Name: "file_read", Arguments: `{"file_path":"foo.go"}`},
+				}},
+			},
+			FinishReason: "tool_calls",
+		}},
+	}, 120*time.Millisecond)
+	rec.AddToolResultWithMetadata("call-1", "file_read", `{"file_path":"foo.go"}`, "File: foo.go", true, 8*time.Millisecond)
+	sh.Finalize()
+
+	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
+	var response, toolCall map[string]any
+	for _, record := range records {
+		switch record["type"] {
+		case "llm_response":
+			response = record
+		case "tool_call":
+			toolCall = record
+		}
+	}
+	if response == nil || response["reasoning"] != "The paths are independent." || response["stop_reason"] != "tool_calls" {
+		t.Fatalf("response metadata = %+v", response)
+	}
+	if toolCall == nil || toolCall["tool_call_id"] != "call-1" || toolCall["duration_ms"] != float64(8) {
+		t.Fatalf("tool metadata = %+v", toolCall)
 	}
 }
 

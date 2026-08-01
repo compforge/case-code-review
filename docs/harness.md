@@ -152,8 +152,10 @@ Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不
 1. **Run Overview**：总 token、时间、模型、工具调用、文件/Unit 完成率和 warning，定位成本与
    吞吐瓶颈；其中 `Diff Files → Review Files → Review 1` 展示原始改动、进入评审的文件与实际
    Unit loop 数，便于判断 FileRole 过滤和 Unit formation 是否真的减少执行；
-2. **Agent Loop Timeline**：按 scope/request 展示 prompt 如何随工具读取和上下文生命周期变化、
-   LLM 返回了什么、调用了哪些工具，以及 Hypothesis → Assessment → Trial 的 Decision Trail。
+2. **Agent Loop Timeline**：Conversation 以紧凑事件流关联 system/user、assistant 与 tool 参数/结果，
+   Turns 保留每轮完整 prompt snapshot 及其增长；二者共同展示上下文如何变化、模型返回了什么，
+   以及 Hypothesis → Assessment → Trial 的 Decision Trail。Provider 实际返回 reasoning 时单独展示，
+   不把普通 assistant 文本冒充为隐藏思维过程。
 
 Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
 机会，后者只是可能的探索回环；同时展示 briefing material、Unit 静态已知路径和 caller/callee
