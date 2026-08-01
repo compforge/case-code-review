@@ -64,6 +64,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		name string
 		data any
 	}{
+		{"repos.html", map[string]any{"Repos": []RepoInfo{{EncodedPath: "repo", LatestBizID: "github:org/repo#148", SessionCount: 1}}}},
 		{"session.html", sessionPageData{EncodedRepo: "repo", RepoName: "repo", Session: vs}},
 		{"review.html", reviewPageData{EncodedRepo: "repo", RepoName: "repo", Session: vs, Review: review}},
 	}
@@ -79,6 +80,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			}
 			if strings.Contains(out.String(), "ZgotmplZ") {
 				t.Fatal("template emitted an unsafe CSS or URL placeholder")
+			}
+			if tt.name == "repos.html" && !strings.Contains(out.String(), "github:org/repo#148") {
+				t.Fatal("repository template does not show the latest biz id")
 			}
 			if tt.name == "session.html" && !strings.Contains(out.String(), `href="/r/repo/session-1/review?scope=internal%2Fviewer%2Fstore.go"`) {
 				t.Fatal("session review link does not preserve the repo and session path")

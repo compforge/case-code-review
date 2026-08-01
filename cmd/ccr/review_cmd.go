@@ -270,7 +270,7 @@ func buildToolRegistry(
 	}
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
-	reg.Register(tool.NewCodeSearch(fr))
+	reg.Register(tool.NewCodeSearch(fr).WithDefinitionSource(runner.CodeSearchDefinitions(fr)))
 	reg.Register(&finding.ToolProvider{Collector: findings})
 	return reg
 }

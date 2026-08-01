@@ -12,11 +12,12 @@
 <h2>Repositories</h2>
 {{if .Repos}}
 <table class="table">
-    <thead><tr><th>Repository</th><th>Sessions</th><th>Last Modified</th></tr></thead>
+    <thead><tr><th>Repository</th><th>Latest Biz ID</th><th>Sessions</th><th>Last Modified</th></tr></thead>
     <tbody>
     {{range .Repos}}
         <tr>
             <td><a href="/r/{{.EncodedPath}}">{{.EncodedPath}}</a></td>
+            <td>{{if .LatestBizID}}<code>{{.LatestBizID}}</code>{{else}}-{{end}}</td>
             <td>{{.SessionCount}}</td>
             <td>{{formatTime .LastModified}}</td>
         </tr>
