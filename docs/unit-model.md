@@ -12,8 +12,8 @@ Component。
 
 ```text
 Git Change ─▶ Component / FileRole
-                   ├─ source ─▶ Fragment ─▶ Unit ─▶ Dossier ─▶ Briefing
-                   └─ manifest / lock ──────────────▶ Clue
+                   ├─ source ─▶ Fragment ───────────▶ Unit{Fragments, Clues} ─▶ Briefing
+                   └─ manifest / lock ─▶ project Clue ────────────────▲
 ```
 
 | 对象 | 语义 |
@@ -22,14 +22,13 @@ Git Change ─▶ Component / FileRole
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
 | `FileRole` | 文件在所属 Component 中的稳定职责，如 source、manifest、lock |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
-| `Unit` | 应由一次 Unit Review 共同判断的行为范围 |
+| `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
-| `Dossier` | 按关系与种类组织后的 Unit 案卷，不受 prompt 形状限制 |
-| `Briefing` | 从 Dossier 投影出的本轮只读上下文 |
+| `Briefing` | 从 Unit 投影出的本轮只读上下文，不改变 Unit 的领域语义 |
 
 FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
 事实。FileRole 不等于证据强度；同一个 lockfile 对依赖问题可能关键，对业务状态流转则只是背景。
-Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Dossier
+Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Unit
 Clue，未来 Review 2 可以按 CaseFile 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
 
 ## 2. 流程
@@ -68,13 +67,13 @@ Clue 用两个正交维度表达上下文：
 - **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`、`project`。
 
 因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
-不决定 prompt 排版；Dossier 先保存完整语义，Briefing 再按预算、优先级和消息形状投影。
+不决定 prompt 排版；Unit 保存完整的 Fragments 与 Clues，Briefing 再按预算、优先级和消息形状投影。
 
 ```text
 Unit
   └─ ClueFinder[]
        └─ Clue{Relation, Kind, Ref, Content}
-            └─ Dossier
+            └─ Unit.Clues
                  └─ Briefing / typed file messages
 ```
 
@@ -111,12 +110,12 @@ Language 负责产出 definition、reference、call edge 等源码事实；Unit 
 - 类型解析后的调用边可用于 caller/callee 关系与 call-chain Unit。
 - 无法判定的边保持 unknown，不升级成“确定调用”。
 
-图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Dossier 的证据来源，
+图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Clue 的证据来源，
 其错误成本取决于消费位置：展示错一个候选影响有限，错误合并 Unit 则会改变整个评审边界。
 
 ### 3.3 Unit 在一次 run 内是有生命周期的对象
 
-Unit 在形成后保持稳定身份，并沿主链路逐步获得 Dossier、Briefing、Execution 结果和 Hypothesis。
+Unit 在形成后保持稳定身份，并沿主链路逐步获得 Clues、Briefing、Execution 结果和 Hypothesis。
 并发调度只改变执行时机，不改变 Unit 的语义归属。跨 Unit 共享的信息由 Unit Review 的 Board /
 Bulletin 机制表达，不反向修改已确定的静态 Unit 边界。
 

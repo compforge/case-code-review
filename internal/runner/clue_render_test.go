@@ -7,7 +7,7 @@ import (
 )
 
 func TestDedupClues(t *testing.T) {
-	in := unit.Dossier{
+	in := []unit.Clue{
 		{Kind: unit.ClueSpec, Relation: unit.RelSelf, Text: "contract"},
 		{Kind: unit.ClueSpec, Relation: unit.RelSelf, Text: "contract"},  // exact dup → dropped
 		{Kind: unit.ClueSpec, Relation: unit.RelOwner, Text: "contract"}, // same text, diff relation → kept
@@ -45,7 +45,7 @@ func TestClueLabel_RelationKindTable(t *testing.T) {
 }
 
 func TestCountClues_RelationKindMatrix(t *testing.T) {
-	d := unit.Dossier{
+	d := []unit.Clue{
 		{Kind: unit.ClueSpec, Relation: unit.RelSelf},
 		{Kind: unit.ClueRule, Relation: unit.RelOwner},
 		{Kind: unit.ClueDoc, Relation: unit.RelUsed},

@@ -174,4 +174,4 @@ Harness 变更至少验证：
 - [`kernel.md`](kernel.md) — Harness 在 CCR Kernel 中的职责
 - [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
 - [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
-- [`unit-model.md`](unit-model.md) — typed briefing 所承载的 Unit / Dossier 语义
+- [`unit-model.md`](unit-model.md) — typed briefing 所承载的 Unit / Clue 语义

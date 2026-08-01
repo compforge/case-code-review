@@ -143,13 +143,13 @@ func TestBrieferFor_Scopes(t *testing.T) {
 		t.Fatalf("func briefer materials off: %+v", mats)
 	}
 
-	// A chain unit adds neighbor bodies from its dossier's caller/callee refs —
+	// A chain unit adds neighbor bodies from its caller/callee clue refs —
 	// but never a member's own file, and only when the neighbor_source gate is on.
 	chain := unit.NewChainUnit([]unit.Fragment{
 		{Path: "a.go", Symbols: []string{"a.go::F"}},
 		{Path: "b.go", Symbols: []string{"b.go::G"}},
 	})
-	chain.Dossier = unit.Dossier{
+	chain.Clues = []unit.Clue{
 		{Kind: unit.ClueSpec, Relation: unit.RelCaller, Ref: "c.go::Entry", Text: "spec"},
 		{Kind: unit.ClueDoc, Relation: unit.RelCallee, Ref: "a.go::F2", Text: "member file — skip"},
 		{Kind: unit.ClueSpec, Relation: unit.RelOwner, Ref: "d.go::T", Text: "not a call edge — skip"},

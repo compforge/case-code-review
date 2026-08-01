@@ -26,7 +26,7 @@ type fileSelection struct {
 
 func (a *Runner) prepareFileSelections(ctx context.Context) {
 	a.fileSelections = make(map[string]fileSelection, len(a.changes))
-	a.componentClues = make(map[string]unit.Dossier)
+	a.componentClues = make(map[string][]unit.Clue)
 	a.contextFileCount = 0
 
 	reader := &tool.FileReader{
@@ -124,12 +124,12 @@ func componentKey(c project.Component) string {
 // splitting, but context still belongs to the final review scope.
 type componentFinder struct {
 	selections map[string]fileSelection
-	clues      map[string]unit.Dossier
+	clues      map[string][]unit.Clue
 }
 
-func (f componentFinder) Find(u unit.Unit) unit.Dossier {
+func (f componentFinder) Find(u unit.Unit) []unit.Clue {
 	seen := make(map[string]bool)
-	var clues unit.Dossier
+	var clues []unit.Clue
 	for _, path := range u.Paths() {
 		selection, ok := f.selections[path]
 		if !ok || !selection.HasComponent {

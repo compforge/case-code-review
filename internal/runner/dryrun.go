@@ -46,10 +46,10 @@ func describeMaterials(mats []material) []string {
 	return out
 }
 
-// countClues tallies a Unit's Dossier on the relation×kind matrix, keyed
+// countClues tallies a Unit's Clues on the relation×kind matrix, keyed
 // "<relation>/<kind>" (e.g. self/spec, owner/rule, used/doc, caller/spec) — so
 // --dry-run shows which relation contributed which evidence, for free.
-func countClues(clues unit.Dossier) map[string]int {
+func countClues(clues []unit.Clue) map[string]int {
 	m := make(map[string]int, len(clues))
 	for _, c := range clues {
 		m[string(c.Relation)+"/"+string(c.Kind)]++
@@ -82,7 +82,7 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	out := make([]UnitContext, 0, len(units))
 	for _, u := range units {
 		// Mirror reviewUnit's context assembly: clues + the path-glob rule.json.
-		specCases, specRules, seeAlso, prior := renderClues(u.Dossier)
+		specCases, specRules, seeAlso, prior := renderClues(u.Clues)
 		usageSites, _ := a.renderUsageSites(u)
 		rule := a.resolveSystemRule(strings.ToLower(u.Path()))
 		if specRules != "" {
@@ -97,12 +97,12 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 			Scope:          string(u.Scope),
 			Paths:          u.Paths(),
 			Fragments:      len(u.Fragments),
-			Clues:          countClues(u.Dossier),
+			Clues:          countClues(u.Clues),
 			SpecCases:      specCases,
 			Rules:          rule,
 			SeeAlso:        seeAlso,
 			Prior:          prior,
-			ProjectContext: renderProjectContext(u.Dossier),
+			ProjectContext: renderProjectContext(u.Clues),
 			Materials:      describeMaterials(a.brieferFor(u.Scope).materials(u)),
 			UsageSites:     usageSites,
 		})

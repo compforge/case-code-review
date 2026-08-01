@@ -155,7 +155,7 @@ type reviewClue struct {
 	Text     string `json:"text"`
 }
 
-func reviewClues(clues unit.Dossier) []reviewClue {
+func reviewClues(clues []unit.Clue) []reviewClue {
 	out := make([]reviewClue, 0, len(clues))
 	for _, clue := range clues {
 		out = append(out, reviewClue{
@@ -165,11 +165,11 @@ func reviewClues(clues unit.Dossier) []reviewClue {
 	return out
 }
 
-func collectCaseFileClues(units []unit.Unit) unit.Dossier {
+func collectCaseFileClues(units []unit.Unit) []unit.Clue {
 	seen := make(map[string]bool)
-	var out unit.Dossier
+	var out []unit.Clue
 	for _, reviewUnit := range units {
-		for _, clue := range reviewUnit.Dossier {
+		for _, clue := range reviewUnit.Clues {
 			key := strings.Join([]string{
 				string(clue.Kind), string(clue.Relation), clue.Ref, clue.Text,
 			}, "\x00")
