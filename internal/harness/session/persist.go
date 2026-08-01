@@ -342,6 +342,9 @@ func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
 	if len(d.ClueRefs) > 0 {
 		rec["clue_refs"] = d.ClueRefs
 	}
+	if d.ContextPaths != nil {
+		rec["context_paths"] = d.ContextPaths
+	}
 	if len(d.Materials) > 0 {
 		rec["materials"] = d.Materials
 	}

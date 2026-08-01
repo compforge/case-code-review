@@ -13,7 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-func TestExecuteCompletesWithTaskDone(t *testing.T) {
+func TestExecutionCompletesWithTaskDone(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponse("task_done", `{}`, &llm.UsageInfo{
 			PromptTokens:     10,
@@ -22,7 +22,7 @@ func TestExecuteCompletesWithTaskDone(t *testing.T) {
 		}),
 	}}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Model:     "review-model",
 		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
@@ -52,13 +52,36 @@ func TestExecuteCompletesWithTaskDone(t *testing.T) {
 	}
 }
 
-func TestExecuteRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
+func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
+	if _, err := NewExecution(ExecutionSpec{}); err == nil {
+		t.Fatal("missing LLM client must be rejected at construction")
+	}
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponse("task_done", `{}`, nil),
+	}}
+	execution, err := NewExecution(ExecutionSpec{
+		LLMClient: client,
+		Messages:  []msg.Msg{msg.Text("user", "review")},
+		MaxTurns:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execution.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execution.Run(context.Background()); err == nil {
+		t.Fatal("an Execution must not be reused")
+	}
+}
+
+func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		textResponse("I am finished."),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
@@ -81,12 +104,12 @@ func TestExecuteRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 	}
 }
 
-func TestExecuteReportsTurnBudgetAsTruncation(t *testing.T) {
+func TestExecutionReportsTurnBudgetAsTruncation(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		textResponse("I am finished."),
 	}}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
 		MaxTurns:  1,
@@ -99,7 +122,7 @@ func TestExecuteReportsTurnBudgetAsTruncation(t *testing.T) {
 	}
 }
 
-func TestExecuteAdaptsRegistryTools(t *testing.T) {
+func TestExecutionAdaptsRegistryTools(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(_ context.Context, args map[string]any) (string, error) {
 		return "echo:" + args["value"].(string), nil
@@ -110,7 +133,7 @@ func TestExecuteAdaptsRegistryTools(t *testing.T) {
 		toolCallResponse("echo", `{"value":"ok"}`, nil),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "use echo")},
 		ToolDefs: []llm.ToolDef{
@@ -142,7 +165,7 @@ func TestExecuteAdaptsRegistryTools(t *testing.T) {
 	}
 }
 
-func TestExecuteConnectsHandlerSessionAndEvents(t *testing.T) {
+func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponse("code_comment", `{"path":"a.go"}`, &llm.UsageInfo{TotalTokens: 7}),
 		toolCallResponse("task_done", `{}`, &llm.UsageInfo{TotalTokens: 3}),
@@ -166,7 +189,7 @@ func TestExecuteConnectsHandlerSessionAndEvents(t *testing.T) {
 	})
 	var events []ExecutionEvent
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:   client,
 		Messages:    []msg.Msg{msg.Text("user", "review this unit")},
 		ToolDefs:    []llm.ToolDef{toolDef("code_comment"), toolDef("task_done")},
@@ -213,13 +236,14 @@ func TestExecuteConnectsHandlerSessionAndEvents(t *testing.T) {
 	}
 }
 
-func TestExecuteContextDeduplicatesFileReads(t *testing.T) {
+func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	body := fmt.Sprintf(
 		"File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n%s",
 		"1|package a\n2|\n3|func F() {}\n",
 	)
 	registry := tool.NewRegistry()
-	registry.Register(fileReadProvider{body: body})
+	provider := &fileReadProvider{body: body}
+	registry.Register(provider)
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
@@ -227,7 +251,7 @@ func TestExecuteContextDeduplicatesFileReads(t *testing.T) {
 		toolCallResponseID("call-2", "file_read", `{"file_path":"pkg/a.go"}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{
@@ -250,32 +274,100 @@ func TestExecuteContextDeduplicatesFileReads(t *testing.T) {
 	if len(requests) != 3 {
 		t.Fatalf("requests = %d, want 3", len(requests))
 	}
-	var full, stubbed int
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want 1", provider.calls)
+	}
+	var full, covered int
 	for _, message := range requests[2].Messages {
 		if message.Role != "tool" {
 			continue
 		}
 		text := message.ExtractText()
 		switch {
-		case strings.Contains(text, "superseded"):
-			stubbed++
+		case strings.Contains(text, "Already available in the current context from an earlier file_read result"):
+			covered++
 		case strings.Contains(text, "func F() {}"):
 			full++
 		}
 	}
-	if stubbed != 1 || full != 1 {
-		t.Fatalf("want one stubbed and one full file read, got stubbed=%d full=%d", stubbed, full)
+	if covered != 1 || full != 1 {
+		t.Fatalf("want one covered notice and one full file read, got covered=%d full=%d", covered, full)
 	}
 }
 
-func TestExecuteContextEvictsWithoutMutatingInput(t *testing.T) {
+func TestExecutionSkipsFileReadAlreadyCoveredByBriefing(t *testing.T) {
+	body := "File: pkg/a.go (Total lines: 3)\n1|package a\n2|\n3|func F() {}\n"
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: body}
+	registry.Register(provider)
+	registry.Freeze()
+
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go"}`, nil),
+		toolCallResponseID("call-2", "task_done", `{}`, nil),
+	}}
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages: []msg.Msg{
+			msg.Text("user", "review this unit"),
+			msg.NewFile("pkg/a.go", 1, 3, 3, body),
+		},
+		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		Tools:            registry,
+		MaxTurns:         2,
+		ContextWindow:    10_000,
+		FileDedupEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || provider.calls != 0 {
+		t.Fatalf("result=%+v provider calls=%d, want completed without executing file_read", result, provider.calls)
+	}
+	if !strings.Contains(requestText(client.Requests()[1]), "Already available in the current context from the initial briefing") {
+		t.Fatalf("second request lacks briefing coverage notice: %#v", client.Requests()[1].Messages)
+	}
+}
+
+func TestExecutionRunsFileReadWhenBriefingOnlyPartiallyCoversRange(t *testing.T) {
+	body := "File: pkg/a.go (Total lines: 30)\nIS_TRUNCATED: false\nLINE_RANGE: 1-20\n1|package a\n"
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: body}
+	registry.Register(provider)
+	registry.Freeze()
+
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go","start_line":1,"end_line":20}`, nil),
+		toolCallResponseID("call-2", "task_done", `{}`, nil),
+	}}
+	_, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages: []msg.Msg{
+			msg.Text("user", "review this unit"),
+			msg.NewFile("pkg/a.go", 10, 20, 30, "File: pkg/a.go (Total lines: 30)\nLINE_RANGE: 10-20\n10|func F() {}\n"),
+		},
+		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		Tools:            registry,
+		MaxTurns:         2,
+		ContextWindow:    10_000,
+		FileDedupEnabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want partial coverage to execute", provider.calls)
+	}
+}
+
+func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	content := "File: pkg/large.go (Total lines: 200)\n" + strings.Repeat("1|some code content\n", 200)
 	file := msg.NewFile("pkg/large.go", 1, 200, 200, content)
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:        client,
 		Messages:         []msg.Msg{msg.Text("user", "review"), file},
 		ToolDefs:         []llm.ToolDef{toolDef("task_done")},
@@ -308,7 +400,7 @@ func TestExecuteContextEvictsWithoutMutatingInput(t *testing.T) {
 	}
 }
 
-func TestExecuteUsesAgentcoreSummaryAndRecordsItsUsage(t *testing.T) {
+func TestExecutionUsesAgentcoreSummaryAndRecordsItsUsage(t *testing.T) {
 	long := strings.Repeat("review evidence and reasoning ", 30)
 	messages := make([]msg.Msg, 0, 8)
 	for range 8 {
@@ -321,7 +413,7 @@ func TestExecuteUsesAgentcoreSummaryAndRecordsItsUsage(t *testing.T) {
 	client.responses[0].Usage = &llm.UsageInfo{TotalTokens: 5}
 	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:     client,
 		Messages:      messages,
 		ToolDefs:      []llm.ToolDef{toolDef("task_done")},
@@ -350,7 +442,7 @@ func TestExecuteUsesAgentcoreSummaryAndRecordsItsUsage(t *testing.T) {
 	}
 }
 
-func TestExecuteInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
+func TestExecutionInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
 		return "ok", nil
@@ -362,7 +454,7 @@ func TestExecuteInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
@@ -390,7 +482,7 @@ func TestExecuteInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 	}
 }
 
-func TestExecuteCommitsIncrementalTurnContext(t *testing.T) {
+func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
 		return "ok", nil
@@ -409,7 +501,7 @@ func TestExecuteCommitsIncrementalTurnContext(t *testing.T) {
 		}
 		return []msg.Msg{msg.NewBoard("peer confirmed the call path")}
 	})
-	result, err := Execute(context.Background(), ExecutionSpec{
+	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
@@ -441,6 +533,14 @@ func TestExecuteCommitsIncrementalTurnContext(t *testing.T) {
 
 type toolHandlerFunc func(context.Context, ToolRequest) (tool.TaskCheckpoint, bool)
 
+func runExecution(ctx context.Context, spec ExecutionSpec) (ExecutionResult, error) {
+	execution, err := NewExecution(spec)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	return execution.Run(ctx)
+}
+
 func (f toolHandlerFunc) HandleTool(ctx context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 	return f(ctx, request)
 }
@@ -451,10 +551,14 @@ func (f turnContextFunc) PullTurnContext(ctx context.Context, scope session.Scop
 	return f(ctx, scope)
 }
 
-type fileReadProvider struct{ body string }
+type fileReadProvider struct {
+	body  string
+	calls int
+}
 
-func (p fileReadProvider) Tool() tool.Tool { return tool.FileRead }
-func (p fileReadProvider) Execute(context.Context, map[string]any) (string, error) {
+func (p *fileReadProvider) Tool() tool.Tool { return tool.FileRead }
+func (p *fileReadProvider) Execute(context.Context, map[string]any) (string, error) {
+	p.calls++
 	return p.body, nil
 }
 

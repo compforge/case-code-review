@@ -70,7 +70,7 @@ func Review(ctx context.Context, config Config, caseFile CaseFile) []Assessment 
 	collector := NewAssessmentCollector()
 	evidence := &EvidenceLedger{}
 	assessmentHook := &AssessmentHook{Collector: collector, Evidence: evidence}
-	result, err := harness.Execute(ctx, harness.ExecutionSpec{
+	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient: config.LLMClient,
 		Model:     config.Model,
 		Messages:  msg.Wrap(messages),
@@ -100,6 +100,12 @@ func Review(ctx context.Context, config Config, caseFile CaseFile) []Assessment 
 		CompressionUpdatePrompt: config.CompressionPrompt,
 		CompressionPrefixPrompt: config.CompressionPrompt,
 	})
+	if err != nil {
+		fmt.Fprintf(console.Out(), "[ccr] Hypothesis review setup failed: %v\n", err)
+		warn(config, "hypothesis_review_error", err.Error())
+		return nil
+	}
+	result, err := execution.Run(ctx)
 	if config.RecordUsage != nil {
 		config.RecordUsage(&result.Usage)
 	}

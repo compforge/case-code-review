@@ -70,6 +70,25 @@
 </table>
 {{end}}
 
+{{if and (eq .Review.Stage "review1") (gt .Review.FileReads.Calls 0)}}
+<h3>File Read Signals</h3>
+<p class="section-note">已覆盖与重复读取是两个独立信号：前者表示调用时请求范围仍完整存在于当前 context；后者只表示同一路径再次读取，行范围可能不同。</p>
+<table class="review-table tool-summary-table">
+    <thead><tr><th>Signal</th><th>Value</th><th>Meaning</th></tr></thead>
+    <tbody>
+        <tr><td>Calls</td><td>{{formatInt .Review.FileReads.Calls}}</td><td>全部 <code>file_read</code> 调用</td></tr>
+        <tr><td>Unique files</td><td>{{formatInt .Review.FileReads.UniqueFiles}}</td><td>去重后的读取路径</td></tr>
+        <tr><td>Already covered</td><td>{{formatInt .Review.FileReads.CoveredCalls}}</td><td>请求范围已在当前 context，Harness 返回复用提示</td></tr>
+        <tr><td>Same-path repeats</td><td>{{formatInt .Review.FileReads.SamePathRepeats}}</td><td>同一路径第二次及后续读取，不等同于范围重复</td></tr>
+        {{if .Review.HasMaterials}}<tr><td>Material overlap</td><td>{{formatRatio .Review.FileReads.MaterialFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径已由 briefing material 组装</td></tr>{{end}}
+        {{if .Review.HasContextPaths}}
+        <tr><td>Unit-known overlap</td><td>{{formatRatio .Review.FileReads.UnitKnownFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径属于 Unit 或其静态已知上下文</td></tr>
+        <tr><td>Caller/callee overlap</td><td>{{formatRatio .Review.FileReads.CallGraphFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径来自静态 caller/callee 关系</td></tr>
+        {{end}}
+    </tbody>
+</table>
+{{end}}
+
 {{$prompts := systemPromptsFor .Session.SystemPrompts .Review.Tasks}}
 {{if $prompts}}
 <h3>System Prompt</h3>

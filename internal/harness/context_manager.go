@@ -2,6 +2,8 @@ package harness
 
 import (
 	"context"
+	"fmt"
+	"path"
 	"sync"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -51,6 +54,20 @@ type contextManager struct {
 	snapshot     *agentcore.ContextSnapshot
 	projectCount int
 	wrapUpIssued bool
+	visibleFiles []visibleFile
+}
+
+type fileSource string
+
+const (
+	fileFromBriefing fileSource = "the initial briefing"
+	fileFromTool     fileSource = "an earlier file_read result"
+)
+
+type visibleFile struct {
+	path              string
+	start, end, total int
+	source            fileSource
 }
 
 func newContextManager(spec ExecutionSpec, model agentcore.ChatModel) *contextManager {
@@ -344,6 +361,114 @@ func (m *contextManager) remember(
 		LastStrategy:       "review_context",
 		LastChanged:        changed,
 	}
+	m.visibleFiles = visibleFilesIn(view)
+}
+
+// coveredFileRead returns a lightweight result when the exact range requested
+// by file_read is already visible to the model. It checks the post-projection
+// view, so content evicted or summarized out of the prompt never blocks a
+// legitimate re-read.
+func (m *contextManager) coveredFileRead(args map[string]any) (string, bool) {
+	if !m.dedupEnabled {
+		return "", false
+	}
+	filePath, _ := args["file_path"].(string)
+	filePath = path.Clean(filePath)
+	if filePath == "." || filePath == "" {
+		return "", false
+	}
+	start := positiveInt(args["start_line"], 1)
+	requestedEnd := positiveInt(args["end_line"], 0)
+	if requestedEnd > 0 && requestedEnd < start {
+		return "", false
+	}
+
+	m.mu.Lock()
+	files := append([]visibleFile(nil), m.visibleFiles...)
+	m.mu.Unlock()
+
+	var briefing *visibleFile
+	for i := range files {
+		visible := &files[i]
+		if visible.path != filePath || start > visible.total {
+			continue
+		}
+		end := min(start+tool.FileReadMaxLines-1, visible.total)
+		if requestedEnd > 0 {
+			end = min(end, requestedEnd)
+		}
+		if start < visible.start || end > visible.end {
+			continue
+		}
+		if visible.source == fileFromTool {
+			return coveredReadMessage(filePath, start, end, visible.source), true
+		}
+		briefing = visible
+	}
+	if briefing != nil {
+		end := min(start+tool.FileReadMaxLines-1, briefing.total)
+		if requestedEnd > 0 {
+			end = min(end, requestedEnd)
+		}
+		return coveredReadMessage(filePath, start, end, briefing.source), true
+	}
+	return "", false
+}
+
+func coveredReadMessage(filePath string, start, end int, source fileSource) string {
+	return fmt.Sprintf(
+		"Already available in the current context from %s: %s lines %d-%d. Reuse that content; call file_read only for a range not shown there.",
+		source, filePath, start, end,
+	)
+}
+
+func positiveInt(value any, fallback int) int {
+	switch n := value.(type) {
+	case float64:
+		if n > 0 {
+			return int(n)
+		}
+	case int:
+		if n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+func visibleFilesIn(messages []agentcore.AgentMessage) []visibleFile {
+	var out []visibleFile
+	for _, message := range messages {
+		switch value := message.(type) {
+		case domainMessage:
+			file, ok := value.value.(*msg.File)
+			if !ok || file.Stubbed() {
+				continue
+			}
+			source := fileFromBriefing
+			if file.IsToolResult() {
+				source = fileFromTool
+			}
+			out = append(out, visibleFile{
+				path: path.Clean(file.Path), start: file.Start, end: file.End,
+				total: file.Total, source: source,
+			})
+		case agentcore.Message:
+			filePath, start, end, total, ok := msg.VisibleFileRange(value.TextContent())
+			if !ok {
+				continue
+			}
+			source := fileFromBriefing
+			if value.Role == agentcore.RoleTool || metadataString(value.Metadata, "tool_name") == msg.FileReadToolName {
+				source = fileFromTool
+			}
+			out = append(out, visibleFile{
+				path: path.Clean(filePath), start: start, end: end,
+				total: total, source: source,
+			})
+		}
+	}
+	return out
 }
 
 func wrapDomainMessages(messages []msg.Msg) []agentcore.AgentMessage {

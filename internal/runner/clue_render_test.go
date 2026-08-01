@@ -45,3 +45,25 @@ func TestCountClues_RelationKindMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestCluePathsKeepsRelationAndSourcePath(t *testing.T) {
+	got := cluePaths([]unit.Clue{
+		{Relation: unit.RelCaller, Ref: "caller.go::Handle"},
+		{Relation: unit.RelCaller, Ref: "caller.go::Other"},
+		{Relation: unit.RelCallee, Ref: "pkg/callee.go::Run"},
+		{Relation: unit.RelProject, Ref: "pyproject.toml"},
+		{Relation: unit.RelUsed, Ref: "external.Type"},
+	})
+	if len(got["caller"]) != 1 || got["caller"][0] != "caller.go" {
+		t.Fatalf("caller paths = %v, want caller.go once", got["caller"])
+	}
+	if len(got["callee"]) != 1 || got["callee"][0] != "pkg/callee.go" {
+		t.Fatalf("callee paths = %v", got["callee"])
+	}
+	if len(got["project"]) != 1 || got["project"][0] != "pyproject.toml" {
+		t.Fatalf("project paths = %v", got["project"])
+	}
+	if _, ok := got["used"]; ok {
+		t.Fatalf("non-source fqn must not become a file path: %v", got["used"])
+	}
+}

@@ -497,6 +497,17 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				}
 			}
 
+		case "debrief":
+			fg := groupFor(rec)
+			if raw, ok := rec["materials"]; ok {
+				fg.Materials = stringList(raw)
+				fg.HasMaterials = true
+			}
+			if raw, ok := rec["context_paths"]; ok {
+				fg.ContextPaths = stringMapLists(raw)
+				fg.HasContextPaths = true
+			}
+
 		case "session_end":
 			if dur, ok := rec["duration_seconds"].(float64); ok {
 				vs.Summary.DurationSec = dur
@@ -592,6 +603,18 @@ func stringList(v any) []string {
 		if s, ok := e.(string); ok {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+func stringMapLists(v any) map[string][]string {
+	raw, ok := v.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string][]string, len(raw))
+	for key, value := range raw {
+		out[key] = stringList(value)
 	}
 	return out
 }

@@ -6,26 +6,24 @@ Harness 只解决一件事：**让一次 agent execution 在明确输入、能�
 它不理解 Unit、Hypothesis 或 Finding，也不决定某条结论是否值得发布。
 
 ```text
-ExecutionSpec
-  ├─ typed messages / tools / hooks
-  ├─ context provider / budget / completion contract
-  └─ session recorder
-          │
-          ▼
-      AgentCore loop
-          │
-          ▼
-ExecutionResult + events + session JSONL
+ExecutionSpec ──▶ Execution.Run ──▶ ExecutionResult
+                      │
+                      ├─ ContextManager
+                      ├─ Tool / Hook adapters
+                      ├─ Recorder
+                      └─ AgentCore loop
+                              │
+                              └─ events + session JSONL
 ```
 
 | 对象 | 责任 |
 |---|---|
 | `ExecutionSpec` | 一次执行的输入消息、工具、hook、预算和 scope |
-| `Execution` | 持有本次 loop 的可变状态与生命周期 |
+| `Execution` | 单次运行的聚合根，持有 ContextManager、Recorder、完成状态与 AgentCore loop 生命周期 |
 | `ContextManager` | 注入、去重、淘汰、压缩和投影上下文 |
 | `Tool Registry` | 把工具定义、provider 与执行身份绑定 |
 | `Hook / Event` | 提供领域扩展点和稳定观测事件 |
-| `ExecutionResult` | 返回完成状态、输出、usage、工具统计和错误 |
+| `ExecutionResult` | 返回完成状态、usage、工具统计和错误 |
 | `Session` | 以稳定 JSONL 持久化实际发生的执行事实 |
 
 Runner 可以用 Harness 执行 Unit Review 或 Hypothesis Review；Harness 不反向 import Runner、Unit、
@@ -35,8 +33,16 @@ Assessment 等评审领域对象。领域语义通过消息、工具、hook 和 
 
 ### 2.1 启动 Execution
 
-调用方组装 `ExecutionSpec`，明确本次执行允许看到和做到什么。Harness 将其降成 AgentCore 的 model、
-tool 和 context 契约，启动独立 Execution。一次 Execution 的状态不能被另一个 scope 隐式复用。
+调用方组装 `ExecutionSpec`，明确本次执行允许看到和做到什么，再通过稳定边界启动：
+
+```go
+execution, err := harness.NewExecution(spec)
+result, err := execution.Run(ctx)
+```
+
+`Execution` 在构造时接管输入快照并组装 AgentCore model、tool 和 context 契约。它是单次使用的
+运行实体；一次 Execution 的 Recorder、ContextManager、完成状态和其它运行事实不能被另一个 scope
+复用。Harness 外不直接创建或持有这些内部组件。
 
 ### 2.2 每轮模型与工具循环
 
@@ -54,7 +60,7 @@ finding”究竟是审完了，还是执行没完成。
 
 ### 2.3 返回结果
 
-Harness 返回结构化 ExecutionResult，不直接生成 ReviewResult。Runner 将其解释成 Hypothesis、
+Execution 结束后返回结构化 ExecutionResult，不直接生成 ReviewResult。Runner 将其解释成 Hypothesis、
 Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 ## 3. 关键设计
@@ -81,6 +87,7 @@ msg.Msg / msg.File
 
 - 注入：system/task、静态 briefing、跨 turn provider 输出；
 - 去重：后一次覆盖读取替代早期重复 file content；
+- 复用：当 `file_read` 请求范围仍完整可见时返回轻量提示，不再次执行相同读取；
 - 淘汰：优先移除可重取、低价值的大块内容；
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
@@ -143,6 +150,10 @@ Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不
    吞吐瓶颈；
 2. **Agent Loop Timeline**：按 scope/request 展示 prompt 如何随工具读取和上下文生命周期变化、
    LLM 返回了什么、调用了哪些工具，以及 Hypothesis → Assessment → Trial 的 Decision Trail。
+
+Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
+机会，后者只是可能的探索回环；同时展示 briefing material、Unit 静态已知路径和 caller/callee
+路径与实际读取文件的重合率，用于判断下一步应预载什么，而不是把所有相关文件都塞进 prompt。
 
 这两个视角分别回答“整次 review 怎么样”和“某一轮为什么这样判断”。Overview 不能替代逐轮证据，
 Timeline 也不能替代全局统计。

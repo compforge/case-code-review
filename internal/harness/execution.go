@@ -64,28 +64,51 @@ type ExecutionResult struct {
 	ToolErrors int
 }
 
-// Execute runs one isolated agentcore loop without exposing agentcore to the
-// review domain. Runner supplies domain behavior through Harness contracts.
-func Execute(ctx context.Context, spec ExecutionSpec) (ExecutionResult, error) {
+// Execution owns one Harness run from immutable input through terminal result.
+// AgentCore, context projection, recording, tools, and completion state remain
+// private children of this lifecycle; callers only construct and Run it.
+type Execution struct {
+	spec ExecutionSpec
+
+	recorder         *executionRecorder
+	contextManager   *contextManager
+	model            *chatModel
+	tools            []agentcore.Tool
+	completionPrompt string
+
+	started   atomic.Bool
+	completed atomic.Bool
+	summary   *agentcore.RunSummary
+	runErr    error
+}
+
+// NewExecution validates and assembles one isolated Harness execution without
+// exposing AgentCore types to the review domain.
+func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	if spec.LLMClient == nil {
-		return ExecutionResult{}, fmt.Errorf("harness: LLM client is required")
+		return nil, fmt.Errorf("harness: LLM client is required")
 	}
 	if len(spec.Messages) == 0 {
-		return ExecutionResult{}, fmt.Errorf("harness: at least one message is required")
+		return nil, fmt.Errorf("harness: at least one message is required")
 	}
 
-	var completed atomic.Bool
-	tools := adaptTools(spec.ToolDefs, spec.Tools, &completed)
-	recorder := newExecutionRecorder(spec)
+	// The execution owns its input snapshot; later caller mutations cannot
+	// change a run that has already been assembled.
+	spec.Messages = msg.CloneAll(spec.Messages)
+	e := &Execution{spec: spec, completionPrompt: spec.CompletionPrompt}
+	if e.completionPrompt == "" {
+		e.completionPrompt = defaultCompletionPrompt
+	}
+	e.recorder = newExecutionRecorder(spec)
 	taskType := spec.TaskType
 	if taskType == "" {
 		taskType = session.MainTask
 	}
-	model := &chatModel{
+	e.model = &chatModel{
 		client:    spec.LLMClient,
 		model:     spec.Model,
 		maxTokens: spec.MaxTokens,
-		recorder:  recorder,
+		recorder:  e.recorder,
 		taskType:  taskType,
 		events:    true,
 	}
@@ -93,76 +116,63 @@ func Execute(ctx context.Context, spec ExecutionSpec) (ExecutionResult, error) {
 		client:    spec.LLMClient,
 		model:     spec.Model,
 		maxTokens: spec.MaxTokens,
-		recorder:  recorder,
+		recorder:  e.recorder,
 		taskType:  session.MemoryCompressionTask,
 	}
-	contextManager := newContextManager(spec, contextModel)
-	prompt := spec.CompletionPrompt
-	if prompt == "" {
-		prompt = defaultCompletionPrompt
+	e.contextManager = newContextManager(spec, contextModel)
+	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed)
+	return e, nil
+}
+
+// Run drives the Execution to one terminal result. An Execution is single-use:
+// reusing it would mix recorder, context, and completion state across loops.
+func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
+	if !e.started.CompareAndSwap(false, true) {
+		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
 	}
 
 	config := agentcore.LoopConfig{
-		Model:          model,
-		MaxTurns:       spec.MaxTurns,
-		ContextManager: contextManager,
-		ConvertToLLM:   contextManager.ConvertToLLM,
+		Model:          e.model,
+		MaxTurns:       e.spec.MaxTurns,
+		ContextManager: e.contextManager,
+		ConvertToLLM:   e.contextManager.ConvertToLLM,
 		StopAfterTool: func(name string) bool {
 			return name == tool.TaskDone.Name()
 		},
 		StopGuard: func(_ context.Context, _ agentcore.StopInfo) agentcore.StopDecision {
-			if completed.Load() {
+			if e.completed.Load() {
 				return agentcore.StopDecision{Allow: true}
 			}
-			return agentcore.StopDecision{InjectMessage: prompt}
+			return agentcore.StopDecision{InjectMessage: e.completionPrompt}
 		},
-	}
-	config.Middlewares = []agentcore.ToolMiddleware{
-		toolMiddleware(spec.Scope, spec.ToolHandler, recorder),
+		Middlewares: []agentcore.ToolMiddleware{e.toolMiddleware()},
 	}
 
 	events := agentcore.AgentLoop(
 		ctx,
-		toAgentMessages(spec.Messages),
-		agentcore.AgentContext{Tools: tools},
+		wrapDomainMessages(e.spec.Messages),
+		agentcore.AgentContext{Tools: e.tools},
 		config,
 	)
-
-	var (
-		result  ExecutionResult
-		runErr  error
-		summary *agentcore.RunSummary
-	)
 	for event := range events {
-		emitExecutionEvent(spec.Events, recorder, event)
+		emitExecutionEvent(e.spec.Events, e.recorder, event)
 		switch event.Type {
 		case agentcore.EventError:
 			if event.Err != nil {
-				runErr = event.Err
+				e.runErr = event.Err
 			}
 		case agentcore.EventToolExecEnd:
 			if event.Tool != tool.TaskDone.Name() {
-				recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError)
+				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError)
 			}
 		case agentcore.EventAgentEnd:
-			summary = event.Summary
+			e.summary = event.Summary
 		}
 	}
-
-	if summary != nil {
-		result.Turns = summary.TurnCount
-		result.ToolCalls = summary.ToolCalls
-		result.ToolErrors = summary.ToolErrors
-	}
-	result.Usage = recorder.Usage()
-	return finishExecution(ctx, result, summary, completed.Load(), runErr)
+	return e.finish(ctx)
 }
 
-func toolMiddleware(
-	scope session.Scope,
-	handler ToolHandler,
-	recorder *executionRecorder,
-) agentcore.ToolMiddleware {
+func (e *Execution) toolMiddleware() agentcore.ToolMiddleware {
 	return func(
 		ctx context.Context,
 		call agentcore.ToolCall,
@@ -170,18 +180,23 @@ func toolMiddleware(
 	) (json.RawMessage, error) {
 		started := time.Now()
 		defer func() {
-			recorder.finishToolExecution(call.ID, time.Since(started))
+			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
-		if handler == nil {
-			return next(ctx, call.Args)
-		}
 		var args map[string]any
 		if err := json.Unmarshal(call.Args, &args); err != nil {
 			return next(ctx, call.Args)
 		}
-		recorded := recorder.call(call.ID)
-		checkpoint, handled := handler.HandleTool(ctx, ToolRequest{
-			Scope: scope,
+		if call.Name == tool.FileRead.Name() {
+			if result, covered := e.contextManager.coveredFileRead(args); covered {
+				return json.RawMessage(result), nil
+			}
+		}
+		if e.spec.ToolHandler == nil {
+			return next(ctx, call.Args)
+		}
+		recorded := e.recorder.call(call.ID)
+		checkpoint, handled := e.spec.ToolHandler.HandleTool(ctx, ToolRequest{
+			Scope: e.spec.Scope,
 			Tool:  tool.OfName(call.Name),
 			Call: llm.ToolCall{
 				ID:   call.ID,
@@ -204,14 +219,14 @@ func toolMiddleware(
 	}
 }
 
-func finishExecution(
-	ctx context.Context,
-	result ExecutionResult,
-	summary *agentcore.RunSummary,
-	completed bool,
-	runErr error,
-) (ExecutionResult, error) {
-	if completed && summary != nil && summary.EndReason == agentcore.EndReasonStop {
+func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
+	result := ExecutionResult{Usage: e.recorder.Usage()}
+	if e.summary != nil {
+		result.Turns = e.summary.TurnCount
+		result.ToolCalls = e.summary.ToolCalls
+		result.ToolErrors = e.summary.ToolErrors
+	}
+	if e.completed.Load() && e.summary != nil && e.summary.EndReason == agentcore.EndReasonStop {
 		result.State = OutcomeCompleted
 		return result, nil
 	}
@@ -225,17 +240,17 @@ func finishExecution(
 		result.Reason = context.Canceled.Error()
 		return result, ctx.Err()
 	}
-	if summary != nil && summary.EndReason == agentcore.EndReasonMaxTurns {
+	if e.summary != nil && e.summary.EndReason == agentcore.EndReasonMaxTurns {
 		result.State = OutcomeTruncated
-		result.Reason = string(summary.EndReason)
+		result.Reason = string(e.summary.EndReason)
 		return result, nil
 	}
-	if runErr != nil {
+	if e.runErr != nil {
 		result.State = OutcomeLLMError
-		result.Reason = runErr.Error()
-		return result, runErr
+		result.Reason = e.runErr.Error()
+		return result, e.runErr
 	}
-	if summary == nil {
+	if e.summary == nil {
 		err := fmt.Errorf("harness: agentcore ended without a run summary")
 		result.State = OutcomeLLMError
 		result.Reason = err.Error()
@@ -243,12 +258,8 @@ func finishExecution(
 	}
 
 	result.State = OutcomeTruncated
-	result.Reason = string(summary.EndReason)
+	result.Reason = string(e.summary.EndReason)
 	return result, nil
-}
-
-func toAgentMessages(messages []msg.Msg) []agentcore.AgentMessage {
-	return wrapDomainMessages(msg.CloneAll(messages))
 }
 
 func wireToAgentMessage(message llm.Message) agentcore.Message {

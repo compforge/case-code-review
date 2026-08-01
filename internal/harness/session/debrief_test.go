@@ -46,6 +46,7 @@ func TestWriteDebrief(t *testing.T) {
 		Degradations: []string{"related_source_dropped"},
 		Clues:        map[string]int{"caller/spec": 1},
 		ClueRefs:     []string{"b.go::Entry"},
+		ContextPaths: map[string][]string{"caller": {"b.go"}},
 		Materials:    []string{"whole a.go"},
 		UsageSites:   4,
 	})
@@ -98,6 +99,10 @@ func TestWriteDebrief(t *testing.T) {
 	}
 	if deb["usage_sites"].(float64) != 4 || deb["insertions"].(float64) != 12 {
 		t.Fatalf("briefing/size fields off: %v", deb)
+	}
+	contextPaths := deb["context_paths"].(map[string]any)
+	if callers := contextPaths["caller"].([]any); len(callers) != 1 || callers[0] != "b.go" {
+		t.Fatalf("context paths off: %v", contextPaths)
 	}
 
 	// Diff totals land in session_end (cost normalization denominators).
