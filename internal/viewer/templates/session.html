@@ -29,11 +29,22 @@
         <span><strong>Commit:</strong> <code>{{.Session.Summary.DiffCommit}}</code></span>
         {{end}}
         <span><strong>Model:</strong> <code>{{.Session.Summary.Model}}</code></span>
-        <span><strong>Files:</strong> {{.Session.Summary.FileCount}}</span>
     </div>
 </div>
 
 <div class="overview-grid">
+    <div class="overview-card">
+        <div class="overview-value">{{if .Session.Summary.HasDiffStats}}{{formatInt .Session.Summary.DiffFileCount}}{{else}}-{{end}}</div>
+        <div class="overview-label">Diff Files</div>
+    </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Session.Summary.FileCount}}</div>
+        <div class="overview-label">Review Files</div>
+    </div>
+    <div class="overview-card review1-card">
+        <div class="overview-value">{{len $review1}}</div>
+        <div class="overview-label">Review 1</div>
+    </div>
     <div class="overview-card">
         <div class="overview-value">{{formatDuration .Session.Summary.DurationSec}}</div>
         <div class="overview-label">Wall Time</div>
@@ -49,10 +60,6 @@
     <div class="overview-card">
         <div class="overview-value">{{formatInt .Session.TokenUsage.RequestCount}}</div>
         <div class="overview-label">LLM Calls</div>
-    </div>
-    <div class="overview-card review1-card">
-        <div class="overview-value">{{len $review1}}</div>
-        <div class="overview-label">Review 1</div>
     </div>
     <div class="overview-card review2-card">
         <div class="overview-value">{{len $review2}}</div>

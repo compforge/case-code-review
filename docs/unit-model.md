@@ -5,6 +5,15 @@
 CCR 不把“文件”直接等同于评审任务。文件是源码的存储边界，**Unit 才是一次行为审查的边界**：
 它应尽量容纳理解同一项行为变化所需的改动，同时避免把互不相关的变化塞进同一个 agent loop。
 
+相对 OCR 固定的“一文件一个 loop”，Unit 有两个直接收益：
+
+1. **粒度更灵活**：可以是函数、文件或跨文件 call-chain，按真实行为边界组织评审；
+2. **减少重复 loop**：若 `file1.func1` 调用 `file2.func2`，两个 file loop 最终都要读取彼此，
+   不如把两处改动形成一个 call-chain Unit，一次理解并判断，从而节省 token 和时间。
+
+CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文件改动收为一个 Unit，跨文件
+协作改动通过 call-chain 合并后可以进一步减少 loop。
+
 一个 Git Repository 可以包含多个 manifest 定义的 **Component**，例如 `backend/pyproject.toml`
 定义 Python Component、仓根 `go.mod` 定义 Go Component。Component 是静态项目边界，Unit 是一次
 diff 动态形成的评审边界；一个 Component 可以产生多个 Unit，Repository 级文件也可以不属于任何
@@ -137,6 +146,8 @@ Bulletin 机制表达，不反向修改已确定的静态 Unit 边界。
 
 Unit 设计同时影响召回、准确率和成本，至少应观察：
 
+- 原始 diff file 数、实际 review file 数与 Review 1 loop 数，区分文件过滤和 Unit formation 各自
+  节省的 loop；
 - Fragment 到 Unit 的合并比例与错误合并样本；
 - 每个 Unit 的预载字节、工具调用、token 和完成状态；
 - 有真实 finding 的 Unit 是否获得了足够契约和邻域；

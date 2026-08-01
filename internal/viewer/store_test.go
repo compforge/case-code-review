@@ -63,7 +63,7 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 		`{"type":"llm_request","timestamp":"2026-07-31T00:00:07Z","scope_id":"hypothesis_review:case-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify"},{"role":"user","content":"assess"}]}`,
 		`{"type":"llm_response","timestamp":"2026-07-31T00:00:08Z","scope_id":"hypothesis_review:case-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","model":"test-model","content":"assessed","duration_ms":900,"usage":{"prompt_tokens":80,"completion_tokens":8,"cache_read_tokens":0,"cache_write_tokens":0}}`,
 		`{"type":"debrief","timestamp":"2026-07-31T00:00:09Z","scope_id":"hypothesis_review:case-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go"}`,
-		`{"type":"session_end","timestamp":"2026-07-31T00:00:10Z","duration_seconds":10,"files_reviewed":["a.go"]}`,
+		`{"type":"session_end","timestamp":"2026-07-31T00:00:10Z","duration_seconds":10,"files_reviewed":["a.go"],"diff_files":3,"diff_insertions":20,"diff_deletions":5}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,6 +94,31 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 	}
 	if len(got.ToolUsage) != 1 || got.ToolUsage[0].DurationMs != 20 {
 		t.Fatalf("session tools = %+v", got.ToolUsage)
+	}
+	if !got.Summary.HasDiffStats || got.Summary.DiffFileCount != 3 || got.Summary.FileCount != 1 {
+		t.Fatalf("session file funnel = %+v", got.Summary)
+	}
+	if got.Summary.DiffInsertions != 20 || got.Summary.DiffDeletions != 5 {
+		t.Fatalf("session diff lines = +%d/-%d", got.Summary.DiffInsertions, got.Summary.DiffDeletions)
+	}
+}
+
+func TestPeekSessionLoadsDiffAndReviewFileCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	transcript := strings.Join([]string{
+		`{"type":"session_start","timestamp":"2026-07-31T00:00:00Z","model":"test-model"}`,
+		`{"type":"session_end","duration_seconds":2,"files_reviewed":["a.go","b.go"],"diff_files":5,"diff_insertions":30,"diff_deletions":6}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := peekSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.HasDiffStats || got.DiffFileCount != 5 || got.FileCount != 2 {
+		t.Fatalf("session file funnel = %+v", got)
 	}
 }
 

@@ -150,7 +150,8 @@ Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不
 视角：
 
 1. **Run Overview**：总 token、时间、模型、工具调用、文件/Unit 完成率和 warning，定位成本与
-   吞吐瓶颈；
+   吞吐瓶颈；其中 `Diff Files → Review Files → Review 1` 展示原始改动、进入评审的文件与实际
+   Unit loop 数，便于判断 FileRole 过滤和 Unit formation 是否真的减少执行；
 2. **Agent Loop Timeline**：按 scope/request 展示 prompt 如何随工具读取和上下文生命周期变化、
    LLM 返回了什么、调用了哪些工具，以及 Hypothesis → Assessment → Trial 的 Decision Trail。
 
