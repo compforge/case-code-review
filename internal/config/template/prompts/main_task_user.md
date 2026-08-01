@@ -29,6 +29,11 @@ Current time in the real world: {{current_system_date_time}}
 ### Requirement Background (Optional)
 {{requirement_background}}
 
+### Project Context (Optional)
+Changed manifest or lock files from the same Component. They are not review targets for this Unit;
+inspect their diff only when they can affect the changed source behavior.
+{{project_context}}
+
 ### Governing Spec/Case (Optional)
 The contract and cases bound to the changed function(s). Treat them as invariants the change must preserve: for each, judge whether this diff could break it. A case unrelated to this change is a valid finding too — say it is unaffected. If empty, no spec is bound to these functions.
 {{spec_cases}}

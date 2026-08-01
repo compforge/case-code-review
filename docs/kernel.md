@@ -1,4 +1,4 @@
-# CCR Kernel：Language × Unit × Harness
+# CCR Kernel：Knowledge × Unit × Harness
 
 ## 1. 理念 / 概念
 
@@ -9,24 +9,34 @@ CCR 的目标不是让一个大模型“读完整个 diff 然后自由发挥”�
 - **健壮性**：每个评审范围确实完成，超时和预算耗尽不会伪装成 clean；
 - **成本**：时间、token 和工具调用有界，能进入持续 review 工作流。
 
-Kernel 由三个能力中心组成：
+Kernel 由两个知识层、Unit 和 Harness 组成：
 
 | 能力中心 | 回答的问题 | 不负责 |
 |---|---|---|
+| **Project** | Repository 中有哪些 Component、文件扮演什么角色、有哪些项目事实 | 解析代码语义、决定是否成 Finding |
 | **Language** | 源码中有哪些 definition、reference、call edge 和稳定身份 | 决定如何审、是否成 Finding |
 | **Unit** | 哪些改动应一起审，相关契约和邻域如何组织 | 运行 agent loop |
 | **Harness** | 一次 agent execution 如何有界运行、完成并被观测 | 理解 Unit、Hypothesis、Finding |
 
-Runner 是薄编排层：选择 review snapshot，调用 Language / Unit 形成输入，用 Harness 执行两个阶段，
+Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Unit 形成输入，用 Harness 执行两个阶段，
 再聚合领域结果。领域行为通过 execution spec、tool、hook 和 event 适配 Harness，而不是塞进执行内核。
 
+评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
+Repository / Component 提供项目边界、FileRole 和 manifest 等项目知识，未来也可承接文档与规则。
+它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 面向 Unit 组织 Dossier，Review 2
+将来可面向 CaseFile 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
+
 ## 2. 总体流程
+
+![CCR 从 Diff 到 Finding 的评审流水线，以及两类 Knowledge 基础](review-pipeline.svg)
 
 ```text
 Git diff
   │
   ▼
-Change ─Splitter─▶ Fragment ─Merger─▶ Unit
+Change ─▶ Component / FileRole
+                  ├─ source ─Splitter─▶ Fragment ─Merger─▶ Unit
+                  └─ manifest / lock ─────────────────────▶ Clue
                                       │
                          ClueFinder ─▶ Dossier / Briefing
                                       │
@@ -63,6 +73,7 @@ Change ─Splitter─▶ Fragment ─Merger─▶ Unit
 
 ### 3.1 事实、作用域、执行和结论各有唯一 owner
 
+- Project 拥有 Repository、Component、FileRole 与项目事实；
 - Language 拥有源码事实与置信度；
 - Unit 拥有行为作用域和上下文关系；
 - Harness 拥有 execution 生命周期、工具机制、预算和观测事件；
@@ -129,7 +140,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 
 任何新能力都应明确落在以下一个问题上：
 
-1. 它是否让源码事实更可靠，而不把策略塞进 Language？
+1. 它是否补充可靠的 Project / Language Knowledge，而没有把评审策略塞进事实层？
 2. 它是否让 Unit 更接近一个行为变化，或让 Dossier 更准确？
 3. 它是否让 Execution 更容易完成、成本更可控、失败更可见？
 4. 它是否提高 Hypothesis / Assessment 的证据质量，而不是只增加 prompt？
@@ -141,7 +152,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 
 | 文档 | 唯一 owner |
 |---|---|
-| [`unit-model.md`](unit-model.md) | Fragment / Unit、Clue / Dossier、上下文与图消费 |
+| [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue / Dossier、上下文与图消费 |
 | [`unit_review.md`](unit_review.md) | Review 1 的探索、收敛、跨 Unit 协作和效果优化 |
 | [`hypothesis_review.md`](hypothesis_review.md) | CaseFile、Review 2、Assessment、receipt 与 Trial |
 | [`harness.md`](harness.md) | Execution、上下文生命周期、工具、Session JSONL 与 Viewer |

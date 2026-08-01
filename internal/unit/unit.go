@@ -73,7 +73,7 @@ type Unit struct {
 	// file Unit; several across files for a call-chain Unit).
 	Fragments []Fragment
 	// Dossier is the deduped set of Clues assembled for this Unit (spec/rule/link/
-	// doc/history across the self/owner/caller/callee/used relations), gathered
+	// doc/history/project across the self/owner/caller/callee/used/project relations), gathered
 	// post-merge against AllSymbols. See docs/unit-model.md.
 	Dossier Dossier
 }

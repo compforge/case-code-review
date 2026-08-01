@@ -418,10 +418,22 @@ func outputPreviewText(p *runner.Preview) {
 		}
 	}
 
+	if p.ContextCount > 0 {
+		fmt.Printf("\n\033[1mProject context (%d):\033[0m\n", p.ContextCount)
+		for _, e := range p.Entries {
+			if !e.ProvidesContext {
+				continue
+			}
+			fmt.Printf("  %s  "+pathFmt+" \033[2m(%s/%s; %s)\033[0m\n",
+				statusBadge(e.Status), sanitizeTerminal(e.Path),
+				sanitizeTerminal(e.ComponentKind), sanitizeTerminal(e.FileRole), sanitizeTerminal(e.ComponentRoot))
+		}
+	}
+
 	if p.ExcludedCount > 0 {
 		fmt.Printf("\n\033[1mExcluded from review (%d):\033[0m\n", p.ExcludedCount)
 		for _, e := range p.Entries {
-			if e.WillReview {
+			if e.WillReview || e.ProvidesContext {
 				continue
 			}
 			fmt.Printf("  %s  "+pathFmt+" \033[2m(%s)\033[0m\n",
