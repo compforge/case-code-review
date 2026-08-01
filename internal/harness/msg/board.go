@@ -2,8 +2,9 @@ package msg
 
 import "github.com/qiankunli/case-code-review/internal/llm"
 
-// Board is the digest of peer units' bulletins injected at a turn boundary
-// (docs/unit_review.md). Like File it is re-derivable — the content came from
+// Board is the legacy llmloop's digest of peer units' bulletins. Active
+// AgentCore Unit Review owns this domain message in runner/unitreview. Like
+// File it is re-derivable — the content came from
 // the board and can be pulled again — so it participates in eviction: under
 // token pressure a stale board digest is shed before the model's own
 // reasoning, the same re-derivability ordering File uses.
@@ -18,13 +19,21 @@ type Board struct {
 // NewBoard wraps a rendered board digest as an evictable user message.
 func NewBoard(digest string) *Board { return &Board{digest: digest} }
 
-func (b *Board) Lower() llm.Message {
+func (b *Board) ToLLM(level CompactionLevel) llm.Message {
+	if level >= CompactionReference {
+		return llm.NewTextMessage("user",
+			"(peer-unit board notes compacted; fresh notes can be pulled again)")
+	}
 	if b.evicted {
 		return llm.NewTextMessage("user",
 			"(peer-unit board notes elided to fit the context budget)")
 	}
 	return llm.NewTextMessage("user", b.digest)
 }
+
+func (b *Board) Lower() llm.Message { return b.ToLLM(CompactionNone) }
+
+func (b *Board) MaxCompaction() CompactionLevel { return CompactionReference }
 
 // Reclaim elides the digest under token pressure (idempotent; msg.Reclaimable).
 // Board notes are the most re-derivable slice of the conversation — losing them

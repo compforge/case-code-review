@@ -80,7 +80,7 @@
         <tr><td>Unique files</td><td>{{formatInt .Review.FileReads.UniqueFiles}}</td><td>去重后的读取路径</td></tr>
         <tr><td>Already covered</td><td>{{formatInt .Review.FileReads.CoveredCalls}}</td><td>请求范围已在当前 context，Harness 返回复用提示</td></tr>
         <tr><td>Same-path repeats</td><td>{{formatInt .Review.FileReads.SamePathRepeats}}</td><td>同一路径第二次及后续读取，不等同于范围重复</td></tr>
-        {{if .Review.HasMaterials}}<tr><td>Material overlap</td><td>{{formatRatio .Review.FileReads.MaterialFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径已由 briefing material 组装</td></tr>{{end}}
+        {{if .Review.HasSourcePreloads}}<tr><td>Preloaded overlap</td><td>{{formatRatio .Review.FileReads.PreloadedFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径已在初始源码上下文中预载</td></tr>{{end}}
         {{if .Review.HasContextPaths}}
         <tr><td>Unit-known overlap</td><td>{{formatRatio .Review.FileReads.UnitKnownFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径属于 Unit 或其静态已知上下文</td></tr>
         <tr><td>Caller/callee overlap</td><td>{{formatRatio .Review.FileReads.CallGraphFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径来自静态 caller/callee 关系</td></tr>

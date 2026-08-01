@@ -143,6 +143,7 @@ func (e *Executor) Run(
 		FileDedupEnabled:        e.fileDedup,
 		FileEvictEnabled:        e.fileEvict,
 		WrapUpPrompt:            e.wrapUpPrompt,
+		WrapUpAllowedTools:      []string{ReportHypothesis.Name(), tool.TaskDone.Name()},
 		CompressionSystemPrompt: e.compressionSystemPrompt,
 		CompressionPrompt:       e.compressionPrompt,
 		CompressionUpdatePrompt: e.compressionPrompt,
@@ -307,7 +308,7 @@ func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []ms
 	}
 	atomic.AddInt64(&r.boardPulled, int64(count))
 	atomic.AddInt64(&r.boardTokens, int64(llm.CountTokens(digest)))
-	return []msg.Msg{msg.NewBoard(digest)}
+	return []msg.Msg{NewBoardDigest(digest)}
 }
 
 func (r *unitExecution) HandleTool(

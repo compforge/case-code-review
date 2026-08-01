@@ -45,9 +45,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			PromptTokens:    120,
 			MaxPromptTokens: 120,
 		},
-		HasMaterials:    true,
-		HasContextPaths: true,
-		FileReads:       FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, MaterialFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
+		HasSourcePreloads: true,
+		HasContextPaths:   true,
+		FileReads:         FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
 	}
 	vs := &ViewSession{
 		Summary: SessionSummary{

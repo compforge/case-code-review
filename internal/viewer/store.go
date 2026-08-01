@@ -564,9 +564,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 
 		case "debrief":
 			fg := groupFor(rec)
-			if raw, ok := rec["materials"]; ok {
-				fg.Materials = stringList(raw)
-				fg.HasMaterials = true
+			if raw, ok := rec["source_preloads"]; ok {
+				fg.SourcePreloads = stringList(raw)
+				fg.HasSourcePreloads = true
 			}
 			if raw, ok := rec["context_paths"]; ok {
 				fg.ContextPaths = stringMapLists(raw)

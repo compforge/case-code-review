@@ -103,8 +103,8 @@ func TestEvictFiles(t *testing.T) {
 	mk := func(path string, lines int) *msg.File {
 		body := strings.Repeat("1|some code line here\n", lines)
 		result := fmt.Sprintf("File: %s (Total lines: %d)\nIS_TRUNCATED: false\nLINE_RANGE: 1-%d\n%s", path, lines, lines, body)
-		f, ok := msg.FileFromToolResult("file_read", "c", result)
-		if !ok {
+		f := &msg.File{}
+		if !f.FromLLM(msg.LLMToolResult{Tool: "file_read", ToolCallID: "c", Content: result}) {
 			t.Fatalf("promotion failed for %s", path)
 		}
 		return f
@@ -141,8 +141,8 @@ func TestEvictFiles(t *testing.T) {
 // when the main loop stubs a File while the background job lowers it.
 func TestAsyncCompressionSnapshotRace(t *testing.T) {
 	result := fmt.Sprintf("File: pkg/a.go (Total lines: 1)\nIS_TRUNCATED: false\nLINE_RANGE: 1-1\n%s", "1|x\n")
-	f, ok := msg.FileFromToolResult("file_read", "c1", result)
-	if !ok {
+	f := &msg.File{}
+	if !f.FromLLM(msg.LLMToolResult{Tool: "file_read", ToolCallID: "c1", Content: result}) {
 		t.Fatal("promotion failed")
 	}
 	client := &scriptedClient{responses: []*llm.ChatResponse{{

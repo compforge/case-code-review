@@ -42,7 +42,7 @@ CaseFile 和 eval 的结果仍然是 Hypothesis。
 | `file_read` | 239 次 |
 
 第 1～10、11～20、21～30 轮分别消耗约 307 万、467 万、472 万输入 token；第 10 轮之后占
-Review 1 输入成本约 75%。这不是“开局 Briefing 太大”单独造成的，而是工具历史和静态任务材料
+Review 1 输入成本约 75%。这不是“开局初始上下文太大”单独造成的，而是工具历史和静态任务内容
 随着对话被反复发送。
 
 一个典型 clean-path Unit 只修改了 `finding.Finding` 的注释。模型第一轮已经判断变更很小，之后
@@ -52,7 +52,7 @@ Hypothesis。说明模型具备早期判断能力，但当前执行协议没有�
 ### 当前表现不支持的结论
 
 - **不是当前 Unit 源码没给够。** 239 次 `file_read` 中只有少量是在重复读取当前 Unit；typed
-  briefing 已基本解决“先把评审对象再读一遍”。
+  File 消息已基本解决“先把评审对象再读一遍”。
 - **不是工具经常失败。** 这次主要调查工具没有执行错误，成本来自成功但过度的探索。
 - **不能简单归因于模型能力。** 模型多次早已得到“没有具体问题”的结论，却继续执行
   “再检查一项”；优先要修的是控制协议。
@@ -98,9 +98,9 @@ Review 1 先调用 `report_hypothesis`，再调用 `task_done`。在最后一轮
 ## 目标流程
 
 ```text
-Unit + Briefing
+Unit + Review Messages
     │
-    ├── 首轮定向：理解 changed behavior，形成 0..N 条 material lead
+    ├── 首轮定向：理解 changed behavior，形成 0..N 条 candidate lead
     │
     ├── 有界补证：每条 lead 只走最短证据链
     │      ├── falsified / low value ──▶ 丢弃
@@ -117,7 +117,7 @@ lead 应按价值排序，而不是要求机械覆盖多条路径。一次补证
 - 一次 spec/case/rule/requirement 核对。
 
 当 lead 已经具备真实 trigger、可观察 impact、diff attribution 和源码锚点时就可以形成
-Hypothesis；仍缺的材料写进 uncertainty，交给 Review 2 定向补证。
+Hypothesis；仍缺的证据写进 uncertainty，交给 Review 2 定向补证。
 
 ## 关键设计
 
@@ -125,7 +125,7 @@ Hypothesis；仍缺的材料写进 uncertainty，交给 Review 2 定向补证。
 
 Review 1 的 prompt 应明确：
 
-- 先基于 diff 和 Briefing 形成少量 material lead；
+- 先基于 diff 和初始上下文形成少量 candidate lead；
 - 没有 lead 时立即结束，不为“更彻底”遍历仓库；
 - 一条 lead 被反证后不换同义搜索继续证明；
 - 不报告没有现实可达 trigger 的防御性可能；
@@ -155,15 +155,16 @@ Review 扩展拥有。Review 2 的 `submit_assessments` 也可以复用同一机
 
 ### 3. 探索预算结束后硬关闭调查工具
 
-执行层将“探索预算”和“终态预留”分开。到达探索边界后：
+执行层将“探索预算”和“终态预留”分开。到达探索边界后，模型看到的工具 schema 不变，但工具
+middleware 将执行能力收敛为：
 
 ```text
-disable: code_search / file_find / file_read / file_read_diff / file_read_base
-allow:   submit_hypotheses
+reject execution: code_search / file_find / file_read / file_read_diff / file_read_base
+allow execution:  report_hypothesis / task_done
 ```
 
-这应由 ToolGate 强制，而不是只追加 wrap-up 文本。最终阈值通过 replay 调整；第一轮实验可从
-约 10～12 个 agent turn 起步，并额外保留一个终态提交机会。
+这应由 ToolGate 强制，而不是只追加 wrap-up 文本。保留 schema 和稳定的 prompt 前缀是为了复用
+provider cache；能力限制发生在本地执行边界。最终阈值通过 replay 调整。
 
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。
@@ -177,7 +178,7 @@ Review 1 本身就是发散阶段，第一轮可以完成 change summary 和 lea
 truncated。改动规模是混杂因素，因此先以 `plan=off` 做固定 corpus 消融，不把该比例直接当成
 因果结论。
 
-若大 Unit 后续确实需要 Plan，应限制为：变更行为摘要、最多三条 material lead、每条唯一的
+若大 Unit 后续确实需要 Plan，应限制为：变更行为摘要、最多三条 candidate lead、每条唯一的
 最便宜补证动作；不再生成一份全面风险清单。
 
 ### 5. 给 Unit 相关 Change，而不是全量 Change 列表
@@ -197,24 +198,78 @@ other_changed_files_count: 17
 
 ### 6. 按调查价值治理上下文
 
-在轮次已被控制后，再处理上下文增长：
+Unit 与 Clue 在 Execution 之前被直接投影成 Review 1 消息，其中源码是带语义标签的 File 消息；Harness 不认识
+Unit。每轮模型返回后，`file_read` 结果也会恢复成 File 消息再进入 ContextManager。在轮次已被控制后，
+再处理上下文增长。
+
+#### 当前 Prompt 组装形状（伪代码）
+
+Runner 先构造稳定的开场消息，文件不是嵌进一大段 user 文本，而是独立的 typed message：
+
+```text
+system: <Review 1 system prompt / rules>
+user:   <review task；Unit diff、Clue 摘要、源码 slot pointer>
+
+<file_messages>
+  user: File(path=A, range=..., context="code under review")
+  user: File(path=B, range=..., context="related caller/callee/project context")
+  ...
+</file_messages>
+```
+
+进入 agent loop 后，assistant tool call 与对应 tool result 继续追加到同一条 conversation。工具结果先
+由 `FromLLM` 恢复成 typed message，下一次请求时再按当前压缩等级 `ToLLM`：
+
+```text
+assistant: <assistant text, if any> + tool_calls(code_search, file_read, ...)
+tool:      SearchResult(query=..., hits=...)
+tool:      File(path=C, range=..., snapshot=current)
+
+assistant: <assistant text, if any> + tool_calls(file_read_base, file_read_diff, ...)
+tool:      File(path=C, range=..., snapshot=baseline)
+tool:      Diff(paths=[...])
+
+... repeated agent turns ...
+```
+
+每次调用模型前，ContextManager 在这条持久 conversation 上追加本轮需要的控制消息并做投影：
+
+```text
+[durable conversation above]
+user: <incremental BoardDigest>                 # 有新的相关跨 Unit 事实时
+user: <wrap-up: stop investigation and submit> # 临近 turn/deadline 边界时只追加一次
+user: <available file path/range inventory>     # request-only 尾消息，不写回 transcript
+```
+
+随后依次执行 covered-range 去重、typed compaction、必要时的通用 context strategy，最后统一降成 provider
+消息。`system + review task` 尽量保持稳定；文件、搜索和 diff 可以从 full 降为 condensed/reference，
+但 tool call/result 配对和消息顺序不变。wrap-up 之后工具 schema 仍不变，执行层只允许结果提交与完成
+工具，避免继续调查空转。
+
+具体保留策略：
 
 - 永久保留 Unit diff、当前 lead ledger、已确认事实和证据引用；
 - 原始 search 列表在完成下一步定位后可淘汰；
 - 完整 `file_read` 结果降为使用过的范围、path/line 和摘要；
-- 工具无命中作为该 query 的反证保留一次，不在后续多轮携带完整相似词建议；
+- `code_search` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
+  不在后续多轮携带完整相似词建议；
 - Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
+
+压缩等级只由 ContextManager 在预算趋紧时选择，消息自己决定对应形态。默认从尾部向前压并在够用
+时停止，使 system/task 和较早消息保持稳定；已经提交的压缩不再反向展开。模型请求末尾会附一份
+当前仍完整可见的 path/range/角色清单，既帮助模型复用已有源码，也作为 `file_read` 覆盖判断的同一
+事实来源。
 
 目标是降低后续 prompt 的注意力噪声，而不是为了压缩再增加一轮昂贵 LLM summary。
 
 `file_read` 需要区分两个信号，不能合成一个“重复率”：
 
-- **已覆盖读取**：请求范围此刻仍完整存在于 briefing 或先前工具结果中。Harness 直接返回复用提示，
+- **已覆盖读取**：请求范围此刻仍完整存在于初始源码消息或先前工具结果中。Harness 直接返回复用提示，
   避免再次装入同一份内容；若范围只部分覆盖或内容已被淘汰，仍正常执行读取。
 - **同路径重复读取**：一个 Unit 内多次读取同一路径。它用于发现探索回环，但不同调用可能读取不同
   行范围，不能仅凭路径相同判定为浪费。
 
-Session debrief 同时记录实际组装的 briefing materials，以及 Unit 按 caller/callee/project 等关系
+Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/callee/project 等关系
 静态知道的路径。Viewer 将二者分别与 `file_read` 对比：前者判断预载是否命中，后者回答“静态分析
 本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
 

@@ -39,17 +39,17 @@ func TestWriteDebrief(t *testing.T) {
 	mk(PlanTask, "")
 
 	sh.CloseScope(sc, Debrief{
-		Outcome:      "completed",
-		Formed:       "func",
-		Fragments:    1,
-		Insertions:   12,
-		Deletions:    3,
-		Degradations: []string{"related_source_dropped"},
-		Clues:        map[string]int{"caller/spec": 1},
-		ClueRefs:     []string{"b.go::Entry"},
-		ContextPaths: map[string][]string{"caller": {"b.go"}},
-		Materials:    []string{"whole a.go"},
-		UsageSites:   4,
+		Outcome:        "completed",
+		Formed:         "func",
+		Fragments:      1,
+		Insertions:     12,
+		Deletions:      3,
+		Degradations:   []string{"related_source_dropped"},
+		Clues:          map[string]int{"caller/spec": 1},
+		ClueRefs:       []string{"b.go::Entry"},
+		ContextPaths:   map[string][]string{"caller": {"b.go"}},
+		SourcePreloads: []string{"whole a.go"},
+		UsageSites:     4,
 	})
 	sh.Finalize()
 
@@ -68,7 +68,7 @@ func TestWriteDebrief(t *testing.T) {
 	}
 
 	// Manifest: the transcript self-describes its configuration and population.
-	if start["schema_version"].(float64) != 2 || start["tool_version"] != "v1.7.1 (abc123)" ||
+	if start["schema_version"].(float64) != 3 || start["tool_version"] != "v1.7.1 (abc123)" ||
 		start["eval_tag"] != "corpus-v1" || start["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("manifest fields off: %v", start)
 	}
@@ -99,7 +99,10 @@ func TestWriteDebrief(t *testing.T) {
 		t.Fatalf("duration off: %v", deb["duration_ms"])
 	}
 	if deb["usage_sites"].(float64) != 4 || deb["insertions"].(float64) != 12 {
-		t.Fatalf("briefing/size fields off: %v", deb)
+		t.Fatalf("context/size fields off: %v", deb)
+	}
+	if preloads := deb["source_preloads"].([]any); len(preloads) != 1 || preloads[0] != "whole a.go" {
+		t.Fatalf("source preloads off: %v", deb["source_preloads"])
 	}
 	contextPaths := deb["context_paths"].(map[string]any)
 	if callers := contextPaths["caller"].([]any); len(callers) != 1 || callers[0] != "b.go" {

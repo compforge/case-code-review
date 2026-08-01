@@ -36,7 +36,8 @@ Assessment 等评审领域对象。领域语义通过消息、工具、hook 和 
 
 ### 2.1 启动 Execution
 
-调用方组装 `ExecutionSpec`，明确本次执行允许看到和做到什么，再通过稳定边界启动：
+调用方组装 `ExecutionSpec`，其中 `Messages` 是领域消息而不是提前摊平的 provider 文本；它同时明确
+本次执行允许看到和做到什么，再通过稳定边界启动：
 
 ```go
 execution, err := harness.NewExecution(spec)
@@ -70,16 +71,31 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 ### 3.1 Typed message 是内部语义，wire message 是边界投影
 
-Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义。只有在调用模型前才降成
-provider wire message：
+Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义。模型返回的普通消息先进入
+`Raw`，可识别的工具结果（例如 `file_read`）会重新提升为 `File`，因此后续压缩始终从 typed message
+视角出发。只有在调用模型前才降成 provider wire message：
 
 ```text
 msg.Msg / msg.File
    ── context lifecycle ──▶ lowered model messages
 ```
 
-文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，ContextManager 才能判断两个范围是否
+每种消息通过 `ToLLM(CompactionLevel)` 自己定义 full、condensed、reference 等投影；Harness 外只
+提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
+ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
+
+工具结果通过其前一条 assistant tool call 的 call ID 找回工具名和参数，再由统一 `FromLLM` 入口归入
+少量语义类型，而不是“一种工具一个 class”。每种双向消息把 `FromLLM` 与 `ToLLM` 放在同一处，
+修改 wire contract 或压缩投影时可以同时核对两个方向：
+
+- `file_read` / `file_read_base` → `File`，current 与 baseline snapshot 参与身份，不能跨版本去重；
+- `file_read_diff` → `Diff`，压缩时保留 path 与 hunk anchor；
+- `code_search` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
+- 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
+
+无法识别的普通 LLM 消息退化为 `Raw`。初始任务、Board 等只由 CCR 内部创建的单向消息没有可恢复的
+wire 来源，因此只定义 `ToLLM`。
 
 降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
 发送的 wire shape，因此 Viewer 能回答“模型当时究竟看到了什么”。
@@ -88,19 +104,25 @@ msg.Msg / msg.File
 
 上下文不是只增不减的聊天数组。Harness 统一处理：
 
-- 注入：system/task、静态 briefing、跨 turn provider 输出；
+- 注入：system/task、静态源码消息、跨 turn provider 输出；
 - 去重：后一次覆盖读取替代早期重复 file content；
 - 复用：当 `file_read` 请求范围仍完整可见时返回轻量提示，不再次执行相同读取；
 - 淘汰：优先移除可重取、低价值的大块内容；
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
-领域层可以决定“哪类事实值得提供”，但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
+ContextManager 默认从完整消息开始，只有预算趋紧才单调提高压缩等级。当前优先从消息尾部向前压，
+够用即停：system/task 和更早的文件保持稳定，下次再从剩余尾部腾空间。压缩一旦提交，本 Execution
+内不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
+但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
 统计和恢复行为会分裂。
 
 ### 3.3 预算是机制，完成策略属于调用方
 
-Harness 提供 token、tool round、deadline 等预算机制，以及“接近边界”的 hook。调用方定义终态
+Harness 提供 token、tool round、deadline 等预算机制，以及“接近边界”的 hook。进入 wrap-up 时
+工具 schema 保持不变，只在消息尾部追加稳定的收敛指令；若调用方配置硬门，middleware 拒绝继续
+执行调查工具，但结果/完成工具仍可用。这样既不能靠忽略 prompt 继续空转，也不因中途换工具集破坏
+provider cache。调用方定义终态
 动作和收敛语义。例如 Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个
 输入都有 Assessment。
 
@@ -158,7 +180,7 @@ Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不
    不把普通 assistant 文本冒充为隐藏思维过程。
 
 Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
-机会，后者只是可能的探索回环；同时展示 briefing material、Unit 静态已知路径和 caller/callee
+机会，后者只是可能的探索回环；同时展示预载源码、Unit 静态已知路径和 caller/callee
 路径与实际读取文件的重合率，用于判断下一步应预载什么，而不是把所有相关文件都塞进 prompt。
 
 这两个视角分别回答“整次 review 怎么样”和“某一轮为什么这样判断”。Overview 不能替代逐轮证据，
@@ -191,4 +213,4 @@ Harness 变更至少验证：
 - [`kernel.md`](kernel.md) — Harness 在 CCR Kernel 中的职责
 - [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
 - [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
-- [`unit-model.md`](unit-model.md) — typed briefing 所承载的 Unit / Clue 语义
+- [`unit-model.md`](unit-model.md) — Review Messages 所承载的 Unit / Clue 语义

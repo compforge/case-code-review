@@ -176,7 +176,7 @@ type Runner struct {
 	// assembly in New(), so findClues stays gate-agnostic.
 	features feature.Set
 	// costlyContext records splitUnits' budget-gate verdict (diff focused enough
-	// for call-graph greps) so the briefing's usage-sites grep — same cost class —
+	// for call-graph greps) so the initial context's usage-sites grep — same cost class —
 	// rides the same gate. Set in splitUnits, read by renderUsageSites.
 	costlyContext bool
 	// repoMap is the run-level ranked symbol map (computed once in
@@ -188,7 +188,7 @@ type Runner struct {
 	// (nil when the typed_graph gate is off). See codegraph.TypedGraph.
 	typedGraph *codegraph.TypedGraph
 	// analyzer is the run-scoped source-language boundary shared by splitting,
-	// callgraph lookup, comment tagging, and ranged briefing.
+	// callgraph lookup, comment tagging, and ranged source preload.
 	analyzer *language.Analyzer
 	// board is the Review Team's shared case board for this run (nil when the
 	// review_team gate is off). See docs/unit_review.md.
@@ -968,9 +968,8 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 			content = strings.ReplaceAll(content, "{{system_rule}}", rule)
 			content = strings.ReplaceAll(content, "{{change_files}}", changeFilesExcludingCurrent)
 			content = strings.ReplaceAll(content, "{{diff}}", u.Diff())
-			// The briefing's materials: the unit's own post-change source, plus
-			// context-only related bodies — inlined so early rounds aren't spent
-			// fetching them (see briefing.go).
+			// High-confidence source already implied by the Unit is appended as
+			// separate File messages so early rounds do not fetch it again.
 			content = strings.ReplaceAll(content, "{{unit_source}}", unitSource)
 			content = strings.ReplaceAll(content, "{{related_source}}", relatedSource)
 			// Pre-grepped blast-radius map of the changed symbols.
@@ -1000,10 +999,8 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		return messages
 	}
 
-	mats := a.brieferFor(u.Scope).materials(u)
-
 	// The debrief is this unit's terminal record: what only this moment knows
-	// (formation, briefing fate, outcome) — post-hoc analysis can't rebuild it.
+	// (formation, source-preload fate, outcome) — post-hoc analysis can't rebuild it.
 	// Cost rollup is filled by WriteDebrief from the scope's task records.
 	deb := session.Debrief{
 		Formed:       string(u.Formed),
@@ -1019,34 +1016,13 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	maxAllowed := a.args.Template.MaxTokens
 	tokenLimit := maxAllowed * 4 / 5 // 80% of MaxTokens
 
-	// Two briefing shapes behind the typed_briefing gate. Both degrade stepwise
-	// under the token limit (drop the context-only bodies first, then the own
-	// source) — the preload is an optimization, never the reason a unit gets
-	// skipped by the token guard below.
-	var domain []msg.Msg
-	if a.features.Enabled(feature.TypedBriefing) {
-		// Typed shape: [template messages, own Files, related Files] — preloads
-		// are per-file msg.File messages, so file_dedup/file_evict cover them.
-		pieces, outs := a.renderPieces(ctx, mats)
-		deb.Materials = outs
-		domain = a.assembleTypedBriefing(buildMessages, pieces, tokenLimit, &deb)
-	} else {
-		// Classic shape: preloads inlined into the task message's template slots.
-		unitSource, relatedSource, outs := a.renderMaterials(ctx, mats)
-		deb.Materials = outs
-		messages := buildMessages(unitSource, relatedSource)
-		if relatedSource != "" && llm.CountMessagesTokens(messages) > tokenLimit {
-			relatedSource = ""
-			messages = buildMessages(unitSource, relatedSource)
-			deb.Degradations = append(deb.Degradations, "related_source_dropped")
-		}
-		if unitSource != sourceNotPreloaded && llm.CountMessagesTokens(messages) > tokenLimit {
-			unitSource = sourceNotPreloaded
-			messages = buildMessages(unitSource, relatedSource)
-			deb.Degradations = append(deb.Degradations, "unit_source_dropped")
-		}
-		domain = msg.Wrap(messages)
-	}
+	// Preloaded source is an optimization, never the reason a Unit is skipped:
+	// related files drop before the reviewed source when the prompt is too large.
+	ownFiles, relatedFiles, notes, outcomes := a.preloadReviewFiles(ctx, u)
+	deb.SourcePreloads = outcomes
+	domain := a.assembleReviewMessages(
+		buildMessages, ownFiles, relatedFiles, notes, tokenLimit, &deb,
+	)
 
 	tokenCount := llm.CountMessagesTokens(msg.Lower(domain))
 	if tokenCount > tokenLimit {
@@ -1090,7 +1066,7 @@ func clueRefs(clues []unit.Clue) []string {
 
 // cluePaths preserves the relation that made a source file statically known
 // to the Unit. The viewer compares these paths with later file_read calls;
-// this is deliberately separate from Materials, which records what was
+// this is deliberately separate from SourcePreloads, which records what was
 // actually placed in the initial prompt.
 func cluePaths(clues []unit.Clue) map[string][]string {
 	paths := map[string][]string{}

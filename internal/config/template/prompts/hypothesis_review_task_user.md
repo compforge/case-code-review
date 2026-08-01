@@ -1,6 +1,6 @@
 ## CaseFile
 
-The change set, background, rules, clues, and hypotheses below are the material packet transferred from the investigative reviews.
+The change set, background, rules, clues, and hypotheses below are the CaseFile transferred from the investigative reviews.
 
 ### Change set
 
@@ -20,7 +20,7 @@ Use `file_read_diff` to inspect the complete diff for each path relevant to a hy
 
 ### Existing clues
 
-These are materials gathered around the affected Units. They are not automatically evidence: use them only after checking that they actually support or contradict a hypothesis.
+This is context gathered around the affected Units. It is not automatically evidence: use it only after checking that it actually supports or contradicts a hypothesis.
 
 ```json
 {{clues}}

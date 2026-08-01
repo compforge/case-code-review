@@ -30,7 +30,7 @@ case-code-review/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
-    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 将 Clue 汇入 Unit，再投影为 Briefing。详见 `docs/unit-model.md`
+    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentcore 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`llmloop` 作为旧实现自包含保留，仓库其他包不再依赖。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施平铺
     ├── config/     模板 prompt、rule.json、tools 配置
@@ -47,8 +47,8 @@ git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fr
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
 
-Formation 把 Change 切成 Fragment，再按行为关系形成 Unit；Unit 持有 target Fragments 与相关 Clues，
-Briefing 只是本轮上下文投影。Harness 执行 Review loop，但不拥有 Unit、Hypothesis 或 Finding。
+Formation 把 Change 切成 Fragment，再按行为关系形成 Unit；Unit 持有 target Fragments 与相关 Clues。
+Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有 Unit、Hypothesis 或 Finding。
 
 ## 关键约定
 
@@ -58,7 +58,7 @@ Briefing 只是本轮上下文投影。Harness 执行 Review loop，但不拥有
    call-chain Unit。目标是 Review 1 loop 不多于需评审文件数，同时不靠错误合并牺牲准确性。
 3. **发现、复核、裁决分离**：Review 1 只产生 Hypothesis，Review 2 形成 Assessment，Trial 用确定性
    规则决定 Finding。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
-4. **Review Execution 有界、只读、可观测**：确定上下文先进入 Briefing，未知事实再通过只读工具补证；
+4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentCore 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
 5. **事实源不重复**：源码事实现场解析，contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
    Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。
@@ -70,7 +70,7 @@ Briefing 只是本轮上下文投影。Harness 执行 Review loop，但不拥有
 - Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
   与 HTML Viewer 可观测性——`docs/harness.md`
 - spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/qiankunli/spec-case)
-- Component、Unit 与上下文：`FileRole`、`Fragment` / `Unit` 作用域、Clue 两轴上下文、图事实消费与 Briefing
+- Component、Unit 与上下文：`FileRole`、`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费
   ——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
 - Unit Review：Review 1 的有界探索、原子完成、上下文治理与 Board/Bulletin 跨 Unit 协作

@@ -14,7 +14,7 @@ type FileReadMetrics struct {
 	UniqueFiles     int
 	CoveredCalls    int
 	SamePathRepeats int
-	MaterialFiles   int
+	PreloadedFiles  int
 	UnitKnownFiles  int
 	CallGraphFiles  int
 }
@@ -50,12 +50,12 @@ func analyzeFileReads(r *ReviewRun) FileReadMetrics {
 		}
 	}
 
-	materials := map[string]bool{}
-	for _, outcome := range r.Materials {
+	preloads := map[string]bool{}
+	for _, outcome := range r.SourcePreloads {
 		for _, prefix := range []string{"whole ", "ranged "} {
 			if strings.HasPrefix(outcome, prefix) {
 				if filePath := cleanReviewPath(strings.TrimPrefix(outcome, prefix)); filePath != "" {
-					materials[filePath] = true
+					preloads[filePath] = true
 				}
 			}
 		}
@@ -71,8 +71,8 @@ func analyzeFileReads(r *ReviewRun) FileReadMetrics {
 		}
 	}
 	for filePath := range readCounts {
-		if materials[filePath] {
-			metrics.MaterialFiles++
+		if preloads[filePath] {
+			metrics.PreloadedFiles++
 		}
 		if known[filePath] {
 			metrics.UnitKnownFiles++

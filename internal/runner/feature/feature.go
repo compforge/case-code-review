@@ -30,19 +30,13 @@ const (
 	RepoMap          Gate = "repo_map"          // ranked symbol map injected per run (anti guessed-name searches)
 	TypedGraph       Gate = "typed_graph"       // type-checker-resolved call edges for caller/callee/merge (Go)
 
-	// Briefing gates: what source material each unit's briefing pre-inlines so the
-	// review loop doesn't spend rounds fetching it (see internal/runner/briefing.go).
+	// Source-context gates control what each Unit receives before its loop so the
+	// model does not spend rounds fetching already-known files.
 	UsageSites     Gate = "usage_sites"     // pre-grepped use sites of the changed symbols
 	RangedPreload  Gate = "ranged_preload"  // over-budget file fallback: inline the unit's function bodies
-	NeighborSource Gate = "neighbor_source" // callchain briefing: inline caller/callee neighbor bodies
+	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier file_read results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
-
-	// TypedBriefing: briefing preloads as per-file messages. Flipped ON by the
-	// corpus replay A/B (eval/README §9): timeouts 9→3 across 70 units/arm
-	// (robustness win via File dedup/evict covering preloads), cost flat, no
-	// quality regression evidence.
-	TypedBriefing Gate = "typed_briefing"
 	// ReviewTeam is the Review Team v0 (docs/unit_review.md): concurrent unit
 	// loops share an in-memory case board — auto-published facts, directed
 	// incremental injection at turn boundaries. Default OFF (experimental)
@@ -84,12 +78,11 @@ var registry = map[Gate]def{
 	RepoMap:          {true, "ranked symbol map injected per run (anti guessed-name searches)", false},
 	TypedGraph:       {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
 
-	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the briefing", false},
+	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the initial context", false},
 	RangedPreload:  {true, "over-budget file fallback: inline the unit's function bodies", false},
-	NeighborSource: {true, "callchain briefing: inline caller/callee neighbor bodies", false},
+	NeighborSource: {true, "callchain context: inline caller/callee neighbor bodies", false},
 	FileDedup:      {true, "stub earlier file_read results superseded by a later covering read", false},
 	FileEvict:      {true, "under token pressure, shed re-derivable file content before LLM compression", false},
-	TypedBriefing:  {true, "briefing preloads as per-file messages (File dedup/evict cover preloads)", false},
 	ReviewTeam:     {false, "Review Team v0: units share an in-memory case board (auto facts + directed injection)", true},
 	PostBulletin:   {false, "post_bulletin tool: the model posts observation-level suspicions to the team board (needs review_team)", true},
 }

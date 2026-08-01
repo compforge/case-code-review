@@ -8,13 +8,13 @@ import (
 )
 
 // Debrief is a unit's terminal record — one line per review Unit written when
-// its loop ends. Briefing goes in, debrief comes out: it captures what the run
-// knew at that moment and what post-hoc analysis cannot reconstruct (outcome
-// vs policy skip, unit formation, briefing degradations), plus a per-unit cost
-// rollup so eval never re-aggregates raw llm_response records.
+// its loop ends. It captures what the run knew at that moment and what post-hoc
+// analysis cannot reconstruct (outcome vs policy skip, unit formation, context
+// degradations), plus a per-unit cost rollup so eval never re-aggregates raw
+// llm_response records.
 //
 // Field groups mirror the metric dashboards (eval/README.md): outcome →
-// robustness, formed → granularity, clues/materials/usage → context, the
+// robustness, formed → granularity, clues/source preloads/usage → context, the
 // aggregated tail → cost.
 type Debrief struct {
 	// Outcome is the Harness execution's terminal state: completed / truncated /
@@ -32,9 +32,9 @@ type Debrief struct {
 	Insertions int64
 	Deletions  int64
 
-	// Degradations lists briefing content dropped after assembly (token guard:
+	// Degradations lists initial context dropped after assembly (token guard:
 	// related bodies first, then own source). Budget misses during assembly are
-	// per-material entries in Materials instead.
+	// recorded in SourcePreloads instead.
 	Degradations []string
 	// Clues is the Unit's clue tally on the relation×kind matrix ("caller/spec" -> n).
 	Clues map[string]int
@@ -43,12 +43,12 @@ type Debrief struct {
 	// (the typed-graph lesson: compare content, not counts).
 	ClueRefs []string
 	// ContextPaths keeps the statically known source paths by relation. Unlike
-	// Materials, these files may only be pointers available for on-demand reads.
+	// SourcePreloads, these files may only be pointers available for on-demand reads.
 	ContextPaths map[string][]string
-	// Materials records each briefing material's fate: "whole <path>",
+	// SourcePreloads records each attempted preload's fate: "whole <path>",
 	// "ranged <path>", "budget_miss <path>", "dropped <label>".
-	Materials []string
-	// UsageSites is how many pre-grepped use sites the briefing carried.
+	SourcePreloads []string
+	// UsageSites is how many pre-grepped use sites the initial context carried.
 	UsageSites int
 
 	// Review Team board activity (docs/unit_review.md), 0 when the board is off.
@@ -68,7 +68,7 @@ type Debrief struct {
 // docs/unit-model.md). The debrief persists immediately when no
 // async work is in flight, or parks until the scope's last async task ends
 // (EndAsync finalizes). The caller supplies only what it alone knows (outcome,
-// briefing fate); cost is aggregated at finalize so it can't drift from the
+// source-preload fate); cost is aggregated at finalize so it can't drift from the
 // llm_request/llm_response records it summarizes.
 func (sh *SessionHistory) CloseScope(sc Scope, d Debrief) {
 	sh.GetOrCreateScope(sc).Close(d)

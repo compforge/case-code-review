@@ -103,7 +103,7 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 			unitToolDef("task_done"),
 		},
 		PostBulletin: true,
-		MaxTurns:     2,
+		MaxTurns:     3,
 		MaxTokens:    1_000,
 		Session:      &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, nil, sharedBoard)

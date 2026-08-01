@@ -7,7 +7,7 @@
 // Consumption is asymmetric on purpose (see docs/unit_review.md): publishing is a
 // push the engine does for free from tool calls; consumption is NOT a pull tool
 // (a model can't query what it doesn't know exists, and a pull round is exactly
-// the fetch cost briefing spent months eliminating). So the board decides WHO
+// the fetch cost initial source context spent months eliminating). So the board decides WHO
 // sees WHAT: a subscriber's interest (its files + symbols + clue neighbors) is
 // intersected against each bulletin's routing keys, scored, capped, and injected
 // incrementally at the turn boundary.

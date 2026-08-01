@@ -1,6 +1,6 @@
 // Package msg is ccr's review-domain message model: the review loop's
 // conversation is a []Msg of DOMAIN messages (what the content IS — a unit's
-// briefing, a file's source, a board note), and the LLM wire format
+// initial context, a file's source, a board note), and the LLM wire format
 // (llm.Message's user/assistant/tool roles) appears only at the Lower
 // boundary, immediately before an API call.
 //
@@ -27,11 +27,35 @@ package msg
 
 import "github.com/qiankunli/case-code-review/internal/llm"
 
+// CompactionLevel is selected only by Harness context projection. Callers
+// provide full-fidelity domain messages; they never choose or persist a level.
+type CompactionLevel uint8
+
+const (
+	CompactionNone CompactionLevel = iota
+	CompactionCondensed
+	CompactionReference
+)
+
 // Msg is one review-domain message in a loop's conversation.
 type Msg interface {
-	// Lower renders the message into its LLM wire form (exactly one message —
-	// see the package invariant).
-	Lower() llm.Message
+	// ToLLM renders the message into its LLM wire form at the fidelity chosen
+	// by ContextManager (exactly one message — see the package invariant).
+	ToLLM(CompactionLevel) llm.Message
+}
+
+// Compactable lets a message declare how far ContextManager may compact it.
+// The message owns each representation; Harness owns when to select one.
+type Compactable interface {
+	Msg
+	MaxCompaction() CompactionLevel
+}
+
+// ToolResultMsg preserves the tool identity needed to reconstruct typed
+// results after AgentCore or a context strategy temporarily lowers them.
+type ToolResultMsg interface {
+	Msg
+	ToolName() string
 }
 
 // Reclaimable is a message whose content can be RE-DERIVED — a file re-read, a
@@ -53,7 +77,11 @@ type Raw struct {
 	M llm.Message
 }
 
-func (r Raw) Lower() llm.Message { return r.M }
+func (r Raw) ToLLM(CompactionLevel) llm.Message { return r.M }
+
+// Lower keeps the old call-site convenience for code that explicitly wants
+// the un-compacted wire form. Runtime projection goes through ToLLM.
+func (r Raw) Lower() llm.Message { return r.ToLLM(CompactionNone) }
 
 // Text is shorthand for a Raw text message — the loop's steering nudges
 // ("call task_done", wrap-up) are wire-shaped user/assistant text by nature.
@@ -76,7 +104,7 @@ func Wrap(msgs []llm.Message) []Msg {
 func Lower(msgs []Msg) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = m.Lower()
+		out[i] = m.ToLLM(CompactionNone)
 	}
 	return out
 }

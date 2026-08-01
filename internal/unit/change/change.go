@@ -1,4 +1,4 @@
-// Package change models the source material from which review Units are formed.
+// Package change models source changes from which review Units are formed.
 package change
 
 // Change is one file's review input. Diff review fills the unified diff and

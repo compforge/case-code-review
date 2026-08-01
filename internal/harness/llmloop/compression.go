@@ -58,7 +58,7 @@ func CountMessagesTokens(msgs []llm.Message) int {
 func countMsgTokens(msgs []msg.Msg) int {
 	var total int
 	for _, m := range msgs {
-		w := m.Lower()
+		w := m.ToLLM(msg.CompactionNone)
 		total += llm.CountTokens(w.ExtractText())
 	}
 	return total
@@ -83,9 +83,9 @@ func evictReclaimable(messages []msg.Msg, limit int) int {
 		if !ok || rc.Reclaimed() {
 			continue
 		}
-		before := rc.Lower()
+		before := rc.ToLLM(msg.CompactionNone)
 		rc.Reclaim()
-		after := rc.Lower()
+		after := rc.ToLLM(msg.CompactionNone)
 		total -= llm.CountTokens(before.ExtractText()) - llm.CountTokens(after.ExtractText())
 		evicted++
 		if total <= limit {
@@ -101,10 +101,10 @@ func groupIntoRounds(messages []msg.Msg, start int) []round {
 	var rounds []round
 	i := start
 	for i < len(messages) {
-		if messages[i].Lower().Role == "assistant" {
+		if messages[i].ToLLM(msg.CompactionNone).Role == "assistant" {
 			r := round{assistantIdx: i}
 			i++
-			for i < len(messages) && messages[i].Lower().Role == "tool" {
+			for i < len(messages) && messages[i].ToLLM(msg.CompactionNone).Role == "tool" {
 				r.toolIdxs = append(r.toolIdxs, i)
 				i++
 			}
@@ -128,10 +128,10 @@ func computeActiveZoneSize(rounds []round, messages []msg.Msg, maxTokens int, re
 	count := 0
 	tokensUsed := 0
 	for i := len(rounds) - 1; i >= 0; i-- {
-		w := messages[rounds[i].assistantIdx].Lower()
+		w := messages[rounds[i].assistantIdx].ToLLM(msg.CompactionNone)
 		roundTokens := llm.CountTokens(w.ExtractText())
 		for _, ti := range rounds[i].toolIdxs {
-			tw := messages[ti].Lower()
+			tw := messages[ti].ToLLM(msg.CompactionNone)
 			roundTokens += llm.CountTokens(tw.ExtractText())
 		}
 		if tokensUsed+roundTokens > budget {
@@ -281,7 +281,7 @@ func (r *Runner) runCompression(ctx context.Context, msgs []msg.Msg, sc session.
 
 	// The summary is appended to the frozen task prompt's WIRE text: whatever
 	// domain type msgs[1] had, the rebuilt message is wire-shaped from here on.
-	userMsg := rebuilt[1].Lower()
+	userMsg := rebuilt[1].ToLLM(msg.CompactionNone)
 	currentText := userMsg.ExtractText()
 	rebuilt[1] = msg.Text(userMsg.Role, currentText+"\n\n<previous_review_summary>\n"+rawSummary+"\n</previous_review_summary>")
 

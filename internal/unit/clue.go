@@ -34,7 +34,7 @@ const (
 	RelProject Relation = "project" // a project file in the same Component
 )
 
-// Clue is one piece of review context reached for a Unit: a contract, a review
+// Clue is one item of review context reached for a Unit: a contract, a review
 // rule, a see-also pointer, a docstring, etc. Kind is what it is; Relation is how
 // it was reached; Text is the RAW content (no relation wording — the prompt
 // renderer labels a clue from relation+kind+Ref, so dedup compares content and
