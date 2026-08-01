@@ -22,7 +22,8 @@ Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Un
 再聚合领域结果。领域行为通过 execution spec、tool、hook 和 event 适配 Harness，而不是塞进执行内核。
 
 评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
-Repository / Component 提供项目边界、FileRole 和 manifest 等项目知识，未来也可承接文档与规则。
+Repository / Component 提供项目边界、可组合 FileRole（如 source + entrypoint / handler）和 manifest
+等项目知识，未来也可承接文档与规则。
 它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 将 Clue 汇入 Unit，Review 2
 将来可面向 CaseFile 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
 
@@ -36,6 +37,7 @@ Git diff
   ▼
 Change ─▶ Component / FileRole
                   ├─ source ─Splitter─▶ Fragment ─Merger─▶ Unit
+                  │     └─ entrypoint / handler ──────────▶ Clue
                   └─ manifest / lock ─────────────────────▶ Clue
                                       │
                          ClueFinder ─▶ Unit.Clues ─▶ Briefing

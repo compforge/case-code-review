@@ -17,49 +17,98 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 	}
 
 	tests := []struct {
-		path string
-		root string
-		kind Kind
-		role FileRole
-		ok   bool
+		path  string
+		root  string
+		kind  Kind
+		roles FileRoles
+		ok    bool
 	}{
-		{"backend/app/service.py", "backend", Python, RoleSource, true},
-		{"backend/pyproject.toml", "backend", Python, RoleManifest, true},
-		{"backend/uv.lock", "backend", Python, RoleLock, true},
-		{"cmd/ccr/main.go", ".", Go, RoleSource, true},
-		{"go.mod", ".", Go, RoleManifest, true},
-		{"go.sum", ".", Go, RoleLock, true},
-		{"README.md", ".", Go, RoleUnknown, true},
+		{"backend/app/service.py", "backend", Python, FileRoles{RoleSource}, true},
+		{"backend/routers/users.py", "backend", Python, FileRoles{RoleSource}, true},
+		{"backend/app/__main__.py", "backend", Python, FileRoles{RoleSource, RoleEntrypoint}, true},
+		{"backend/pyproject.toml", "backend", Python, FileRoles{RoleManifest}, true},
+		{"backend/uv.lock", "backend", Python, FileRoles{RoleLock}, true},
+		{"cmd/ccr/main.go", ".", Go, FileRoles{RoleSource, RoleEntrypoint}, true},
+		{"go.mod", ".", Go, FileRoles{RoleManifest}, true},
+		{"go.sum", ".", Go, FileRoles{RoleLock}, true},
+		{"README.md", ".", Go, FileRoles{RoleUnknown}, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
-			got, role, ok := r.Resolve(tt.path)
-			if ok != tt.ok || got.Root != tt.root || got.Kind != tt.kind || role != tt.role {
-				t.Fatalf("Resolve(%q) = (%+v, %q, %t), want root=%q kind=%q role=%q ok=%t",
-					tt.path, got, role, ok, tt.root, tt.kind, tt.role, tt.ok)
+			got, roles, ok := r.Resolve(tt.path)
+			if ok != tt.ok || got.Root != tt.root || got.Kind != tt.kind || roles.String() != tt.roles.String() {
+				t.Fatalf("Resolve(%q) = (%+v, %q, %t), want root=%q kind=%q roles=%q ok=%t",
+					tt.path, got, roles, ok, tt.root, tt.kind, tt.roles, tt.ok)
 			}
 		})
+	}
+}
+
+func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
+	component := Component{Root: "backend", Kind: Python}
+	roles := EnrichFileRoles(
+		component,
+		"backend/api/v1/endpoints/items.py",
+		FileRoles{RoleSource},
+		[]string{"router.post"},
+		nil,
+	)
+	if !roles.Has(RoleHandler) {
+		t.Fatalf("decorated endpoint roles = %v, want handler", roles)
+	}
+
+	plain := EnrichFileRoles(
+		component,
+		"backend/api/v1/routes.py",
+		FileRoles{RoleSource},
+		nil,
+		[]string{"APIRouter", "include_router"},
+	)
+	if plain.Has(RoleHandler) {
+		t.Fatalf("router aggregator roles = %v, must not be handler", plain)
+	}
+
+	main := EnrichFileRoles(
+		component,
+		"backend/main.py",
+		FileRoles{RoleSource},
+		[]string{"app.get"},
+		[]string{"FastAPI"},
+	)
+	if !main.Has(RoleEntrypoint) || !main.Has(RoleHandler) {
+		t.Fatalf("FastAPI main roles = %v, want entrypoint + handler", main)
+	}
+
+	apiRoute := EnrichFileRoles(
+		component,
+		"backend/api/v1/endpoints/items.py",
+		FileRoles{RoleSource},
+		[]string{"router.api_route"},
+		nil,
+	)
+	if !apiRoute.Has(RoleHandler) {
+		t.Fatalf("api_route endpoint roles = %v, want handler", apiRoute)
 	}
 }
 
 func TestRepositoryDoesNotGuessBetweenPolyglotComponents(t *testing.T) {
 	r := repositoryWith("go.mod", "pyproject.toml")
 
-	if got, role, ok := r.Resolve("config.yaml"); ok {
-		t.Fatalf("ambiguous config unexpectedly owned by %+v as %q", got, role)
+	if got, roles, ok := r.Resolve("config.yaml"); ok {
+		t.Fatalf("ambiguous config unexpectedly owned by %+v as %q", got, roles)
 	}
-	if got, role, ok := r.Resolve("main.go"); !ok || got.Kind != Go || role != RoleSource {
-		t.Fatalf("Go source = (%+v, %q, %t)", got, role, ok)
+	if got, roles, ok := r.Resolve("main.go"); !ok || got.Kind != Go || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
+		t.Fatalf("Go source = (%+v, %q, %t)", got, roles, ok)
 	}
-	if got, role, ok := r.Resolve("main.py"); !ok || got.Kind != Python || role != RoleSource {
-		t.Fatalf("Python source = (%+v, %q, %t)", got, role, ok)
+	if got, roles, ok := r.Resolve("main.py"); !ok || got.Kind != Python || !roles.Has(RoleSource) {
+		t.Fatalf("Python source = (%+v, %q, %t)", got, roles, ok)
 	}
 }
 
 func TestRepositoryLeavesRepositoryFileUnowned(t *testing.T) {
 	r := repositoryWith("backend/pyproject.toml")
-	if got, role, ok := r.Resolve("README.md"); ok {
-		t.Fatalf("repository README unexpectedly owned by %+v as %q", got, role)
+	if got, roles, ok := r.Resolve("README.md"); ok {
+		t.Fatalf("repository README unexpectedly owned by %+v as %q", got, roles)
 	}
 }

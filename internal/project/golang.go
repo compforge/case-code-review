@@ -8,16 +8,22 @@ import (
 var goProfile = profile{
 	kind:    Go,
 	markers: []string{"go.mod"},
-	classify: func(file string) FileRole {
+	classify: func(_, file string) FileRoles {
 		switch strings.ToLower(path.Base(file)) {
 		case "go.mod":
-			return RoleManifest
+			return FileRoles{RoleManifest}
 		case "go.sum":
-			return RoleLock
+			return FileRoles{RoleLock}
 		}
 		if strings.EqualFold(path.Ext(file), ".go") {
-			return RoleSource
+			roles := FileRoles{RoleSource}
+			// Go does not require this filename, but main.go is the dominant
+			// repository convention for an executable package boundary.
+			if strings.EqualFold(path.Base(file), "main.go") {
+				roles = append(roles, RoleEntrypoint)
+			}
+			return roles
 		}
-		return RoleUnknown
+		return FileRoles{RoleUnknown}
 	},
 }

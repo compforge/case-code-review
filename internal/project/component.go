@@ -18,7 +18,16 @@ type Component struct {
 type profile struct {
 	kind     Kind
 	markers  []string
-	classify func(string) FileRole
+	classify func(root, file string) FileRoles
 }
 
 var profiles = []profile{pythonProfile, goProfile}
+
+// EnrichFileRoles projects source-language facts into Component semantics.
+// Language owns extraction; Project owns what those facts mean to review.
+func EnrichFileRoles(component Component, file string, roles FileRoles, decorators, calls []string) FileRoles {
+	if component.Kind == Python {
+		return enrichPythonRoles(file, roles, decorators, calls)
+	}
+	return roles
+}

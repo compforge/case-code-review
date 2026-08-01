@@ -13,8 +13,8 @@ const (
 	ClueRule ClueKind = "rule" // review criterion (@rule)
 	ClueLink ClueKind = "link" // curated see-also pointer (@link)
 	ClueDoc  ClueKind = "doc"  // symbol docstring, read from source (adoption-free)
-	// ClueProject points at a changed manifest or lockfile belonging to the
-	// Unit's Component. It remains on-demand context rather than a review target.
+	// ClueProject carries Component facts such as a source file's semantic role,
+	// or points at a changed manifest/lockfile kept as on-demand context.
 	ClueProject ClueKind = "project"
 	// ClueHistory carries a prior review's findings on this symbol, so the reviewer
 	// can judge whether the current change addresses them (the review-history

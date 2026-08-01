@@ -1222,7 +1222,7 @@ func (a *Runner) filterDiffs(changes []change.Change) []change.Change {
 		path := effectivePath(d)
 		if !a.shouldReview(d) {
 			if selection, ok := a.selectionFor(d); ok && selection.Context {
-				fmt.Fprintf(console.Out(), "[ccr] Using %s as %s component context\n", path, selection.Role)
+				fmt.Fprintf(console.Out(), "[ccr] Using %s as %s component context\n", path, selection.Roles)
 				continue
 			} else if d.IsBinary {
 				fmt.Fprintf(console.Out(), "[ccr] Skipping %s — binary file\n", path)

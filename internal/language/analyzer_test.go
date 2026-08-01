@@ -59,6 +59,24 @@ class Svc:
 	assertNames(t, analysis.CalleesOf("Svc.create"), "validate", "store")
 }
 
+func TestAnalyzePythonCapturesRouteDecorators(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	source := Source{Path: "api.py", Content: `
+@router.post("/items")
+async def create_item():
+    return service.create()
+`}
+	analysis, err := NewAnalyzer("").Analyze(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(analysis.Decorators, "router.post") {
+		t.Fatalf("decorators = %v, want router.post", analysis.Decorators)
+	}
+}
+
 func TestAnalyzeTypeScript(t *testing.T) {
 	source := Source{Path: "app.ts", Content: `const helper = () => 1;
 

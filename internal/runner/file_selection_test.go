@@ -9,17 +9,22 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
+	"github.com/qiankunli/case-code-review/internal/project"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func writeSelectionFile(t *testing.T, root, path string) {
+	writeSelectionContent(t, root, path, "test\n")
+}
+
+func writeSelectionContent(t *testing.T, root, path, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(path))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(full, []byte("test\n"), 0o644); err != nil {
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,6 +109,59 @@ func TestProjectContextDoesNotLeakAcrossComponents(t *testing.T) {
 	tools := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "tools/tool.py"}}})
 	if len(tools) != 1 || tools[0].Ref != "tools/pyproject.toml" {
 		t.Fatalf("tools clues = %+v", tools)
+	}
+}
+
+func TestSourceRolesBecomeReviewClues(t *testing.T) {
+	repo := t.TempDir()
+	for _, path := range []string{"go.mod", "cmd/server/main.go"} {
+		writeSelectionFile(t, repo, path)
+	}
+	a := &Runner{
+		args:    Args{RepoDir: repo},
+		changes: []change.Change{{NewPath: "cmd/server/main.go"}},
+	}
+	a.prepareFileSelections(context.Background())
+
+	selection, ok := a.selectionFor(a.changes[0])
+	if !ok || !selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
+		t.Fatalf("entrypoint selection = %+v", selection)
+	}
+	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
+	clues := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "cmd/server/main.go"}}})
+	if len(clues) != 1 || clues[0].Kind != unit.ClueProject || clues[0].Relation != unit.RelSelf ||
+		!strings.Contains(clues[0].Text, "entrypoint") {
+		t.Fatalf("entrypoint clues = %+v", clues)
+	}
+}
+
+func TestFastAPIDecoratorBecomesHandlerClue(t *testing.T) {
+	repo := t.TempDir()
+	writeSelectionFile(t, repo, "backend/pyproject.toml")
+	path := "backend/api/v1/endpoints/items.py"
+	writeSelectionContent(t, repo, path, `
+from fastapi import APIRouter
+
+router = APIRouter()
+
+@router.post("/items")
+async def create_item():
+    return {"ok": True}
+`)
+	a := &Runner{
+		args:    Args{RepoDir: repo},
+		changes: []change.Change{{NewPath: path}},
+	}
+	a.prepareFileSelections(context.Background())
+
+	selection, ok := a.selectionFor(a.changes[0])
+	if !ok || !selection.Roles.Has(project.RoleHandler) {
+		t.Fatalf("FastAPI selection = %+v", selection)
+	}
+	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
+	clues := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: path}}})
+	if len(clues) != 1 || !strings.Contains(clues[0].Text, "request handler") {
+		t.Fatalf("FastAPI handler clues = %+v", clues)
 	}
 }
 

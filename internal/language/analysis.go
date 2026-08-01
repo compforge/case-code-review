@@ -139,6 +139,7 @@ type Analysis struct {
 	Quality     Quality
 	Definitions []Definition
 	Calls       []Call
+	Decorators  []string
 	References  map[string]int
 }
 

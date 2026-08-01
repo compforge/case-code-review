@@ -19,9 +19,9 @@ func NewRepository(root string, exists func(string) bool) *Repository {
 	return &Repository{Root: root, exists: exists, cache: make(map[string]bool)}
 }
 
-// Resolve returns the nearest owning Component and the file's role. Files may
+// Resolve returns the nearest owning Component and the file's roles. Files may
 // legitimately belong to no Component (for example a repository-level README).
-func (r *Repository) Resolve(file string) (Component, FileRole, bool) {
+func (r *Repository) Resolve(file string) (Component, FileRoles, bool) {
 	file = path.Clean(file)
 	dir := path.Dir(file)
 	for {
@@ -36,15 +36,15 @@ func (r *Repository) Resolve(file string) (Component, FileRole, bool) {
 		// that understands this file; an unrelated config remains unowned rather
 		// than being assigned to an arbitrary ecosystem.
 		for _, candidate := range matched {
-			if role := candidate.classify(file); role != RoleUnknown {
-				return Component{Root: dir, Kind: candidate.kind}, role, true
+			if roles := candidate.classify(dir, file); roles.Known() {
+				return Component{Root: dir, Kind: candidate.kind}, roles, true
 			}
 		}
 		if len(matched) == 1 {
-			return Component{Root: dir, Kind: matched[0].kind}, RoleUnknown, true
+			return Component{Root: dir, Kind: matched[0].kind}, FileRoles{RoleUnknown}, true
 		}
 		if len(matched) > 1 {
-			return Component{}, RoleUnknown, false
+			return Component{}, nil, false
 		}
 
 		if dir == "." {
@@ -52,7 +52,7 @@ func (r *Repository) Resolve(file string) (Component, FileRole, bool) {
 		}
 		dir = path.Dir(dir)
 	}
-	return Component{}, RoleUnknown, false
+	return Component{}, nil, false
 }
 
 func (r *Repository) hasMarker(root string, markers []string) bool {
