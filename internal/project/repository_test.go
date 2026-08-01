@@ -95,7 +95,7 @@ func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
 }
 
 func TestRepositoryDoesNotGuessBetweenPolyglotComponents(t *testing.T) {
-	r := repositoryWith("go.mod", "pyproject.toml")
+	r := repositoryWith("go.mod", "pyproject.toml", "package.json")
 
 	if got, roles, ok := r.Resolve("config.yaml"); ok {
 		t.Fatalf("ambiguous config unexpectedly owned by %+v as %q", got, roles)
@@ -105,6 +105,45 @@ func TestRepositoryDoesNotGuessBetweenPolyglotComponents(t *testing.T) {
 	}
 	if got, roles, ok := r.Resolve("main.py"); !ok || got.Kind != Python || !roles.Has(RoleSource) {
 		t.Fatalf("Python source = (%+v, %q, %t)", got, roles, ok)
+	}
+	if got, roles, ok := r.Resolve("main.ts"); !ok || got.Kind != TypeScript || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
+		t.Fatalf("TypeScript source = (%+v, %q, %t)", got, roles, ok)
+	}
+}
+
+func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
+	// Mirrors Doctor (TypeScript CLI + Python server) and Baton's nested
+	// package workspace without teaching Project either repository by name.
+	r := repositoryWith(
+		"cli/package.json", "server/pyproject.toml", "server/harness/pyproject.toml",
+		"package.json", "packages/plugin/package.json",
+	)
+	tests := []struct {
+		path  string
+		root  string
+		kind  Kind
+		roles FileRoles
+	}{
+		{"cli/src/app/main.tsx", "cli", TypeScript, FileRoles{RoleSource, RoleEntrypoint}},
+		{"cli/package.json", "cli", TypeScript, FileRoles{RoleManifest}},
+		{"cli/tsconfig.json", "cli", TypeScript, FileRoles{RoleManifest}},
+		{"cli/bun.lock", "cli", TypeScript, FileRoles{RoleLock}},
+		{"server/app.py", "server", Python, FileRoles{RoleSource}},
+		{"server/harness/runtime.py", "server/harness", Python, FileRoles{RoleSource}},
+		{"src/index.ts", ".", TypeScript, FileRoles{RoleSource}},
+		{"src/cli/launcher.cjs", ".", TypeScript, FileRoles{RoleSource}},
+		{"packages/plugin/src/index.ts", "packages/plugin", TypeScript, FileRoles{RoleSource}},
+		{"VERSION", ".", TypeScript, FileRoles{RoleVersion}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got, roles, ok := r.Resolve(tt.path)
+			if !ok || got.Root != tt.root || got.Kind != tt.kind || roles.String() != tt.roles.String() {
+				t.Fatalf("Resolve(%q) = (%+v, %q, %t), want root=%q kind=%q roles=%q",
+					tt.path, got, roles, ok, tt.root, tt.kind, tt.roles)
+			}
+		})
 	}
 }
 
