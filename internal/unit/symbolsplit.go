@@ -60,8 +60,9 @@ func splitByFuncSpans(d change.Change, spans []funcSpan) []Fragment {
 	hunks := change.ParseHunks(d.Diff)
 	grouped := make(map[int][]change.Hunk)
 	for _, h := range hunks {
-		group := funcOfHunk(h, spans)
-		grouped[group] = append(grouped[group], h)
+		for _, part := range splitHunkByFuncSpans(h, spans) {
+			grouped[part.group] = append(grouped[part.group], part.hunk)
+		}
 	}
 
 	var fragments []Fragment
@@ -89,28 +90,66 @@ func splitByFuncSpans(d change.Change, spans []funcSpan) []Fragment {
 	return fragments
 }
 
-func funcOfHunk(h change.Hunk, spans []funcSpan) int {
-	line := changedLine(h)
+type attributedHunk struct {
+	group int
+	hunk  change.Hunk
+}
+
+// splitHunkByFuncSpans handles the common case where git joins nearby changes
+// from several functions into one @@ block. Attribution follows each line's
+// post-change position, so a large unified hunk does not make its first changed
+// function own every later function in the same block.
+func splitHunkByFuncSpans(h change.Hunk, spans []funcSpan) []attributedHunk {
+	oldLine, newLine := h.OldStart, h.NewStart
+	group := -2
+	part := change.Hunk{}
+	changed := false
+	var parts []attributedHunk
+
+	flush := func() {
+		if len(part.Lines) > 0 && changed {
+			parts = append(parts, attributedHunk{group: group, hunk: part})
+		}
+		part = change.Hunk{}
+		changed = false
+	}
+
+	for _, line := range h.Lines {
+		owner := funcAtLine(newLine, spans)
+		if owner != group {
+			flush()
+			group = owner
+			part.OldStart = oldLine
+			part.NewStart = newLine
+		}
+		part.Lines = append(part.Lines, line)
+		switch line.Type {
+		case change.HunkAdded:
+			part.NewCount++
+			newLine++
+			changed = true
+		case change.HunkDeleted:
+			part.OldCount++
+			oldLine++
+			changed = true
+		default:
+			part.OldCount++
+			part.NewCount++
+			oldLine++
+			newLine++
+		}
+	}
+	flush()
+	return parts
+}
+
+func funcAtLine(line int, spans []funcSpan) int {
 	for i := range spans {
 		if line >= spans[i].start && line <= spans[i].end {
 			return i
 		}
 	}
 	return -1
-}
-
-func changedLine(h change.Hunk) int {
-	line := h.NewStart
-	for _, diffLine := range h.Lines {
-		switch diffLine.Type {
-		case change.HunkAdded:
-			return line
-		case change.HunkDeleted:
-		default:
-			line++
-		}
-	}
-	return h.NewStart
 }
 
 func countChanges(hunks []change.Hunk) (insertions, deletions int64) {
