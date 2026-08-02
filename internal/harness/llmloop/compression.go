@@ -68,7 +68,7 @@ func countMsgTokens(msgs []msg.Msg) int {
 // board digests) OLDEST-FIRST until the conversation fits under limit tokens
 // (or candidates run out), returning how many were evicted. It runs before LLM
 // compression because this content is the RE-DERIVABLE slice of the context —
-// the model can always file_read or re-pull it — so shedding it is
+// the model can always read_files or re-pull it — so shedding it is
 // deterministic, free, and lossless in a way a summarization pass is not.
 // Oldest-first means the most recent read is shed last (it's the one the model
 // is most likely still working from).

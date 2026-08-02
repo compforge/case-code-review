@@ -74,7 +74,7 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义，并直接实现 AgentGo 的
 `AgentMessage` 契约。模型返回的普通消息先进入
-`Raw`，可识别的工具结果（例如 `file_read`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
+`Raw`，可识别的工具结果（例如 `read_files`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
 视角出发。只有在调用模型前才降成 provider wire message：
 
 ```text
@@ -92,10 +92,10 @@ ContextManager 才能判断两个范围是否
 少量语义类型，而不是“一种工具一个 class”。每种双向消息把 `FromLLM` 与 `ToLLM` 放在同一处，
 修改 wire contract 或压缩投影时可以同时核对两个方向：
 
-- `file_read` / `file_read_base` → `FileBatch`（内部保留各个 `File`），current 与 baseline snapshot
+- `read_files` / `read_base_files` → `FileBatch`（内部保留各个 `File`），current 与 baseline snapshot
   参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
 - `file_read_diff` → `Diff`，压缩时保留 path 与 hunk anchor；
-- `code_search` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
+- `search_code` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
 无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
@@ -104,7 +104,7 @@ wire 来源，因此只定义 `ToLLM`。
 降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
 发送的 wire shape，因此 Viewer 能回答“模型当时究竟看到了什么”。
 
-`file_read` 只有批量 `reads[]` 契约，单文件也使用一个元素的数组；已经确定且彼此独立的范围由
+`read_files` 只有批量 `reads[]` 契约，单文件也使用一个元素的数组；已经确定且彼此独立的范围由
 provider 并行读取，并按请求顺序装回同一条结果。ContextManager 可以只剔除其中已覆盖的成员，执行
 剩余成员后再按原顺序合并，因此批量不会削弱范围复用，也不需要保留另一套单文件入口。
 
@@ -114,7 +114,7 @@ provider 并行读取，并按请求顺序装回同一条结果。ContextManager
 
 - 注入：system/task、静态源码消息、跨 turn provider 输出；
 - 去重：后一次覆盖读取替代早期重复 file content；
-- 复用：当 `file_read` 请求范围仍完整可见时返回轻量提示，不再次执行相同读取；
+- 复用：当 `read_files` 请求范围仍完整可见时返回轻量提示，不再次执行相同读取；
 - 淘汰：优先移除可重取、低价值的大块内容；
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
@@ -143,7 +143,7 @@ Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用�
 工具定义、参数解析、provider 调用和通用 telemetry 位于 Harness。某个工具是否在一个阶段可见、
 调用后产生何种领域 artifact，由 Runner 的 execution spec / hook 决定。
 
-这允许同一个 `file_read` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
+这允许同一个 `read_files` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
 的能力。Runner 适配可以依赖 Harness，Harness 不依赖 Runner。
 
 ### 3.5 AgentGo 是内核依赖，不是项目领域模型

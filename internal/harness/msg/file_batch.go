@@ -5,7 +5,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// FileBatch preserves one file_read tool call as one message while retaining
+// FileBatch preserves one read_files tool call as one message while retaining
 // the identity of every file range inside it. That keeps the wire protocol's
 // one-call/one-result pairing intact without flattening batch members into
 // opaque text that ContextManager cannot deduplicate or compact.

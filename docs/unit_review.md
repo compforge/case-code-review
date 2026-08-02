@@ -38,8 +38,8 @@ Lane 调度和 eval 的结果仍然是 Hypothesis。
 | Hypothesis | 21，来自 9 个 Unit |
 | 无 Hypothesis 的 Unit | 12，仍消耗约 540 万 token、254 轮 |
 | Hypothesis 首次提交 | 全部发生在第 22～30 轮 |
-| `code_search` | 300 次，其中 161 次无命中或近空 |
-| `file_read` | 239 次 |
+| `search_code` | 300 次，其中 161 次无命中或近空 |
+| `read_files` | 239 次 |
 
 第 1～10、11～20、21～30 轮分别消耗约 307 万、467 万、472 万输入 token；第 10 轮之后占
 Review 1 输入成本约 75%。这不是“开局初始上下文太大”单独造成的，而是工具历史和静态任务内容
@@ -51,7 +51,7 @@ Hypothesis。说明模型具备早期判断能力，但当前执行协议没有�
 
 ### 当前表现不支持的结论
 
-- **不是当前 Unit 源码没给够。** 239 次 `file_read` 中只有少量是在重复读取当前 Unit；typed
+- **不是当前 Unit 源码没给够。** 239 次 `read_files` 中只有少量是在重复读取当前 Unit；typed
   File 消息已基本解决“先把评审对象再读一遍”。
 - **不是工具经常失败。** 这次主要调查工具没有执行错误，成本来自成功但过度的探索。
 - **不能简单归因于模型能力。** 模型多次早已得到“没有具体问题”的结论，却继续执行
@@ -169,7 +169,7 @@ AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、c
 middleware 将执行能力收敛为：
 
 ```text
-reject execution: code_search / file_find / file_read / file_read_diff / file_read_base
+reject execution: search_code / file_find / read_files / file_read_diff / read_base_files
 allow execution:  submit_hypotheses
 ```
 
@@ -209,7 +209,7 @@ other_changed_files_count: 17
 ### 6. 按调查价值治理上下文
 
 Unit 与 Clue 在 Execution 之前被直接投影成 Review 1 消息，其中源码是带语义标签的 File 消息；Harness 不认识
-Unit。每轮模型返回后，`file_read` 结果也会恢复成 File 消息再进入 ContextManager。在轮次已被控制后，
+Unit。每轮模型返回后，`read_files` 结果也会恢复成 File 消息再进入 ContextManager。在轮次已被控制后，
 再处理上下文增长。
 
 #### 当前 Prompt 组装形状（伪代码）
@@ -231,11 +231,11 @@ user:   <review task；Unit diff、Clue 摘要、源码 slot pointer>
 由 `FromLLM` 恢复成 typed message，下一次请求时再按当前压缩等级 `ToLLM`：
 
 ```text
-assistant: <assistant text, if any> + tool_calls(code_search, file_read(reads=[...]), ...)
+assistant: <assistant text, if any> + tool_calls(search_code, read_files(reads=[...]), ...)
 tool:      SearchResult(query=..., hits=...)
 tool:      FileBatch(files=[C, D, ...], snapshot=current)
 
-assistant: <assistant text, if any> + tool_calls(file_read_base, file_read_diff, ...)
+assistant: <assistant text, if any> + tool_calls(read_base_files, file_read_diff, ...)
 tool:      FileBatch(files=[C, D, ...], snapshot=baseline)
 tool:      Diff(paths=[...])
 
@@ -251,7 +251,7 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
 直接出现在参数 schema 里，是比“允许一次返回多个 tool call”更明确的 affordance，会持续提醒模型先收集
 可并行目标、再批量补证。
 
-因此 `file_read` 使用 `reads[]`，`code_search` 使用 `searches[]`，单个目标也走同一数组形状：
+因此 `read_files` 使用 `reads[]`，`search_code` 使用 `searches[]`，单个目标也走同一数组形状：
 
 - 已经确定且互不依赖的目标放进同一调用，由 provider 并行执行并按请求顺序返回；
 - 单个成员失败不影响同批其它成员；批量整体受共享输出预算约束；
@@ -266,32 +266,33 @@ ContextManager 做统一投影：
 ```text
 [durable conversation above]
 user: <incremental BoardDigest>                 # 仅 Review Team 试验开启且有新事实时
-user: <wrap-up: stop investigation and submit> # 临近 turn/deadline 边界时只追加一次
+user: <wrap-up: stop investigation and submit> # 有限调查窗口或 turn/deadline 边界时只追加一次
 user: <available file path/range inventory>     # request-only 尾消息，不写回 transcript
 ```
 
 随后依次执行 covered-range 去重、typed compaction、必要时的通用 context strategy，最后统一降成 provider
 消息。`system + review task` 尽量保持稳定；文件、搜索和 diff 可以从 full 降为 condensed/reference，
-但 tool call/result 配对和消息顺序不变。wrap-up 之后工具 schema 仍不变，执行层只允许终态提交工具，
+但 tool call/result 配对和消息顺序不变。Review Plan 是有限 lead 清单，Review 1 不因全局 turn 上限尚有
+余量而继续扩散；清单完成或有限调查窗口结束后进入 wrap-up。wrap-up 之后工具 schema 仍不变，执行层只允许终态提交工具，
 避免继续调查空转。
 
 具体保留策略：
 
 - 永久保留 Unit diff、当前 lead ledger、已确认事实和证据引用；
 - 原始 search 列表在完成下一步定位后可淘汰；
-- 完整 `file_read` 结果降为使用过的范围、path/line 和摘要；
-- `code_search` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
+- 完整 `read_files` 结果降为使用过的范围、path/line 和摘要；
+- `search_code` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
   不在后续多轮携带完整相似词建议；
 - 试验性的 Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
 
 压缩等级只由 ContextManager 在预算趋紧时选择，消息自己决定对应形态。默认从尾部向前压并在够用
 时停止，使 system/task 和较早消息保持稳定；已经提交的压缩不再反向展开。模型请求末尾会附一份
-当前仍完整可见的 path/range/角色清单，既帮助模型复用已有源码，也作为 `file_read` 覆盖判断的同一
+当前仍完整可见的 path/range/角色清单，既帮助模型复用已有源码，也作为 `read_files` 覆盖判断的同一
 事实来源。
 
 目标是降低后续 prompt 的注意力噪声，而不是为了压缩再增加一轮昂贵 LLM summary。
 
-`file_read` 需要区分两个信号，不能合成一个“重复率”：
+`read_files` 需要区分两个信号，不能合成一个“重复率”：
 
 工具默认只提供批量形状；这样减少 tool call / 模型往返，但每个成员仍独立参与覆盖判断、typed
 compaction 与轨迹统计。
@@ -302,7 +303,7 @@ compaction 与轨迹统计。
   行范围，不能仅凭路径相同判定为浪费。
 
 Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/callee/project 等关系
-静态知道的路径。Viewer 将二者分别与 `file_read` 对比：前者判断预载是否命中，后者回答“静态分析
+静态知道的路径。Viewer 将二者分别与 `read_files` 对比：前者判断预载是否命中，后者回答“静态分析
 本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
 
 ### 7. 试验特性：Review Team 跨 Unit 协作

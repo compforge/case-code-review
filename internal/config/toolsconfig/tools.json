@@ -128,11 +128,11 @@
     }
   },
   {
-    "name": "file_read",
+    "name": "read_files",
     "plan_task": false,
     "main_task": true,
     "definition": {
-      "name": "file_read",
+      "name": "read_files",
       "description": "Read one or more file ranges from the modified version under review. Always pass reads, including for a single range. Put all independent paths or ranges already known into the same reads array; the tool reads them in parallel and returns results in request order. Use separate calls only when an earlier result determines what to read next.\n\nGit diff hunk headers guide focused ranges: @@ -x,y +m,n @@ means the new hunk starts at m and spans n lines. Each requested range is capped at 500 lines.",
       "parameters": {
         "type": "object",
@@ -169,11 +169,11 @@
     }
   },
   {
-    "name": "code_search",
+    "name": "search_code",
     "plan_task": true,
     "main_task": true,
     "definition": {
-      "name": "code_search",
+      "name": "search_code",
       "description": "Search repository text with literal matching or Perl regular expressions. The input is always searches[], including for one query. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions.\n\nfile_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. Set use_perl_regexp for expressions such as 'error|exception|fail'. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
       "parameters": {
         "type": "object",
@@ -186,7 +186,7 @@
             "items": {
               "type": "object",
               "properties": {
-                "search_text": {
+                "query": {
                   "type": "string",
                   "description": "Text or regular expression to search for."
                 },
@@ -203,10 +203,10 @@
                 },
                 "use_perl_regexp": {
                   "type": "boolean",
-                  "description": "Treat search_text as a Perl-compatible regular expression. Defaults to false."
+                  "description": "Treat query as a Perl-compatible regular expression. Defaults to false."
                 }
               },
-              "required": ["search_text"]
+              "required": ["query"]
             }
           }
         },
@@ -239,11 +239,11 @@
     }
   },
   {
-    "name": "file_read_base",
+    "name": "read_base_files",
     "plan_task": false,
     "main_task": true,
     "definition": {
-      "name": "file_read_base",
+      "name": "read_base_files",
       "description": "Read one or more repository file ranges as they existed immediately before the reviewed change. Always pass reads, including for a single range. Batch all independent baseline reads already known; they run in parallel and return in request order. Use this to distinguish a caused issue from pre-existing behavior.",
       "parameters": {
         "type": "object",

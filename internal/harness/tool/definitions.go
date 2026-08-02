@@ -13,11 +13,11 @@ type Tool struct {
 var (
 	Unknown      = Tool{name: "unknown"}
 	TaskDone     = Tool{name: "task_done"}
-	FileRead     = Tool{name: "file_read"}
-	FileReadBase = Tool{name: "file_read_base"}
+	FileRead     = Tool{name: "read_files"}
+	FileReadBase = Tool{name: "read_base_files"}
 	FileFind     = Tool{name: "file_find"}
 	FileReadDiff = Tool{name: "file_read_diff"}
-	CodeSearch   = Tool{name: "code_search"}
+	CodeSearch   = Tool{name: "search_code"}
 	PostBulletin = Tool{name: "post_bulletin"}
 )
 

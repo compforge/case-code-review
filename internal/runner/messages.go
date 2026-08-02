@@ -19,8 +19,8 @@ import (
 const preloadSourceBudget = 32 * 1024
 
 const (
-	sourceNotPreloaded   = "(not preloaded — fetch what you need via file_read)"
-	unitSourcePointer    = "(provided as separate messages after this task — do NOT call file_read on those ranges again)"
+	sourceNotPreloaded   = "(not preloaded — fetch what you need via read_files)"
+	unitSourcePointer    = "(provided as separate messages after this task — do NOT call read_files on those ranges again)"
 	relatedSourcePointer = "(provided as separate messages after this task)"
 	maxNeighborSources   = 6
 )
@@ -103,7 +103,7 @@ func (a *Runner) relatedSourceClues(u unit.Unit) []unit.Clue {
 	return out
 }
 
-// preloadPath mirrors file_read's numbered-line format. Own source prefers the
+// preloadPath mirrors read_files's numbered-line format. Own source prefers the
 // whole file and falls back to changed function spans; related source always
 // carries only the named function bodies.
 func (a *Runner) preloadPath(
@@ -142,7 +142,7 @@ func (a *Runner) preloadPath(
 
 	if whole {
 		return nil, fmt.Sprintf(
-			"File: %s — %d bytes exceeds the preload budget; read on demand via file_read",
+			"File: %s — %d bytes exceeds the preload budget; read on demand via read_files",
 			filePath, len(content),
 		), "budget_miss " + filePath
 	}

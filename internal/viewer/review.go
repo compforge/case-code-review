@@ -310,7 +310,7 @@ func toolTarget(arguments string) string {
 			var queries []string
 			for _, value := range searches {
 				item, _ := value.(map[string]any)
-				if query, _ := item["search_text"].(string); query != "" {
+				if query, _ := item["query"].(string); query != "" {
 					queries = append(queries, query)
 				}
 			}
@@ -318,7 +318,7 @@ func toolTarget(arguments string) string {
 				return strings.Join(queries, ", ")
 			}
 		}
-		for _, key := range []string{"file_path", "search_text", "query_name", "path"} {
+		for _, key := range []string{"file_path", "query", "query_name", "path"} {
 			if value, ok := args[key].(string); ok && value != "" {
 				return value
 			}

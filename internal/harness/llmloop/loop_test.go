@@ -33,7 +33,7 @@ func TestRunnerModelsUsed(t *testing.T) {
 func TestExtractFacts_ToolSpecificPathArgs(t *testing.T) {
 	sc := session.Scope{ID: "u1", Kind: "unit", Type: "file", Paths: []string{"main.go", "b.go"}}
 	calls := []llm.ToolCall{
-		{Function: llm.FunctionCall{Name: "file_read",
+		{Function: llm.FunctionCall{Name: "read_files",
 			Arguments: `{"reads":[{"file_path":"a.go","start_line":3,"end_line":9}]}`}},
 	}
 	facts := extractFacts(sc, 2, calls)
@@ -83,7 +83,7 @@ func TestHandlePostBulletin(t *testing.T) {
 
 func TestNewRunner_StripsPostBulletinDefWithoutBoard(t *testing.T) {
 	defs := []llm.ToolDef{
-		{Type: "function", Function: llm.FunctionDef{Name: "file_read"}},
+		{Type: "function", Function: llm.FunctionDef{Name: "read_files"}},
 		{Type: "function", Function: llm.FunctionDef{Name: "post_bulletin"}},
 	}
 	for _, tc := range []struct {

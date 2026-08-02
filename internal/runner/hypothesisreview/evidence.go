@@ -98,7 +98,7 @@ func codeSearchReceipts(
 	for i, request := range requests {
 		part := strings.TrimSpace(parts[i])
 		if request.SearchText == "" || part == "" || strings.HasPrefix(part, "Error:") ||
-			strings.HasPrefix(part, "code_search timed out") {
+			strings.HasPrefix(part, "search_code timed out") {
 			continue
 		}
 		receipt := base

@@ -39,7 +39,7 @@
 <table class="review-table tool-summary-table">
     <thead><tr><th>Signal</th><th>Value</th><th>Meaning</th></tr></thead>
     <tbody>
-        <tr><td>Calls</td><td>{{formatInt .Review.FileReads.Calls}}</td><td><code>file_read</code> 工具调用 / 模型往返</td></tr>
+        <tr><td>Calls</td><td>{{formatInt .Review.FileReads.Calls}}</td><td><code>read_files</code> 工具调用 / 模型往返</td></tr>
         <tr><td>Read requests</td><td>{{formatInt .Review.FileReads.Requests}}</td><td>批量调用内的文件范围总数</td></tr>
         <tr><td>Unique files</td><td>{{formatInt .Review.FileReads.UniqueFiles}}</td><td>去重后的读取路径</td></tr>
         <tr><td>Already covered</td><td>{{formatInt .Review.FileReads.CoveredRequests}}</td><td>请求范围已在当前 context，Harness 返回复用提示</td></tr>

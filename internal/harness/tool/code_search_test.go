@@ -345,7 +345,7 @@ func assertContainsInOrder(t *testing.T, args []string, vals ...string) {
 	}
 }
 
-// TestGitGrep_NonGitDirectoryFallback verifies code_search works in a plain
+// TestGitGrep_NonGitDirectoryFallback verifies search_code works in a plain
 // (non-git) directory by retrying git grep in --no-index mode instead of
 // failing with git's exit 128, while still honoring .gitignore.
 func TestGitGrep_NonGitDirectoryFallback(t *testing.T) {
@@ -401,7 +401,7 @@ func TestCodeSearch_RejectsTraversalPathspecs(t *testing.T) {
 	p := &CodeSearchProvider{FileReader: &FileReader{RepoDir: t.TempDir()}}
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{
-			"search_text":   "secret",
+			"query":         "secret",
 			"file_patterns": []any{"../outside/*.go"},
 		}},
 	})
@@ -418,9 +418,9 @@ func TestCodeSearchBatchPreservesOrderAndItemErrors(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{
-			map[string]any{"search_text": "Util"},
-			map[string]any{"search_text": ""},
-			map[string]any{"search_text": "Hello"},
+			map[string]any{"query": "Util"},
+			map[string]any{"query": ""},
+			map[string]any{"query": "Hello"},
 		},
 	})
 	if err != nil {
@@ -431,7 +431,7 @@ func TestCodeSearchBatchPreservesOrderAndItemErrors(t *testing.T) {
 		t.Fatalf("batch result = %q, parsed=%d ok=%t", out, len(results), ok)
 	}
 	if !strings.Contains(results[0], "pkg/util.go") ||
-		!strings.HasPrefix(results[1], "Error: search_text is blank") ||
+		!strings.HasPrefix(results[1], "Error: query is blank") ||
 		!strings.Contains(results[2], "hello.go") {
 		t.Fatalf("batch order/error isolation off: %#v", results)
 	}
@@ -446,9 +446,9 @@ func TestCodeSearchBatchSharesAggregateMatchBudget(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{
-			map[string]any{"search_text": "alpha"},
-			map[string]any{"search_text": "beta"},
-			map[string]any{"search_text": "gamma"},
+			map[string]any{"query": "alpha"},
+			map[string]any{"query": "beta"},
+			map[string]any{"query": "gamma"},
 		},
 	})
 	if err != nil {
@@ -470,7 +470,7 @@ func TestCodeSearchBatchSharesAggregateMatchBudget(t *testing.T) {
 
 func TestCodeSearchRejectsFormerSingularShape(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: t.TempDir(), Mode: ModeWorkspace})
-	out, err := p.Execute(context.Background(), map[string]any{"search_text": "Hello"})
+	out, err := p.Execute(context.Background(), map[string]any{"query": "Hello"})
 	if err != nil || !strings.Contains(out, "searches must be a non-empty array") {
 		t.Fatalf("singular args = %q, %v; want batch-only contract error", out, err)
 	}

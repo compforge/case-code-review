@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	CodeSearchToolName   = "code_search"
+	CodeSearchToolName   = "search_code"
 	FileFindToolName     = "file_find"
 	FileReadDiffToolName = "file_read_diff"
 )
@@ -40,7 +40,7 @@ type SearchResult struct {
 }
 
 func (r *SearchResult) FromLLM(result LLMToolResult) bool {
-	// code_search is batch-only and is decoded by SearchBatch; accepting a
+	// search_code is batch-only and is decoded by SearchBatch; accepting a
 	// bare successful result here would hide a broken provider envelope.
 	if result.failed() || result.Tool != FileFindToolName {
 		return false
@@ -109,7 +109,7 @@ func (r SearchResult) condensed() string {
 	if len(hits) == 0 {
 		return r.Content
 	}
-	return fmt.Sprintf("code_search %q matched:\n- %s", r.Query, strings.Join(hits, "\n- "))
+	return fmt.Sprintf("search_code %q matched:\n- %s", r.Query, strings.Join(hits, "\n- "))
 }
 
 // Diff is a re-readable slice of the reviewed change. Its condensed form keeps

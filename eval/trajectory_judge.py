@@ -318,7 +318,7 @@ def main() -> int:
                       f"empty_searches={sig['empty_searches']}")
                 if sig["file_reads"]["calls"]:
                     reads = sig["file_reads"]
-                    print(f"   file_read calls={reads['calls']} requests={reads['requests']} "
+                    print(f"   read_files calls={reads['calls']} requests={reads['requests']} "
                           f"rounds={reads['rounds']} avg_batch={reads['average_batch']} "
                           f"max_batch={reads['max_batch']} calls/round={reads['calls_per_round']}")
                     overlap = sig["prompt_overlap"]
@@ -337,7 +337,7 @@ def main() -> int:
                 if sig["code_searches"]["calls"]:
                     searches = sig["code_searches"]
                     print(
-                        f"   code_search calls={searches['calls']} "
+                        f"   search_code calls={searches['calls']} "
                         f"requests={searches['requests']} rounds={searches['rounds']} "
                         f"avg_batch={searches['average_batch']} "
                         f"max_batch={searches['max_batch']} "

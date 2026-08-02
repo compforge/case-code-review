@@ -48,6 +48,10 @@ type ExecutionSpec struct {
 	FileDedupEnabled bool
 	FileEvictEnabled bool
 	WrapUpPrompt     string
+	// WrapUpAfterTurns ends open-ended investigation after this many complete
+	// turns. Zero preserves the default behavior of reserving only the final
+	// turns or deadline window for completion.
+	WrapUpAfterTurns int
 	// WrapUpAllowedTools hard-closes investigation after WrapUpPrompt is
 	// injected without changing the advertised tool schemas. Nil leaves tool
 	// execution unchanged for callers that only need a textual reminder.

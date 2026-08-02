@@ -8,7 +8,7 @@ The change set, background, rules, clues, and hypothesis below are the material 
 {{change_set}}
 ```
 
-Use `file_read_diff` to inspect the complete diff for each path relevant to a hypothesis. Use `file_read_base` to compare the exact baseline when deciding whether the change introduced the behavior. Use `file_read` and `code_search` for surrounding implementation and call-path evidence.
+Use `file_read_diff` to inspect the complete diff for each path relevant to a hypothesis. Use `read_base_files` to compare the exact baseline when deciding whether the change introduced the behavior. Use `read_files` and `search_code` for surrounding implementation and call-path evidence.
 
 ### Evidence paths already visited by Unit Review
 

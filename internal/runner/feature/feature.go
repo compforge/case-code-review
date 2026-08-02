@@ -35,7 +35,7 @@ const (
 	UsageSites     Gate = "usage_sites"     // pre-grepped use sites of the changed symbols
 	RangedPreload  Gate = "ranged_preload"  // over-budget file fallback: inline the unit's function bodies
 	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
-	FileDedup      Gate = "file_dedup"      // stub earlier file_read results superseded by a later covering read
+	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
 	// ReviewTeam is the Review Team v0 (docs/unit_review.md): concurrent unit
 	// loops share an in-memory case board — auto-published facts, directed
@@ -81,7 +81,7 @@ var registry = map[Gate]def{
 	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the initial context", false},
 	RangedPreload:  {true, "over-budget file fallback: inline the unit's function bodies", false},
 	NeighborSource: {true, "callchain context: inline caller/callee neighbor bodies", false},
-	FileDedup:      {true, "stub earlier file_read results superseded by a later covering read", false},
+	FileDedup:      {true, "stub earlier read_files results superseded by a later covering read", false},
 	FileEvict:      {true, "under token pressure, shed re-derivable file content before LLM compression", false},
 	ReviewTeam:     {false, "Review Team v0: units share an in-memory case board (auto facts + directed injection)", true},
 	PostBulletin:   {false, "post_bulletin tool: the model posts observation-level suspicions to the team board (needs review_team)", true},

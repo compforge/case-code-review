@@ -19,6 +19,7 @@ const wrapUpTurnReserve = 2
 // the Execution lifecycle exposed by AgentGo's BeforeTurn hook.
 type turnController struct {
 	maxTurns     int
+	wrapUpAfter  int
 	wrapUpPrompt string
 	scope        session.Scope
 	provider     TurnContextProvider
@@ -30,6 +31,7 @@ type turnController struct {
 func newTurnController(spec ExecutionSpec) *turnController {
 	return &turnController{
 		maxTurns:     spec.MaxTurns,
+		wrapUpAfter:  spec.WrapUpAfterTurns,
 		wrapUpPrompt: spec.WrapUpPrompt,
 		scope:        spec.Scope,
 		provider:     spec.TurnContext,
@@ -66,12 +68,13 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int) bool {
 		return false
 	}
 
+	plannedWrapUp := c.wrapUpAfter > 0 && turnIndex > c.wrapUpAfter
 	nearTurnLimit := c.maxTurns > 0 && c.maxTurns-turnIndex+1 <= wrapUpTurnReserve
 	nearDeadline := false
 	if deadline, ok := ctx.Deadline(); ok {
 		nearDeadline = time.Until(deadline) < wrapUpTimeReserve
 	}
-	if nearTurnLimit || nearDeadline {
+	if plannedWrapUp || nearTurnLimit || nearDeadline {
 		c.wrapUpIssued = true
 		return true
 	}

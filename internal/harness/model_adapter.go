@@ -10,6 +10,7 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -143,7 +144,8 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 		content = append(content, agentgo.TextBlock(text))
 	}
 	for _, call := range choice.Message.ToolCalls {
-		args := json.RawMessage(call.Function.Arguments)
+		rawArgs := json.RawMessage(call.Function.Arguments)
+		args := canonicalBatchArguments(call.Function.Name, rawArgs)
 		toolCall := agentgo.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
@@ -176,6 +178,38 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 		}
 	}
 	return message, nil
+}
+
+// canonicalBatchArguments keeps the public schema batch-only while tolerating
+// a model that emits one valid item directly. This is not a second provider
+// contract: every downstream layer still sees reads[] or searches[].
+func canonicalBatchArguments(name string, raw json.RawMessage) json.RawMessage {
+	var item map[string]any
+	if json.Unmarshal(raw, &item) != nil {
+		return raw
+	}
+
+	var batchKey, memberKey string
+	switch name {
+	case tool.FileRead.Name(), tool.FileReadBase.Name():
+		batchKey, memberKey = "reads", "file_path"
+	case tool.CodeSearch.Name():
+		batchKey, memberKey = "searches", "query"
+	default:
+		return raw
+	}
+	if _, batched := item[batchKey]; batched {
+		return raw
+	}
+	if _, singleton := item[memberKey]; !singleton {
+		return raw
+	}
+
+	canonical, err := json.Marshal(map[string]any{batchKey: []any{item}})
+	if err != nil {
+		return raw
+	}
+	return canonical
 }
 
 func toStopReason(finishReason string, hasToolCalls bool) agentgo.StopReason {

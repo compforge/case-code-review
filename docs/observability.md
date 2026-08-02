@@ -64,7 +64,7 @@ Viewer 保留两个互补层级：
 而不是由上一轮 response 和 tool result 反推 conversation。这样 compaction、context 注入、缓存前缀变化
 和消息删除都可直接观察；相邻 snapshot 的 token/message delta 只是帮助定位变化的诊断值。
 
-Viewer 可以增加简单、确定、便于人发现问题的数据统计，例如重复读取、context 与 `file_read` 路径重合、
+Viewer 可以增加简单、确定、便于人发现问题的数据统计，例如重复读取、context 与 `read_files` 路径重合、
 空搜索和未完成 Execution 数。这些数据是诊断线索，不是效果分数。Viewer 不负责实验编排，不回写
 Session 或 Trial 结果，也不能因为“0 Finding”就把 partial run 展示为 clean。
 
@@ -83,7 +83,7 @@ prompt 和形成改进假设，不适合凭少量 session 断言整体效果提�
 - **健壮性**：Unit/Lane 是否完成、Hypothesis 是否全部 Assessment、超时、partial 和执行错误；
 - **成本**：token、时间、模型轮次、工具调用和 Unit 数量。
 
-Viewer 中发现的重复 `file_read`、搜索空转或未完成 Unit，可以进一步沉淀为 Trajectory Evaluator；人工
+Viewer 中发现的重复 `read_files`、搜索空转或未完成 Unit，可以进一步沉淀为 Trajectory Evaluator；人工
 确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中确认问题具有普遍性、指标改善且没有召回
 或成本回退，才能认为优化有效。
 
