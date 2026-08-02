@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Trajectory judge — classify WHY a review chain was slow or weak, per unit.
 
-Consumes ATIF trajectories (`ccr export --format atif`, one JSON per line) and
-produces, for every unit chain, a diagnosis against a fixed failure taxonomy:
+Consumes ATIF trajectories (`ccr export --format atif`, one JSON per line),
+projects them into `trajectory_harness.Trajectory`, and produces, for every
+unit chain, a diagnosis against a fixed failure taxonomy:
 
   missing_tool          需要的能力没有对应工具，agent 在用别的工具硬凑
   bad_tool_description  工具选错 / 参数拼错 / 失败后换参重试——描述或参数 schema 没写清
@@ -20,12 +21,12 @@ The per-chain labels are the raw material for prompt/tool-desc evolution
 (GEPA-style): objective signals double as Actionable Side Information.
 
 Usage:
-  ccr export | python3 scripts/trajectory_judge.py                 # stdin
-  python3 scripts/trajectory_judge.py traj.jsonl [--no-llm]
-  python3 scripts/trajectory_judge.py session.jsonl                # auto-runs ccr export
+  ccr export | uv run --project eval/reviewbench python eval/trajectory_judge.py
+  uv run --project eval/reviewbench python eval/trajectory_judge.py traj.jsonl [--no-llm]
+  uv run --project eval/reviewbench python eval/trajectory_judge.py session.jsonl
   ... [--labels out.jsonl] [--model <name>] [--max-chains N]
 
-stdlib only — no pip installs.
+Dependencies are managed by eval/reviewbench/pyproject.toml.
 """
 from __future__ import annotations
 
@@ -35,15 +36,24 @@ import re
 import subprocess
 import sys
 import urllib.request
-from collections import Counter
 from pathlib import Path
+
+from ccr_trajectory import (
+    ATIFTrajectoryLoader,
+    EmptySearchEvaluator,
+    ToolFailureEvaluator,
+    UnitCompletionEvaluator,
+    repeated_file_reads,
+    tool_frequencies,
+)
+from trajectory_harness import RepeatedToolCallEvaluator, Trajectory, evaluate
 
 TAXONOMY = ["missing_tool", "bad_tool_description", "bad_prompt",
             "missing_context", "model_limitation", "ok"]
 
 # ── input ────────────────────────────────────────────────────────────────────
 
-def load_trajectories(path: str | None) -> list[dict]:
+def load_trajectories(path: str | None) -> list[Trajectory]:
     """Read ATIF trajectories: from stdin, an ATIF json/jsonl file, or a raw
     session jsonl (detected by its session_start first line → `ccr export` it)."""
     if path is None:
@@ -54,46 +64,37 @@ def load_trajectories(path: str | None) -> list[dict]:
         if '"session_start"' in first:  # raw session transcript, not ATIF
             data = subprocess.run(["ccr", "export", "--format", "atif", path],
                                   capture_output=True, text=True, check=True).stdout
-    out = []
-    for line in data.splitlines():
-        line = line.strip()
-        if line:
-            out.append(json.loads(line))
-    return out
+    return ATIFTrajectoryLoader().loads(data, source=path or "stdin")
 
 
 # ── objective pass (deterministic, free) ─────────────────────────────────────
 
-def objective_signals(chain: dict) -> dict:
+_OBJECTIVE_EVALUATORS = (
+    RepeatedToolCallEvaluator(),
+    ToolFailureEvaluator(),
+    EmptySearchEvaluator(),
+    UnitCompletionEvaluator(),
+)
+
+
+def objective_signals(trajectory: Trajectory) -> dict:
     """Local, deterministic waste/failure signals for one unit chain. These are
     both a cheap standalone report and the ASI handed to the LLM judge."""
-    steps = chain.get("steps") or []
-    llm_steps = [s for s in steps if s.get("source") == "agent"]
-    reads = Counter()          # file_path → times fetched via file_read
-    empty_searches = 0
-    tool_fails = []
-    tool_freq = Counter()
-    duration_ms = 0.0
-    for s in steps:
-        m = s.get("metrics") or {}
-        duration_ms += float((m.get("extra") or {}).get("duration_ms") or 0)
-        for tc in s.get("tool_calls") or []:
-            name = tc.get("function_name", "?")
-            tool_freq[name] += 1
-            if name == "file_read":
-                reads[(tc.get("arguments") or {}).get("file_path", "?")] += 1
-        for r in (s.get("observation") or {}).get("results") or []:
-            ex = r.get("extra") or {}
-            if ex.get("ok") is False:
-                tool_fails.append({"tool": ex.get("tool_name"),
-                                   "error": (r.get("content") or "")[:120]})
-            elif ex.get("tool_name") == "code_search" and len(r.get("content") or "") < 32:
-                empty_searches += 1
+    report = evaluate(trajectory, _OBJECTIVE_EVALUATORS)
+    evaluations = {result.name: result for result in report.evaluations}
+    tool_fails = [
+        {"tool": step.name, "error": _tool_result(step)[:120]}
+        for step in trajectory.steps
+        if step.operation == "execute_tool" and step.status == "error"
+    ]
+    empty_searches = len(evaluations["non_empty_search"].step_ids)
     return {
-        "rounds": len(llm_steps),
-        "duration_sec": round(duration_ms / 1000),
-        "tool_freq": dict(tool_freq),
-        "repeated_reads": {p: n for p, n in reads.items() if n > 1},
+        "score": report.score,
+        "evaluations": [result.to_dict() for result in report.evaluations],
+        "rounds": sum(step.operation == "inference" for step in trajectory.steps),
+        "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
+        "tool_freq": tool_frequencies(trajectory),
+        "repeated_reads": repeated_file_reads(trajectory),
         "empty_searches": empty_searches,
         "tool_failures": tool_fails,
     }
@@ -125,28 +126,60 @@ rule to add>","confidence":0.0}],"summary":"<one sentence>"}"""
 _TRUNC = 500  # per message/result — the judge needs shape, not full payloads
 
 
-def chain_digest(chain: dict, signals: dict) -> str:
+def chain_digest(trajectory: Trajectory, signals: dict) -> str:
     """Compact one chain for the judge: every step, messages/results truncated,
     objective signals appended as ASI."""
-    lines = [f"unit: {chain.get('trajectory_id')} extra={json.dumps(chain.get('extra') or {}, ensure_ascii=False)}"]
-    for s in chain.get("steps") or []:
-        src = s.get("source")
-        msg = s.get("message")
-        msg = msg if isinstance(msg, str) else json.dumps(msg, ensure_ascii=False)
-        head = f"#{s.get('step_id')} [{src}]"
-        if src in ("system", "user"):
-            lines.append(f"{head} {msg[:_TRUNC]}")
+    lines = [
+        f"unit: {trajectory.trajectory_id} "
+        f"metadata={json.dumps(trajectory.metadata, ensure_ascii=False)}"
+    ]
+    for step in trajectory.steps:
+        head = f"#{step.step_id} [{step.operation}]"
+        if step.operation == "context":
+            lines.append(f"{head} {_message_text(step.output_messages)[:_TRUNC]}")
             continue
-        dur = ((s.get("metrics") or {}).get("extra") or {}).get("duration_ms", 0)
-        lines.append(f"{head} ({int(float(dur) / 1000)}s) {msg[:_TRUNC]}")
-        for tc in s.get("tool_calls") or []:
-            lines.append(f"    -> {tc.get('function_name')}({json.dumps(tc.get('arguments'), ensure_ascii=False)[:200]})")
-        for r in (s.get("observation") or {}).get("results") or []:
-            ex = r.get("extra") or {}
-            ok = "" if ex.get("ok", True) else " FAILED"
-            lines.append(f"    <- {ex.get('tool_name')}{ok}: {(r.get('content') or '')[:_TRUNC]}")
+        if step.operation == "inference":
+            lines.append(
+                f"{head} ({int(step.duration_ms / 1000)}s) "
+                f"{_message_text(step.output_messages)[:_TRUNC]}"
+            )
+            continue
+        if step.operation == "execute_tool":
+            ok = " FAILED" if step.status == "error" else ""
+            lines.append(
+                f"{head} {step.name}{ok}({_tool_arguments(step)[:200]}) "
+                f"-> {_tool_result(step)[:_TRUNC]}"
+            )
     lines.append(f"objective signals: {json.dumps(signals, ensure_ascii=False)}")
     return "\n".join(lines)
+
+
+def _parts(messages: tuple[dict, ...]):
+    for message in messages:
+        yield from message.get("parts") or []
+
+
+def _message_text(messages: tuple[dict, ...]) -> str:
+    return "\n".join(
+        str(part.get("content") or "")
+        for part in _parts(messages)
+        if part.get("type") == "text"
+    )
+
+
+def _tool_arguments(step) -> str:
+    for part in _parts(step.input_messages):
+        if part.get("type") == "tool_call":
+            return json.dumps(part.get("arguments"), ensure_ascii=False)
+    return "{}"
+
+
+def _tool_result(step) -> str:
+    for part in _parts(step.output_messages):
+        if part.get("type") == "tool_call_response":
+            value = part.get("response")
+            return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return ""
 
 
 def load_llm(model_override: str | None):
@@ -203,40 +236,51 @@ def main() -> int:
     labels_f = open(ns.labels, "a", encoding="utf-8") if ns.labels else None
 
     judged = 0
-    for traj in trajectories:
-        print(f"# session {traj.get('session_id', '?')[:8]} "
-              f"repo={(traj.get('extra') or {}).get('repo', '?')} "
-              f"branch={(traj.get('extra') or {}).get('branch', '?')}")
-        for chain in traj.get("subagent_trajectories") or []:
-            sig = objective_signals(chain)
-            print(f"\n## {chain.get('trajectory_id')}")
-            print(f"   rounds={sig['rounds']} duration={sig['duration_sec']}s "
-                  f"tools={sig['tool_freq']} empty_searches={sig['empty_searches']}")
-            if sig["repeated_reads"]:
-                print(f"   ⚠ repeated reads: {sig['repeated_reads']}")
-            for tf in sig["tool_failures"]:
-                print(f"   ⚠ tool failure: {tf['tool']}: {tf['error']}")
-            verdict = None
-            if llm and (not ns.max_chains or judged < ns.max_chains):
-                try:
-                    verdict = judge_chain(*llm, chain_digest(chain, sig))
-                    judged += 1
-                except Exception as e:  # judge 失败不挡客观报告
-                    print(f"   (judge failed: {e})")
-            if verdict:
-                for c in verdict.get("categories", []):
-                    print(f"   [{c.get('type')}] ({c.get('confidence')}) {c.get('evidence', '')[:160]}")
-                    if c.get("suggestion"):
-                        print(f"       fix: {c['suggestion'][:200]}")
-                print(f"   => {verdict.get('summary', '')}")
-            if labels_f:
-                labels_f.write(json.dumps({
-                    "session_id": traj.get("session_id"),
-                    "trajectory_id": chain.get("trajectory_id"),
-                    "extra": chain.get("extra"),
-                    "signals": sig,
-                    "verdict": verdict,
-                }, ensure_ascii=False) + "\n")
+    current_session = None
+    for trajectory in trajectories:
+        session_id = str(trajectory.metadata.get("session_id") or "?")
+        if session_id != current_session:
+            if current_session is not None:
+                print()
+            current_session = session_id
+            print(f"# session {session_id[:8]} "
+                  f"repo={trajectory.metadata.get('repo', '?')} "
+                  f"branch={trajectory.metadata.get('branch', '?')}")
+        sig = objective_signals(trajectory)
+        print(f"\n## {trajectory.trajectory_id}")
+        print(f"   score={sig['score']} rounds={sig['rounds']} "
+              f"duration={sig['duration_sec']}s tools={sig['tool_freq']} "
+              f"empty_searches={sig['empty_searches']}")
+        for result in sig["evaluations"]:
+            if result["label"] == "fail":
+                print(f"   ⚠ {result['name']}: {result['explanation']}")
+        if sig["repeated_reads"]:
+            print(f"   ⚠ repeated reads: {sig['repeated_reads']}")
+        for failure in sig["tool_failures"]:
+            print(f"   ⚠ tool failure: {failure['tool']}: {failure['error']}")
+        verdict = None
+        if llm and (not ns.max_chains or judged < ns.max_chains):
+            try:
+                verdict = judge_chain(*llm, chain_digest(trajectory, sig))
+                judged += 1
+            except Exception as e:  # judge 失败不挡客观报告
+                print(f"   (judge failed: {e})")
+        if verdict:
+            for category in verdict.get("categories", []):
+                print(f"   [{category.get('type')}] ({category.get('confidence')}) "
+                      f"{category.get('evidence', '')[:160]}")
+                if category.get("suggestion"):
+                    print(f"       fix: {category['suggestion'][:200]}")
+            print(f"   => {verdict.get('summary', '')}")
+        if labels_f:
+            labels_f.write(json.dumps({
+                "session_id": session_id,
+                "trajectory_id": trajectory.trajectory_id,
+                "extra": trajectory.metadata,
+                "signals": sig,
+                "verdict": verdict,
+            }, ensure_ascii=False) + "\n")
+    if trajectories:
         print()
     if labels_f:
         labels_f.close()
