@@ -287,6 +287,18 @@ func firstLine(text string) string {
 func toolTarget(arguments string) string {
 	var args map[string]any
 	if json.Unmarshal([]byte(arguments), &args) == nil {
+		if reads, ok := args["reads"].([]any); ok {
+			var paths []string
+			for _, value := range reads {
+				item, _ := value.(map[string]any)
+				if filePath, _ := item["file_path"].(string); filePath != "" {
+					paths = append(paths, filePath)
+				}
+			}
+			if len(paths) > 0 {
+				return strings.Join(paths, ", ")
+			}
+		}
 		for _, key := range []string{"file_path", "search_text", "query_name", "path"} {
 			if value, ok := args[key].(string); ok && value != "" {
 				return value

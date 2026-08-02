@@ -546,13 +546,9 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 	}
 
 	for _, rs := range results {
-		var m msg.Msg = msg.Raw{M: llm.NewToolResultMessage(rs.ToolCallID, rs.Result)}
-		// file_read results carry a path+range identity — keep it (typed File)
-		// so covered re-reads can be deduplicated below.
-		f := &msg.File{}
-		if f.FromLLM(msg.LLMToolResult{Tool: rs.Name, ToolCallID: rs.ToolCallID, Content: rs.Result}) {
-			m = f
-		}
+		m := msg.FromLLM(msg.LLMToolResult{
+			Tool: rs.Name, ToolCallID: rs.ToolCallID, Content: rs.Result,
+		})
 		*messages = append(*messages, m)
 	}
 	if r.deps.FileDedupEnabled {
@@ -582,22 +578,24 @@ func (r *Runner) addNextMessage(ctx context.Context, assistantContent string, to
 func extractFacts(sc session.Scope, turn int, calls []llm.ToolCall) []board.Bulletin {
 	var out []board.Bulletin
 	for _, c := range calls {
-		var args struct {
-			FilePath  string `json:"file_path"`
-			StartLine int    `json:"start_line"`
-			EndLine   int    `json:"end_line"`
-		}
+		var args map[string]any
 		_ = json.Unmarshal([]byte(c.Function.Arguments), &args)
 		if c.Function.Name == tool.FileRead.Name() {
-			if args.FilePath == "" {
+			requests, err := tool.ParseFileReadRequests(args)
+			if err != nil {
 				continue
 			}
-			text := "read " + args.FilePath
-			if args.StartLine > 0 {
-				text = fmt.Sprintf("read %s:%d-%d", args.FilePath, args.StartLine, args.EndLine)
+			paths := make([]string, 0, len(requests))
+			for _, request := range requests {
+				if request.FilePath != "" {
+					paths = append(paths, request.FilePath)
+				}
+			}
+			if len(paths) == 0 {
+				continue
 			}
 			out = append(out, board.Bulletin{From: sc.ID, Turn: turn, Level: board.LevelConfirmed,
-				Paths: []string{args.FilePath}, Text: text})
+				Paths: paths, Text: fmt.Sprintf("read %d file range(s): %s", len(requests), strings.Join(paths, ", "))})
 		}
 	}
 	return out

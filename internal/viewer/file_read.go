@@ -11,12 +11,24 @@ import (
 // latter is only a diagnostic because different ranges may be intentional.
 type FileReadMetrics struct {
 	Calls           int
+	Requests        int
 	UniqueFiles     int
-	CoveredCalls    int
+	CoveredRequests int
 	SamePathRepeats int
 	PreloadedFiles  int
 	UnitKnownFiles  int
 	CallGraphFiles  int
+}
+
+type fileReadArguments struct {
+	Reads []fileReadArgument `json:"reads"`
+	// Historical traces used a singular top-level shape. Viewer still reads
+	// them, but the runtime tool accepts only reads[].
+	FilePath string `json:"file_path"`
+}
+
+type fileReadArgument struct {
+	FilePath string `json:"file_path"`
 }
 
 func analyzeFileReads(r *ReviewRun) FileReadMetrics {
@@ -28,18 +40,20 @@ func analyzeFileReads(r *ReviewRun) FileReadMetrics {
 				continue
 			}
 			metrics.Calls++
-			if strings.HasPrefix(call.Result, "Already available in the current context") {
-				metrics.CoveredCalls++
-			}
-			var args struct {
-				FilePath string `json:"file_path"`
-			}
+			metrics.CoveredRequests += strings.Count(call.Result, "Already available in the current context")
+			var args fileReadArguments
 			if json.Unmarshal([]byte(call.Arguments), &args) != nil {
 				continue
 			}
-			filePath := cleanReviewPath(args.FilePath)
-			if filePath != "" {
-				readCounts[filePath]++
+			if len(args.Reads) == 0 && args.FilePath != "" {
+				args.Reads = append(args.Reads, fileReadArgument{FilePath: args.FilePath})
+			}
+			metrics.Requests += len(args.Reads)
+			for _, read := range args.Reads {
+				filePath := cleanReviewPath(read.FilePath)
+				if filePath != "" {
+					readCounts[filePath]++
+				}
 			}
 		}
 	}

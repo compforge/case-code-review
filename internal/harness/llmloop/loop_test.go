@@ -34,13 +34,13 @@ func TestExtractFacts_ToolSpecificPathArgs(t *testing.T) {
 	sc := session.Scope{ID: "u1", Kind: "unit", Type: "file", Paths: []string{"main.go", "b.go"}}
 	calls := []llm.ToolCall{
 		{Function: llm.FunctionCall{Name: "file_read",
-			Arguments: `{"file_path":"a.go","start_line":3,"end_line":9}`}},
+			Arguments: `{"reads":[{"file_path":"a.go","start_line":3,"end_line":9}]}`}},
 	}
 	facts := extractFacts(sc, 2, calls)
 	if len(facts) != 1 {
 		t.Fatalf("want 1 fact, got %d: %+v", len(facts), facts)
 	}
-	if facts[0].Text != "read a.go:3-9" || facts[0].Paths[0] != "a.go" {
+	if facts[0].Text != "read 1 file range(s): a.go" || facts[0].Paths[0] != "a.go" {
 		t.Fatalf("unexpected read fact: %+v", facts[0])
 	}
 }

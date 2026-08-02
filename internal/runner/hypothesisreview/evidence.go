@@ -65,9 +65,9 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 		}
 		return out
 	case tool.FileReadBase:
-		base.Kind, base.Ref = "base", stringValue(request.Args, "file_path")
+		return fileReadReceipts(base, "base", request.Args, result)
 	case tool.FileRead:
-		base.Kind, base.Ref = "source", stringValue(request.Args, "file_path")
+		return fileReadReceipts(base, "source", request.Args, result)
 	case tool.CodeSearch:
 		base.Kind, base.Ref = "search", stringValue(request.Args, "search_text")
 	case tool.FileFind:
@@ -79,6 +79,36 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 		return nil
 	}
 	return []EvidenceReceipt{base}
+}
+
+func fileReadReceipts(
+	base EvidenceReceipt,
+	kind string,
+	args map[string]any,
+	result string,
+) []EvidenceReceipt {
+	requests, err := tool.ParseFileReadRequests(args)
+	if err != nil {
+		return nil
+	}
+	parts, ok := tool.DecodeFileReadResults(result)
+	if !ok || len(parts) != len(requests) {
+		return nil
+	}
+	var receipts []EvidenceReceipt
+	for i, request := range requests {
+		// Only a returned File block proves that repository content was read;
+		// deletion, missing-file, and context-coverage notices do not mint new
+		// evidence receipts for the batch member.
+		if request.FilePath == "" || !strings.Contains(parts[i], "File: ") {
+			continue
+		}
+		receipt := base
+		receipt.Kind = kind
+		receipt.Ref = request.FilePath
+		receipts = append(receipts, receipt)
+	}
+	return receipts
 }
 
 // ReviewHandler owns the convergent Review's complete tool boundary. Read-only

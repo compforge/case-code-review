@@ -231,12 +231,12 @@ user:   <review task；Unit diff、Clue 摘要、源码 slot pointer>
 由 `FromLLM` 恢复成 typed message，下一次请求时再按当前压缩等级 `ToLLM`：
 
 ```text
-assistant: <assistant text, if any> + tool_calls(code_search, file_read, ...)
+assistant: <assistant text, if any> + tool_calls(code_search, file_read(reads=[...]), ...)
 tool:      SearchResult(query=..., hits=...)
-tool:      File(path=C, range=..., snapshot=current)
+tool:      FileBatch(files=[C, D, ...], snapshot=current)
 
 assistant: <assistant text, if any> + tool_calls(file_read_base, file_read_diff, ...)
-tool:      File(path=C, range=..., snapshot=baseline)
+tool:      FileBatch(files=[C, D, ...], snapshot=baseline)
 tool:      Diff(paths=[...])
 
 ... repeated agent turns ...
@@ -274,6 +274,10 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 目标是降低后续 prompt 的注意力噪声，而不是为了压缩再增加一轮昂贵 LLM summary。
 
 `file_read` 需要区分两个信号，不能合成一个“重复率”：
+
+工具默认只提供 `reads[]` 批量形状，单个范围也放进数组。已确定且互不依赖的范围一次提交，provider
+并行读取并保持返回顺序；只有前一个结果决定下一个目标时才新开一轮。这样减少 tool call / 模型往返，
+但每个成员仍独立参与覆盖判断、typed compaction 与轨迹统计。
 
 - **已覆盖读取**：请求范围此刻仍完整存在于初始源码消息或先前工具结果中。Harness 直接返回复用提示，
   避免再次装入同一份内容；若范围只部分覆盖或内容已被淘汰，仍正常执行读取。

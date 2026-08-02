@@ -194,7 +194,7 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 `file_read` 行覆盖率和 Unit
 完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：前者以 `submit_hypotheses`，
 后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。文件读取额外报告
-调用次数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
+tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
 小范围可合并出的理论最少读取数；这些是诊断项，不参与综合分，避免增加新
 Evaluator 时悄悄改变既有分数基线。确定性结果统一产生
 0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再

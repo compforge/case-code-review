@@ -74,7 +74,7 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义，并直接实现 AgentGo 的
 `AgentMessage` 契约。模型返回的普通消息先进入
-`Raw`，可识别的工具结果（例如 `file_read`）会重新提升为 `File`，因此后续压缩始终从 typed message
+`Raw`，可识别的工具结果（例如 `file_read`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
 视角出发。只有在调用模型前才降成 provider wire message：
 
 ```text
@@ -92,7 +92,8 @@ ContextManager 才能判断两个范围是否
 少量语义类型，而不是“一种工具一个 class”。每种双向消息把 `FromLLM` 与 `ToLLM` 放在同一处，
 修改 wire contract 或压缩投影时可以同时核对两个方向：
 
-- `file_read` / `file_read_base` → `File`，current 与 baseline snapshot 参与身份，不能跨版本去重；
+- `file_read` / `file_read_base` → `FileBatch`（内部保留各个 `File`），current 与 baseline snapshot
+  参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
 - `file_read_diff` → `Diff`，压缩时保留 path 与 hunk anchor；
 - `code_search` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
@@ -102,6 +103,10 @@ wire 来源，因此只定义 `ToLLM`。
 
 降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
 发送的 wire shape，因此 Viewer 能回答“模型当时究竟看到了什么”。
+
+`file_read` 只有批量 `reads[]` 契约，单文件也使用一个元素的数组；已经确定且彼此独立的范围由
+provider 并行读取，并按请求顺序装回同一条结果。ContextManager 可以只剔除其中已覆盖的成员，执行
+剩余成员后再按原顺序合并，因此批量不会削弱范围复用，也不需要保留另一套单文件入口。
 
 ### 3.2 上下文生命周期统一在 ContextManager
 

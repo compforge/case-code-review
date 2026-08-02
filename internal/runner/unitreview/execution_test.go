@@ -16,10 +16,13 @@ import (
 
 func TestExecutorTracksSuccessfulRepositoryReadPathsPerUnit(t *testing.T) {
 	executor := &Executor{}
-	executor.recordReadPaths("unit-1", tool.FileRead.Name(), json.RawMessage(`{"file_path":"a.go"}`))
-	executor.recordReadPaths("unit-1", tool.FileReadBase.Name(), json.RawMessage(`{"file_path":"base.go"}`))
-	executor.recordReadPaths("unit-1", tool.FileReadDiff.Name(), json.RawMessage(`{"path_array":["a.go","b.go"]}`))
-	executor.recordReadPaths("unit-2", tool.FileRead.Name(), json.RawMessage(`{"file_path":"other.go"}`))
+	readResult := func(path string) string {
+		return tool.EncodeFileReadResults([]string{"File: " + path + " (Total lines: 1)\nIS_TRUNCATED: false\nLINE_RANGE: 1-1\n1|x"})
+	}
+	executor.recordReadPaths("unit-1", tool.FileRead.Name(), json.RawMessage(`{"reads":[{"file_path":"a.go"}]}`), readResult("a.go"))
+	executor.recordReadPaths("unit-1", tool.FileReadBase.Name(), json.RawMessage(`{"reads":[{"file_path":"base.go"}]}`), readResult("base.go"))
+	executor.recordReadPaths("unit-1", tool.FileReadDiff.Name(), json.RawMessage(`{"path_array":["a.go","b.go"]}`), "diff")
+	executor.recordReadPaths("unit-2", tool.FileRead.Name(), json.RawMessage(`{"reads":[{"file_path":"other.go"}]}`), readResult("other.go"))
 	got := executor.ReadPaths("unit-1")
 	want := []string{"a.go", "b.go", "base.go"}
 	if !slices.Equal(got, want) {

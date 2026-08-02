@@ -76,9 +76,10 @@
 <table class="review-table tool-summary-table">
     <thead><tr><th>Signal</th><th>Value</th><th>Meaning</th></tr></thead>
     <tbody>
-        <tr><td>Calls</td><td>{{formatInt .Review.FileReads.Calls}}</td><td>全部 <code>file_read</code> 调用</td></tr>
+        <tr><td>Calls</td><td>{{formatInt .Review.FileReads.Calls}}</td><td><code>file_read</code> 工具调用 / 模型往返</td></tr>
+        <tr><td>Read requests</td><td>{{formatInt .Review.FileReads.Requests}}</td><td>批量调用内的文件范围总数</td></tr>
         <tr><td>Unique files</td><td>{{formatInt .Review.FileReads.UniqueFiles}}</td><td>去重后的读取路径</td></tr>
-        <tr><td>Already covered</td><td>{{formatInt .Review.FileReads.CoveredCalls}}</td><td>请求范围已在当前 context，Harness 返回复用提示</td></tr>
+        <tr><td>Already covered</td><td>{{formatInt .Review.FileReads.CoveredRequests}}</td><td>请求范围已在当前 context，Harness 返回复用提示</td></tr>
         <tr><td>Same-path repeats</td><td>{{formatInt .Review.FileReads.SamePathRepeats}}</td><td>同一路径第二次及后续读取，不等同于范围重复</td></tr>
         {{if .Review.HasSourcePreloads}}<tr><td>Preloaded overlap</td><td>{{formatRatio .Review.FileReads.PreloadedFiles .Review.FileReads.UniqueFiles}}</td><td>读取路径已在初始源码上下文中预载</td></tr>{{end}}
         {{if .Review.HasContextPaths}}

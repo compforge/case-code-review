@@ -209,13 +209,13 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 				ReasoningContent: "The paths are independent.",
 				ToolCalls: []llm.ToolCall{{
 					ID: "call-1", Type: "function",
-					Function: llm.FunctionCall{Name: "file_read", Arguments: `{"file_path":"foo.go"}`},
+					Function: llm.FunctionCall{Name: "file_read", Arguments: `{"reads":[{"file_path":"foo.go"}]}`},
 				}},
 			},
 			FinishReason: "tool_calls",
 		}},
 	}, 120*time.Millisecond)
-	rec.AddToolResultWithMetadata("call-1", "file_read", `{"file_path":"foo.go"}`, "File: foo.go", true, 8*time.Millisecond)
+	rec.AddToolResultWithMetadata("call-1", "file_read", `{"reads":[{"file_path":"foo.go"}]}`, "File: foo.go", true, 8*time.Millisecond)
 	sh.Finalize()
 
 	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))

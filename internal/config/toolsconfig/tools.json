@@ -133,26 +133,38 @@
     "main_task": true,
     "definition": {
       "name": "file_read",
-      "description": "Use this tool to read file content when you need to get context for git diff. You can specify start_line and end_line to view specific parts of the file. Each call reads one file; when several independent paths or ranges are already known, issue separate file_read calls in the same assistant response instead of waiting between them.\n\n**Line Range Strategy:**\n- Git diff hunk header provides guidance on how to get more relevant context.\n- Git diff hunk header \"@@-x,y +m,n@@\" indicates that the old file has y lines starting from line x, and the new file has n lines starting from line m.\n- For example, when you need to read 50 lines above and below the current changed code block in the new file, set start_line = m - 50, end_line = m + n + 50.\n\n**Example output:**\nFile：path/to/example.go (Total lines: 50)\nIS_TRUNCATED: false\nLINE_RANGE: 10-12\n// The following is the original content of the file\nfunc main() {\n  fmt.Println(\"Hello, World!\")\n}\n\n**Limitations:**\n- If the specified range exceeds 500 lines, only 500 lines will be returned with a truncation notice.\n- This tool can only read file content from the modified version (after changes) in git diff.",
+      "description": "Read one or more file ranges from the modified version under review. Always pass reads, including for a single range. Put all independent paths or ranges already known into the same reads array; the tool reads them in parallel and returns results in request order. Use separate calls only when an earlier result determines what to read next.\n\nGit diff hunk headers guide focused ranges: @@ -x,y +m,n @@ means the new hunk starts at m and spans n lines. Each requested range is capped at 500 lines.",
       "parameters": {
         "type": "object",
         "properties": {
-          "file_path": {
-            "type": "string",
-            "description": "The relative path of the file to open."
-          },
-          "start_line": {
-            "type": "integer",
-            "description": "The start line number to view. Defaults to 1."
-          },
-          "end_line": {
-            "type": "integer",
-            "description": "The end line number to view. Defaults to end line of file."
+          "reads": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "description": "Independent file ranges to read in parallel. Results preserve this order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file_path": {
+                  "type": "string",
+                  "description": "Repository-relative file path."
+                },
+                "start_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Optional 1-based start line. Defaults to 1."
+                },
+                "end_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Optional inclusive end line."
+                }
+              },
+              "required": ["file_path"]
+            }
           }
         },
-        "required": [
-          "file_path"
-        ]
+        "required": ["reads"]
       }
     }
   },
@@ -222,24 +234,38 @@
     "main_task": true,
     "definition": {
       "name": "file_read_base",
-      "description": "Read a repository file as it existed immediately before the reviewed change. Use this to verify whether a suspected behavior was introduced or materially changed by the current diff instead of merely pre-existing. The tool is read-only and uses the exact workspace HEAD, range merge-base, or commit parent selected by CCR.",
+      "description": "Read one or more repository file ranges as they existed immediately before the reviewed change. Always pass reads, including for a single range. Batch all independent baseline reads already known; they run in parallel and return in request order. Use this to distinguish a caused issue from pre-existing behavior.",
       "parameters": {
         "type": "object",
         "properties": {
-          "file_path": {
-            "type": "string",
-            "description": "Repository-relative file path to read at the baseline revision."
-          },
-          "start_line": {
-            "type": "integer",
-            "description": "Optional 1-based start line. Defaults to 1."
-          },
-          "end_line": {
-            "type": "integer",
-            "description": "Optional inclusive end line."
+          "reads": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "description": "Independent baseline ranges to read in parallel. Results preserve this order.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file_path": {
+                  "type": "string",
+                  "description": "Repository-relative file path."
+                },
+                "start_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Optional 1-based start line. Defaults to 1."
+                },
+                "end_line": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Optional inclusive end line."
+                }
+              },
+              "required": ["file_path"]
+            }
           }
         },
-        "required": ["file_path"]
+        "required": ["reads"]
       }
     }
   },

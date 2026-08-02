@@ -20,7 +20,7 @@ type fileReadStub struct{ body string }
 
 func (fileReadStub) Tool() tool.Tool { return tool.FileRead }
 func (s fileReadStub) Execute(context.Context, map[string]any) (string, error) {
-	return s.body, nil
+	return tool.EncodeFileReadResults([]string{s.body}), nil
 }
 
 func TestRunPerFile_FileDedupStubsCoveredRead(t *testing.T) {
@@ -28,8 +28,8 @@ func TestRunPerFile_FileDedupStubsCoveredRead(t *testing.T) {
 		"1|package a\n2|\n3|func F() {}\n")
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResp("file_read", `{"file_path":"pkg/a.go"}`), // round 1: read
-		toolCallResp("file_read", `{"file_path":"pkg/a.go"}`), // round 2: same read again
+		toolCallResp("file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`), // round 1: read
+		toolCallResp("file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`), // round 2: same read again
 		toolCallResp("task_done", `{}`),
 	}}
 	reg := tool.NewRegistry()
@@ -76,8 +76,8 @@ func TestRunPerFile_FileDedupStubsCoveredRead(t *testing.T) {
 func TestRunPerFile_FileDedupGateOff(t *testing.T) {
 	result := fmt.Sprintf("File: pkg/a.go (Total lines: 1)\nIS_TRUNCATED: false\nLINE_RANGE: 1-1\n%s", "1|x\n")
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResp("file_read", `{"file_path":"pkg/a.go"}`),
-		toolCallResp("file_read", `{"file_path":"pkg/a.go"}`),
+		toolCallResp("file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`),
+		toolCallResp("file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`),
 		toolCallResp("task_done", `{}`),
 	}}
 	reg := tool.NewRegistry()
@@ -206,7 +206,7 @@ func (s *stubBoard) Pull(string) (string, int) {
 func TestRunPerFile_BoardPullInjectsAndAutoPublishes(t *testing.T) {
 	result := fmt.Sprintf("File: pkg/a.go (Total lines: 1)\nIS_TRUNCATED: false\nLINE_RANGE: 1-1\n%s", "1|x\n")
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResp("file_read", `{"file_path":"pkg/a.go"}`),
+		toolCallResp("file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`),
 		toolCallResp("task_done", `{}`),
 	}}
 	reg := tool.NewRegistry()
