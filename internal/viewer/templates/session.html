@@ -32,19 +32,62 @@
     </div>
 </div>
 
+<section class="review-health health-{{.Session.Diagnostics.Status}}">
+    <div>
+        <div class="review-health-kicker">Review health</div>
+        <div class="review-health-title">{{.Session.Diagnostics.StatusLabel}}</div>
+    </div>
+    <p>{{.Session.Diagnostics.Summary}}</p>
+</section>
+
+{{if .Session.Diagnostics.Alerts}}
+<div class="diagnostic-alerts">
+{{range .Session.Diagnostics.Alerts}}
+    <div class="diagnostic-alert alert-{{.Level}}">
+        <strong>{{.Title}}</strong>
+        <span>{{.Detail}}</span>
+    </div>
+{{end}}
+</div>
+{{end}}
+
+<h3>Review Pipeline</h3>
+<div class="pipeline-funnel">
+    <div class="pipeline-step">
+        <div class="pipeline-value">{{if .Session.Summary.HasDiffStats}}{{formatInt .Session.Diagnostics.DiffFiles}}{{else}}-{{end}}</div>
+        <div class="pipeline-label">Diff Files</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-step">
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.ReviewFiles}}</div>
+        <div class="pipeline-label">Review Files</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-step pipeline-review1">
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Review1Runs}}</div>
+        <div class="pipeline-label">Review 1 · Units</div>
+        <div class="pipeline-detail">{{.Session.Diagnostics.Review1Done}} completed{{if .Session.Diagnostics.Review1Missed}} · <b>{{.Session.Diagnostics.Review1Missed}} incomplete</b>{{end}}</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-step">
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Hypotheses}}</div>
+        <div class="pipeline-label">Hypotheses</div>
+    </div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-step pipeline-review2">
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Assessments}}</div>
+        <div class="pipeline-label">Review 2 · Assessments</div>
+        <div class="pipeline-detail">{{.Session.Diagnostics.Review2Runs}} Lane(s){{if .Session.Diagnostics.Unassessed}} · <b>{{.Session.Diagnostics.Unassessed}} unassessed</b>{{end}}</div>
+    </div>
+    <div class="pipeline-arrow pipeline-trial"><span>Trial</span>→</div>
+    <div class="pipeline-step pipeline-finding">
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Findings}}</div>
+        <div class="pipeline-label">Findings</div>
+        <div class="pipeline-detail">{{.Session.Diagnostics.TrialPassed}} passed · {{.Session.Diagnostics.TrialBlocked}} blocked</div>
+    </div>
+</div>
+
 <div class="overview-grid">
-    <div class="overview-card">
-        <div class="overview-value">{{if .Session.Summary.HasDiffStats}}{{formatInt .Session.Summary.DiffFileCount}}{{else}}-{{end}}</div>
-        <div class="overview-label">Diff Files</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Session.Summary.FileCount}}</div>
-        <div class="overview-label">Review Files</div>
-    </div>
-    <div class="overview-card review1-card">
-        <div class="overview-value">{{len $review1}}</div>
-        <div class="overview-label">Review 1</div>
-    </div>
     <div class="overview-card">
         <div class="overview-value">{{formatDuration .Session.Summary.DurationSec}}</div>
         <div class="overview-label">Wall Time</div>
@@ -60,10 +103,6 @@
     <div class="overview-card">
         <div class="overview-value">{{formatInt .Session.TokenUsage.RequestCount}}</div>
         <div class="overview-label">LLM Calls</div>
-    </div>
-    <div class="overview-card review2-card">
-        <div class="overview-value">{{len $review2}}</div>
-        <div class="overview-label">Review 2</div>
     </div>
     <div class="overview-card">
         <div class="overview-value">{{toolCallCount .Session.ToolUsage}}</div>
@@ -88,16 +127,16 @@
 <p class="section-note">以 Unit 为粒度发散 Hypothesis。点进任一 Review 查看 prompt 随 agent turn 的增长。</p>
 {{if $review1}}
 <table class="review-table">
-    <thead><tr><th>Unit</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <thead><tr><th>Unit</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
     <tbody>{{range $review1}}{{template "reviewRow" .}}{{end}}</tbody>
 </table>
 {{else}}<p class="empty-state">No Review 1 runs.</p>{{end}}
 
-<h3>Review 2 <span class="heading-count">{{len $review2}}</span></h3>
-<p class="section-note">相关 Hypothesis 进入同一 Lane，串行复用上下文并产出 Assessment。</p>
+<h3>Review 2 Lanes <span class="heading-count">{{len $review2}}</span></h3>
+<p class="section-note">相关 Hypothesis 进入同一 Lane，串行复用上下文并产出 Assessment；点进 Lane 查看完整 Conversation。</p>
 {{if $review2}}
 <table class="review-table">
-    <thead><tr><th>Lane</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <thead><tr><th>Lane</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
     <tbody>{{range $review2}}{{template "reviewRow" .}}{{end}}</tbody>
 </table>
 {{else}}<p class="empty-state">No Review 2 runs.</p>{{end}}
@@ -105,7 +144,7 @@
 {{if $scans}}
 <h3>Scan <span class="heading-count">{{len $scans}}</span></h3>
 <table class="review-table">
-    <thead><tr><th>File</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
+    <thead><tr><th>File</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
     <tbody>{{range $scans}}{{template "reviewRow" .}}{{end}}</tbody>
 </table>
 {{end}}
@@ -147,10 +186,14 @@
 {{end}}
 
 {{define "reviewRow"}}
-<tr>
+<tr class="review-row {{if eq .Status "incomplete"}}review-row-incomplete{{end}}">
     <td>
         <a class="review-link" href="/r/{{.EncodedRepo}}/{{.SessionID}}/review?scope={{urlquery .ID}}">{{if .ID}}{{.ID | truncate 54}}{{else}}{{.FilePath | truncate 54}}{{end}}</a>
         {{if gt (len .Paths) 1}}<div class="review-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</div>{{end}}
+    </td>
+    <td>
+        <span class="status-badge status-{{.Status}}">{{.Status}}</span>
+        {{if .OutcomeReason}}<div class="status-reason">{{.OutcomeReason}}</div>{{else if eq .Status "incomplete"}}{{if .Outcome}}<div class="status-reason">{{.Outcome}}</div>{{else}}<div class="status-reason">no terminal signal</div>{{end}}{{end}}
     </td>
     <td><span class="badge badge-scope">{{if .Scope}}{{.Scope}}{{else}}{{.Stage.Label}}{{end}}</span></td>
     <td>{{formatDuration .Metrics.ElapsedSec}}</td>

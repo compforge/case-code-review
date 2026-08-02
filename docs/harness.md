@@ -175,26 +175,28 @@ prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然
 Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补
 视角：
 
-1. **Run Overview**：总 token、时间、模型、工具调用、文件/Unit 完成率和 warning，定位成本与
-   吞吐瓶颈；其中 `Diff Files → Review Files → Review 1` 展示原始改动、进入评审的文件与实际
-   Unit loop 数，便于判断 FileRole 过滤和 Unit formation 是否真的减少执行；
-2. **Agent Loop Timeline**：Conversation 以紧凑事件流关联 system/user、assistant 与 tool 参数/结果，
-   Turns 保留每轮完整 prompt snapshot 及其增长；二者共同展示上下文如何变化、模型返回了什么，
-   以及 Hypothesis → Assessment → Trial 的 Decision Trail。Provider 实际返回 reasoning 时单独展示，
-   不把普通 assistant 文本冒充为隐藏思维过程。
+1. **Run Overview**：总 token、时间、模型、工具调用和完成状态，定位成本与吞吐瓶颈；其中
+   `Diff Files → Review Files → Unit → Hypothesis → Assessment → Finding` 把两阶段 review 与 Trial
+   放回同一条漏斗，并显式标出不完整 Unit/Lane、未评估 Hypothesis 和被 Trial 拦截的判断。这样
+   “0 Finding” 只有在各阶段完整时才可理解，partial run 不会伪装成 clean；
+2. **Agent Loop Conversation**：Unit 与 Lane 都以紧凑事件流关联 system/user、assistant 与 tool
+   参数/结果，点选节点查看内容、reasoning 和调用结果；Session JSONL 仍保留每轮完整 prompt snapshot
+   供离线分析。它与 Hypothesis → Assessment → Trial 的 Decision Trail 共同解释模型如何推进与最终
+   结论如何形成。Provider 实际返回 reasoning 时单独展示，不把普通 assistant 文本冒充为隐藏思维过程。
 
 Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
 机会，后者只是可能的探索回环；同时展示预载源码、Unit 静态已知路径和 caller/callee
 路径与实际读取文件的重合率，用于判断下一步应预载什么，而不是把所有相关文件都塞进 prompt。
 
-这两个视角分别回答“整次 review 怎么样”和“某一轮为什么这样判断”。Overview 不能替代逐轮证据，
-Timeline 也不能替代全局统计。
+这两个视角分别回答“整次 review 怎么样”和“某个 Unit/Lane 为什么这样判断”。Overview 不能替代
+逐轮证据，Conversation 也不能替代全局统计。
 
 ### 4.3 展示层不反向定义协议
 
 JSONL schema 是执行与诊断之间的稳定协议；HTML 只是其中一种投影。新增图表或页面不应迫使 recorder
 依赖模板结构，Viewer 也不应回写 session 或修改 Trial 结果。若需要新的诊断能力，先定义稳定事件或
-artifact，再让 CLI、eval 和 HTML 分别消费。
+artifact，再让 CLI、eval 和 HTML 分别消费。Viewer 只按当前 schema 投影 Unit、Lane 与决策 artifact，
+不猜测旧字段的等价语义；不符合当前契约的 scope 不展示。
 
 ### 4.4 隐私与体积边界
 

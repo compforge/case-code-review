@@ -238,6 +238,7 @@ func peekSession(path string) (SessionSummary, error) {
 // ViewSession holds fully parsed records for one session.
 type ViewSession struct {
 	Summary       SessionSummary
+	Diagnostics   SessionDiagnostics
 	TokenUsage    TokenUsageSummary
 	ToolUsage     []ToolUsage
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
@@ -368,6 +369,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	scanner.Buffer(buf, 10*1024*1024)
 
 	latestAssessment := make(map[string]int)
+	signals := newSessionSignals()
 	for scanner.Scan() {
 		var rec map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
@@ -432,6 +434,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			if kind == "" {
 				continue
 			}
+			payload, _ := rec["data"].(map[string]any)
+			signals.observeArtifact(kind, payload)
 			data, err := json.MarshalIndent(rec["data"], "", "  ")
 			if err != nil {
 				continue
@@ -580,6 +584,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 
 		case "debrief":
 			fg := groupFor(rec)
+			fg.HasDebrief = true
+			fg.Outcome, _ = rec["outcome"].(string)
+			fg.OutcomeReason, _ = rec["reason"].(string)
 			if raw, ok := rec["source_preloads"]; ok {
 				fg.SourcePreloads = stringList(raw)
 				fg.HasSourcePreloads = true
@@ -590,6 +597,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "session_end":
+			signals.hasSessionEnd = true
 			if dur, ok := rec["duration_seconds"].(float64); ok {
 				vs.Summary.DurationSec = dur
 			}
@@ -615,6 +623,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			if f, ok := rec["llm_failures"].(float64); ok {
 				vs.Summary.LLMFailures = int(f)
 			}
+
+		case "finding":
+			signals.findings++
 		}
 	}
 
@@ -623,13 +634,18 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	fileIdx := make(map[string]*FileTokenUsage)
 	fileOrder := make([]string, 0)
 	sessionTools := map[string]*ToolUsage{}
+	supportedReviews := make([]*ReviewRun, 0, len(vs.Reviews))
 	for _, run := range vs.Reviews {
 		run.EncodedRepo = encodedRepo
 		run.SessionID = sessionID
 		finalizeReview(run)
+		if run.Stage == OtherStage {
+			continue
+		}
+		supportedReviews = append(supportedReviews, run)
 
 		rollupKey := run.FilePath
-		if run.Kind == "run" || run.Kind == "lane" {
+		if run.Kind == "lane" {
 			rollupKey = "(run-level)"
 		}
 		ft := fileIdx[rollupKey]
@@ -659,6 +675,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			total.DurationMs += tool.DurationMs
 		}
 	}
+	vs.Reviews = supportedReviews
 	fileBreakdown := make([]FileTokenUsage, 0, len(fileOrder))
 	for _, p := range fileOrder {
 		fileBreakdown = append(fileBreakdown, *fileIdx[p])
@@ -668,6 +685,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	})
 	vs.TokenUsage.FileTokenBreakdown = fileBreakdown
 	vs.ToolUsage = sortedTools(sessionTools)
+	vs.Diagnostics = buildSessionDiagnostics(vs, signals)
 
 	// Review 1 first, then Review 2 and non-diff scan passes; stable by id
 	// within each stage so overview links do not jump between reloads.

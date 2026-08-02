@@ -48,11 +48,20 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		HasSourcePreloads: true,
 		HasContextPaths:   true,
 		FileReads:         FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
+		Status:            "completed",
+		Outcome:           "completed",
+		HasDebrief:        true,
 	}
 	vs := &ViewSession{
 		Summary: SessionSummary{
 			SessionID: "session-1", CWD: "/repo", BizID: "github:org/repo#148",
 			HasDiffStats: true, DiffFileCount: 4, FileCount: 2,
+		},
+		Diagnostics: SessionDiagnostics{
+			Status: "warning", StatusLabel: "Partial", Summary: "one hypothesis is unassessed",
+			DiffFiles: 4, ReviewFiles: 2, Review1Runs: 1, Review1Done: 1,
+			Hypotheses: 2, Assessments: 1, Unassessed: 1,
+			Alerts: []DiagnosticAlert{{Level: "warning", Title: "1 Hypothesis lacks Assessment", Detail: "inspect Review 2"}},
 		},
 		Reviews: []*ReviewRun{review},
 		SystemPrompts: []SystemPrompt{
@@ -93,11 +102,20 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			if tt.name == "session.html" && (!strings.Contains(out.String(), "Diff Files") || !strings.Contains(out.String(), "Review Files") || !strings.Contains(out.String(), "Review 1")) {
 				t.Fatal("session template does not show the diff-to-Review-1 funnel")
 			}
+			if tt.name == "session.html" && (!strings.Contains(out.String(), "Review Pipeline") || !strings.Contains(out.String(), "Review health") || !strings.Contains(out.String(), "unassessed")) {
+				t.Fatal("session template does not surface pipeline health")
+			}
+			if tt.name == "session.html" && !strings.Contains(out.String(), "Review 2 Lanes") {
+				t.Fatal("session template does not list Review 2 by Lane")
+			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Already covered") || !strings.Contains(out.String(), "Same-path repeats")) {
 				t.Fatal("review page does not separate covered and repeated file reads")
 			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Conversation") || !strings.Contains(out.String(), `data-conversation-node="conversation-1"`) || !strings.Contains(out.String(), "Reasoning")) {
 				t.Fatal("review page does not render the conversation inspector")
+			}
+			if tt.name == "review.html" && strings.Contains(out.String(), `data-review-view="turns"`) {
+				t.Fatal("review page still renders the removed Turns view")
 			}
 		})
 	}
