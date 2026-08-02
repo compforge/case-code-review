@@ -62,9 +62,11 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 ### 2.4 增量提交与完成契约
 
 当前一次 Review 2 execution 只负责一个 Hypothesis。模型判断完成后应立即调用
-`submit_assessments`；对同一 ID 的后续合法提交替换前值，Session 保留提交轨迹。
+`submit_assessments`。Harness 只在当前 Hypothesis 的 Assessment 通过解析和领域校验后接受完成；合法
+提交由 AgentGo 作为 terminal tool 结束 execution，不再额外调用 `task_done`。无效提交只返回修正提示，
+loop 继续运行。
 
-`task_done` 只有在当前 Hypothesis 已有合法 Assessment 时才接受。若 execution 超时或失败：
+若 execution 超时或失败：
 
 - 已提交 Assessment 仍然保留；
 - 未评估 Hypothesis 产生明确 warning；
@@ -87,12 +89,16 @@ user: Hypothesis A(
 assistant: tool_call(file_read_diff / file_read_base / file_read / code_search)
 tool: <typed evidence result>
 assistant: tool_call(submit_assessments)
-tool: <accepted / replaced / remaining>
-assistant: tool_call(task_done)
+tool: <accepted; execution completes>
 
-user: Hypothesis B(...)  # 同一 Lane，复用前面的 conversation 与 receipt
+user: Hypothesis B(...)  # 同一 Lane，只追加新材料，复用前面的 conversation
 ...
 ```
+
+continuation 保留先前的 assistant、file/tool result 和 Assessment；新一轮只追加当前 Hypothesis 及其
+增量 Change / Clue / navigation hints，不重复挂载旧 file message、Assessment 或 receipt。receipt 账本由
+Runner 在模型上下文之外累计，继续供 Trial 校验；若旧文件内容已被 compaction 压到不足以判断，模型
+仍可按需重新读取。
 
 Supporting Change / Clue 可以在预算压力下降级，但当前 Hypothesis 不能被删除或只剩 ID。稳定前缀和
 尾部追加有利于 provider cache，也避免每次复核重新读取相同上下文。

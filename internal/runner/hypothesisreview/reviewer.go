@@ -63,12 +63,12 @@ func Review(
 		if continueFrom != nil && message.Role != "user" {
 			continue
 		}
-		full := renderReviewPrompt(message.Content, config, input, false)
+		full := renderReviewPrompt(message.Content, config, input, false, continueFrom != nil)
 		if message.Role != "user" {
 			messages = append(messages, msg.Text(message.Role, full))
 			continue
 		}
-		condensed := renderReviewPrompt(message.Content, config, input, true)
+		condensed := renderReviewPrompt(message.Content, config, input, true, continueFrom != nil)
 		messages = append(messages, newHypothesisMessage(full, condensed))
 	}
 
@@ -100,23 +100,17 @@ func Review(
 			ID: "hypothesis_review:" + input.LaneID, Kind: "lane",
 			Type: "hypothesis_review", Paths: input.Paths(),
 		},
-		TaskType:           session.HypothesisReviewTask,
-		Events:             config.Events,
-		MaxTurns:           config.MaxTurns,
-		MaxTokens:          config.MaxTokens,
-		ContextWindow:      config.MaxTokens,
-		FileDedupEnabled:   config.FileDedup,
-		FileEvictEnabled:   config.FileEvict,
-		WrapUpPrompt:       WrapUpPrompt,
-		WrapUpAllowedTools: []string{SubmitAssessments.Name(), tool.TaskDone.Name()},
-		CompletionPrompt:   "The review is not complete until every supplied hypothesis has an assessment. Submit the remaining assessments, then call task_done.",
-		CompletionCheck: func(context.Context) (bool, string) {
-			missing := collector.Missing()
-			if len(missing) == 0 {
-				return true, ""
-			}
-			return false, fmt.Sprintf("Cannot finish: assessments are still missing for %s. Submit them with submit_assessments, using insufficient/unknown where evidence is incomplete.", strings.Join(missing, ", "))
-		},
+		TaskType:                session.HypothesisReviewTask,
+		Events:                  config.Events,
+		MaxTurns:                config.MaxTurns,
+		MaxTokens:               config.MaxTokens,
+		ContextWindow:           config.MaxTokens,
+		FileDedupEnabled:        config.FileDedup,
+		FileEvictEnabled:        config.FileEvict,
+		WrapUpPrompt:            WrapUpPrompt,
+		WrapUpAllowedTools:      []string{SubmitAssessments.Name()},
+		CompletionTool:          SubmitAssessments.Name(),
+		CompletionPrompt:        "The review is not complete until the current hypothesis has a valid assessment. Submit it with submit_assessments, using insufficient/unknown where evidence is incomplete.",
 		CompressionSystemPrompt: config.CompressionSystemPrompt,
 		CompressionPrompt:       config.CompressionPrompt,
 		CompressionUpdatePrompt: config.CompressionPrompt,
@@ -149,7 +143,13 @@ func Review(
 	}
 }
 
-func renderReviewPrompt(source string, config Config, input ReviewInput, condensed bool) string {
+func renderReviewPrompt(
+	source string,
+	config Config,
+	input ReviewInput,
+	condensed bool,
+	retainedLaneContext bool,
+) string {
 	hypothesisJSON, _ := json.Marshal(input.Hypothesis)
 	changesJSON, _ := json.Marshal(reviewChangeSet(input.Changes))
 	clues := reviewClues(input.Clues)
@@ -159,10 +159,11 @@ func renderReviewPrompt(source string, config Config, input ReviewInput, condens
 		}
 	}
 	cluesJSON, _ := json.Marshal(clues)
-	priorJSON, _ := json.Marshal(map[string]any{
-		"assessments": input.PriorAssessments,
-		"evidence":    input.PriorEvidence,
-	})
+	priorContext := "Earlier Lane assessments and evidence remain in the retained conversation above; they are not repeated in this turn."
+	if !retainedLaneContext {
+		priorJSON, _ := json.Marshal(input.PriorAssessments)
+		priorContext = "```json\n" + string(priorJSON) + "\n```"
+	}
 	evidencePathsJSON, _ := json.Marshal(input.EvidencePaths)
 
 	content := source
@@ -170,7 +171,7 @@ func renderReviewPrompt(source string, config Config, input ReviewInput, condens
 	content = strings.ReplaceAll(content, "{{hypothesis}}", string(hypothesisJSON))
 	content = strings.ReplaceAll(content, "{{clues}}", string(cluesJSON))
 	content = strings.ReplaceAll(content, "{{evidence_paths}}", string(evidencePathsJSON))
-	content = strings.ReplaceAll(content, "{{prior_assessments}}", string(priorJSON))
+	content = strings.ReplaceAll(content, "{{prior_assessments}}", priorContext)
 	content = strings.ReplaceAll(content, "{{requirement_background}}", config.Background)
 	content = strings.ReplaceAll(content, "{{system_rules}}", reviewRule(input.Hypothesis, config.ResolveRule))
 	return content
