@@ -1,13 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="590" viewBox="0 0 1800 590">
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="800" viewBox="0 0 1800 800">
   <title>CCR agentic review pipeline from Diff to Finding</title>
   <desc>
     CCR forms behavioral Units from a diff. Unit Review discovers falsifiable
     Hypotheses, Hypothesis Review independently verifies them, and deterministic
     Trial delivers Findings. Language and Project Knowledge support the flow.
+    Review 1 and Review 2 also emit Session JSONL; trajectory evaluation turns
+    those facts into a feedback loop that improves both review stages.
   </desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
       <path d="M0,0 L10,5 L0,10" fill="none" stroke="#172033" stroke-width="1.8"/>
+    </marker>
+    <marker id="feedback-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#6d4cc5" stroke-width="1.8"/>
     </marker>
     <style>
       text {
@@ -23,15 +28,50 @@
       .soft-box { stroke: #8893a8; stroke-width: 1.6; }
       .flow { fill: none; stroke: #172033; stroke-width: 2.6; marker-end: url(#arrow); }
       .knowledge-line { fill: none; stroke: #4f7d86; stroke-width: 1.8; }
+      .feedback-flow {
+        fill: none;
+        stroke: #6d4cc5;
+        stroke-width: 2.4;
+        stroke-dasharray: 8 7;
+        marker-end: url(#feedback-arrow);
+      }
     </style>
   </defs>
 
-  <rect width="1800" height="590" fill="#ffffff"/>
+  <rect width="1800" height="800" fill="#ffffff"/>
   <text x="900" y="48" text-anchor="middle" class="title">CCR · Agentic review from Diff to Finding</text>
   <text x="900" y="80" text-anchor="middle" class="subtitle">
     Organize by behavior, separate discovery from verification, deliver only evidence-backed findings
   </text>
 
+  <!-- Both review stages emit observable facts and are improved through evaluation. -->
+  <text x="900" y="108" text-anchor="middle" class="tiny">Observability &amp; evaluation feedback loop</text>
+
+  <rect x="235" y="120" width="280" height="82" rx="16" fill="#eee8ff" class="soft-box"/>
+  <text x="375" y="153" text-anchor="middle" class="label">Review 1 &amp; Review 2</text>
+  <text x="375" y="180" text-anchor="middle" class="small">agent executions</text>
+
+  <line x1="515" y1="161" x2="570" y2="161" class="flow"/>
+
+  <rect x="585" y="120" width="245" height="82" rx="16" fill="#e7edf8" class="soft-box"/>
+  <text x="707" y="153" text-anchor="middle" class="label">Session JSONL</text>
+  <text x="707" y="180" text-anchor="middle" class="small">actual execution facts</text>
+
+  <line x1="830" y1="161" x2="885" y2="161" class="flow"/>
+
+  <rect x="900" y="120" width="245" height="82" rx="16" fill="#fff0bf" class="soft-box"/>
+  <text x="1022" y="153" text-anchor="middle" class="label">Trajectory eval</text>
+  <text x="1022" y="180" text-anchor="middle" class="small">stage-specific evidence</text>
+
+  <line x1="1145" y1="161" x2="1200" y2="161" class="flow"/>
+
+  <rect x="1215" y="120" width="350" height="82" rx="16" fill="#e7f7ee" class="soft-box"/>
+  <text x="1390" y="153" text-anchor="middle" class="label">Improve both reviews</text>
+  <text x="1390" y="180" text-anchor="middle" class="small">prompt · context · tools · completion</text>
+
+  <path d="M1390 202 V242 H375 V205" class="feedback-flow"/>
+
+  <g transform="translate(0 180)">
   <rect x="35" y="185" width="120" height="125" rx="18" fill="#e7edf8" class="box"/>
   <text x="95" y="240" text-anchor="middle" class="label">Diff</text>
   <text x="95" y="269" text-anchor="middle" class="small">changed code</text>
@@ -102,4 +142,5 @@
   <text x="1092" y="460" text-anchor="middle" class="label">Project Knowledge</text>
   <text x="1092" y="490" text-anchor="middle" class="small">Repository · Component · FileRole</text>
   <text x="1092" y="515" text-anchor="middle" class="tiny">entrypoint · handler · manifest · lock</text>
+  </g>
 </svg>
