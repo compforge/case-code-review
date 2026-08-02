@@ -161,48 +161,47 @@ AgentGo 类型不应泄漏到 Runner、Session Viewer 或 Unit 模型。这样�
 
 ### 4.1 Session JSONL 是事实源
 
-Session 使用追加式事件记录，不要求运行结束后才能生成完整对象。稳定记录至少包括：
+Session 使用追加式事件记录，不要求运行结束后才能生成完整对象。它按
+`Session → Scope(Unit/Lane) → Execution` 组织：Scope 表示领域工作范围，Execution 表示一次真实
+AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
-- run/scope 身份、review snapshot、工具版本、feature 与模型身份；
-- 每轮实际发送的 prompt、LLM response、stop reason 和 usage；
-- tool call 参数、结果、耗时、成功状态和所属 request；
-- warning、completion 状态和 Execution 级统计；
-- Hypothesis、Lane assignment、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
-  与 Trial 分开记录，使中断前已完成的判断和后续覆盖过程仍可还原。
+每个 Execution 的 `llm_request`、`llm_response`、`tool_call` 和 `execution_end` 共享稳定身份。
+`execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
+assistant 文本或 Unit debrief 反推 loop 是否完成。领域层仍把 Hypothesis、Lane assignment、Assessment
+和 Trial decision 作为 artifact 追加到相应 Scope。
 
-JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化
-发生在 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。
+JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化发生在
+Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。
 
 Session 仍是本地执行记录，不替代 Forge 上的持久评论、代码仓或业务事实源。跨 CI revision 的
 prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然存在。
 
 ### 4.2 HTML Viewer 是诊断投影
 
-Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补
-视角：
+Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补层级：
 
-1. **Run Overview**：总 token、时间、模型、工具调用和完成状态，定位成本与吞吐瓶颈；其中
+1. **Session Overview**：总 token、时间、模型、工具调用和完成状态，定位成本与吞吐瓶颈；其中
    `Diff Files → Review Files → Unit → Hypothesis → Assessment → Finding` 把两阶段 review 与 Trial
-   放回同一条漏斗，并显式标出不完整 Unit/Lane、未评估 Hypothesis 和被 Trial 拦截的判断。这样
+   放回同一条漏斗，并显式标出不完整 Execution、未评估 Hypothesis 和被 Trial 拦截的判断。这样
    “0 Finding” 只有在各阶段完整时才可理解，partial run 不会伪装成 clean；
-2. **Agent Loop Conversation**：Unit 与 Lane 都以紧凑事件流关联 system/user、assistant 与 tool
-   参数/结果，点选节点查看内容、reasoning 和调用结果；Session JSONL 仍保留每轮完整 prompt snapshot
-   供离线分析。它与 Hypothesis → Assessment → Trial 的 Decision Trail 共同解释模型如何推进与最终
-   结论如何形成。Provider 实际返回 reasoning 时单独展示，不把普通 assistant 文本冒充为隐藏思维过程。
+2. **Scope / Execution**：Scope 页面展示 Unit/Lane 聚合数据与本地 Decision Trail；每个 Execution
+   独立展示实际 `llm_request` 形成的 Prompt Snapshot、assistant response/reasoning 和 tool 参数/结果。
+   Snapshot 不从相邻事件重建，因此 compaction、context 注入和缓存前缀变化都可直接检查。Provider
+   实际返回 reasoning 时单独展示，不把普通 assistant 文本冒充为隐藏思维过程。
 
 Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
 机会，后者只是可能的探索回环；同时展示预载源码、Unit 静态已知路径和 caller/callee
 路径与实际读取文件的重合率，用于判断下一步应预载什么，而不是把所有相关文件都塞进 prompt。
 
-这两个视角分别回答“整次 review 怎么样”和“某个 Unit/Lane 为什么这样判断”。Overview 不能替代
-逐轮证据，Conversation 也不能替代全局统计。
+这两个层级分别回答“整次 review 怎么样”和“某个 Scope 中的某次 Execution 为什么这样推进”。
+Overview 不能替代逐轮证据，Execution timeline 也不能替代全局统计。
 
 ### 4.3 展示层不反向定义协议
 
 JSONL schema 是执行与诊断之间的稳定协议；HTML 只是其中一种投影。新增图表或页面不应迫使 recorder
 依赖模板结构，Viewer 也不应回写 session 或修改 Trial 结果。若需要新的诊断能力，先定义稳定事件或
-artifact，再让 CLI、eval 和 HTML 分别消费。Viewer 只按当前 schema 投影 Unit、Lane 与决策 artifact，
-不猜测旧字段的等价语义；不符合当前契约的 scope 不展示。
+artifact，再让 CLI、eval 和 HTML 分别消费。Viewer 只消费当前 schema，不为历史记录维护字段猜测或
+完成状态 fallback；需要保留的历史数据应由离线迁移转成当前协议。
 
 ### 4.4 隐私与体积边界
 

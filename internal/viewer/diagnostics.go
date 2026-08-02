@@ -9,23 +9,25 @@ type SessionDiagnostics struct {
 	StatusLabel string
 	Summary     string
 
-	HasSessionEnd bool
-	DiffFiles     int
-	ReviewFiles   int
-	Review1Runs   int
-	Review1Done   int
-	Review1Missed int
-	Review2Runs   int
-	Review2Done   int
-	Review2Missed int
-	Hypotheses    int
-	Assessments   int
-	Unassessed    int
-	TrialPassed   int
-	TrialBlocked  int
-	Findings      int
-	CoveredReads  int
-	RepeatedReads int
+	HasSessionEnd     bool
+	DiffFiles         int
+	ReviewFiles       int
+	Review1Units      int
+	Review1Executions int
+	Review1Done       int
+	Review1Missed     int
+	Review2Lanes      int
+	Review2Executions int
+	Review2Done       int
+	Review2Missed     int
+	Hypotheses        int
+	Assessments       int
+	Unassessed        int
+	TrialPassed       int
+	TrialBlocked      int
+	Findings          int
+	CoveredReads      int
+	RepeatedReads     int
 
 	Alerts []DiagnosticAlert
 }
@@ -96,21 +98,17 @@ func buildSessionDiagnostics(vs *ViewSession, signals sessionSignals) SessionDia
 	for _, review := range vs.Reviews {
 		switch review.Stage {
 		case Review1Stage:
-			d.Review1Runs++
-			if review.Status == "completed" {
-				d.Review1Done++
-			} else {
-				d.Review1Missed++
-			}
+			d.Review1Units++
+			d.Review1Executions += len(review.Executions)
+			d.Review1Done += review.ExecutionDone
+			d.Review1Missed += review.ExecutionMissed
 			d.CoveredReads += review.FileReads.CoveredRequests
 			d.RepeatedReads += review.FileReads.SamePathRepeats
 		case Review2Stage:
-			d.Review2Runs++
-			if review.Status == "completed" {
-				d.Review2Done++
-			} else {
-				d.Review2Missed++
-			}
+			d.Review2Lanes++
+			d.Review2Executions += len(review.Executions)
+			d.Review2Done += review.ExecutionDone
+			d.Review2Missed += review.ExecutionMissed
 		}
 	}
 
@@ -139,14 +137,14 @@ func buildSessionDiagnostics(vs *ViewSession, signals sessionSignals) SessionDia
 
 	if d.Review1Missed > 0 {
 		d.Alerts = append(d.Alerts, DiagnosticAlert{
-			Level: "warning", Title: fmt.Sprintf("%d Review 1 run(s) incomplete", d.Review1Missed),
-			Detail: "Inspect the highlighted Unit rows for timeout, truncation, or a missing debrief.",
+			Level: "warning", Title: fmt.Sprintf("%d Review 1 Execution(s) incomplete", d.Review1Missed),
+			Detail: "Inspect the highlighted Unit rows for timeout, truncation, or execution errors.",
 		})
 	}
 	if d.Review2Missed > 0 {
 		d.Alerts = append(d.Alerts, DiagnosticAlert{
-			Level: "warning", Title: fmt.Sprintf("%d Review 2 Lane(s) incomplete", d.Review2Missed),
-			Detail: "Assessments from these Lanes may be missing even when Review 1 produced Hypotheses.",
+			Level: "warning", Title: fmt.Sprintf("%d Review 2 Execution(s) incomplete", d.Review2Missed),
+			Detail: "Inspect the owning Lane; completed sibling Executions and their Assessments remain valid.",
 		})
 	}
 	if d.Unassessed > 0 {

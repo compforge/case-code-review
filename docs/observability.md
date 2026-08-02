@@ -17,12 +17,29 @@ Session JSONL                 # 基础：实际发生了什么
 ## 1. Session JSONL：共同事实源
 
 Session JSONL 是可观测性的基础。Harness recorder 在执行过程中追加事件，记录实际发生的行为，而不是
-模板渲染前的推测或运行结束后的摘要。稳定事实包括：
+模板渲染前的推测或运行结束后的摘要。它采用一个最小层级：
+
+```text
+Session
+  └─ Scope                    # Unit、Review 2 Lane 或 scan file
+       ├─ Execution           # 一次真实 AgentGo loop
+       │    ├─ llm_request / llm_response
+       │    ├─ tool_call
+       │    └─ execution_end  # 唯一终态事实
+       └─ Artifact            # Hypothesis、Assessment、Trial decision
+```
+
+Scope 是领域工作范围，不等于一次模型循环：一个 Unit 目前通常只有一个 Execution，一个 Lane 可以随
+Hypothesis 到达而连续拥有多个 Execution。每个 Execution 有稳定 `execution_id`；它的模型、工具和终态
+记录共享该身份。只有 `execution_end` 决定该 Execution 是 completed、truncated、timed out 还是 failed，
+Viewer 不再从 `task_done`、最后一条 assistant 文本或 Scope debrief 猜测完成状态。
+
+稳定事实包括：
 
 - run/scope、review snapshot、工具版本、feature、模型和业务身份；
-- 每轮实际发送的 prompt、模型 response/reasoning、stop reason 和 usage；
-- tool call 参数、结果、耗时、成功状态及其所属 request；
-- warning、completion、partial 状态和 Execution 统计；
+- 每个 Execution 的任务类型，以及每轮实际发送的 prompt、模型 response/reasoning、stop reason 和 usage；
+- tool call 参数、结果、耗时、成功状态及其所属 Execution；
+- `execution_end` 中的 outcome、reason、turn/tool 统计和总耗时；
 - Hypothesis、Lane、Assessment、Trial decision 等阶段 artifact。
 
 追加式记录使异常退出或预算耗尽的运行仍可分析；Assessment 等中间结论也不会因为后续步骤未完成而
@@ -36,16 +53,23 @@ Session 可能包含源码、prompt 与工具结果，应默认作为本地敏�
 Viewer 读取 Session JSONL，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
 看到了什么、loop 如何推进、最终决策如何形成，以及哪里发生中断或空转。
 
-Viewer 保留两个互补视角：
+Viewer 保留两个互补层级：
 
-1. **Run Overview**：token、时间、模型、工具调用、完成状态，以及
+1. **Session Overview**：token、时间、模型、工具调用、完成状态，以及
    `Diff Files → Review Files → Unit → Hypothesis → Assessment → Finding` 漏斗；
-2. **Agent Loop Conversation**：system/user message、每轮 prompt、模型 response/reasoning、tool 参数与
-   结果，以及 Hypothesis → Assessment → Trial 的 Decision Trail。
+2. **Scope / Execution**：Scope 页面先展示 Unit 或 Lane 的聚合数据和本地 Decision Trail，再把每个
+   Execution 独立展开为 prompt、response/reasoning 与 tool 参数/结果时间线。
+
+每次 `llm_request` 直接投影为一个 **Prompt Snapshot**，展示那一轮实际发送给 provider 的完整消息，
+而不是由上一轮 response 和 tool result 反推 conversation。这样 compaction、context 注入、缓存前缀变化
+和消息删除都可直接观察；相邻 snapshot 的 token/message delta 只是帮助定位变化的诊断值。
 
 Viewer 可以增加简单、确定、便于人发现问题的数据统计，例如重复读取、context 与 `file_read` 路径重合、
-空搜索和阶段未完成数。这些数据是诊断线索，不是效果分数。Viewer 不负责实验编排，不回写 Session 或
-Trial 结果，也不能因为“0 Finding”就把 partial run 展示为 clean。
+空搜索和未完成 Execution 数。这些数据是诊断线索，不是效果分数。Viewer 不负责实验编排，不回写
+Session 或 Trial 结果，也不能因为“0 Finding”就把 partial run 展示为 clean。
+
+Viewer 只消费当前 Session schema。协议变化时应同步 recorder、fixture 和投影，不为旧记录叠加字段猜测、
+终态推断或页面兼容分支；历史分析需要时由一次性的离线迁移完成。
 
 单次运行容易受 diff、模型路由、缓存、网络和上下文差异影响。Viewer 更像显微镜：适合发现问题、查看
 prompt 和形成改进假设，不适合凭少量 session 断言整体效果提升。

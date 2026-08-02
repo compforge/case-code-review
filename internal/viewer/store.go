@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 )
 
 // SessionsRoot returns the root directory where session JSONL files are stored.
@@ -56,14 +58,17 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 			continue
 		}
 		for _, se := range subEntries {
-			if strings.HasSuffix(se.Name(), ".jsonl") {
-				info.SessionCount++
-				if fi, err := se.Info(); err == nil {
-					if fi.ModTime().After(info.LastModified) {
-						info.LastModified = fi.ModTime()
-						latestSessionPath = filepath.Join(repoDir, se.Name())
-					}
-				}
+			if !strings.HasSuffix(se.Name(), ".jsonl") {
+				continue
+			}
+			path := filepath.Join(repoDir, se.Name())
+			if _, err := readSessionStart(path); err != nil {
+				continue
+			}
+			info.SessionCount++
+			if fi, err := se.Info(); err == nil && fi.ModTime().After(info.LastModified) {
+				info.LastModified = fi.ModTime()
+				latestSessionPath = path
 			}
 		}
 		if info.SessionCount > 0 {
@@ -79,26 +84,51 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 }
 
 func readSessionBizID(path string) string {
-	f, err := os.Open(path)
+	summary, err := readSessionStart(path)
 	if err != nil {
 		return ""
+	}
+	return summary.BizID
+}
+
+func readSessionStart(path string) (SessionSummary, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return SessionSummary{}, err
 	}
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
 	if !scanner.Scan() {
-		return ""
+		return SessionSummary{}, fmt.Errorf("session is empty")
 	}
 	var record map[string]any
 	if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-		return ""
+		return SessionSummary{}, err
 	}
-	bizID, _ := record["biz_id"].(string)
-	return bizID
+	if stringValue(record["type"]) != "session_start" {
+		return SessionSummary{}, fmt.Errorf("first record is not session_start")
+	}
+	version := intValue(record["schema_version"])
+	if version != session.SchemaVersion {
+		return SessionSummary{}, fmt.Errorf("unsupported session schema %d", version)
+	}
+	summary := SessionSummary{
+		SchemaVersion: version,
+		CWD:           stringValue(record["cwd"]), GitBranch: stringValue(record["gitBranch"]),
+		Model: stringValue(record["model"]), ReviewMode: stringValue(record["reviewMode"]),
+		DiffFrom: stringValue(record["diffFrom"]), DiffTo: stringValue(record["diffTo"]),
+		DiffCommit: stringValue(record["diffCommit"]), BizID: stringValue(record["biz_id"]),
+	}
+	if raw := stringValue(record["timestamp"]); raw != "" {
+		summary.Timestamp, _ = time.Parse(time.RFC3339, raw)
+	}
+	return summary, nil
 }
 
 // SessionSummary is built from session_start and session_end records.
 type SessionSummary struct {
+	SchemaVersion  int
 	SessionID      string
 	Timestamp      time.Time
 	CWD            string
@@ -149,13 +179,16 @@ func ListSessions(root, encodedRepo string) ([]SessionSummary, error) {
 
 // peekSession reads only the first and last record of a JSONL file.
 func peekSession(path string) (SessionSummary, error) {
+	summary, err := readSessionStart(path)
+	if err != nil {
+		return SessionSummary{}, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return SessionSummary{}, err
 	}
 	defer f.Close()
 
-	var summary SessionSummary
 	scanner := bufio.NewScanner(f)
 	buf := make([]byte, 0, 1024*1024)
 	scanner.Buffer(buf, 10*1024*1024)
@@ -164,40 +197,6 @@ func peekSession(path string) (SessionSummary, error) {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		lastLine = append([]byte(nil), line...)
-
-		if summary.Timestamp.IsZero() {
-			var rec map[string]any
-			if err := json.Unmarshal(line, &rec); err != nil {
-				continue
-			}
-			if ts, ok := rec["timestamp"].(string); ok {
-				summary.Timestamp, _ = time.Parse(time.RFC3339, ts)
-			}
-			if cwd, ok := rec["cwd"].(string); ok {
-				summary.CWD = cwd
-			}
-			if branch, ok := rec["gitBranch"].(string); ok {
-				summary.GitBranch = branch
-			}
-			if model, ok := rec["model"].(string); ok {
-				summary.Model = model
-			}
-			if rm, ok := rec["reviewMode"].(string); ok {
-				summary.ReviewMode = rm
-			}
-			if v, ok := rec["diffFrom"].(string); ok {
-				summary.DiffFrom = v
-			}
-			if v, ok := rec["diffTo"].(string); ok {
-				summary.DiffTo = v
-			}
-			if v, ok := rec["diffCommit"].(string); ok {
-				summary.DiffCommit = v
-			}
-			if v, ok := rec["biz_id"].(string); ok {
-				summary.BizID = v
-			}
-		}
 	}
 
 	if len(lastLine) > 0 {
@@ -243,15 +242,18 @@ type ViewSession struct {
 	ToolUsage     []ToolUsage
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
 	Artifacts     []ReviewArtifact
-	Reviews       []*ReviewRun
+	Reviews       []*ReviewScope
 }
 
 // ReviewArtifact is a domain-owned intermediate decision rendered without
 // teaching the viewer the evolving Hypothesis or Assessment schemas.
 type ReviewArtifact struct {
-	Kind   string
-	Data   string
-	Status string // assessment only: current | superseded
+	Kind         string
+	Data         string
+	Status       string // assessment only: current | superseded
+	OriginUnit   string
+	LaneID       string
+	HypothesisID string
 }
 
 // DisplayMessage is one message of an LLM request with its text content
@@ -302,6 +304,7 @@ const (
 
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
+	ExecutionID string
 	// Request holds the complete recorded message list sent in this call.
 	Request          []DisplayMessage
 	TaskType         TaskType
@@ -334,7 +337,7 @@ type ToolCallInfo struct {
 	DurationMs int64
 }
 
-// LoadSession fully parses a JSONL file into a ViewSession.
+// LoadSession fully parses one current-schema JSONL file into the Viewer read model.
 func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	path := filepath.Join(root, encodedRepo, sessionID+".jsonl")
 	f, err := os.Open(path)
@@ -343,25 +346,57 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	}
 	defer f.Close()
 
-	vs := &ViewSession{Reviews: make([]*ReviewRun, 0)}
-	reviewIndex := make(map[string]*ReviewRun)
-	sysIndex := make(map[string]int) // system prompt text -> index in vs.SystemPrompts
+	vs := &ViewSession{Reviews: make([]*ReviewScope, 0)}
+	scopeIndex := make(map[string]*ReviewScope)
+	executionIndex := make(map[string]*ReviewExecution)
+	sysIndex := make(map[string]int)
 
-	// groupFor resolves the ReviewRun a record belongs to, keyed by scope_id.
-	groupFor := func(rec map[string]any) *ReviewRun {
+	scopeFor := func(rec map[string]any) *ReviewScope {
 		key, _ := rec["scope_id"].(string)
-		run := reviewIndex[key]
-		if run == nil {
-			kind, _ := rec["kind"].(string)
-			scope, _ := rec["scope"].(string)
-			fp, _ := rec["filePath"].(string)
-			run = &ReviewRun{ID: key, Kind: kind, Scope: scope, Paths: stringList(rec["paths"]), FilePath: fp, Tasks: make(map[TaskType][]*TaskCard)}
-			reviewIndex[key] = run
-			vs.Reviews = append(vs.Reviews, run)
-		} else {
-			run.Paths = mergeStrings(run.Paths, stringList(rec["paths"]))
+		if key == "" {
+			return nil
 		}
-		return run
+		scope := scopeIndex[key]
+		if scope == nil {
+			kind, _ := rec["kind"].(string)
+			scopeType, _ := rec["scope"].(string)
+			filePath, _ := rec["filePath"].(string)
+			scope = &ReviewScope{
+				ID: key, Kind: kind, Scope: scopeType, Paths: stringList(rec["paths"]),
+				FilePath: filePath, Tasks: make(map[TaskType][]*TaskCard),
+			}
+			scopeIndex[key] = scope
+			vs.Reviews = append(vs.Reviews, scope)
+		} else {
+			scope.Paths = mergeStrings(scope.Paths, stringList(rec["paths"]))
+		}
+		return scope
+	}
+
+	executionFor := func(rec map[string]any) (*ReviewScope, *ReviewExecution) {
+		scope := scopeFor(rec)
+		executionID, _ := rec["execution_id"].(string)
+		if scope == nil || executionID == "" {
+			return scope, nil
+		}
+		key := scope.ID + "\x00" + executionID
+		execution := executionIndex[key]
+		if execution == nil {
+			execution = &ReviewExecution{ID: executionID, Tasks: make(map[TaskType][]*TaskCard)}
+			executionIndex[key] = execution
+			scope.Executions = append(scope.Executions, execution)
+		}
+		return scope, execution
+	}
+
+	cardsFor := func(scope *ReviewScope, execution *ReviewExecution, taskType TaskType) []*TaskCard {
+		if execution != nil {
+			return execution.Tasks[taskType]
+		}
+		if scope != nil {
+			return scope.Tasks[taskType]
+		}
+		return nil
 	}
 
 	scanner := bufio.NewScanner(f)
@@ -370,325 +405,278 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 
 	latestAssessment := make(map[string]int)
 	signals := newSessionSignals()
+	hasCurrentSchema := false
 	for scanner.Scan() {
 		var rec map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			continue // skip malformed lines
+			return nil, fmt.Errorf("decode session record: %w", err)
 		}
 		typ, _ := rec["type"].(string)
-		if scopeID, _ := rec["scope_id"].(string); scopeID != "" {
-			groupFor(rec).observeTimestamp(rec["timestamp"])
-		}
 
 		switch typ {
 		case "session_start":
+			version := intValue(rec["schema_version"])
+			if version != session.SchemaVersion {
+				return nil, fmt.Errorf("unsupported session schema %d; viewer requires %d", version, session.SchemaVersion)
+			}
+			hasCurrentSchema = true
+			vs.Summary.SchemaVersion = version
 			if ts, ok := rec["timestamp"].(string); ok {
 				vs.Summary.Timestamp, _ = time.Parse(time.RFC3339, ts)
 			}
-			if cwd, ok := rec["cwd"].(string); ok {
-				vs.Summary.CWD = cwd
-			}
-			if branch, ok := rec["gitBranch"].(string); ok {
-				vs.Summary.GitBranch = branch
-			}
-			if model, ok := rec["model"].(string); ok {
-				vs.Summary.Model = model
-			}
-			if rm, ok := rec["reviewMode"].(string); ok {
-				vs.Summary.ReviewMode = rm
-			}
-			if v, ok := rec["diffFrom"].(string); ok {
-				vs.Summary.DiffFrom = v
-			}
-			if v, ok := rec["diffTo"].(string); ok {
-				vs.Summary.DiffTo = v
-			}
-			if v, ok := rec["diffCommit"].(string); ok {
-				vs.Summary.DiffCommit = v
-			}
-			if v, ok := rec["biz_id"].(string); ok {
-				vs.Summary.BizID = v
-			}
+			vs.Summary.CWD, _ = rec["cwd"].(string)
+			vs.Summary.GitBranch, _ = rec["gitBranch"].(string)
+			vs.Summary.Model, _ = rec["model"].(string)
+			vs.Summary.ReviewMode, _ = rec["reviewMode"].(string)
+			vs.Summary.DiffFrom, _ = rec["diffFrom"].(string)
+			vs.Summary.DiffTo, _ = rec["diffTo"].(string)
+			vs.Summary.DiffCommit, _ = rec["diffCommit"].(string)
+			vs.Summary.BizID, _ = rec["biz_id"].(string)
 
 		case "llm_request":
-			tt, _ := rec["taskType"].(string)
-			reqNo := 0
-			if n, ok := rec["request_no"].(float64); ok {
-				reqNo = int(n)
-			}
-			var reqMsgs []DisplayMessage
-			for _, m := range extractMessages(rec["messages"]) {
-				if m.Role == "system" {
-					registerSystemPrompt(vs, sysIndex, TaskType(tt), m.Text)
+			taskType := TaskType(stringValue(rec["taskType"]))
+			var request []DisplayMessage
+			for _, message := range extractMessages(rec["messages"]) {
+				if message.Role == "system" {
+					registerSystemPrompt(vs, sysIndex, taskType, message.Text)
 				}
-				reqMsgs = append(reqMsgs, m)
+				request = append(request, message)
 			}
-
-			tc := &TaskCard{Request: reqMsgs, TaskType: TaskType(tt), RequestNo: reqNo}
-			fg := groupFor(rec)
-			fg.Tasks[TaskType(tt)] = append(fg.Tasks[TaskType(tt)], tc)
-			fg.Calls = append(fg.Calls, tc)
-
-		case "artifact":
-			kind, _ := rec["artifact_kind"].(string)
-			if kind == "" {
+			scope, execution := executionFor(rec)
+			if scope == nil {
 				continue
 			}
-			payload, _ := rec["data"].(map[string]any)
-			signals.observeArtifact(kind, payload)
-			data, err := json.MarshalIndent(rec["data"], "", "  ")
-			if err != nil {
-				continue
+			card := &TaskCard{
+				ExecutionID: stringValue(rec["execution_id"]), Request: request,
+				TaskType: taskType, RequestNo: intValue(rec["request_no"]),
 			}
-			artifact := ReviewArtifact{Kind: kind, Data: string(data)}
-			if kind == "review_assessment" {
-				if payload, ok := rec["data"].(map[string]any); ok {
-					if hypothesisID, _ := payload["hypothesis_id"].(string); hypothesisID != "" {
-						if previous, exists := latestAssessment[hypothesisID]; exists {
-							vs.Artifacts[previous].Status = "superseded"
-						}
-						artifact.Status = "current"
-						latestAssessment[hypothesisID] = len(vs.Artifacts)
-					}
-				}
+			scope.Tasks[taskType] = append(scope.Tasks[taskType], card)
+			scope.Calls = append(scope.Calls, card)
+			if execution != nil {
+				execution.Tasks[taskType] = append(execution.Tasks[taskType], card)
+				execution.Calls = append(execution.Calls, card)
 			}
-			vs.Artifacts = append(vs.Artifacts, artifact)
 
 		case "llm_response":
-			content, _ := rec["content"].(string)
-			reasoning, _ := rec["reasoning"].(string)
-			stopReason, _ := rec["stop_reason"].(string)
-			durationMs := int64(0)
-			if d, ok := rec["duration_ms"].(float64); ok {
-				durationMs = int64(d)
+			taskType := TaskType(stringValue(rec["taskType"]))
+			scope, execution := executionFor(rec)
+			cards := cardsFor(scope, execution, taskType)
+			if len(cards) == 0 {
+				continue
 			}
-			model, _ := rec["model"].(string)
-			errStr, _ := rec["error"].(string)
-
-			promptTok := 0
-			completionTok := 0
-			cacheReadTok := 0
-			cacheWriteTok := 0
+			card := cards[len(cards)-1]
+			if card.HasResponse {
+				continue
+			}
+			card.ResponseContent = stringValue(rec["content"])
+			card.Reasoning = stringValue(rec["reasoning"])
+			card.StopReason = stringValue(rec["stop_reason"])
+			card.DurationMs = int64(intValue(rec["duration_ms"]))
+			card.Model = stringValue(rec["model"])
+			card.Error = stringValue(rec["error"])
+			card.HasResponse = true
 			if usage, ok := rec["usage"].(map[string]any); ok {
-				if v, ok := usage["prompt_tokens"].(float64); ok {
-					promptTok = int(v)
-				}
-				if v, ok := usage["completion_tokens"].(float64); ok {
-					completionTok = int(v)
-				}
-				if v, ok := usage["cache_read_tokens"].(float64); ok {
-					cacheReadTok = int(v)
-				}
-				if v, ok := usage["cache_write_tokens"].(float64); ok {
-					cacheWriteTok = int(v)
-				}
+				card.PromptTokens = intValue(usage["prompt_tokens"])
+				card.CompletionTokens = intValue(usage["completion_tokens"])
+				card.CacheReadTokens = intValue(usage["cache_read_tokens"])
+				card.CacheWriteTokens = intValue(usage["cache_write_tokens"])
 			}
-
-			tt, _ := rec["taskType"].(string)
-			fg := groupFor(rec)
-			if fg != nil {
-				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 && !cards[len(cards)-1].HasResponse {
-					card := cards[len(cards)-1]
-					card.ResponseContent = content
-					card.Reasoning = reasoning
-					card.StopReason = stopReason
-					card.HasResponse = true
-					card.DurationMs = durationMs
-					card.Model = model
-					card.Error = errStr
-					card.PromptTokens = promptTok
-					card.CompletionTokens = completionTok
-					card.CacheReadTokens = cacheReadTok
-					card.CacheWriteTokens = cacheWriteTok
-				}
-			}
-
-			// Also attach tool_calls to the same card
-			if tcs, ok := rec["tool_calls"].([]any); ok && fg != nil {
-				tt, _ := rec["taskType"].(string)
-				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 {
-					card := cards[len(cards)-1]
-					for _, tc := range tcs {
-						if tm, ok := tc.(map[string]any); ok {
-							id, _ := tm["id"].(string)
-							name, _ := tm["name"].(string)
-							args, _ := tm["arguments"].(string)
-							info := ToolCallInfo{ID: id, Name: name, Arguments: args}
-							if name == "task_done" {
-								info.Ok = true
-								info.HasResult = true
-							}
-							card.ToolCalls = append(card.ToolCalls, info)
-						}
+			if calls, ok := rec["tool_calls"].([]any); ok {
+				for _, raw := range calls {
+					call, ok := raw.(map[string]any)
+					if !ok {
+						continue
 					}
+					card.ToolCalls = append(card.ToolCalls, ToolCallInfo{
+						ID: stringValue(call["id"]), Name: stringValue(call["name"]),
+						Arguments: stringValue(call["arguments"]),
+					})
 				}
 			}
 
 		case "llm_error":
-			tt, _ := rec["taskType"].(string)
-			errStr, _ := rec["error"].(string)
-			durationMs := int64(0)
-			if d, ok := rec["duration_ms"].(float64); ok {
-				durationMs = int64(d)
+			taskType := TaskType(stringValue(rec["taskType"]))
+			scope, execution := executionFor(rec)
+			cards := cardsFor(scope, execution, taskType)
+			if len(cards) == 0 {
+				continue
 			}
-
-			fg := groupFor(rec)
-			if fg != nil {
-				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 && !cards[len(cards)-1].HasResponse && cards[len(cards)-1].Error == "" {
-					card := cards[len(cards)-1]
-					card.Error = errStr
-					card.DurationMs = durationMs
-				}
-			}
+			card := cards[len(cards)-1]
+			card.Error = stringValue(rec["error"])
+			card.DurationMs = int64(intValue(rec["duration_ms"]))
 
 		case "tool_call":
-			toolCallID, _ := rec["tool_call_id"].(string)
-			toolName, _ := rec["tool_name"].(string)
-			result, _ := rec["result"].(string)
-			okVal := true
-			if b, hasOk := rec["ok"].(bool); hasOk {
-				okVal = b
+			taskType := TaskType(stringValue(rec["taskType"]))
+			scope, execution := executionFor(rec)
+			cards := cardsFor(scope, execution, taskType)
+			if len(cards) == 0 {
+				continue
 			}
-			tt, _ := rec["taskType"].(string)
-			durationMs := int64(0)
-			if d, ok2 := rec["duration_ms"].(float64); ok2 {
-				durationMs = int64(d)
-			}
-			fg := groupFor(rec)
-			if fg != nil {
-				cards := fg.Tasks[TaskType(tt)]
-				if len(cards) > 0 {
-					card := cards[len(cards)-1]
-					match := -1
-					for ti := range card.ToolCalls {
-						call := &card.ToolCalls[ti]
-						if toolCallID != "" && call.ID == toolCallID {
-							match = ti
-							break
-						}
-						if toolCallID == "" && match == -1 && !call.HasResult && call.Name == toolName {
-							match = ti
-						}
-					}
-					if match >= 0 {
-						card.ToolCalls[match].Result = result
-						card.ToolCalls[match].Ok = okVal
-						card.ToolCalls[match].HasResult = true
-						card.ToolCalls[match].DurationMs = durationMs
-					}
+			card := cards[len(cards)-1]
+			toolCallID := stringValue(rec["tool_call_id"])
+			toolName := stringValue(rec["tool_name"])
+			match := -1
+			for i := range card.ToolCalls {
+				call := &card.ToolCalls[i]
+				if toolCallID != "" && call.ID == toolCallID {
+					match = i
+					break
+				}
+				if toolCallID == "" && match == -1 && !call.HasResult && call.Name == toolName {
+					match = i
 				}
 			}
+			if match >= 0 {
+				card.ToolCalls[match].Result = stringValue(rec["result"])
+				card.ToolCalls[match].Ok = boolValue(rec["ok"], true)
+				card.ToolCalls[match].HasResult = true
+				card.ToolCalls[match].DurationMs = int64(intValue(rec["duration_ms"]))
+			}
+
+		case "execution_end":
+			_, execution := executionFor(rec)
+			if execution == nil {
+				return nil, fmt.Errorf("execution_end missing scope or execution_id")
+			}
+			execution.TaskType = TaskType(stringValue(rec["taskType"]))
+			execution.Outcome = stringValue(rec["outcome"])
+			execution.Reason = stringValue(rec["reason"])
+			execution.DurationMs = int64(intValue(rec["duration_ms"]))
+			execution.ToolCalls = intValue(rec["tool_calls"])
+			execution.ToolErrors = intValue(rec["tool_errors"])
+
+		case "artifact":
+			kind := stringValue(rec["artifact_kind"])
+			payload, _ := rec["data"].(map[string]any)
+			if kind == "" || payload == nil {
+				continue
+			}
+			signals.observeArtifact(kind, payload)
+			data, err := json.MarshalIndent(payload, "", "  ")
+			if err != nil {
+				continue
+			}
+			artifact := ReviewArtifact{
+				Kind: kind, Data: string(data), OriginUnit: stringValue(payload["origin_unit"]),
+				LaneID: stringValue(payload["lane_id"]), HypothesisID: stringValue(payload["hypothesis_id"]),
+			}
+			if kind == "review_hypothesis" && artifact.HypothesisID == "" {
+				artifact.HypothesisID = stringValue(payload["id"])
+			}
+			if kind == "review_assessment" && artifact.HypothesisID != "" {
+				if previous, exists := latestAssessment[artifact.HypothesisID]; exists {
+					vs.Artifacts[previous].Status = "superseded"
+				}
+				artifact.Status = "current"
+				latestAssessment[artifact.HypothesisID] = len(vs.Artifacts)
+			}
+			vs.Artifacts = append(vs.Artifacts, artifact)
 
 		case "debrief":
-			fg := groupFor(rec)
-			fg.HasDebrief = true
-			fg.Outcome, _ = rec["outcome"].(string)
-			fg.OutcomeReason, _ = rec["reason"].(string)
+			scope := scopeFor(rec)
+			if scope == nil {
+				continue
+			}
 			if raw, ok := rec["source_preloads"]; ok {
-				fg.SourcePreloads = stringList(raw)
-				fg.HasSourcePreloads = true
+				scope.SourcePreloads = stringList(raw)
+				scope.HasSourcePreloads = true
 			}
 			if raw, ok := rec["context_paths"]; ok {
-				fg.ContextPaths = stringMapLists(raw)
-				fg.HasContextPaths = true
+				scope.ContextPaths = stringMapLists(raw)
+				scope.HasContextPaths = true
 			}
 
 		case "session_end":
 			signals.hasSessionEnd = true
-			if dur, ok := rec["duration_seconds"].(float64); ok {
-				vs.Summary.DurationSec = dur
+			if duration, ok := rec["duration_seconds"].(float64); ok {
+				vs.Summary.DurationSec = duration
 			}
-			if files, ok := rec["files_reviewed"].([]any); ok {
-				vs.Summary.FilesReviewed = make([]string, 0, len(files))
-				for _, fv := range files {
-					if s, ok2 := fv.(string); ok2 {
-						vs.Summary.FilesReviewed = append(vs.Summary.FilesReviewed, s)
-					}
-				}
-			}
-			if n, ok := rec["diff_files"].(float64); ok {
-				vs.Summary.DiffFileCount = int(n)
-				vs.Summary.HasDiffStats = true
-			}
-			if n, ok := rec["diff_insertions"].(float64); ok {
-				vs.Summary.DiffInsertions = int(n)
-			}
-			if n, ok := rec["diff_deletions"].(float64); ok {
-				vs.Summary.DiffDeletions = int(n)
-			}
+			vs.Summary.FilesReviewed = stringList(rec["files_reviewed"])
+			vs.Summary.DiffFileCount = intValue(rec["diff_files"])
+			vs.Summary.HasDiffStats = rec["diff_files"] != nil
+			vs.Summary.DiffInsertions = intValue(rec["diff_insertions"])
+			vs.Summary.DiffDeletions = intValue(rec["diff_deletions"])
 			vs.Summary.FileCount = len(vs.Summary.FilesReviewed)
-			if f, ok := rec["llm_failures"].(float64); ok {
-				vs.Summary.LLMFailures = int(f)
-			}
+			vs.Summary.LLMFailures = intValue(rec["llm_failures"])
 
 		case "finding":
 			signals.findings++
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if !hasCurrentSchema {
+		return nil, fmt.Errorf("session_start with schema %d is required", session.SchemaVersion)
+	}
 
-	// Build the same read model at both levels: the session overview is a rollup
-	// of Review 1/2 runs, while each run preserves its ordered prompt timeline.
+	laneScopes := make(map[string]*ReviewScope)
+	for _, scope := range vs.Reviews {
+		if scope.Kind == "lane" {
+			laneScopes[strings.TrimPrefix(scope.ID, "hypothesis_review:")] = scope
+		}
+	}
+	for _, artifact := range vs.Artifacts {
+		if artifact.OriginUnit != "" {
+			if scope := scopeIndex[artifact.OriginUnit]; scope != nil {
+				scope.Artifacts = append(scope.Artifacts, artifact)
+			}
+		}
+		if artifact.LaneID != "" {
+			if scope := laneScopes[artifact.LaneID]; scope != nil {
+				scope.Artifacts = append(scope.Artifacts, artifact)
+			}
+		}
+	}
+
 	fileIdx := make(map[string]*FileTokenUsage)
 	fileOrder := make([]string, 0)
 	sessionTools := map[string]*ToolUsage{}
-	supportedReviews := make([]*ReviewRun, 0, len(vs.Reviews))
-	for _, run := range vs.Reviews {
-		run.EncodedRepo = encodedRepo
-		run.SessionID = sessionID
-		finalizeReview(run)
-		if run.Stage == OtherStage {
+	supportedReviews := make([]*ReviewScope, 0, len(vs.Reviews))
+	for _, scope := range vs.Reviews {
+		scope.EncodedRepo = encodedRepo
+		scope.SessionID = sessionID
+		finalizeReview(scope)
+		if scope.Stage == OtherStage {
 			continue
 		}
-		supportedReviews = append(supportedReviews, run)
+		supportedReviews = append(supportedReviews, scope)
 
-		rollupKey := run.FilePath
-		if run.Kind == "lane" {
-			rollupKey = "(run-level)"
+		rollupKey := scope.FilePath
+		if scope.Kind == "lane" {
+			rollupKey = "(review-2 lanes)"
 		}
-		ft := fileIdx[rollupKey]
-		if ft == nil {
-			ft = &FileTokenUsage{FilePath: rollupKey}
-			fileIdx[rollupKey] = ft
+		usage := fileIdx[rollupKey]
+		if usage == nil {
+			usage = &FileTokenUsage{FilePath: rollupKey}
+			fileIdx[rollupKey] = usage
 			fileOrder = append(fileOrder, rollupKey)
 		}
-		vs.TokenUsage.TotalPromptTokens += run.Metrics.PromptTokens
-		vs.TokenUsage.TotalCompletionTokens += run.Metrics.CompletionTokens
-		vs.TokenUsage.TotalCacheReadTokens += run.Metrics.CacheReadTokens
-		vs.TokenUsage.TotalCacheWriteTokens += run.Metrics.CacheWriteTokens
-		vs.TokenUsage.RequestCount += run.Metrics.LLMCalls
-		ft.PromptTokens += run.Metrics.PromptTokens
-		ft.CompletionTokens += run.Metrics.CompletionTokens
-		ft.CacheReadTokens += run.Metrics.CacheReadTokens
-		ft.CacheWriteTokens += run.Metrics.CacheWriteTokens
-
-		for _, tool := range run.Tools {
-			total := sessionTools[tool.Name]
-			if total == nil {
-				total = &ToolUsage{Name: tool.Name}
-				sessionTools[tool.Name] = total
-			}
-			total.Calls += tool.Calls
-			total.Failures += tool.Failures
-			total.DurationMs += tool.DurationMs
+		vs.TokenUsage.TotalPromptTokens += scope.Metrics.PromptTokens
+		vs.TokenUsage.TotalCompletionTokens += scope.Metrics.CompletionTokens
+		vs.TokenUsage.TotalCacheReadTokens += scope.Metrics.CacheReadTokens
+		vs.TokenUsage.TotalCacheWriteTokens += scope.Metrics.CacheWriteTokens
+		vs.TokenUsage.RequestCount += scope.Metrics.LLMCalls
+		usage.PromptTokens += scope.Metrics.PromptTokens
+		usage.CompletionTokens += scope.Metrics.CompletionTokens
+		usage.CacheReadTokens += scope.Metrics.CacheReadTokens
+		usage.CacheWriteTokens += scope.Metrics.CacheWriteTokens
+		for _, tool := range scope.Tools {
+			mergeTool(sessionTools, tool)
 		}
 	}
 	vs.Reviews = supportedReviews
-	fileBreakdown := make([]FileTokenUsage, 0, len(fileOrder))
-	for _, p := range fileOrder {
-		fileBreakdown = append(fileBreakdown, *fileIdx[p])
+	for _, path := range fileOrder {
+		vs.TokenUsage.FileTokenBreakdown = append(vs.TokenUsage.FileTokenBreakdown, *fileIdx[path])
 	}
-	sort.Slice(fileBreakdown, func(i, j int) bool {
-		return fileBreakdown[i].PromptTokens+fileBreakdown[i].CompletionTokens > fileBreakdown[j].PromptTokens+fileBreakdown[j].CompletionTokens
+	sort.Slice(vs.TokenUsage.FileTokenBreakdown, func(i, j int) bool {
+		a := vs.TokenUsage.FileTokenBreakdown[i]
+		b := vs.TokenUsage.FileTokenBreakdown[j]
+		return a.PromptTokens+a.CompletionTokens > b.PromptTokens+b.CompletionTokens
 	})
-	vs.TokenUsage.FileTokenBreakdown = fileBreakdown
 	vs.ToolUsage = sortedTools(sessionTools)
 	vs.Diagnostics = buildSessionDiagnostics(vs, signals)
 
-	// Review 1 first, then Review 2 and non-diff scan passes; stable by id
-	// within each stage so overview links do not jump between reloads.
 	sort.SliceStable(vs.Reviews, func(i, j int) bool {
 		a, b := vs.Reviews[i], vs.Reviews[j]
 		if a.Stage != b.Stage {
@@ -696,9 +684,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		}
 		return a.ID < b.ID
 	})
-
 	vs.Summary.SessionID = sessionID
-	return vs, scanner.Err()
+	return vs, nil
 }
 
 // stringList coerces a JSON value (expected []any of strings) into []string.
@@ -724,6 +711,32 @@ func mergeStrings(left, right []string) []string {
 		}
 	}
 	return out
+}
+
+func stringValue(value any) string {
+	result, _ := value.(string)
+	return result
+}
+
+func intValue(value any) int {
+	switch number := value.(type) {
+	case float64:
+		return int(number)
+	case int:
+		return number
+	case int64:
+		return int(number)
+	default:
+		return 0
+	}
+}
+
+func boolValue(value any, fallback bool) bool {
+	result, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
+	return result
 }
 
 func stringMapLists(v any) map[string][]string {

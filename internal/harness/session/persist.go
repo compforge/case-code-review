@@ -19,11 +19,10 @@ import (
 // don't pollute the real store.
 var sessionSubDir = "sessions"
 
-// schemaVersion stamps every session_start so longitudinal analysis survives
-// record-format changes. Bump when a record type's meaning changes (not for
-// additive fields). v4 records each Assessment submission independently and
-// moves final pass/fail into a separate Trial decision artifact.
-const schemaVersion = 4
+// SchemaVersion stamps every session_start so readers consume one explicit
+// protocol instead of guessing old record semantics. v5 makes Execution the
+// lifecycle owner for model/tool records and persists its terminal result.
+const SchemaVersion = 5
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -151,7 +150,7 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 		"type":           "session_start",
 		"sessionId":      jw.sessionID,
 		"timestamp":      startTime.UTC().Format(time.RFC3339),
-		"schema_version": schemaVersion,
+		"schema_version": SchemaVersion,
 		"cwd":            jw.repoDir,
 		"gitBranch":      jw.gitBranch,
 		"model":          jw.model,
@@ -207,7 +206,7 @@ func addScopeFields(rec map[string]any, ss *ScopeSession) {
 }
 
 // WriteLLMRequest writes a request entry with the resolved messages.
-func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, taskType TaskType, requestNo int, messages any) string {
+func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, messages any) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -223,6 +222,7 @@ func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, taskType TaskType, requ
 		"messages":   messages,
 	}
 	addScopeFields(rec, ss)
+	addExecutionField(rec, executionID)
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid
 	return uuid
@@ -230,7 +230,7 @@ func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, taskType TaskType, requ
 
 // WriteLLMResponse writes a response entry with model, content, optional
 // provider reasoning, stop reason, tool calls, and usage.
-func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, taskType TaskType, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage, duration time.Duration) string {
+func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, taskType TaskType, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -260,13 +260,14 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, taskType TaskType, con
 		rec["stop_reason"] = stopReason
 	}
 	addScopeFields(rec, ss)
+	addExecutionField(rec, executionID)
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid
 	return uuid
 }
 
 // WriteLLMError writes an llm_error entry recording a failed LLM request.
-func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, taskType TaskType, requestNo int, errorMsg string, duration time.Duration) string {
+func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, errorMsg string, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -283,13 +284,14 @@ func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, taskType TaskType, reques
 		"duration_ms": duration.Milliseconds(),
 	}
 	addScopeFields(rec, ss)
+	addExecutionField(rec, executionID)
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid
 	return uuid
 }
 
 // WriteToolCall writes a tool call result entry.
-func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) string {
+func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -309,6 +311,44 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, taskType TaskType, toolCa
 	}
 	if toolCallID != "" {
 		rec["tool_call_id"] = toolCallID
+	}
+	addScopeFields(rec, ss)
+	addExecutionField(rec, executionID)
+	jw.writeRecordLocked(rec)
+	jw.lastUUID = uuid
+	return uuid
+}
+
+func addExecutionField(rec map[string]any, executionID string) {
+	if executionID != "" {
+		rec["execution_id"] = executionID
+	}
+}
+
+// WriteExecutionEnd persists the single terminal fact for one Harness
+// Execution. Scope is grouping context; only this record decides whether the
+// underlying AgentGo run completed, timed out, truncated, or failed.
+func (jw *jsonlWriter) WriteExecutionEnd(ss *ScopeSession, end ExecutionEnd) string {
+	uuid := uuid.V4()
+
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	rec := map[string]any{
+		"uuid":         uuid,
+		"parentUuid":   jw.lastUUID,
+		"type":         "execution_end",
+		"sessionId":    jw.sessionID,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
+		"execution_id": end.ID,
+		"taskType":     string(end.TaskType),
+		"outcome":      end.Outcome,
+		"turns":        end.Turns,
+		"tool_calls":   end.ToolCalls,
+		"tool_errors":  end.ToolErrors,
+		"duration_ms":  end.Duration.Milliseconds(),
+	}
+	if end.Reason != "" {
+		rec["reason"] = end.Reason
 	}
 	addScopeFields(rec, ss)
 	jw.writeRecordLocked(rec)

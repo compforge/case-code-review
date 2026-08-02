@@ -128,8 +128,8 @@ func parseTemplate(name string) (*template.Template, error) {
 		"formatTime": formatTime,
 		"truncate":   truncateText,
 		"add":        func(a, b int) int { return a + b },
-		"reviewsOfStage": func(reviews []*ReviewRun, stage string) []*ReviewRun {
-			out := make([]*ReviewRun, 0, len(reviews))
+		"reviewsOfStage": func(reviews []*ReviewScope, stage string) []*ReviewScope {
+			out := make([]*ReviewScope, 0, len(reviews))
 			for _, review := range reviews {
 				if string(review.Stage) == stage {
 					out = append(out, review)

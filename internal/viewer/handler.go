@@ -62,7 +62,7 @@ type reviewPageData struct {
 	EncodedRepo string
 	RepoName    string
 	Session     *ViewSession
-	Review      *ReviewRun
+	Review      *ReviewScope
 }
 
 func handleSession(w http.ResponseWriter, r *http.Request, root, repo, sessionID string) {

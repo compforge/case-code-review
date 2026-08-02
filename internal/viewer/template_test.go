@@ -23,7 +23,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		Reasoning:       "The changed path needs context.",
 		StopReason:      "tool_calls",
 	}
-	review := &ReviewRun{
+	review := &ReviewScope{
 		ID:          "internal/viewer/store.go",
 		Kind:        "unit",
 		Scope:       "file",
@@ -34,11 +34,15 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		FilePath:    "internal/viewer/store.go",
 		Tasks:       map[TaskType][]*TaskCard{MainTask: {turn}},
 		Calls:       []*TaskCard{turn},
-		Turns:       []*TaskCard{turn},
-		Conversation: []ConversationNode{
-			{ID: "conversation-1", Kind: "system", Label: "System", Preview: "investigate", Text: "investigate"},
-			{ID: "conversation-2", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
-		},
+		Executions: []*ReviewExecution{{
+			ID: "execution-1", TaskType: MainTask, Calls: []*TaskCard{turn}, Turns: []*TaskCard{turn},
+			Conversation: []ConversationNode{
+				{ID: "execution-1-1", Kind: "prompt", Label: "Prompt Snapshot · Turn 1", Preview: "2 messages", Messages: turn.Request, TurnNo: 1, PromptTokens: 120},
+				{ID: "execution-1-2", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
+			},
+			Metrics: ReviewMetrics{LLMCalls: 1, TurnCount: 1, PromptTokens: 120},
+			Status:  "completed", Outcome: "completed", DurationMs: 100,
+		}},
 		Metrics: ReviewMetrics{
 			LLMCalls:        1,
 			TurnCount:       1,
@@ -49,8 +53,8 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		HasContextPaths:   true,
 		FileReads:         FileReadMetrics{Calls: 4, Requests: 4, UniqueFiles: 3, CoveredRequests: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
 		Status:            "completed",
-		Outcome:           "completed",
-		HasDebrief:        true,
+		ExecutionDone:     1,
+		Artifacts:         []ReviewArtifact{{Kind: "review_hypothesis", HypothesisID: "h-1", Data: `{"id":"h-1"}`}},
 	}
 	vs := &ViewSession{
 		Summary: SessionSummary{
@@ -59,11 +63,11 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		},
 		Diagnostics: SessionDiagnostics{
 			Status: "warning", StatusLabel: "Partial", Summary: "one hypothesis is unassessed",
-			DiffFiles: 4, ReviewFiles: 2, Review1Runs: 1, Review1Done: 1,
+			DiffFiles: 4, ReviewFiles: 2, Review1Units: 1, Review1Executions: 1, Review1Done: 1,
 			Hypotheses: 2, Assessments: 1, Unassessed: 1,
 			Alerts: []DiagnosticAlert{{Level: "warning", Title: "1 Hypothesis lacks Assessment", Detail: "inspect Review 2"}},
 		},
-		Reviews: []*ReviewRun{review},
+		Reviews: []*ReviewScope{review},
 		SystemPrompts: []SystemPrompt{
 			{TaskTypes: []TaskType{MainTask}, Text: "investigate"},
 		},
@@ -111,8 +115,8 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Already covered") || !strings.Contains(out.String(), "Same-path repeats")) {
 				t.Fatal("review page does not separate covered and repeated file reads")
 			}
-			if tt.name == "review.html" && (!strings.Contains(out.String(), "Conversation") || !strings.Contains(out.String(), `data-conversation-node="conversation-1"`) || !strings.Contains(out.String(), "Reasoning")) {
-				t.Fatal("review page does not render the conversation inspector")
+			if tt.name == "review.html" && (!strings.Contains(out.String(), "Executions") || !strings.Contains(out.String(), `data-conversation-node="execution-1-1"`) || !strings.Contains(out.String(), "Prompt Snapshot") || !strings.Contains(out.String(), "Reasoning")) {
+				t.Fatal("review page does not render execution prompt snapshots")
 			}
 			if tt.name == "review.html" && strings.Contains(out.String(), `data-review-view="turns"`) {
 				t.Fatal("review page still renders the removed Turns view")

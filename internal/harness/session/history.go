@@ -121,6 +121,7 @@ func (s Scope) Path() string {
 
 // TaskRecord captures a single LLM request-response cycle within a file subtask.
 type TaskRecord struct {
+	ExecutionID     string
 	Type            TaskType
 	RequestNo       int           // sequential number within this task type
 	RequestMessages []llm.Message // messages sent to LLM
@@ -129,6 +130,20 @@ type TaskRecord struct {
 	Duration        time.Duration
 	Error           string
 	scopeSession    *ScopeSession // back-reference for JSONL persistence
+}
+
+// ExecutionEnd is the terminal runtime fact for one Harness Execution. It is
+// intentionally domain-free: Unit coverage and review judgments stay outside
+// the Session protocol.
+type ExecutionEnd struct {
+	ID         string
+	TaskType   TaskType
+	Outcome    string
+	Reason     string
+	Turns      int
+	ToolCalls  int
+	ToolErrors int
+	Duration   time.Duration
 }
 
 // TokenUsage holds token usage for a single LLM request/response cycle.
@@ -228,6 +243,18 @@ func (sh *SessionHistory) WriteArtifact(kind string, data map[string]any) {
 		return
 	}
 	p.WriteArtifact(kind, data)
+}
+
+// WriteExecutionEnd persists the authoritative terminal state for one
+// Execution. An Execution belongs to a Scope, but a Lane may own many of them.
+func (sh *SessionHistory) WriteExecutionEnd(scope Scope, end ExecutionEnd) {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p == nil || end.ID == "" {
+		return
+	}
+	p.WriteExecutionEnd(sh.GetOrCreateScope(scope), end)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,
@@ -346,6 +373,17 @@ func (sh *SessionHistory) Finalize() {
 // task type. It auto-assigns the RequestNo based on existing records and writes
 // an llm_request record to the JSONL stream.
 func (ss *ScopeSession) AppendTaskRecord(taskType TaskType, messages []llm.Message) *TaskRecord {
+	return ss.appendTaskRecord("", taskType, messages)
+}
+
+// AppendExecutionTaskRecord records one model call inside a Harness
+// Execution. Direct auxiliary calls may still use AppendTaskRecord, while all
+// AgentGo loop calls carry the execution identity used by Viewer and eval.
+func (ss *ScopeSession) AppendExecutionTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
+	return ss.appendTaskRecord(executionID, taskType, messages)
+}
+
+func (ss *ScopeSession) appendTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -358,6 +396,7 @@ func (ss *ScopeSession) AppendTaskRecord(taskType TaskType, messages []llm.Messa
 	}
 
 	rec := &TaskRecord{
+		ExecutionID:     executionID,
 		Type:            taskType,
 		RequestNo:       len(ss.TaskRecords[taskType]) + 1,
 		RequestMessages: copyMessages(messages),
@@ -366,7 +405,7 @@ func (ss *ScopeSession) AppendTaskRecord(taskType TaskType, messages []llm.Messa
 	ss.TaskRecords[taskType] = append(ss.TaskRecords[taskType], rec)
 
 	if p := ss.session.persist; p != nil {
-		p.WriteLLMRequest(ss, taskType, rec.RequestNo, copyMessagesForJSON(messages))
+		p.WriteLLMRequest(ss, executionID, taskType, rec.RequestNo, copyMessagesForJSON(messages))
 	}
 
 	return rec
@@ -460,7 +499,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 					"arguments": tc.Function.Arguments,
 				})
 			}
-			p.WriteLLMResponse(ss, tr.Type, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage, duration)
+			p.WriteLLMResponse(ss, tr.ExecutionID, tr.Type, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage, duration)
 		}
 	}
 }
@@ -473,7 +512,7 @@ func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteLLMError(ss, tr.Type, tr.RequestNo, err.Error(), duration)
+			p.WriteLLMError(ss, tr.ExecutionID, tr.Type, tr.RequestNo, err.Error(), duration)
 		}
 		atomic.AddInt64(&ss.session.llmFailures, 1)
 	}
@@ -513,7 +552,7 @@ func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments,
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteToolCall(ss, tr.Type, toolCallID, toolName, arguments, result, ok, duration)
+			p.WriteToolCall(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, duration)
 		}
 	}
 }
