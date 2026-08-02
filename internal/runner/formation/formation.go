@@ -68,13 +68,11 @@ func Form(config Config) ([]unit.Unit, bool, error) {
 	switch {
 	case len(files) == 1:
 		units = append(units, unit.CoalesceFile(files[0].Diff, files[0].Fragments))
-	case costly && config.CallChain:
+	case config.CallChain && total <= watermark*2:
 		adjacency := codegraph.CallAdjacency(
 			config.RepoDir, config.GitRunner, config.TypedGraph, funcIDsOf(files),
 		)
-		chains, residual := clusterByCallChain(files, adjacency)
-		units = append(units, chains...)
-		units = append(units, merger.Merge(residual)...)
+		units = mergeCallChains(files, adjacency, merger)
 	default:
 		units = merger.Merge(files)
 	}
@@ -83,6 +81,24 @@ func Form(config Config) ([]unit.Unit, bool, error) {
 		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders, costly)
 	}
 	return units, costly, nil
+}
+
+func mergeCallChains(
+	files []unit.FileFragments,
+	adjacency map[string][]string,
+	merger unit.Merger,
+) []unit.Unit {
+	chains, residual := clusterByCallChain(files, adjacency)
+	if len(chains) == 0 {
+		return merger.Merge(files)
+	}
+	units := append([]unit.Unit(nil), chains...)
+	for _, file := range residual {
+		if len(file.Fragments) > 0 {
+			units = append(units, unit.CoalesceFragments(file.Fragments))
+		}
+	}
+	return units
 }
 
 func findClues(

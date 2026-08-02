@@ -64,3 +64,56 @@ func TestAutoSplitter_TypeScriptDoesNotNeedNode(t *testing.T) {
 		t.Fatalf("TypeScript should use in-process parsing without Node, got %v", ids(frags))
 	}
 }
+
+func TestAutoSplitter_TypeScriptSplitsOneHunkAcrossFunctions(t *testing.T) {
+	src := `interface State {
+  ready: boolean;
+}
+export function alpha() {
+  return "new-alpha";
+}
+export function beta() {
+  return "new-beta";
+}
+`
+	rawDiff := `diff --git a/app.ts b/app.ts
+--- a/app.ts
++++ b/app.ts
+@@ -1,8 +1,9 @@
+ interface State {
+-  ready: string;
++  ready: boolean;
+ }
+ export function alpha() {
+-  return "old-alpha";
++  return "new-alpha";
+ }
+ export function beta() {
+-  return "old-beta";
++  return "new-beta";
+ }
+`
+	frags, err := AutoSplitter{}.Split(change.Change{
+		NewPath: "app.ts", Diff: rawDiff, NewFileContent: src,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frags) != 3 {
+		t.Fatalf("want residual plus 2 function fragments, got %d: %v", len(frags), ids(frags))
+	}
+	alpha := findFrag(t, frags, "app.ts::alpha")
+	beta := findFrag(t, frags, "app.ts::beta")
+	if strings.Contains(alpha.Diff, "new-beta") || strings.Contains(beta.Diff, "new-alpha") {
+		t.Fatalf("one git hunk leaked across function fragments:\nalpha:\n%s\nbeta:\n%s", alpha.Diff, beta.Diff)
+	}
+	var residual *Fragment
+	for i := range frags {
+		if len(frags[i].Symbols) == 0 {
+			residual = &frags[i]
+		}
+	}
+	if residual == nil || !strings.Contains(residual.Diff, "ready: boolean") {
+		t.Fatalf("top-level interface change missing from residual: %+v", frags)
+	}
+}

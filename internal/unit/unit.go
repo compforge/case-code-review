@@ -181,6 +181,24 @@ func CoalesceFile(d change.Change, frags []Fragment) Unit {
 	return Unit{ID: d.NewPath, Scope: ScopeFile, Formed: FormedCoalesce, Fragments: []Fragment{whole}}
 }
 
+// CoalesceFragments groups the remaining fragments of one file without
+// reintroducing parts already assigned to a cross-file chain. It is used only
+// after semantic formation has claimed those related fragments.
+func CoalesceFragments(frags []Fragment) Unit {
+	if len(frags) == 1 {
+		return UnitOf(frags[0])
+	}
+	if len(frags) == 0 {
+		return Unit{}
+	}
+	return Unit{
+		ID:        frags[0].Path,
+		Scope:     ScopeFile,
+		Formed:    FormedCoalesce,
+		Fragments: append([]Fragment(nil), frags...),
+	}
+}
+
 // NewChainUnit groups call-adjacent changed functions (possibly across files)
 // into one ScopeCallChain review Unit — a requirement's change reviewed along the
 // call chain it touched. Callers should pass Fragments in a stable order (e.g.
