@@ -1,61 +1,55 @@
 # case-code-review (`ccr`)
 
-> AI 代码评审 CLI——在 [open-code-review](https://github.com/alibaba/open-code-review) 的基础上继续深化。｜ English: [README.md](./README.md)
+> 围绕行为 Unit、两阶段证据评审和 Language / Project Knowledge 构建的 Agentic Code Review CLI。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
 
 ## 理念
 
-只看 diff 不足以做好评审：diff 说不出这次改动有没有破坏它服务的需求、有没有影响依赖它的代码。ccr 围绕三个想法构建：
+Code Review 不是“把每个改动文件分别交给模型”。文件边界表达的是存储位置，不一定是行为边界；只看 diff 往往太窄，通读整个仓库又通常太贵，而且仍然无法推断没有表达出来的业务规则。
 
-**1. 捕获相关 Knowledge。** Language Knowledge 提供 definition、reference、call 和源码文档；Project Knowledge 识别 Repository 中的 Component，以及 source、entrypoint、handler、manifest、lock 等文件角色；作者提供的 spec、case、rule 和 link 再补充显式契约。
+ccr 围绕三个原则构建：
 
-**2. 按 *Unit* 而不是按文件评审。** Unit 是一次行为评审的作用域，可以是函数、文件或跨文件 call-chain。当整个 diff 只有一个需评审文件时，收为一个 File Unit；多个文件中彼此调用的改动函数合为一个 call-chain Unit，因为分成两个 file loop 最终也要重复读取彼此。目标是 Review 1 loop 数不多于需评审文件数，跨文件协作时进一步减少。
+1. **评审行为，而不是文件。** 一次评审应覆盖能够解释改动及其影响的最小作用域，ccr 将它称为 **Unit**。
+2. **把发现与验证分开。** 发现一个可能的问题是开放式任务；验证它是否真实、是否由当前改动造成、是否值得行动、是否重复则更收敛。不同任务应由不同 agent loop 承担。
+3. **提供相关 Knowledge，而不是最大 Context。** Language 结构和 Project 结构共同决定哪些改动应放在一起，以及哪些邻近证据值得交给模型。
 
-**3. 把发现与裁决分开。** 每个 Unit Review 可以产出零到多个可证伪的 Hypothesis，不直接发布评论；相关 Hypothesis 共用一个 Hypothesis Review Lane 复用前案上下文和证据，不相关 Lane 并行；确定性的 Trial 只交付证据支持、由本次变更造成、值得行动且不重复的 Finding。
+ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现需求时容易忽略的具体问题，例如 caller 假设被破坏、边界处理、错误路径和 API 误用。语法问题仍归 lint；隐含业务约束仍需要显式需求背景或作者提供的 Knowledge。
 
-ccr 不追求通读仓库或穷举所有问题，而是在相关、有界的上下文中，优先发现实现需求时容易忽略的具体缺陷，例如边界处理、错误路径、API 误用或 caller 假设被破坏。隐含业务约束需要需求背景、spec、case 或 rule 等显式知识；加载更多无关代码不能凭空补足这些知识。语法问题仍归 lint 管。
+![CCR 从 Diff 到 Finding 的 Agentic Review 流水线](docs/review-pipeline.svg)
 
-评审质量盯三个互相拉扯的追求——**健壮性、准确性、成本**;落地手段以 review loop 为核心,分能力 / 粒度 / context 三个抓手。展开见 `AGENTS.md`。
+## 核心模型
 
-![CCR 从 Diff 到 Finding 的评审流水线](docs/review-pipeline.svg)
+### Unit：评审边界
 
-设计展开：[`Kernel`](docs/kernel.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness 与可观测性`](docs/harness.md)
+一个 **Unit** 是一次行为评审的作用域。根据改动形态，它可以是：
 
-## Knowledge 与上下文
+- 自然边界明确时的一个**函数**；
+- 整个 diff 只有一个需评审文件时的一个**文件**；
+- 多个改动函数彼此协作、分开评审会重复探索时的一条**跨文件调用链**。
 
-Project Knowledge 先决定一个改动文件如何参与评审：
+因此 Unit 比逐文件评审更灵活。实践目标是 Review 1 loop 数不多于需评审文件数；当跨文件改动存在明确关系时，用更少的 loop 一起理解它们。
 
-| 文件角色 | 评审行为 |
+### Review 1 发现，Review 2 验证
+
+| 阶段 | 职责 | 产出 | 公检法类比 |
+|---|---|---|---|
+| **Unit Review（Review 1）** | 探索 Unit、沿证据调查、提出可能的缺陷 | `Hypothesis` | 公安侦查并提出案件假设 |
+| **Hypothesis Review（Review 2）** | 独立核对源码、diff、baseline、影响、归因与重复性 | `Assessment` | 检察院复核指控是否有证据支持 |
+| **Trial** | 执行确定性的交付门禁 | `Finding` 或驳回 | 法院门禁决定什么可以交付 |
+
+这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；Trial 使用确定性规则，避免不完整或证据不足的结果悄悄变成公开评论。
+
+### Language Knowledge 与 Project Knowledge
+
+两类 Knowledge 共同支持 Unit formation 和两个评审阶段：
+
+| Knowledge | 提供什么 |
 |---|---|
-| **source** | 可以成为 Unit target |
-| **entrypoint / handler** | 仍是 source，并补充项目语义下的评审重点 |
-| **manifest / lock** | 随源码改动作为项目上下文；单独变化不启动 Unit Review |
-| **version** | 仅作为发布元数据观测；单独变化不启动 Unit Review |
+| **Language Knowledge** | 语法感知的 symbol、span、definition、reference、call、import、源码文档，以及作者契约的抽取与匹配 |
+| **Project Knowledge** | Repository / Component 边界、文件角色、entrypoint、handler、manifest、lock 和其它项目约定 |
 
-ccr 为每个 review unit 汇集一组线索(clue)。一条线索 = 一种**证据种类**,经某种**关系**到达——两条正交轴(详见 [`docs/unit-model.md`](docs/unit-model.md)):
+spec、case、rule、link、源码文档等上下文不全是“语言知识”，但它们的抽取和定位强依赖语言语法分析。[`spec-case`](https://github.com/qiankunli/spec-case) 仍是可选的契约编写与分发方式，而不再是 ccr 的产品前提；没有采用它的仓库也能使用 ccr。
 
-| 种类 | 是什么 | 来源 |
-|---|---|---|
-| **spec** | 符号的契约(必须保证什么) | authored(`spec.json`) |
-| **case** | 要核对的具体场景 | authored |
-| **rule** | 审查准则——盯什么 | authored |
-| **link** | 作者策展的 "see also"——文档或另一个函数 | authored |
-| **doc** | 符号的 docstring / doc 注释 | **运行时从源码抽取** |
-| **history** | 之前 revision 已交付的 finding | Forge 输入 |
-| **project** | Component、FileRole 或项目结构知识 | 从 Repository 派生 |
-
-| 关系 | 到达的符号 |
-|---|---|
-| **self** | 被改动的符号本身 |
-| **owner** | 所属类/类型(改方法时看到类的契约) |
-| **caller** | 谁在用它——上溯到最近带 authored spec 的祖先(治理契约) |
-| **callee** | 它依赖什么——直接被调方的契约 |
-| **used** | diff 里引用到的类型/函数(经 import 解析,同名符号可消歧) |
-| **project** | 为 Unit 提供背景的 Component 或项目事实 |
-
-两个值得知道的性质:
-
-- **`doc` 零采纳成本。** authored 四类需要 [`spec-case`](https://github.com/qiankunli/spec-case) 标注;`doc` 在评审时直接从源码抽取(Python docstring、Go doc 注释)——**包括依赖的源码**。一个从没听说过 spec-case 的仓，在源码关系上照样有契约上下文。
-- **跨仓靠 fqn。** 仓内符号用 `relpath::symbol` 寻址;依赖把自己的 `spec.json` 随包发(Go module cache / Python site-packages),其条目**只按 fqn**(`import路径.符号`)匹配、经你的 import 解析——所以 diff 用到某框架类型时,框架标的"仅 per-request"规则会命中。
+设计展开：[`Kernel`](docs/kernel.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Language`](docs/language.md) · [`Harness 与可观测性`](docs/harness.md)
 
 ## 使用
 
@@ -63,87 +57,64 @@ ccr 为每个 review unit 汇集一组线索(clue)。一条线索 = 一种**证�
 
 ```bash
 git clone https://github.com/compforge/case-code-review && cd case-code-review
-make install        # 构建并安装 `ccr` 到 ~/.local/bin(macOS 自动重签名)
-# 或:go install github.com/qiankunli/case-code-review/cmd/ccr@latest
+make install        # 安装 `ccr` 到 ~/.local/bin；macOS 自动重签名
+# 或：go install github.com/qiankunli/case-code-review/cmd/ccr@latest
 ```
 
-### 配置 LLM
-
-配置存于 `~/.casecodereview/config.json`。交互式:
+### 配置模型
 
 ```bash
-ccr config provider     # 选内置 provider 或添加自定义(url / protocol / api_key)
-ccr config model        # 为当前 provider 选模型
+ccr config provider     # 选择或新增 provider
+ccr config model        # 选择 model
 ccr llm test            # 验证连通性
 ```
 
-非交互(CI / 脚本):
+配置位于 `~/.casecodereview/config.json`。内置 provider 和 OpenAI-compatible 自定义 provider 也可以非交互配置，详见 `ccr config --help`。
+
+### 评审改动
 
 ```bash
-ccr config set provider anthropic
-ccr config set providers.anthropic.api_key $ANTHROPIC_API_KEY
-ccr config set providers.anthropic.model claude-sonnet-4-6
+ccr review                              # staged + unstaged + untracked 改动
+ccr review --from main --to my-branch  # 分支相对 merge base
+ccr review --commit abc123              # 单个 commit 相对第一父提交
+ccr review --background "需求背景"      # 注入业务或需求上下文
+ccr review --format json                # 面向 CI / bot 的机器可读输出
 ```
 
-自定义 provider(私有网关、OpenAI 协议端点)支持 `url`、`protocol`、`extra_body`、`extra_headers`、`timeout_sec` 和 `models` 列表——见 `ccr config --help`。
+连续评审 PR/MR 时，可用 `--history prior.json` 传入之前已经交付的 Finding。Forge comments 是持久事实源；调用方在每个 revision 拉取它们，使 ccr 能区分新问题与重复交付。
 
-### 评审
+### 花 Token 前先检查
 
 ```bash
-ccr review                              # 工作区:staged + unstaged + untracked
-ccr review --from main --to my-branch  # 分支 vs 基线(merge-base 模式)
-ccr review --commit abc123              # 单个 commit vs 其父
-ccr review --format json                # 机器可读输出(CI、bot)
-ccr review --background "$(cat mr.md)"  # 注入需求/业务背景以提准
-ccr review --history prior.json         # 上轮 findings,对新 diff 复核
+ccr review --preview            # 改动文件及其评审 / 排除角色
+ccr review --dry-run            # 不调用 LLM，查看形成的 Unit 和装配 Context
+ccr review --dry-run --format json
 ```
 
-连续评审 PR/MR 时,Forge comments 才是持久 history。每个 revision 由调用方临时拉取当前
-PR/MR comments,生成一次性的 `prior.json` 并传给 ccr；devloop 与 review-harness 会自动完成。
-key 优先用 symbol-id；Forge 只保留文件锚点时可退化为仓库相对 path,例如
-`{"path/to/file.go::Symbol":[{"msg":"prior finding","sha":"abc123"}]}`。
-
-### 花 token 之前先看装配
-
-两者都不调 LLM:
+### 观察一次运行
 
 ```bash
-ccr review --preview            # 哪些文件会被评审 / 被排除
-ccr review --dry-run            # + 每个 unit 装配好的完整上下文(LLM 将看到什么)
-ccr review --dry-run --format json   # + 结构指标:unit/scope 计数与 clue_coverage
-                                     #   矩阵(关系/种类,如 owner/rule、callee/doc)
+ccr viewer                      # session、token/time/tool 总览、prompt 与决策轨迹
 ```
 
-`--dry-run --format json` 是免费的 A/B 层:对比两次运行的指标,不花一次 LLM 调用就能看清某个特性或某份 spec.json 带来了什么。
+Session JSONL 持久化真实 message、模型回复、工具调用、阶段产物、warning 和完成状态；Viewer 将它们组织成 run 级统计和每个 loop 的时间线，用于分析效果、成本与未完成评审。
 
-### Feature gates(消融)
+### 可选作者 Knowledge 与 Feature Gate
 
-每项能力都有具名开关,默认**全开**。关掉一个,测它的边际效果(leave-one-out):
+把生成的 `spec.json` 放到 `.casecodereview/spec.json`、通过 `--spec` 传入，或配置用户级契约，即可补充 spec/case/rule/link。具名 feature gate 可用于消融：
 
 ```bash
-ccr review --feature doc=off             # 关 derived docstring 线索
-ccr review --feature caller_callee=off   # 关 call-graph 邻域
-ccr review --feature callchain=off       # 关跨文件调用链 unit
+ccr review --feature caller_callee=off
+ccr review --feature callchain=off
+ccr review --feature doc=off
 ```
 
-kind 门(`spec_case` / `rule` / `link` / `doc`)把一种证据在**所有关系**上一起开关;`caller_callee` 是 call-graph 遍历的成本门。也可经 config 的 `features:{}` 或 `CCR_FEATURES` 环境变量设置。完整列表见 `ccr review --help`。
-
-### authored 契约(可选,推荐)
-
-用 [`spec-case`](https://github.com/qiankunli/spec-case) 标注函数/类(Go doc 注释 marker / Python 装饰器),用其 `specgen` 产出 `spec.json`,放到 `.casecodereview/spec.json`——ccr 自动加载(另有 `~/.casecodereview/spec.json` 与 `--spec path`,高优先层胜)。依赖包内随包发的 `spec.json` 自动发现、按 fqn 匹配。
-
-### 其它
-
-```bash
-ccr scan                        # 全文件评审,不需要 diff(--path 缩小范围)
-ccr rules                       # 查看哪些评审规则作用于哪些路径
-ccr viewer                      # WebUI：Diff→Review 1 漏斗、run 总览、prompt 时间线与决策轨迹
-```
+完整命令和 feature 列表见 `ccr review --help`。
 
 ## 状态
 
-活跃开发中。已有：Project / Language Knowledge、项目感知 FileRole、Unit formation（函数 / 文件 / call-chain）、两阶段证据 Review、feature gates、dry-run 指标、跨 revision history 复核与可观测 Session Viewer。
+活跃开发中。当前基础包括：项目感知 FileRole、语言分析、Unit formation、两阶段证据 Review、跨 revision history、有界 Agent 执行和可观测 Session Viewer。
 
 ## License
 
-Apache-2.0(见 `LICENSE` / `NOTICE`)。
+Apache-2.0（见 `LICENSE` / `NOTICE`）。

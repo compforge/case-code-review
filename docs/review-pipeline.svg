@@ -1,102 +1,105 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="520" viewBox="0 0 1800 520">
-  <title>CCR review pipeline from Diff to Finding</title>
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="590" viewBox="0 0 1800 590">
+  <title>CCR agentic review pipeline from Diff to Finding</title>
   <desc>
-    A diff is organized into review Units and enriched with Clues. Divergent
-    Unit Review produces Hypotheses. Related Hypotheses share a Review 2 Lane,
-    which produces Assessments before deterministic Trial publishes Findings. Language
-    Knowledge and Project Knowledge support the whole review flow.
+    CCR forms behavioral Units from a diff. Unit Review discovers falsifiable
+    Hypotheses, Hypothesis Review independently verifies them, and deterministic
+    Trial delivers Findings. Language and Project Knowledge support the flow.
   </desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#111827" stroke-width="1.8"/>
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#172033" stroke-width="1.8"/>
     </marker>
     <style>
       text {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", Arial, sans-serif;
-        fill: #111827;
+        fill: #172033;
       }
-      .title { font-size: 29px; font-weight: 650; }
-      .label { font-size: 21px; font-weight: 650; }
-      .small { font-size: 16px; }
-      .tiny { font-size: 13px; }
-      .box { stroke: #111827; stroke-width: 2.6; }
-      .soft-box { stroke: #8a94a6; stroke-width: 1.8; }
-      .flow { fill: none; stroke: #111827; stroke-width: 2.8; marker-end: url(#arrow); }
-      .knowledge-line { fill: none; stroke: #5b7f86; stroke-width: 1.8; }
+      .title { font-size: 30px; font-weight: 700; }
+      .subtitle { font-size: 17px; fill: #536078; }
+      .label { font-size: 20px; font-weight: 700; }
+      .small { font-size: 15px; }
+      .tiny { font-size: 13px; fill: #536078; }
+      .box { stroke: #172033; stroke-width: 2.4; }
+      .soft-box { stroke: #8893a8; stroke-width: 1.6; }
+      .flow { fill: none; stroke: #172033; stroke-width: 2.6; marker-end: url(#arrow); }
+      .knowledge-line { fill: none; stroke: #4f7d86; stroke-width: 1.8; }
     </style>
   </defs>
 
-  <rect width="1800" height="520" fill="#ffffff"/>
-  <text x="900" y="52" text-anchor="middle" class="title">CCR · Diff → Finding</text>
-  <text x="900" y="82" text-anchor="middle" class="small">
-    先按行为组织改动并提出 Hypothesis，再独立复核证据，最后确定性裁决
+  <rect width="1800" height="590" fill="#ffffff"/>
+  <text x="900" y="48" text-anchor="middle" class="title">CCR · Agentic review from Diff to Finding</text>
+  <text x="900" y="80" text-anchor="middle" class="subtitle">
+    Organize by behavior, separate discovery from verification, deliver only evidence-backed findings
   </text>
 
-  <rect x="40" y="185" width="130" height="150" rx="18" fill="#e7edf8" class="box"/>
-  <text x="105" y="250" text-anchor="middle" class="label">Diff</text>
-  <text x="105" y="279" text-anchor="middle" class="small">代码改动</text>
+  <rect x="35" y="185" width="120" height="125" rx="18" fill="#e7edf8" class="box"/>
+  <text x="95" y="240" text-anchor="middle" class="label">Diff</text>
+  <text x="95" y="269" text-anchor="middle" class="small">changed code</text>
 
-  <line x1="170" y1="260" x2="205" y2="260" class="flow"/>
+  <line x1="155" y1="247" x2="200" y2="247" class="flow"/>
 
-  <rect x="220" y="185" width="210" height="150" rx="18" fill="#eef3fb" class="box"/>
-  <text x="325" y="238" text-anchor="middle" class="label">Unit + Clues</text>
-  <text x="325" y="270" text-anchor="middle" class="small">行为作用域</text>
-  <text x="325" y="298" text-anchor="middle" class="tiny">spec · case · rule · link · doc</text>
+  <rect x="215" y="165" width="190" height="165" rx="18" fill="#eef3fb" class="box"/>
+  <text x="310" y="218" text-anchor="middle" class="label">Unit</text>
+  <text x="310" y="249" text-anchor="middle" class="small">behavioral scope</text>
+  <text x="310" y="279" text-anchor="middle" class="tiny">function · file</text>
+  <text x="310" y="302" text-anchor="middle" class="tiny">cross-file call chain</text>
 
-  <line x1="430" y1="260" x2="465" y2="260" class="flow"/>
+  <line x1="405" y1="247" x2="450" y2="247" class="flow"/>
 
-  <rect x="480" y="170" width="210" height="180" rx="18" fill="#eee8ff" class="box"/>
-  <text x="585" y="224" text-anchor="middle" class="label">Unit Review</text>
-  <text x="585" y="258" text-anchor="middle" class="small">发散调查</text>
-  <rect x="515" y="282" width="140" height="36" rx="18" fill="#f7f4ff" class="soft-box"/>
-  <text x="585" y="306" text-anchor="middle" class="tiny">“侦查” · 类比</text>
+  <rect x="465" y="150" width="210" height="195" rx="18" fill="#eee8ff" class="box"/>
+  <text x="570" y="205" text-anchor="middle" class="label">Review 1</text>
+  <text x="570" y="237" text-anchor="middle" class="small">Unit Review</text>
+  <text x="570" y="269" text-anchor="middle" class="small">discover</text>
+  <rect x="505" y="292" width="130" height="32" rx="16" fill="#f8f5ff" class="soft-box"/>
+  <text x="570" y="313" text-anchor="middle" class="tiny">investigation</text>
 
-  <line x1="690" y1="260" x2="725" y2="260" class="flow"/>
+  <line x1="675" y1="247" x2="720" y2="247" class="flow"/>
 
-  <rect x="740" y="170" width="220" height="180" rx="18" fill="#fff0bf" class="box"/>
-  <text x="850" y="220" text-anchor="middle" class="label">Hypothesis</text>
-  <text x="850" y="254" text-anchor="middle" class="small">待证伪主张</text>
-  <text x="850" y="284" text-anchor="middle" class="tiny">Unit evidence + Clues</text>
-  <text x="850" y="312" text-anchor="middle" class="tiny">待证伪，不是最终评论</text>
+  <rect x="735" y="175" width="185" height="145" rx="18" fill="#fff0bf" class="box"/>
+  <text x="827" y="228" text-anchor="middle" class="label">Hypothesis</text>
+  <text x="827" y="260" text-anchor="middle" class="small">falsifiable claim</text>
+  <text x="827" y="290" text-anchor="middle" class="tiny">not a public comment</text>
 
-  <line x1="960" y1="260" x2="995" y2="260" class="flow"/>
+  <line x1="920" y1="247" x2="965" y2="247" class="flow"/>
 
-  <rect x="1010" y="170" width="220" height="180" rx="18" fill="#eee8ff" class="box"/>
-  <text x="1120" y="220" text-anchor="middle" class="label">Hypothesis Review</text>
-  <text x="1120" y="258" text-anchor="middle" class="small">独立收敛</text>
-  <rect x="1050" y="282" width="140" height="36" rx="18" fill="#f7f4ff" class="soft-box"/>
-  <text x="1120" y="306" text-anchor="middle" class="tiny">“复核” · 类比</text>
+  <rect x="980" y="150" width="225" height="195" rx="18" fill="#eee8ff" class="box"/>
+  <text x="1092" y="205" text-anchor="middle" class="label">Review 2</text>
+  <text x="1092" y="237" text-anchor="middle" class="small">Hypothesis Review</text>
+  <text x="1092" y="269" text-anchor="middle" class="small">verify</text>
+  <rect x="1017" y="292" width="150" height="32" rx="16" fill="#f8f5ff" class="soft-box"/>
+  <text x="1092" y="313" text-anchor="middle" class="tiny">prosecutor review</text>
 
-  <line x1="1230" y1="260" x2="1265" y2="260" class="flow"/>
+  <line x1="1205" y1="247" x2="1245" y2="247" class="flow"/>
 
-  <rect x="1280" y="185" width="160" height="150" rx="18" fill="#eef3fb" class="box"/>
-  <text x="1360" y="244" text-anchor="middle" class="label">Assessment</text>
-  <text x="1360" y="276" text-anchor="middle" class="small">证据支持度</text>
-  <text x="1360" y="302" text-anchor="middle" class="tiny">+ 交付价值</text>
+  <rect x="1260" y="175" width="165" height="145" rx="18" fill="#eef3fb" class="box"/>
+  <text x="1342" y="228" text-anchor="middle" class="label">Assessment</text>
+  <text x="1342" y="260" text-anchor="middle" class="small">evidence verdict</text>
+  <text x="1342" y="290" text-anchor="middle" class="tiny">support · value · novelty</text>
 
-  <line x1="1440" y1="260" x2="1460" y2="260" class="flow"/>
+  <line x1="1425" y1="247" x2="1460" y2="247" class="flow"/>
 
-  <circle cx="1530" cy="260" r="65" fill="#e7f7ee" class="box"/>
-  <text x="1530" y="247" text-anchor="middle" class="label">Trial</text>
-  <text x="1530" y="276" text-anchor="middle" class="small">确定性裁决</text>
-  <text x="1530" y="300" text-anchor="middle" class="tiny">“审判” · 类比</text>
+  <circle cx="1525" cy="247" r="60" fill="#e7f7ee" class="box"/>
+  <text x="1525" y="240" text-anchor="middle" class="label">Trial</text>
+  <text x="1525" y="268" text-anchor="middle" class="tiny">court gate</text>
 
-  <line x1="1595" y1="260" x2="1625" y2="260" class="flow"/>
+  <line x1="1585" y1="247" x2="1615" y2="247" class="flow"/>
 
-  <rect x="1640" y="205" width="120" height="110" rx="55" fill="#dff5e8" class="box"/>
-  <text x="1700" y="253" text-anchor="middle" class="label">Finding</text>
-  <text x="1700" y="281" text-anchor="middle" class="tiny">最终交付</text>
+  <rect x="1630" y="192" width="135" height="110" rx="52" fill="#dff5e8" class="box"/>
+  <text x="1697" y="240" text-anchor="middle" class="label">Finding</text>
+  <text x="1697" y="268" text-anchor="middle" class="tiny">delivered result</text>
 
-  <!-- Knowledge foundations shared by Unit formation and both review stages. -->
-  <path d="M325 335 V375 H1150 M585 350 V375 M850 350 V375 M1120 350 V375" class="knowledge-line"/>
-  <line x1="650" y1="375" x2="650" y2="397" class="knowledge-line"/>
-  <line x1="1150" y1="375" x2="1150" y2="397" class="knowledge-line"/>
+  <!-- Shared foundations: they shape Unit formation and both review stages. -->
+  <path d="M310 330 V390 H1092 M570 345 V390 M827 320 V390 M1092 345 V390" class="knowledge-line"/>
+  <line x1="570" y1="390" x2="570" y2="420" class="knowledge-line"/>
+  <line x1="1092" y1="390" x2="1092" y2="420" class="knowledge-line"/>
 
-  <rect x="440" y="397" width="420" height="88" rx="18" fill="#e8f4f6" class="soft-box"/>
-  <text x="650" y="430" text-anchor="middle" class="label">Language Knowledge</text>
-  <text x="650" y="459" text-anchor="middle" class="small">symbol · definition · reference · call</text>
+  <rect x="340" y="420" width="460" height="105" rx="18" fill="#e8f4f6" class="soft-box"/>
+  <text x="570" y="460" text-anchor="middle" class="label">Language Knowledge</text>
+  <text x="570" y="490" text-anchor="middle" class="small">syntax · symbols · calls · references</text>
+  <text x="570" y="515" text-anchor="middle" class="tiny">documentation and contract extraction</text>
 
-  <rect x="940" y="397" width="420" height="88" rx="18" fill="#e8f4f6" class="soft-box"/>
-  <text x="1150" y="430" text-anchor="middle" class="label">Project Knowledge</text>
-  <text x="1150" y="459" text-anchor="middle" class="small">Repository · Component · FileRole · manifest</text>
+  <rect x="862" y="420" width="460" height="105" rx="18" fill="#e8f4f6" class="soft-box"/>
+  <text x="1092" y="460" text-anchor="middle" class="label">Project Knowledge</text>
+  <text x="1092" y="490" text-anchor="middle" class="small">Repository · Component · FileRole</text>
+  <text x="1092" y="515" text-anchor="middle" class="tiny">entrypoint · handler · manifest · lock</text>
 </svg>
