@@ -2,7 +2,8 @@
 
 本目录提供可公开复用的采集、规范化和重放工具。最短路径是：在 PR/MR finding 线程中完成
 `ccr:label` 标注，用 `labels.py` 回收标签，再用 `build_label_dataset.py` 生成自包含 JSONL
-数据集。
+数据集。Session JSONL、Viewer 与 eval 的职责边界见
+[`docs/observability.md`](../docs/observability.md)。
 
 ## 数据边界
 
@@ -190,8 +191,10 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
 `trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索和 Unit
-完成度 Evaluator。确定性结果统一产生 0~1 score、label、explanation 与证据 step id；可选 LLM
-judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
+完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：前者以 `task_done`，
+后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。确定性结果统一产生
+0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
+直接解析 ATIF 私有字段。
 
 后验扫描 finding 指向的代码是否被后续提交修改：
 

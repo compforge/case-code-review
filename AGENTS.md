@@ -69,6 +69,8 @@ Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥�
 - 内核分层与依赖方向：Project / Language 产事实、Unit 汇总评审知识、Harness 执行——`docs/kernel.md`
 - Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
   与 HTML Viewer 可观测性——`docs/harness.md`
+- 可观测性：Session JSONL 是共同事实源，Viewer 用于单次运行诊断，eval 用固定数据与 Evaluator
+  判断准确性、健壮性和成本——`docs/observability.md`
 - spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/qiankunli/spec-case)
 - Component、Unit 与上下文：`FileRole`、`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费
   ——`docs/unit-model.md`

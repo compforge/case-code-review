@@ -15,6 +15,10 @@ from typing import Any
 
 from trajectory_harness import Evaluation, Step, Trajectory
 
+REVIEW1 = "review1"
+REVIEW2 = "review2"
+UNKNOWN_STAGE = "unknown"
+
 
 class ATIFTrajectoryLoader:
     """Project CCR's ATIF root records into one canonical trajectory per scope."""
@@ -204,6 +208,56 @@ class UnitCompletionEvaluator:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class AssessmentCompletionEvaluator:
+    """A Review 2 execution completes by submitting an Assessment."""
+
+    name: str = "assessment_submission"
+    weight: float = 1.0
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        calls = _tool_steps(trajectory)
+        if not calls and not any(step.operation == "inference" for step in trajectory.steps):
+            return _not_evaluated(self.name, "Trajectory contains no model execution.")
+        submissions = [step for step in calls if step.name == "submit_assessments"]
+        if not submissions:
+            return Evaluation(
+                name=self.name,
+                score=0.0,
+                label="fail",
+                explanation="Review 2 ended without submitting an Assessment.",
+            )
+        completed = [step for step in submissions if _assessment_completed(step)]
+        failed = [step.step_id for step in submissions if step not in completed]
+        return _ratio_evaluation(
+            self.name,
+            len(completed),
+            len(submissions),
+            failed,
+            "Assessment submissions completed their Review 2 execution",
+        )
+
+
+def review_stage(trajectory: Trajectory) -> str:
+    """Classify a CCR scope without relying on trajectory-id naming."""
+
+    scope_kind = trajectory.metadata.get("scope_kind")
+    if scope_kind == "unit":
+        return REVIEW1
+    if scope_kind == "lane":
+        return REVIEW2
+    if any(
+        step.attributes.get("task_type") == "hypothesis_review_task"
+        for step in trajectory.steps
+        if step.operation == "inference"
+    ):
+        return REVIEW2
+    return UNKNOWN_STAGE
+
+
 def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
     """Count path-level repeats even when line ranges differ."""
 
@@ -243,6 +297,14 @@ def _tool_response(step: Step) -> str:
                 value = part.get("response")
                 return value if isinstance(value, str) else json.dumps(value)
     return ""
+
+
+def _assessment_completed(step: Step) -> bool:
+    try:
+        result = json.loads(_tool_response(step))
+    except json.JSONDecodeError:
+        return False
+    return bool(result.get("accepted")) and not result.get("remaining")
 
 
 def _not_evaluated(name: str, explanation: str) -> Evaluation:
