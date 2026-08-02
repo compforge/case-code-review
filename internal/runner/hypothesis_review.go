@@ -15,23 +15,23 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-// reviewDossier delegates one immutable packet to the convergent Review 2
-// loop. Lane assignment and scheduling stay in Runner; the review package
-// owns only evidence gathering and Assessment production.
-func (a *Runner) reviewDossier(
+// reviewHypothesis delegates one claim to the convergent Review 2 loop. Lane
+// assignment and scheduling stay in Runner; the review package owns only
+// evidence gathering and Assessment production.
+func (a *Runner) reviewHypothesis(
 	ctx context.Context,
-	dossier hypothesisreview.Dossier,
+	input hypothesisreview.ReviewInput,
 	continueFrom *harness.ExecutionResult,
 ) (result hypothesisreview.ReviewResult) {
 	task := a.args.Template.HypothesisReviewTask
-	if task == nil || len(task.Messages) == 0 || len(dossier.Hypotheses) == 0 {
+	if task == nil || len(task.Messages) == 0 || input.Hypothesis.ID == "" {
 		return hypothesisreview.ReviewResult{}
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s: %v\n%s\n", dossier.ID, recovered, debug.Stack())
+			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s in %s: %v\n%s\n", input.Hypothesis.ID, input.LaneID, recovered, debug.Stack())
 			telemetry.ErrorEvent(ctx, "hypothesis_review.panic", fmt.Errorf("panic: %v", recovered))
-			a.recordWarning("hypothesis_review_error", "", fmt.Sprintf("dossier %s panic: %v", dossier.ID, recovered))
+			a.recordWarning("hypothesis_review_error", "", fmt.Sprintf("hypothesis %s in lane %s panic: %v", input.Hypothesis.ID, input.LaneID, recovered))
 			result = hypothesisreview.ReviewResult{}
 		}
 	}()
@@ -54,10 +54,10 @@ func (a *Runner) reviewDossier(
 		RecordWarning:           a.recordWarning,
 		OnAssessment:            a.persistAssessmentSubmission,
 		Events:                  a.hypothesisReviewEvents(ctx),
-	}, dossier, continueFrom)
+	}, input, continueFrom)
 }
 
-func collectDossierClues(units []unit.Unit) []unit.Clue {
+func collectReviewClues(units []unit.Unit) []unit.Clue {
 	seen := make(map[string]bool)
 	var out []unit.Clue
 	for _, reviewUnit := range units {
@@ -75,21 +75,16 @@ func collectDossierClues(units []unit.Unit) []unit.Clue {
 	return out
 }
 
-func (a *Runner) persistDossier(dossier hypothesisreview.Dossier, reason string) {
-	ids := make([]string, 0, len(dossier.Hypotheses))
-	for _, hypothesis := range dossier.Hypotheses {
-		ids = append(ids, hypothesis.ID)
-	}
-	a.session.WriteArtifact("review_dossier", map[string]any{
-		"id": dossier.ID, "lane_id": dossier.LaneID, "hypothesis_ids": ids, "paths": dossier.Paths(),
-		"prior_dossier_ids": dossier.PriorDossierIDs, "assigned_by": reason,
+func (a *Runner) persistLaneAssignment(input hypothesisreview.ReviewInput, reason string) {
+	a.session.WriteArtifact("review_lane_assignment", map[string]any{
+		"lane_id": input.LaneID, "hypothesis_id": input.Hypothesis.ID,
+		"paths": input.Paths(), "assigned_by": reason,
 	})
 }
 
 func (a *Runner) persistAssessmentSubmission(submission hypothesisreview.AssessmentSubmission) {
 	assessment := submission.Assessment
 	a.session.WriteArtifact("review_assessment", map[string]any{
-		"dossier_id":       assessment.DossierID,
 		"lane_id":          assessment.LaneID,
 		"submission_index": assessment.SubmissionIndex,
 		"replaced":         submission.Replaced,

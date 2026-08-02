@@ -61,7 +61,6 @@ type Assessment struct {
 	Evidence         []string          `json:"evidence,omitempty"`
 	EvidenceReceipts []EvidenceReceipt `json:"evidence_receipts,omitempty"`
 	ReviewerAlias    string            `json:"reviewer_alias,omitempty"`
-	DossierID        string            `json:"dossier_id,omitempty"`
 	LaneID           string            `json:"lane_id,omitempty"`
 	SubmissionIndex  int               `json:"submission_index,omitempty"`
 }
@@ -76,7 +75,7 @@ type AssessmentSubmission struct {
 	Replaced   bool
 }
 
-// AssessmentCollector is scoped to one Dossier execution.
+// AssessmentCollector is scoped to one Hypothesis Review execution.
 type AssessmentCollector struct {
 	mu          sync.Mutex
 	assessments map[string]Assessment
@@ -138,7 +137,6 @@ func (c *AssessmentCollector) Complete() bool { return len(c.Missing()) == 0 }
 type AssessmentHook struct {
 	Collector  *AssessmentCollector
 	Evidence   *EvidenceLedger
-	DossierID  string
 	LaneID     string
 	OnAccepted func(AssessmentSubmission)
 }
@@ -157,7 +155,6 @@ func (h *AssessmentHook) HandleTool(
 	var accepted, replaced, rejected []string
 	for _, assessment := range assessments {
 		assessment.ReviewerAlias = request.Alias
-		assessment.DossierID = h.DossierID
 		assessment.LaneID = h.LaneID
 		if h.Evidence != nil {
 			assessment.EvidenceReceipts = h.Evidence.Receipts()

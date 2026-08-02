@@ -551,8 +551,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 			reviewLanes = newLanePool(lanePoolConfig{
 				Context: ctx, Units: units, Changes: a.changes, Selections: a.fileSelections,
 				Concurrency: laneReviewWorkers,
-				ReadPaths:   a.executor.ReadPaths, Review: a.reviewDossier,
-				OnHypothesis: a.persistHypothesis, OnDossier: a.persistDossier,
+				ReadPaths:   a.executor.ReadPaths, Review: a.reviewHypothesis,
+				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 			})
 			a.hypothesisHook.OnResolved = reviewLanes.Submit
 		}
@@ -751,7 +751,6 @@ func (a *Runner) persistTrialDecisions(
 	for _, assessment := range assessments {
 		hypothesis, ok := byID[assessment.HypothesisID]
 		a.session.WriteArtifact("trial_decision", map[string]any{
-			"dossier_id":                  assessment.DossierID,
 			"lane_id":                     assessment.LaneID,
 			"assessment_submission_index": assessment.SubmissionIndex,
 			"hypothesis_id":               assessment.HypothesisID,

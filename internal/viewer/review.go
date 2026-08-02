@@ -9,7 +9,7 @@ import (
 )
 
 // ReviewStage is the stable viewer vocabulary for the two review loops. Scan
-// remains separate because it does not run the diff review's Dossier stage.
+// remains separate because it does not run the diff review's Hypothesis stage.
 type ReviewStage string
 
 const (
@@ -33,7 +33,7 @@ func (s ReviewStage) Label() string {
 }
 
 // ReviewRun aggregates one review scope. Review 1 is keyed by Unit; Review 2
-// is keyed by Dossier/run scope. Calls stays in transcript order so the
+// is keyed by Lane. Calls stays in transcript order so the
 // detail page can replay prompt growth across the agent loop.
 type ReviewRun struct {
 	ID                string   // scope id: unit.ID, run-level phase ID, or scan file path

@@ -21,7 +21,7 @@ type EvidenceReceipt struct {
 }
 
 // EvidenceLedger starts from the Lane's retained receipts and appends facts
-// read by the current Dossier review.
+// read by the current Hypothesis Review.
 type EvidenceLedger struct {
 	mu       sync.Mutex
 	receipts []EvidenceReceipt

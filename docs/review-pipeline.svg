@@ -2,8 +2,8 @@
   <title>CCR review pipeline from Diff to Finding</title>
   <desc>
     A diff is organized into review Units and enriched with Clues. Divergent
-    Unit Review produces Hypotheses in a Dossier. Independent Hypothesis Review
-    produces Assessments, and deterministic Trial publishes Findings. Language
+    Unit Review produces Hypotheses. Related Hypotheses share a Review 2 Lane,
+    which produces Assessments before deterministic Trial publishes Findings. Language
     Knowledge and Project Knowledge support the whole review flow.
   </desc>
   <defs>
@@ -54,9 +54,9 @@
   <line x1="690" y1="260" x2="725" y2="260" class="flow"/>
 
   <rect x="740" y="170" width="220" height="180" rx="18" fill="#fff0bf" class="box"/>
-  <text x="850" y="220" text-anchor="middle" class="label">Dossier</text>
-  <text x="850" y="254" text-anchor="middle" class="small">Hypotheses</text>
-  <text x="850" y="284" text-anchor="middle" class="tiny">ChangeSet + Clues</text>
+  <text x="850" y="220" text-anchor="middle" class="label">Hypothesis</text>
+  <text x="850" y="254" text-anchor="middle" class="small">待证伪主张</text>
+  <text x="850" y="284" text-anchor="middle" class="tiny">Unit evidence + Clues</text>
   <text x="850" y="312" text-anchor="middle" class="tiny">待证伪，不是最终评论</text>
 
   <line x1="960" y1="260" x2="995" y2="260" class="flow"/>

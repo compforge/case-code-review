@@ -46,15 +46,15 @@ type ReviewResult struct {
 	Execution        harness.ExecutionResult
 }
 
-// Review performs the convergent, read-only evidence loop for one Dossier.
-// It produces Assessments only; deterministic delivery belongs to trial.
+// Review performs the convergent, read-only evidence loop for one Hypothesis.
+// It produces an Assessment only; deterministic delivery belongs to trial.
 func Review(
 	ctx context.Context,
 	config Config,
-	dossier Dossier,
+	input ReviewInput,
 	continueFrom *harness.ExecutionResult,
 ) ReviewResult {
-	if len(config.Task.Messages) == 0 || len(dossier.Hypotheses) == 0 {
+	if len(config.Task.Messages) == 0 || input.Hypothesis.ID == "" {
 		return ReviewResult{}
 	}
 
@@ -63,13 +63,13 @@ func Review(
 		if continueFrom != nil && message.Role != "user" {
 			continue
 		}
-		full := renderDossierPrompt(message.Content, config, dossier, false)
+		full := renderReviewPrompt(message.Content, config, input, false)
 		if message.Role != "user" {
 			messages = append(messages, msg.Text(message.Role, full))
 			continue
 		}
-		condensed := renderDossierPrompt(message.Content, config, dossier, true)
-		messages = append(messages, newDossierMessage(full, condensed))
+		condensed := renderReviewPrompt(message.Content, config, input, true)
+		messages = append(messages, newHypothesisMessage(full, condensed))
 	}
 
 	if config.Task.Timeout > 0 {
@@ -78,14 +78,10 @@ func Review(
 		defer cancel()
 	}
 
-	expected := make([]string, 0, len(dossier.Hypotheses))
-	for _, hypothesis := range dossier.Hypotheses {
-		expected = append(expected, hypothesis.ID)
-	}
-	collector := NewAssessmentCollector(expected...)
-	evidence := &EvidenceLedger{receipts: append([]EvidenceReceipt(nil), dossier.PriorEvidence...)}
+	collector := NewAssessmentCollector(input.Hypothesis.ID)
+	evidence := &EvidenceLedger{receipts: append([]EvidenceReceipt(nil), input.PriorEvidence...)}
 	assessmentHook := &AssessmentHook{
-		Collector: collector, Evidence: evidence, DossierID: dossier.ID, LaneID: dossier.LaneID,
+		Collector: collector, Evidence: evidence, LaneID: input.LaneID,
 		OnAccepted: config.OnAssessment,
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
@@ -101,8 +97,8 @@ func Review(
 		},
 		Session: config.Session,
 		Scope: session.Scope{
-			ID: "hypothesis_review:" + dossier.LaneID, Kind: "lane",
-			Type: "hypothesis_review", Paths: dossier.Paths(),
+			ID: "hypothesis_review:" + input.LaneID, Kind: "lane",
+			Type: "hypothesis_review", Paths: input.Paths(),
 		},
 		TaskType:           session.HypothesisReviewTask,
 		Events:             config.Events,
@@ -129,7 +125,7 @@ func Review(
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Hypothesis review setup failed: %v\n", err)
-		warn(config, "hypothesis_review_error", fmt.Sprintf("dossier %s: %v", dossier.ID, err))
+		warn(config, "hypothesis_review_error", fmt.Sprintf("hypothesis %s in lane %s: %v", input.Hypothesis.ID, input.LaneID, err))
 		return ReviewResult{}
 	}
 	result, err := execution.Run(ctx)
@@ -138,26 +134,25 @@ func Review(
 	}
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Hypothesis review failed: %v\n", err)
-		warn(config, "hypothesis_review_error", fmt.Sprintf("dossier %s: %v; accepted assessments were retained", dossier.ID, err))
+		warn(config, "hypothesis_review_error", fmt.Sprintf("hypothesis %s in lane %s: %v; accepted assessments were retained", input.Hypothesis.ID, input.LaneID, err))
 	}
 	if result.State != harness.OutcomeCompleted {
-		warn(config, "hypothesis_review_incomplete", fmt.Sprintf("dossier %s ended incomplete (%s)", dossier.ID, result.Reason))
+		warn(config, "hypothesis_review_incomplete", fmt.Sprintf("hypothesis %s in lane %s ended incomplete (%s)", input.Hypothesis.ID, input.LaneID, result.Reason))
 	}
 
 	assessments := collector.Assessments()
-	total := uniqueHypothesisCount(dossier.Hypotheses)
-	if missing := total - assessedHypothesisCount(dossier.Hypotheses, assessments); missing > 0 {
-		warn(config, "hypothesis_unassessed", fmt.Sprintf("dossier %s: %d of %d hypotheses were not assessed and will not pass Trial", dossier.ID, missing, total))
+	if len(assessments) == 0 {
+		warn(config, "hypothesis_unassessed", fmt.Sprintf("hypothesis %s in lane %s was not assessed and will not pass Trial", input.Hypothesis.ID, input.LaneID))
 	}
 	return ReviewResult{
 		Assessments: assessments, EvidenceReceipts: evidence.Receipts(), Execution: result,
 	}
 }
 
-func renderDossierPrompt(source string, config Config, dossier Dossier, condensed bool) string {
-	hypothesesJSON, _ := json.Marshal(dossier.Hypotheses)
-	changesJSON, _ := json.Marshal(reviewChangeSet(dossier.Changes))
-	clues := reviewClues(dossier.Clues)
+func renderReviewPrompt(source string, config Config, input ReviewInput, condensed bool) string {
+	hypothesisJSON, _ := json.Marshal(input.Hypothesis)
+	changesJSON, _ := json.Marshal(reviewChangeSet(input.Changes))
+	clues := reviewClues(input.Clues)
 	if condensed {
 		for i := range clues {
 			clues[i].Text = ""
@@ -165,21 +160,19 @@ func renderDossierPrompt(source string, config Config, dossier Dossier, condense
 	}
 	cluesJSON, _ := json.Marshal(clues)
 	priorJSON, _ := json.Marshal(map[string]any{
-		"dossier_ids": dossier.PriorDossierIDs,
-		"assessments": dossier.PriorAssessments,
-		"evidence":    dossier.PriorEvidence,
+		"assessments": input.PriorAssessments,
+		"evidence":    input.PriorEvidence,
 	})
-	evidencePathsJSON, _ := json.Marshal(dossier.EvidencePaths)
+	evidencePathsJSON, _ := json.Marshal(input.EvidencePaths)
 
 	content := source
-	content = strings.ReplaceAll(content, "{{dossier}}", string(changesJSON))
 	content = strings.ReplaceAll(content, "{{change_set}}", string(changesJSON))
-	content = strings.ReplaceAll(content, "{{hypotheses}}", string(hypothesesJSON))
+	content = strings.ReplaceAll(content, "{{hypothesis}}", string(hypothesisJSON))
 	content = strings.ReplaceAll(content, "{{clues}}", string(cluesJSON))
 	content = strings.ReplaceAll(content, "{{evidence_paths}}", string(evidencePathsJSON))
 	content = strings.ReplaceAll(content, "{{prior_assessments}}", string(priorJSON))
 	content = strings.ReplaceAll(content, "{{requirement_background}}", config.Background)
-	content = strings.ReplaceAll(content, "{{system_rules}}", reviewRules(dossier.Hypotheses, config.ResolveRule))
+	content = strings.ReplaceAll(content, "{{system_rules}}", reviewRule(input.Hypothesis, config.ResolveRule))
 	return content
 }
 
@@ -233,41 +226,13 @@ func reviewChangeSet(changes []change.Change) []reviewChange {
 	return out
 }
 
-func reviewRules(hypotheses []unitreview.Hypothesis, resolve func(string) string) string {
+func reviewRule(hypothesis unitreview.Hypothesis, resolve func(string) string) string {
 	if resolve == nil {
 		return ""
 	}
-	var blocks []string
-	seen := make(map[string]bool)
-	for _, hypothesis := range hypotheses {
-		rule := resolve(strings.ToLower(hypothesis.Path))
-		if rule == "" || seen[rule] {
-			continue
-		}
-		seen[rule] = true
-		blocks = append(blocks, hypothesis.Path+":\n"+rule)
+	rule := resolve(strings.ToLower(hypothesis.Path))
+	if rule == "" {
+		return ""
 	}
-	return strings.Join(blocks, "\n\n")
-}
-
-func assessedHypothesisCount(hypotheses []unitreview.Hypothesis, assessments []Assessment) int {
-	expected := make(map[string]bool, len(hypotheses))
-	for _, hypothesis := range hypotheses {
-		expected[hypothesis.ID] = true
-	}
-	seen := make(map[string]bool, len(assessments))
-	for _, assessment := range assessments {
-		if expected[assessment.HypothesisID] {
-			seen[assessment.HypothesisID] = true
-		}
-	}
-	return len(seen)
-}
-
-func uniqueHypothesisCount(hypotheses []unitreview.Hypothesis) int {
-	seen := make(map[string]bool, len(hypotheses))
-	for _, hypothesis := range hypotheses {
-		seen[hypothesis.ID] = true
-	}
-	return len(seen)
+	return hypothesis.Path + ":\n" + rule
 }

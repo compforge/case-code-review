@@ -109,7 +109,7 @@ func TestLoadDefault_PlaceholdersPresent(t *testing.T) {
 		{"MainTask user has diff", tpl.MainTask.Messages[1].Content, "{{diff}}"},
 		{"PlanTask system has plan_tools", tpl.PlanTask.Messages[0].Content, "{{plan_tools}}"},
 		{"MemoryCompression user has context", tpl.MemoryCompressionTask.Messages[1].Content, "{{context}}"},
-		{"HypothesisReview user has hypotheses", tpl.HypothesisReviewTask.Messages[1].Content, "{{hypotheses}}"},
+		{"HypothesisReview user has hypothesis", tpl.HypothesisReviewTask.Messages[1].Content, "{{hypothesis}}"},
 		{"HypothesisReview user has prior assessments", tpl.HypothesisReviewTask.Messages[1].Content, "{{prior_assessments}}"},
 		{"HypothesisReview user has evidence paths", tpl.HypothesisReviewTask.Messages[1].Content, "{{evidence_paths}}"},
 		{"ReLocation user has diff (single brace)", tpl.ReLocationTask.Messages[1].Content, "{diff}"},

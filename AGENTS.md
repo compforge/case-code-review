@@ -7,12 +7,12 @@
 （衍生归属见 `NOTICE`）。稳定主链路是：
 
 ```text
-Project / Language Knowledge ─▶ Unit ─Review 1─▶ Hypothesis
-    ─Dossier─▶ Lane / Review 2 ─▶ Assessment ─Trial─▶ Finding
+Project / Language facts ─▶ Unit ─Unit Review─▶ Hypothesis
+    ─Hypothesis Review in Lane─▶ Assessment ─Trial gate─▶ Finding
 ```
 
 Project Knowledge 解释 Repository / Component / FileRole，Language Knowledge 提供源码事实；它们共同
-参与 Unit formation，并按作用域向 Review 1 / Review 2 提供上下文。相对 OCR 固定按 file 发起 loop，
+参与 Unit formation，并按作用域向 Unit Review / Hypothesis Review 提供上下文。相对 OCR 固定按 file 发起 loop，
 CCR 的 Unit 可以是函数、文件或跨文件 call-chain，以行为边界组织评审并减少重复探索。
 
 CCR 不追求通读仓库或穷举所有问题，而是在相关、有界的上下文内发现具体缺陷。任何优化都要同时观察
@@ -31,7 +31,7 @@ case-code-review/
     ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue
     ├── language/   ★ 唯一源码语言边界：Analyzer / RepositoryIndex 输出 symbol-id、definition/span、call/reference/doc 与依赖根；专用 parser、go/types 与 gotreesitter 通用 grammar 都封装在内。详见 `docs/language.md`
     ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`codegraph` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
-    ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`board`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`llmloop` 作为旧实现自包含保留，仓库其他包不再依赖。详见 `docs/harness.md`
+    ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力，`llmloop` 作为旧实现隔离保留。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施平铺
     ├── config/     模板 prompt、rule.json、tools 配置
     └── gitcmd · telemetry · viewer …   独立支撑能力
@@ -42,7 +42,7 @@ case-code-review/
 ```
 git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Merger─▶ Unit
                                       └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
-    ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis ─▶ Dossier
+    ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis
     ─Lane─▶ Hypothesis Review ─▶ Assessment ─Trial─▶ Finding
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
@@ -56,7 +56,7 @@ Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥�
    稳定身份；Unit 拥有行为作用域和 Clues；Harness 只拥有 Execution 机制，依赖方向不得反转。
 2. **Unit 不等于文件**：只有一个 target 文件时收为一个 File Unit；多文件改动按高置信行为关系形成
    call-chain Unit。目标是 Review 1 loop 不多于需评审文件数，同时不靠错误合并牺牲准确性。
-3. **发现、复核、裁决分离**：Review 1 只产生 Hypothesis，Review 2 形成 Assessment，Trial 用确定性
+3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial 用确定性
    规则决定 Finding。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
@@ -73,8 +73,8 @@ Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥�
 - Component、Unit 与上下文：`FileRole`、`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费
   ——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
-- Unit Review：Review 1 的有界探索、原子完成、上下文治理与 Board/Bulletin 跨 Unit 协作
-  ——`docs/unit_review.md`
-- Hypothesis Review：Dossier、Lane、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial
+- Unit Review：有界探索、原子完成、上下文治理与效果优化；默认关闭的 Board/Bulletin
+  作为试验特性单独记录——`docs/unit_review.md`
+- Hypothesis Review：Lane、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial
   ——`docs/hypothesis_review.md`
 - 上游归属（Apache-2.0 衍生）：`NOTICE`

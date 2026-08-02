@@ -10,7 +10,7 @@
 
 **2. 按 *Unit* 而不是按文件评审。** Unit 是一次行为评审的作用域，可以是函数、文件或跨文件 call-chain。当整个 diff 只有一个需评审文件时，收为一个 File Unit；多个文件中彼此调用的改动函数合为一个 call-chain Unit，因为分成两个 file loop 最终也要重复读取彼此。目标是 Review 1 loop 数不多于需评审文件数，跨文件协作时进一步减少。
 
-**3. 把发现与裁决分开。** 每个 Unit Review 可以产出零到多个可证伪的 Hypothesis，不直接发布评论；每个 Hypothesis 立即形成不可变 Dossier，相关 Dossier 共用一个 Review 2 Lane 复用前案上下文和证据，不相关 Lane 并行；确定性的 Trial 只交付证据支持、由本次变更造成、值得行动且不重复的 Finding。
+**3. 把发现与裁决分开。** 每个 Unit Review 可以产出零到多个可证伪的 Hypothesis，不直接发布评论；相关 Hypothesis 共用一个 Hypothesis Review Lane 复用前案上下文和证据，不相关 Lane 并行；确定性的 Trial 只交付证据支持、由本次变更造成、值得行动且不重复的 Finding。
 
 ccr 不追求通读仓库或穷举所有问题，而是在相关、有界的上下文中，优先发现实现需求时容易忽略的具体缺陷，例如边界处理、错误路径、API 误用或 caller 假设被破坏。隐含业务约束需要需求背景、spec、case 或 rule 等显式知识；加载更多无关代码不能凭空补足这些知识。语法问题仍归 lint 管。
 

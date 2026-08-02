@@ -29,7 +29,7 @@ type HypothesisHook struct {
 	Relocation   bool
 	RecordUsage  func(*llm.UsageInfo)
 	// OnResolved runs after anchoring/relocation and collection, when the
-	// Hypothesis is stable enough to enter downstream Dossier formation.
+	// Hypothesis is stable enough to enter downstream Lane assignment.
 	OnResolved func(Hypothesis)
 }
 
