@@ -26,8 +26,9 @@ type recordedModel struct {
 // A model turn owns its session TaskRecord; tools only append results to the
 // record of the assistant message that requested them.
 type executionRecorder struct {
-	session *session.SessionHistory
-	scope   session.Scope
+	executionID string
+	session     *session.SessionHistory
+	scope       session.Scope
 
 	mu     sync.Mutex
 	calls  map[string][]recordedCall
@@ -35,11 +36,12 @@ type executionRecorder struct {
 	usage  llm.UsageInfo
 }
 
-func newExecutionRecorder(spec ExecutionSpec) *executionRecorder {
+func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionRecorder {
 	return &executionRecorder{
-		session: spec.Session,
-		scope:   spec.Scope,
-		calls:   make(map[string][]recordedCall),
+		executionID: executionID,
+		session:     spec.Session,
+		scope:       spec.Scope,
+		calls:       make(map[string][]recordedCall),
 	}
 }
 
@@ -53,7 +55,19 @@ func (r *executionRecorder) beginModel(
 	if taskType == "" {
 		taskType = session.MainTask
 	}
-	return r.session.GetOrCreateScope(r.scope).AppendTaskRecord(taskType, messages)
+	return r.session.GetOrCreateScope(r.scope).AppendExecutionTaskRecord(r.executionID, taskType, messages)
+}
+
+func (r *executionRecorder) finishExecution(taskType session.TaskType, result ExecutionResult, duration time.Duration) {
+	if r.session == nil {
+		return
+	}
+	r.session.WriteExecutionEnd(r.scope, session.ExecutionEnd{
+		ID: r.executionID, TaskType: taskType,
+		Outcome: result.State, Reason: result.Reason,
+		Turns: result.Turns, ToolCalls: result.ToolCalls, ToolErrors: result.ToolErrors,
+		Duration: duration,
+	})
 }
 
 func (r *executionRecorder) finishModel(

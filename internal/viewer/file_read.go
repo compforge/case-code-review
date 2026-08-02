@@ -31,7 +31,7 @@ type fileReadArgument struct {
 	FilePath string `json:"file_path"`
 }
 
-func analyzeFileReads(r *ReviewRun) FileReadMetrics {
+func analyzeFileReads(r *ReviewScope) FileReadMetrics {
 	metrics := FileReadMetrics{}
 	readCounts := map[string]int{}
 	for _, card := range r.Calls {

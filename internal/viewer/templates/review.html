@@ -10,11 +10,12 @@
 <nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; <a href="/r/{{.EncodedRepo}}/{{.Session.Summary.SessionID}}">Session {{.Session.Summary.SessionID | truncate 12}}</a> &rsaquo; {{.Review.Stage.Label}}</nav>
 <main>
 <div class="session-header review-header">
-    <div class="stage-kicker">{{.Review.Stage.Label}}{{if eq .Review.Stage "review2"}} · Lane{{end}}</div>
+    <div class="stage-kicker">{{.Review.Stage.Label}}{{if eq .Review.Stage "review2"}} · Lane{{else}} · Unit{{end}}</div>
     <h2>{{if .Review.ID}}{{.Review.ID}}{{else}}{{.Review.FilePath}}{{end}}</h2>
     <div class="meta">
         <span><strong>Scope:</strong> {{if .Review.Scope}}{{.Review.Scope}}{{else}}-{{end}}</span>
         <span><strong>Kind:</strong> {{.Review.Kind}}</span>
+        <span><strong>Executions:</strong> {{len .Review.Executions}}</span>
         {{if .Review.FilePath}}<span><strong>Anchor:</strong> {{.Review.FilePath}}</span>{{end}}
         {{if .Review.Paths}}<span><strong>Files:</strong> {{len .Review.Paths}}</span>{{end}}
     </div>
@@ -22,57 +23,19 @@
 </div>
 
 <div class="overview-grid review-metrics-grid">
-    <div class="overview-card">
-        <div class="overview-value">{{formatDuration .Review.Metrics.ElapsedSec}}</div>
-        <div class="overview-label">Elapsed</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatMillis .Review.Metrics.LLMDurationMs}}</div>
-        <div class="overview-label">LLM Time</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{.Review.Metrics.TurnCount}}</div>
-        <div class="overview-label">Agent Turns</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Review.Metrics.LLMCalls}}</div>
-        <div class="overview-label">LLM Calls</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Review.Metrics.PromptTokens}}</div>
-        <div class="overview-label">Prompt Total</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Review.Metrics.CompletionTokens}}</div>
-        <div class="overview-label">Completion</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Review.Metrics.ToolCalls}}</div>
-        <div class="overview-label">Tool Calls</div>
-    </div>
-    {{if .Review.Metrics.ToolFailures}}
-    <div class="overview-card error-card">
-        <div class="overview-value">{{.Review.Metrics.ToolFailures}}</div>
-        <div class="overview-label">Tool Failures</div>
-    </div>
-    {{end}}
+    <div class="overview-card"><div class="overview-value">{{formatDuration .Review.Metrics.ElapsedSec}}</div><div class="overview-label">Execution Time</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatMillis .Review.Metrics.LLMDurationMs}}</div><div class="overview-label">LLM Time</div></div>
+    <div class="overview-card"><div class="overview-value">{{.Review.ExecutionDone}} / {{len .Review.Executions}}</div><div class="overview-label">Completed</div></div>
+    <div class="overview-card"><div class="overview-value">{{.Review.Metrics.TurnCount}}</div><div class="overview-label">Agent Turns</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.PromptTokens}}</div><div class="overview-label">Prompt Total</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.CompletionTokens}}</div><div class="overview-label">Completion</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.CacheReadTokens}}</div><div class="overview-label">Cache Read</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.ToolCalls}}</div><div class="overview-label">Tool Calls</div></div>
 </div>
-
-{{if .Review.Tools}}
-<h3>Tool Usage</h3>
-<table class="review-table tool-summary-table">
-    <thead><tr><th>Tool</th><th>Calls</th><th>Failures</th><th>Time</th></tr></thead>
-    <tbody>
-    {{range .Review.Tools}}
-        <tr><td><code>{{.Name}}</code></td><td>{{formatInt .Calls}}</td><td>{{formatInt .Failures}}</td><td>{{formatMillis .DurationMs}}</td></tr>
-    {{end}}
-    </tbody>
-</table>
-{{end}}
 
 {{if and (eq .Review.Stage "review1") (gt .Review.FileReads.Calls 0)}}
 <h3>File Read Signals</h3>
-<p class="section-note">已覆盖与重复读取是两个独立信号：前者表示调用时请求范围仍完整存在于当前 context；后者只表示同一路径再次读取，行范围可能不同。</p>
+<p class="section-note">已覆盖与重复读取是两个独立信号：前者表示请求范围仍在当前 context；后者只表示同一路径再次读取。</p>
 <table class="review-table tool-summary-table">
     <thead><tr><th>Signal</th><th>Value</th><th>Meaning</th></tr></thead>
     <tbody>
@@ -90,111 +53,100 @@
 </table>
 {{end}}
 
-<h3>Conversation</h3>
-<section class="review-view">
-{{if .Review.Conversation}}
-<div class="conversation-layout">
-    <div class="conversation-rail" role="tree" aria-label="Conversation events">
-    {{range $i, $node := .Review.Conversation}}
-        <button type="button" role="treeitem" class="conversation-node node-{{$node.Kind}} {{if $node.Depth}}node-child{{end}} {{if eq $i 0}}is-active{{end}}" data-conversation-node="{{$node.ID}}">
-            <span class="conversation-node-head">
-                <span class="conversation-kind">{{$node.Label}}</span>
-                {{if $node.DurationMs}}<span class="conversation-node-meta">{{formatMillis $node.DurationMs}}</span>{{end}}
-            </span>
-            {{if $node.Preview}}<span class="conversation-preview">{{$node.Preview | truncate 90}}</span>{{end}}
-        </button>
-    {{end}}
-    </div>
-    <div class="conversation-inspector">
-    {{range $i, $node := .Review.Conversation}}
-        <article class="conversation-detail" data-conversation-detail="{{$node.ID}}" {{if ne $i 0}}hidden{{end}}>
-            <div class="conversation-detail-header">
-                <div>
-                    <div class="conversation-detail-kicker">{{$node.Kind}}</div>
-                    <h4>{{$node.Label}}</h4>
-                </div>
-                <div class="call-meta conversation-detail-meta">
-                    {{if $node.Model}}<span class="badge badge-model">{{$node.Model}}</span>{{end}}
-                    {{if $node.TurnNo}}<span class="badge badge-scope">Turn {{$node.TurnNo}}</span>{{end}}
-                    {{if or $node.PromptTokens $node.CompletionTokens}}<span class="badge badge-tokens">P:{{formatInt $node.PromptTokens}} C:{{formatInt $node.CompletionTokens}}</span>{{end}}
-                    {{if $node.DurationMs}}<span class="badge badge-duration">{{formatMillis $node.DurationMs}}</span>{{end}}
-                    {{if $node.StopReason}}<span class="badge badge-scope">{{$node.StopReason}}</span>{{end}}
-                    {{if $node.Error}}<span class="badge badge-error">{{$node.Error}}</span>{{end}}
-                    {{if and (eq $node.Kind "tool") $node.HasResult (not $node.OK)}}<span class="badge badge-error">Failed</span>{{end}}
-                </div>
-            </div>
-            {{if $node.ToolCallID}}<div class="conversation-call-id">{{$node.ToolCallID}}</div>{{end}}
-            {{if $node.Text}}
-            <div class="conversation-section">
-                <div class="conversation-section-label">{{if eq $node.Kind "assistant"}}Response{{else}}Message{{end}}</div>
-                {{if eq $node.Kind "assistant"}}<div class="response-text">{{$node.Text}}</div>{{else}}<pre>{{$node.Text}}</pre>{{end}}
-            </div>
-            {{end}}
-            {{if $node.Reasoning}}
-            <div class="conversation-section">
-                <div class="conversation-section-label">Reasoning</div>
-                <pre>{{$node.Reasoning}}</pre>
-            </div>
-            {{end}}
-            {{if eq $node.Kind "tool"}}
-            <div class="conversation-section">
-                <div class="conversation-section-label">Arguments</div>
-                <pre>{{$node.Arguments}}</pre>
-            </div>
-            {{if $node.HasResult}}
-            <div class="conversation-section">
-                <div class="conversation-section-label">Output</div>
-                <pre>{{$node.Result}}</pre>
-            </div>
-            {{end}}
-            {{end}}
-        </article>
-    {{end}}
-    </div>
-</div>
-{{else}}
-<p class="empty-state">No agent conversation was recorded for this review.</p>
+{{if .Review.Artifacts}}
+<h3>Decision Trail <span class="heading-count">{{len .Review.Artifacts}}</span></h3>
+<p class="section-note">这里只投影当前 Unit 或 Lane 关联的 Hypothesis、Assessment 与 Trial 事实。</p>
+<div class="system-prompts">
+{{range .Review.Artifacts}}
+<details class="system-prompt">
+    <summary class="system-prompt-header"><span class="chevron"></span><span class="system-prompt-label">{{.Kind}}</span>{{if .HypothesisID}}<code>{{.HypothesisID}}</code>{{end}}{{if .Status}}<span class="badge badge-scope">{{.Status}}</span>{{end}}</summary>
+    <pre class="msg-text">{{.Data}}</pre>
+</details>
 {{end}}
+</div>
+{{end}}
+
+<h3>Executions <span class="heading-count">{{len .Review.Executions}}</span></h3>
+{{range $executionIndex, $execution := .Review.Executions}}
+<section class="execution-panel {{if eq $execution.Status "incomplete"}}execution-incomplete{{end}}">
+    <div class="execution-header">
+        <div>
+            <div class="stage-kicker">Execution {{add $executionIndex 1}}</div>
+            <code>{{$execution.ID}}</code>
+        </div>
+        <div class="call-meta">
+            <span class="status-badge status-{{$execution.Status}}">{{$execution.Outcome}}</span>
+            <span class="badge badge-scope">{{$execution.TaskType}}</span>
+            <span class="badge badge-duration">{{formatMillis $execution.DurationMs}}</span>
+            <span class="badge badge-tokens">{{$execution.Metrics.TurnCount}} turns · {{$execution.Metrics.ToolCalls}} tools</span>
+        </div>
+    </div>
+    {{if $execution.Reason}}<div class="execution-reason">{{$execution.Reason}}</div>{{end}}
+    {{if $execution.Tools}}<div class="tool-chips execution-tools">{{range $execution.Tools}}<span><code>{{.Name}}</code> ×{{.Calls}}{{if .Failures}} / <b>{{.Failures}} failed</b>{{end}}</span>{{end}}</div>{{end}}
+
+    {{if $execution.Conversation}}
+    <div class="conversation-layout">
+        <div class="conversation-rail" role="tree" aria-label="Execution events">
+        {{range $nodeIndex, $node := $execution.Conversation}}
+            <button type="button" role="treeitem" class="conversation-node node-{{$node.Kind}} {{if $node.Depth}}node-child{{end}} {{if eq $nodeIndex 0}}is-active{{end}}" data-conversation-node="{{$node.ID}}">
+                <span class="conversation-node-head"><span class="conversation-kind">{{$node.Label}}</span>{{if $node.DurationMs}}<span class="conversation-node-meta">{{formatMillis $node.DurationMs}}</span>{{end}}</span>
+                {{if $node.Preview}}<span class="conversation-preview">{{$node.Preview | truncate 90}}</span>{{end}}
+            </button>
+        {{end}}
+        </div>
+        <div class="conversation-inspector">
+        {{range $nodeIndex, $node := $execution.Conversation}}
+            <article class="conversation-detail" data-conversation-detail="{{$node.ID}}" {{if ne $nodeIndex 0}}hidden{{end}}>
+                <div class="conversation-detail-header">
+                    <div><div class="conversation-detail-kicker">{{$node.Kind}}</div><h4>{{$node.Label}}</h4></div>
+                    <div class="call-meta conversation-detail-meta">
+                        {{if $node.Model}}<span class="badge badge-model">{{$node.Model}}</span>{{end}}
+                        {{if $node.TurnNo}}<span class="badge badge-scope">Turn {{$node.TurnNo}}</span>{{end}}
+                        {{if $node.PromptTokens}}<span class="badge badge-tokens">Prompt {{formatInt $node.PromptTokens}}{{if $node.PromptDelta}} · {{formatSigned $node.PromptDelta}}{{end}}</span>{{end}}
+                        {{if or $node.CacheReadTokens $node.CacheWriteTokens}}<span class="badge badge-scope">Cache R:{{formatInt $node.CacheReadTokens}} W:{{formatInt $node.CacheWriteTokens}}</span>{{end}}
+                        {{if $node.DurationMs}}<span class="badge badge-duration">{{formatMillis $node.DurationMs}}</span>{{end}}
+                        {{if $node.StopReason}}<span class="badge badge-scope">{{$node.StopReason}}</span>{{end}}
+                        {{if $node.Error}}<span class="badge badge-error">{{$node.Error}}</span>{{end}}
+                    </div>
+                </div>
+                {{if eq $node.Kind "prompt"}}
+                {{if or (lt $node.PromptDelta 0) (lt $node.MessageDelta 0)}}<div class="context-reduced">Context reduced before this call.</div>{{end}}
+                <div class="prompt-snapshot">
+                {{range $node.Messages}}<div class="msg"><div class="msg-role">{{.Role}}</div><pre class="msg-text">{{.Text}}</pre></div>{{end}}
+                </div>
+                {{end}}
+                {{if $node.ToolCallID}}<div class="conversation-call-id">{{$node.ToolCallID}}</div>{{end}}
+                {{if $node.Text}}<div class="conversation-section"><div class="conversation-section-label">Response</div><div class="response-text">{{$node.Text}}</div></div>{{end}}
+                {{if $node.Reasoning}}<div class="conversation-section"><div class="conversation-section-label">Reasoning</div><pre>{{$node.Reasoning}}</pre></div>{{end}}
+                {{if eq $node.Kind "tool"}}
+                <div class="conversation-section"><div class="conversation-section-label">Arguments</div><pre>{{$node.Arguments}}</pre></div>
+                {{if $node.HasResult}}<div class="conversation-section"><div class="conversation-section-label">Output</div><pre>{{$node.Result}}</pre></div>{{end}}
+                {{end}}
+            </article>
+        {{end}}
+        </div>
+    </div>
+    {{else}}<p class="empty-state">No model call was recorded for this Execution.</p>{{end}}
 </section>
+{{else}}<p class="empty-state">No Execution was recorded for this Scope.</p>{{end}}
 
 <script>
 document.querySelectorAll('[data-conversation-node]').forEach(function(node) {
     node.addEventListener('click', function() {
+        var panel = node.closest('.execution-panel');
         var target = node.getAttribute('data-conversation-node');
-        document.querySelectorAll('[data-conversation-node]').forEach(function(item) {
-            item.classList.toggle('is-active', item === node);
-        });
-        document.querySelectorAll('[data-conversation-detail]').forEach(function(detail) {
-            detail.hidden = detail.getAttribute('data-conversation-detail') !== target;
-        });
+        panel.querySelectorAll('[data-conversation-node]').forEach(function(item) { item.classList.toggle('is-active', item === node); });
+        panel.querySelectorAll('[data-conversation-detail]').forEach(function(detail) { detail.hidden = detail.getAttribute('data-conversation-detail') !== target; });
     });
 });
 
 document.querySelectorAll('.response-text').forEach(function(el) {
     var text = el.textContent;
-    var esc = function(s) {
-        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    };
+    var esc = function(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); };
     var codeBlocks = [];
-    var html = esc(text);
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
-        codeBlocks.push(code.replace(/^\n|\n$/g, ''));
-        return '%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%';
-    });
-    html = html
-        .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>')
-        .replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>')
-        .replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>')
-        .replace(/^[-*] (.+)$/gm, '<div class="md-li">&bull; $1</div>')
-        .replace(/\n{2,}/g, '<br><br>')
-        .replace(/\n/g, '<br>');
-    codeBlocks.forEach(function(code, i) {
-        html = html.replace('%%CODEBLOCK_' + i + '%%',
-            '<pre class="code-block"><code>' + code + '</code></pre>');
-    });
+    var html = esc(text).replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) { codeBlocks.push(code.replace(/^\n|\n$/g, '')); return '%%CODEBLOCK_' + (codeBlocks.length - 1) + '%%'; });
+    html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>').replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>').replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>').replace(/^[-*] (.+)$/gm, '<div class="md-li">&bull; $1</div>').replace(/\n{2,}/g, '<br><br>').replace(/\n/g, '<br>');
+    codeBlocks.forEach(function(code, i) { html = html.replace('%%CODEBLOCK_' + i + '%%', '<pre class="code-block"><code>' + code + '</code></pre>'); });
     el.innerHTML = html;
 });
 </script>

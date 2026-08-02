@@ -80,7 +80,7 @@ func TestWriteDebrief(t *testing.T) {
 	}
 
 	// Manifest: the transcript self-describes its configuration and population.
-	if start["schema_version"].(float64) != 4 || start["tool_version"] != "v1.7.1 (abc123)" ||
+	if start["schema_version"].(float64) != float64(SchemaVersion) || start["tool_version"] != "v1.7.1 (abc123)" ||
 		start["eval_tag"] != "corpus-v1" || start["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("manifest fields off: %v", start)
 	}

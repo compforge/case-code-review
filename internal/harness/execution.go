@@ -15,6 +15,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/go-stdx/uuid"
 )
 
 const defaultCompletionPrompt = "The review is not complete until you call task_done. Finish any required result tool calls, then call task_done."
@@ -86,6 +87,7 @@ type ExecutionResult struct {
 // AgentGo, context projection, recording, tools, and completion state remain
 // private children of this lifecycle; callers only construct and Run it.
 type Execution struct {
+	id   string
 	spec ExecutionSpec
 
 	recorder         *executionRecorder
@@ -120,6 +122,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	// change a run that has already been assembled.
 	spec.Messages = msg.CloneAll(spec.Messages)
 	e := &Execution{
+		id:               uuid.V4(),
 		spec:             spec,
 		completionTool:   spec.CompletionTool,
 		completionPrompt: spec.CompletionPrompt,
@@ -139,7 +142,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	if e.completionTool != tool.TaskDone.Name() && !hasToolDef(spec.ToolDefs, e.completionTool) {
 		return nil, fmt.Errorf("harness: completion tool %q is not defined", e.completionTool)
 	}
-	e.recorder = newExecutionRecorder(spec)
+	e.recorder = newExecutionRecorder(spec, e.id)
 	taskType := spec.TaskType
 	if taskType == "" {
 		taskType = session.MainTask
@@ -179,6 +182,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
 	}
 
+	startedAt := time.Now()
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
@@ -223,7 +227,13 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 			e.summary = event.Summary
 		}
 	}
-	return e.finish(ctx)
+	result, err := e.finish(ctx)
+	taskType := e.spec.TaskType
+	if taskType == "" {
+		taskType = session.MainTask
+	}
+	e.recorder.finishExecution(taskType, result, time.Since(startedAt))
+	return result, err
 }
 
 func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo.AgentMessage {

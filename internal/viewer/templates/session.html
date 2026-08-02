@@ -64,9 +64,9 @@
     </div>
     <div class="pipeline-arrow">→</div>
     <div class="pipeline-step pipeline-review1">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Review1Runs}}</div>
+        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Review1Units}}</div>
         <div class="pipeline-label">Review 1 · Units</div>
-        <div class="pipeline-detail">{{.Session.Diagnostics.Review1Done}} completed{{if .Session.Diagnostics.Review1Missed}} · <b>{{.Session.Diagnostics.Review1Missed}} incomplete</b>{{end}}</div>
+        <div class="pipeline-detail">{{.Session.Diagnostics.Review1Executions}} Execution(s) · {{.Session.Diagnostics.Review1Done}} completed{{if .Session.Diagnostics.Review1Missed}} · <b>{{.Session.Diagnostics.Review1Missed}} incomplete</b>{{end}}</div>
     </div>
     <div class="pipeline-arrow">→</div>
     <div class="pipeline-step">
@@ -77,7 +77,7 @@
     <div class="pipeline-step pipeline-review2">
         <div class="pipeline-value">{{formatInt .Session.Diagnostics.Assessments}}</div>
         <div class="pipeline-label">Review 2 · Assessments</div>
-        <div class="pipeline-detail">{{.Session.Diagnostics.Review2Runs}} Lane(s){{if .Session.Diagnostics.Unassessed}} · <b>{{.Session.Diagnostics.Unassessed}} unassessed</b>{{end}}</div>
+        <div class="pipeline-detail">{{.Session.Diagnostics.Review2Lanes}} Lane(s) · {{.Session.Diagnostics.Review2Executions}} Execution(s){{if .Session.Diagnostics.Unassessed}} · <b>{{.Session.Diagnostics.Unassessed}} unassessed</b>{{end}}</div>
     </div>
     <div class="pipeline-arrow pipeline-trial"><span>Trial</span>→</div>
     <div class="pipeline-step pipeline-finding">
@@ -124,7 +124,7 @@
 {{end}}
 
 <h3>Review 1 <span class="heading-count">{{len $review1}}</span></h3>
-<p class="section-note">以 Unit 为粒度发散 Hypothesis。点进任一 Review 查看 prompt 随 agent turn 的增长。</p>
+<p class="section-note">以 Unit 为 Scope 发散 Hypothesis；点进 Unit 查看其中的 Execution 与每轮真实 Prompt Snapshot。</p>
 {{if $review1}}
 <table class="review-table">
     <thead><tr><th>Unit</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
@@ -133,7 +133,7 @@
 {{else}}<p class="empty-state">No Review 1 runs.</p>{{end}}
 
 <h3>Review 2 Lanes <span class="heading-count">{{len $review2}}</span></h3>
-<p class="section-note">相关 Hypothesis 进入同一 Lane，串行复用上下文并产出 Assessment；点进 Lane 查看完整 Conversation。</p>
+<p class="section-note">相关 Hypothesis 进入同一 Lane；每个 Hypothesis 触发一次 Execution，并串行复用 Lane context。</p>
 {{if $review2}}
 <table class="review-table">
     <thead><tr><th>Lane</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
@@ -193,7 +193,7 @@
     </td>
     <td>
         <span class="status-badge status-{{.Status}}">{{.Status}}</span>
-        {{if .OutcomeReason}}<div class="status-reason">{{.OutcomeReason}}</div>{{else if eq .Status "incomplete"}}{{if .Outcome}}<div class="status-reason">{{.Outcome}}</div>{{else}}<div class="status-reason">no terminal signal</div>{{end}}{{end}}
+        <div class="status-reason">{{len .Executions}} Execution(s) · {{.ExecutionDone}} completed{{if .ExecutionMissed}} · {{.ExecutionMissed}} incomplete{{end}}</div>
     </td>
     <td><span class="badge badge-scope">{{if .Scope}}{{.Scope}}{{else}}{{.Stage.Label}}{{end}}</span></td>
     <td>{{formatDuration .Metrics.ElapsedSec}}</td>

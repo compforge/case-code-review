@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 )
 
 // ReviewStage is the stable viewer vocabulary for the two review loops. Scan
@@ -32,41 +31,58 @@ func (s ReviewStage) Label() string {
 	}
 }
 
-// ReviewRun aggregates one review scope. Review 1 is keyed by Unit; Review 2
-// is keyed by Lane. Calls stays in transcript order so the
-// detail page can replay prompt growth across the agent loop.
-type ReviewRun struct {
-	ID                string   // scope id: unit.ID, run-level phase ID, or scan file path
-	Kind              string   // "unit" | "lane" | "file"
-	Scope             string   // func/file/callchain (units) | filter | scan
-	Paths             []string // member file(s)
-	FilePath          string   // representative path
-	EncodedRepo       string   // encoded repository path used by viewer links
-	SessionID         string   // owning session used by viewer links
-	Stage             ReviewStage
-	Tasks             map[TaskType][]*TaskCard
-	Calls             []*TaskCard
-	Turns             []*TaskCard
-	Conversation      []ConversationNode
-	Metrics           ReviewMetrics
-	Tools             []ToolUsage
+// ReviewScope is the Viewer projection of one persisted Scope. A Review 1
+// Unit normally owns one Execution; a Review 2 Lane may own many sequential
+// Executions that retain context between hypotheses.
+type ReviewScope struct {
+	ID          string
+	Kind        string
+	Scope       string
+	Paths       []string
+	FilePath    string
+	EncodedRepo string
+	SessionID   string
+	Stage       ReviewStage
+
+	Tasks           map[TaskType][]*TaskCard
+	Calls           []*TaskCard
+	Executions      []*ReviewExecution
+	Artifacts       []ReviewArtifact
+	Metrics         ReviewMetrics
+	Tools           []ToolUsage
+	ExecutionDone   int
+	ExecutionMissed int
+	Status          string // completed | incomplete; aggregate projection only
+
 	SourcePreloads    []string
 	ContextPaths      map[string][]string
 	HasSourcePreloads bool
 	HasContextPaths   bool
 	FileReads         FileReadMetrics
-	Status            string // completed | incomplete
-	Outcome           string // debrief outcome when present
-	OutcomeReason     string
-	HasDebrief        bool
-
-	startedAt  time.Time
-	finishedAt time.Time
 }
 
-// ReviewMetrics is the per-Review counterpart of TokenUsageSummary. Elapsed
-// is wall time from the first to last scoped event; LLM duration is the sum of
-// model-call durations and can exceed elapsed when work overlaps.
+// ReviewExecution is one actual Harness/AgentGo run. Its terminal state comes
+// only from execution_end; Scope and tool names never imply completion.
+type ReviewExecution struct {
+	ID           string
+	TaskType     TaskType
+	Tasks        map[TaskType][]*TaskCard
+	Calls        []*TaskCard
+	Turns        []*TaskCard
+	Conversation []ConversationNode
+	Metrics      ReviewMetrics
+	Tools        []ToolUsage
+	Status       string // completed | incomplete
+	Outcome      string
+	Reason       string
+	DurationMs   int64
+	ToolCalls    int
+	ToolErrors   int
+}
+
+// ReviewMetrics is the per-Scope/Execution counterpart of TokenUsageSummary.
+// LLM duration is the sum of model-call durations and can exceed wall time
+// when calls overlap.
 type ReviewMetrics struct {
 	ElapsedSec       float64
 	LLMDurationMs    int64
@@ -81,7 +97,8 @@ type ReviewMetrics struct {
 	MaxPromptTokens  int
 }
 
-// ToolUsage aggregates calls to one tool at either review or session level.
+// ToolUsage aggregates calls to one tool at either Execution, Scope, or
+// Session level.
 type ToolUsage struct {
 	Name       string
 	Calls      int
@@ -89,15 +106,16 @@ type ToolUsage struct {
 	DurationMs int64
 }
 
-// ConversationNode is one selectable event in the compact agent-loop view.
-// Tool calls are children of the assistant turn that requested them; their
-// result stays on the same node so the left rail remains easy to scan.
+// ConversationNode is one selectable event in an Execution timeline. Prompt
+// nodes carry the complete recorded model input; no message-dedup heuristic is
+// used to reconstruct context after compaction.
 type ConversationNode struct {
 	ID               string
 	Kind             string
 	Label            string
 	Preview          string
 	Text             string
+	Messages         []DisplayMessage
 	Reasoning        string
 	Arguments        string
 	Result           string
@@ -110,130 +128,133 @@ type ConversationNode struct {
 	DurationMs       int64
 	PromptTokens     int
 	CompletionTokens int
+	CacheReadTokens  int
+	CacheWriteTokens int
+	PromptDelta      int
+	MessageDelta     int
 	OK               bool
 	HasResult        bool
 }
 
-func (r *ReviewRun) observeTimestamp(raw any) {
-	s, _ := raw.(string)
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return
+func finalizeReview(scope *ReviewScope) {
+	scope.Stage = classifyReview(scope)
+	scope.Tools = nil
+	scope.Metrics = ReviewMetrics{}
+	toolIdx := map[string]*ToolUsage{}
+
+	for _, execution := range scope.Executions {
+		finalizeExecution(execution)
+		addMetrics(&scope.Metrics, execution.Metrics)
+		for _, tool := range execution.Tools {
+			mergeTool(toolIdx, tool)
+		}
+		if execution.Status == "completed" {
+			scope.ExecutionDone++
+		} else {
+			scope.ExecutionMissed++
+		}
 	}
-	if r.startedAt.IsZero() || t.Before(r.startedAt) {
-		r.startedAt = t
+
+	// Direct plan/re-location calls are Scope support work rather than AgentGo
+	// Executions. Keep their cost in the Scope/session rollup without inventing
+	// a fake Execution lifecycle for them.
+	for _, card := range scope.Calls {
+		if card.ExecutionID == "" {
+			addCardMetrics(&scope.Metrics, card)
+		}
 	}
-	if r.finishedAt.IsZero() || t.After(r.finishedAt) {
-		r.finishedAt = t
+
+	scope.Tools = sortedTools(toolIdx)
+	if len(scope.Executions) > 0 && scope.ExecutionMissed == 0 {
+		scope.Status = "completed"
+	} else {
+		scope.Status = "incomplete"
+	}
+	if scope.Stage == Review1Stage {
+		scope.FileReads = analyzeFileReads(scope)
 	}
 }
 
-func finalizeReview(r *ReviewRun) {
-	r.Stage = classifyReview(r)
+func finalizeExecution(execution *ReviewExecution) {
 	toolIdx := map[string]*ToolUsage{}
 	previousPrompt := 0
 	previousMessages := 0
-	hasTaskDone := false
-
-	for _, card := range r.Calls {
-		r.Metrics.LLMCalls++
-		r.Metrics.LLMDurationMs += card.DurationMs
-		r.Metrics.PromptTokens += card.PromptTokens
-		r.Metrics.CompletionTokens += card.CompletionTokens
-		r.Metrics.CacheReadTokens += card.CacheReadTokens
-		r.Metrics.CacheWriteTokens += card.CacheWriteTokens
-		if isAgentTurn(r.Stage, card.TaskType) {
-			card.TurnNo = len(r.Turns) + 1
+	for _, card := range execution.Calls {
+		addCardMetrics(&execution.Metrics, card)
+		if card.TaskType == execution.TaskType {
+			card.TurnNo = len(execution.Turns) + 1
 			card.PromptDelta = card.PromptTokens - previousPrompt
 			card.MessageDelta = len(card.Request) - previousMessages
-			if card.PromptTokens > r.Metrics.MaxPromptTokens {
-				r.Metrics.MaxPromptTokens = card.PromptTokens
-			}
 			previousPrompt = card.PromptTokens
 			previousMessages = len(card.Request)
-			r.Turns = append(r.Turns, card)
+			execution.Turns = append(execution.Turns, card)
 		}
-
 		for _, call := range card.ToolCalls {
-			if call.Name == "task_done" && call.Ok {
-				hasTaskDone = true
-			}
-			tool := toolIdx[call.Name]
-			if tool == nil {
-				tool = &ToolUsage{Name: call.Name}
-				toolIdx[call.Name] = tool
-			}
-			tool.Calls++
-			tool.DurationMs += call.DurationMs
-			if !call.Ok {
-				tool.Failures++
-			}
+			mergeTool(toolIdx, ToolUsage{
+				Name: call.Name, Calls: 1, DurationMs: call.DurationMs,
+				Failures: boolInt(call.HasResult && !call.Ok),
+			})
 		}
 	}
-
-	r.Metrics.TurnCount = len(r.Turns)
-	r.Conversation = buildConversation(r.Turns)
-	r.Tools = sortedTools(toolIdx)
-	for _, tool := range r.Tools {
-		r.Metrics.ToolCalls += tool.Calls
-		r.Metrics.ToolFailures += tool.Failures
+	execution.Metrics.TurnCount = len(execution.Turns)
+	execution.Conversation = buildConversation(execution.ID, execution.Turns)
+	execution.Tools = sortedTools(toolIdx)
+	for _, tool := range execution.Tools {
+		execution.Metrics.ToolCalls += tool.Calls
+		execution.Metrics.ToolFailures += tool.Failures
 	}
-	if !r.startedAt.IsZero() && !r.finishedAt.IsZero() {
-		r.Metrics.ElapsedSec = r.finishedAt.Sub(r.startedAt).Seconds()
-	}
-	if r.Metrics.ElapsedSec == 0 && r.Metrics.LLMDurationMs > 0 {
-		r.Metrics.ElapsedSec = float64(r.Metrics.LLMDurationMs) / 1000
-	}
-	if r.HasDebrief {
-		if r.Outcome == "" || r.Outcome == "completed" {
-			r.Status = "completed"
-		} else {
-			r.Status = "incomplete"
-		}
-	} else if hasTaskDone {
-		r.Status = "completed"
-	} else {
-		r.Status = "incomplete"
-	}
-	if r.Stage == Review1Stage {
-		r.FileReads = analyzeFileReads(r)
+	execution.Metrics.ElapsedSec = float64(execution.DurationMs) / 1000
+	execution.Status = "incomplete"
+	if execution.Outcome == "completed" {
+		execution.Status = "completed"
 	}
 }
 
-func buildConversation(turns []*TaskCard) []ConversationNode {
+func addCardMetrics(metrics *ReviewMetrics, card *TaskCard) {
+	metrics.LLMCalls++
+	metrics.LLMDurationMs += card.DurationMs
+	metrics.PromptTokens += card.PromptTokens
+	metrics.CompletionTokens += card.CompletionTokens
+	metrics.CacheReadTokens += card.CacheReadTokens
+	metrics.CacheWriteTokens += card.CacheWriteTokens
+	if card.PromptTokens > metrics.MaxPromptTokens {
+		metrics.MaxPromptTokens = card.PromptTokens
+	}
+}
+
+func addMetrics(total *ReviewMetrics, value ReviewMetrics) {
+	total.ElapsedSec += value.ElapsedSec
+	total.LLMDurationMs += value.LLMDurationMs
+	total.PromptTokens += value.PromptTokens
+	total.CompletionTokens += value.CompletionTokens
+	total.CacheReadTokens += value.CacheReadTokens
+	total.CacheWriteTokens += value.CacheWriteTokens
+	total.LLMCalls += value.LLMCalls
+	total.TurnCount += value.TurnCount
+	total.ToolCalls += value.ToolCalls
+	total.ToolFailures += value.ToolFailures
+	if value.MaxPromptTokens > total.MaxPromptTokens {
+		total.MaxPromptTokens = value.MaxPromptTokens
+	}
+}
+
+func buildConversation(executionID string, turns []*TaskCard) []ConversationNode {
 	var nodes []ConversationNode
-	seenMessages := make(map[string]int)
 	nextID := 1
 	appendNode := func(node ConversationNode) {
-		node.ID = fmt.Sprintf("conversation-%d", nextID)
+		node.ID = fmt.Sprintf("execution-%s-%d", executionID, nextID)
 		nextID++
 		nodes = append(nodes, node)
 	}
 
 	for _, turn := range turns {
-		requestCounts := make(map[string]int)
-		for _, message := range turn.Request {
-			role := strings.ToLower(message.Role)
-			if role != "system" && role != "user" {
-				continue
-			}
-			key := role + "\x00" + message.Text
-			requestCounts[key]++
-			if requestCounts[key] <= seenMessages[key] {
-				continue
-			}
-			appendNode(ConversationNode{
-				Kind:    role,
-				Label:   strings.ToUpper(role[:1]) + role[1:],
-				Preview: firstLine(message.Text),
-				Text:    message.Text,
-			})
-		}
-		for key, count := range requestCounts {
-			if count > seenMessages[key] {
-				seenMessages[key] = count
-			}
-		}
+		appendNode(ConversationNode{
+			Kind: "prompt", Label: fmt.Sprintf("Prompt Snapshot · Turn %d", turn.TurnNo),
+			Preview: fmt.Sprintf("%d messages", len(turn.Request)), Messages: turn.Request,
+			TurnNo: turn.TurnNo, PromptTokens: turn.PromptTokens,
+			CacheReadTokens: turn.CacheReadTokens, CacheWriteTokens: turn.CacheWriteTokens,
+			PromptDelta: turn.PromptDelta, MessageDelta: turn.MessageDelta,
+		})
 
 		preview := firstLine(turn.ResponseContent)
 		if preview == "" {
@@ -243,33 +264,19 @@ func buildConversation(turns []*TaskCard) []ConversationNode {
 			preview = fmt.Sprintf("requested %d tool call(s)", len(turn.ToolCalls))
 		}
 		appendNode(ConversationNode{
-			Kind:             "assistant",
-			Label:            fmt.Sprintf("Assistant · Turn %d", turn.TurnNo),
-			Preview:          preview,
-			Text:             turn.ResponseContent,
-			Reasoning:        turn.Reasoning,
-			Model:            turn.Model,
-			StopReason:       turn.StopReason,
-			Error:            turn.Error,
-			TurnNo:           turn.TurnNo,
-			DurationMs:       turn.DurationMs,
-			PromptTokens:     turn.PromptTokens,
+			Kind: "assistant", Label: fmt.Sprintf("Assistant · Turn %d", turn.TurnNo), Preview: preview,
+			Text: turn.ResponseContent, Reasoning: turn.Reasoning, Model: turn.Model,
+			StopReason: turn.StopReason, Error: turn.Error, TurnNo: turn.TurnNo,
+			DurationMs: turn.DurationMs, PromptTokens: turn.PromptTokens,
 			CompletionTokens: turn.CompletionTokens,
 		})
 
 		for _, call := range turn.ToolCalls {
 			appendNode(ConversationNode{
-				Kind:       "tool",
-				Label:      call.Name,
-				Preview:    toolTarget(call.Arguments),
-				Arguments:  call.Arguments,
-				Result:     call.Result,
-				ToolCallID: call.ID,
-				TurnNo:     turn.TurnNo,
-				Depth:      1,
-				DurationMs: call.DurationMs,
-				OK:         call.Ok,
-				HasResult:  call.HasResult,
+				Kind: "tool", Label: call.Name, Preview: toolTarget(call.Arguments),
+				Arguments: call.Arguments, Result: call.Result, ToolCallID: call.ID,
+				TurnNo: turn.TurnNo, Depth: 1, DurationMs: call.DurationMs,
+				OK: call.Ok, HasResult: call.HasResult,
 			})
 		}
 	}
@@ -308,28 +315,17 @@ func toolTarget(arguments string) string {
 	return firstLine(arguments)
 }
 
-func classifyReview(r *ReviewRun) ReviewStage {
-	if r.Kind == "unit" {
+func classifyReview(scope *ReviewScope) ReviewStage {
+	if scope.Kind == "unit" {
 		return Review1Stage
 	}
-	if r.Kind == "lane" && r.Scope == "hypothesis_review" {
+	if scope.Kind == "lane" && scope.Scope == "hypothesis_review" {
 		return Review2Stage
 	}
-	if r.Kind == "file" || r.Scope == "scan" {
+	if scope.Kind == "file" || scope.Scope == "scan" {
 		return ScanStage
 	}
 	return OtherStage
-}
-
-func isAgentTurn(stage ReviewStage, taskType TaskType) bool {
-	switch stage {
-	case Review2Stage:
-		return taskType == HypothesisReviewTask
-	case Review1Stage, ScanStage:
-		return taskType == MainTask
-	default:
-		return taskType == MainTask || taskType == HypothesisReviewTask
-	}
 }
 
 func sortedTools(index map[string]*ToolUsage) []ToolUsage {
@@ -346,6 +342,24 @@ func sortedTools(index map[string]*ToolUsage) []ToolUsage {
 	return tools
 }
 
+func mergeTool(index map[string]*ToolUsage, value ToolUsage) {
+	tool := index[value.Name]
+	if tool == nil {
+		tool = &ToolUsage{Name: value.Name}
+		index[value.Name] = tool
+	}
+	tool.Calls += value.Calls
+	tool.Failures += value.Failures
+	tool.DurationMs += value.DurationMs
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
 func reviewStageRank(stage ReviewStage) int {
 	switch stage {
 	case Review1Stage:
@@ -360,7 +374,7 @@ func reviewStageRank(stage ReviewStage) int {
 }
 
 // Review returns one review scope by its stable session scope id.
-func (vs *ViewSession) Review(id string) *ReviewRun {
+func (vs *ViewSession) Review(id string) *ReviewScope {
 	for _, review := range vs.Reviews {
 		if review.ID == id {
 			return review
