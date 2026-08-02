@@ -167,15 +167,25 @@ class EmptySearchEvaluator:
         searches = [step for step in _tool_steps(trajectory) if step.name == "code_search"]
         if not searches:
             return _not_evaluated(self.name, "Trajectory contains no code_search calls.")
-        empty = [
-            step.step_id
-            for step in searches
-            if len(_tool_response(step).strip()) < self.minimum_result_chars
-        ]
+        total = 0
+        empty = []
+        for step in searches:
+            requests = _code_search_requests(step) or [{}]
+            results = _code_search_result_parts(step)
+            for index in range(len(requests)):
+                total += 1
+                result = results[index] if index < len(results) else ""
+                text = result.strip()
+                if (
+                    len(text) < self.minimum_result_chars
+                    or text.startswith("Error:")
+                    or text.startswith("code_search timed out")
+                ):
+                    empty.append(f"{step.step_id}:{index + 1}")
         return _ratio_evaluation(
             self.name,
-            len(searches) - len(empty),
-            len(searches),
+            total - len(empty),
+            total,
             empty,
             "searches returned a non-empty result",
         )
@@ -407,6 +417,32 @@ def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
     }
 
 
+def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
+    """Describe query batching separately from tool-call frequency."""
+
+    calls = [step for step in _tool_steps(trajectory) if step.name == "code_search"]
+    if not calls:
+        return {
+            "calls": 0,
+            "requests": 0,
+            "rounds": 0,
+            "average_batch": 0.0,
+            "max_batch": 0,
+            "calls_per_round": 0.0,
+        }
+    batches = [max(len(_code_search_requests(step)), 1) for step in calls]
+    rounds = len({step.parent_step_id for step in calls})
+    requests = sum(batches)
+    return {
+        "calls": len(calls),
+        "requests": requests,
+        "rounds": rounds,
+        "average_batch": round(requests / len(calls), 2),
+        "max_batch": max(batches),
+        "calls_per_round": round(len(calls) / rounds, 2),
+    }
+
+
 def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
     """Classify reads by overlap with File messages supplied before the loop."""
 
@@ -553,6 +589,31 @@ def _file_read_requests(step: Step) -> list[dict[str, Any]]:
     if arguments.get("file_path"):
         return [arguments]
     return []
+
+
+def _code_search_requests(step: Step) -> list[dict[str, Any]]:
+    arguments = _tool_arguments(step)
+    searches = arguments.get("searches")
+    if isinstance(searches, list):
+        return [item for item in searches if isinstance(item, dict)]
+    # Historical ATIF remains analyzable even though the runtime only accepts
+    # searches[]. This is a trace reader, not a public execution entrypoint.
+    if "search_text" in arguments:
+        return [arguments]
+    return []
+
+
+def _code_search_result_parts(step: Step) -> list[str]:
+    response = _tool_response(step)
+    markers = list(
+        re.finditer(r"(?m)^===== CODE_SEARCH RESULT \d+/\d+ =====\n", response)
+    )
+    if not markers or markers[0].start() != 0:
+        return [response]
+    return [
+        response[marker.end() : markers[index + 1].start() if index + 1 < len(markers) else len(response)].strip()
+        for index, marker in enumerate(markers)
+    ]
 
 
 def _file_read_result_parts(step: Step) -> list[str]:

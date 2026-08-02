@@ -29,9 +29,8 @@ func (r LLMToolResult) failed() bool {
 	return r.IsError || strings.HasPrefix(strings.TrimSpace(r.Content), "Error:")
 }
 
-// SearchResult covers content search and file discovery. Both are query
-// results whose raw hits can be re-derived; their compact forms keep the query
-// and hit locations so an exhausted path is not silently searched again.
+// SearchResult is one content-search member or one file-discovery result. Its
+// raw hits can be re-derived, so compact forms retain the query and locations.
 type SearchResult struct {
 	Tool       string
 	Query      string
@@ -41,16 +40,14 @@ type SearchResult struct {
 }
 
 func (r *SearchResult) FromLLM(result LLMToolResult) bool {
-	if result.failed() || (result.Tool != CodeSearchToolName && result.Tool != FileFindToolName) {
+	// code_search is batch-only and is decoded by SearchBatch; accepting a
+	// bare successful result here would hide a broken provider envelope.
+	if result.failed() || result.Tool != FileFindToolName {
 		return false
-	}
-	queryKey := "search_text"
-	if result.Tool == FileFindToolName {
-		queryKey = "query_name"
 	}
 	*r = SearchResult{
 		Tool:       result.Tool,
-		Query:      stringArgument(result.Arguments, queryKey),
+		Query:      stringArgument(result.Arguments, "query_name"),
 		Content:    result.Content,
 		ToolCallID: result.ToolCallID,
 		NoMatches:  searchHadNoMatches(result.Content),
@@ -59,10 +56,13 @@ func (r *SearchResult) FromLLM(result LLMToolResult) bool {
 }
 
 func (r SearchResult) ToLLM(level CompactionLevel) llm.Message {
+	return llm.NewToolResultMessage(r.ToolCallID, r.render(level))
+}
+
+func (r SearchResult) render(level CompactionLevel) string {
 	text := r.Content
 	if r.NoMatches && level >= CompactionReference {
-		text = fmt.Sprintf("%s %q returned no matches; this negative result is retained after compaction.", r.Tool, r.Query)
-		return llm.NewToolResultMessage(r.ToolCallID, text)
+		return fmt.Sprintf("%s %q returned no matches; this negative result is retained after compaction.", r.Tool, r.Query)
 	}
 	switch level {
 	case CompactionCondensed:
@@ -71,7 +71,7 @@ func (r SearchResult) ToLLM(level CompactionLevel) llm.Message {
 		text = fmt.Sprintf("%s result for %q compacted to a reference; rerun %s if exact hits are needed.",
 			r.Tool, r.Query, r.Tool)
 	}
-	return llm.NewToolResultMessage(r.ToolCallID, text)
+	return text
 }
 
 func (r SearchResult) ToolName() string { return r.Tool }
@@ -187,7 +187,7 @@ type llmDecoder interface {
 // The dispatcher contains no message-specific parsing; each decoder sits next
 // to that type's ToLLM so the two directions evolve together.
 func FromLLM(result LLMToolResult) Msg {
-	decoders := []llmDecoder{&FileBatch{}, &File{}, &SearchResult{}, &Diff{}}
+	decoders := []llmDecoder{&FileBatch{}, &File{}, &SearchBatch{}, &SearchResult{}, &Diff{}}
 	for _, decoder := range decoders {
 		if decoder.FromLLM(result) {
 			return decoder

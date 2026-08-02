@@ -242,6 +242,24 @@ tool:      Diff(paths=[...])
 ... repeated agent turns ...
 ```
 
+#### Review 1 工具的批量契约
+
+Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，但对 Review 1 来说，检索工具自身显式
+支持批量仍更合适。模型看到一个改动后，常常能一次确定多个**彼此独立**的补证目标，例如多个相关
+文件范围、多个 imported symbol 或多条调用线索；把它们分别包装成多个 tool call，仍会制造多份调用、
+结果消息和轨迹节点，也无法由 provider 统一约束顺序与总输出预算。更重要的是，`reads[]` / `searches[]`
+直接出现在参数 schema 里，是比“允许一次返回多个 tool call”更明确的 affordance，会持续提醒模型先收集
+可并行目标、再批量补证。
+
+因此 `file_read` 使用 `reads[]`，`code_search` 使用 `searches[]`，单个目标也走同一数组形状：
+
+- 已经确定且互不依赖的目标放进同一调用，由 provider 并行执行并按请求顺序返回；
+- 单个成员失败不影响同批其它成员；批量整体受共享输出预算约束；
+- Harness 保留一个 tool call / result 配对，同时把成员恢复为 typed message，供 compaction、覆盖判断和
+  trajectory eval 分别统计；
+- 只有前一个结果决定后一个读取或 query 时才串行调用。批量能力不是“看到 import 就全搜”，仍由
+  当前 lead 决定哪些目标值得补证。
+
 每次调用模型前，Execution 通过 AgentGo `BeforeTurn` 在持久 conversation 上追加本轮控制消息，随后
 ContextManager 做统一投影：
 
@@ -275,9 +293,8 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 
 `file_read` 需要区分两个信号，不能合成一个“重复率”：
 
-工具默认只提供 `reads[]` 批量形状，单个范围也放进数组。已确定且互不依赖的范围一次提交，provider
-并行读取并保持返回顺序；只有前一个结果决定下一个目标时才新开一轮。这样减少 tool call / 模型往返，
-但每个成员仍独立参与覆盖判断、typed compaction 与轨迹统计。
+工具默认只提供批量形状；这样减少 tool call / 模型往返，但每个成员仍独立参与覆盖判断、typed
+compaction 与轨迹统计。
 
 - **已覆盖读取**：请求范围此刻仍完整存在于初始源码消息或先前工具结果中。Harness 直接返回复用提示，
   避免再次装入同一份内容；若范围只部分覆盖或内容已被淘汰，仍正常执行读取。

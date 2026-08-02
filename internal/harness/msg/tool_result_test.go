@@ -3,19 +3,23 @@ package msg
 import (
 	"strings"
 	"testing"
+
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
 func TestFromLLMToolResultFamilies(t *testing.T) {
 	search := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"search_text": "NewExecution"},
-		Content:   "File: internal/harness/execution.go\nMatch lines: 2\n10|func NewExecution\n20|NewExecution(spec)\n",
+		Arguments: map[string]any{"searches": []any{map[string]any{"search_text": "NewExecution"}}},
+		Content: tool.EncodeCodeSearchResults([]string{
+			"File: internal/harness/execution.go\nMatch lines: 2\n10|func NewExecution\n20|NewExecution(spec)\n",
+		}),
 	})
-	searchResult, ok := search.(*SearchResult)
-	if !ok || searchResult.Query != "NewExecution" {
+	searchBatch, ok := search.(*SearchBatch)
+	if !ok || len(searchBatch.Results()) != 1 || searchBatch.Results()[0].Query != "NewExecution" {
 		t.Fatalf("search result = %#v", search)
 	}
-	condensed := searchResult.ToLLM(CompactionCondensed)
+	condensed := searchBatch.ToLLM(CompactionCondensed)
 	if condensed.ToolCallID != "search-1" || !strings.Contains(condensed.ExtractText(), "2 hits") {
 		t.Fatalf("condensed search = %+v", condensed)
 	}
@@ -79,5 +83,16 @@ func TestFromLLMToolErrorStaysReceipt(t *testing.T) {
 	})
 	if _, ok := decoded.(*ToolReceipt); !ok {
 		t.Fatalf("wire error metadata should take precedence over a file-shaped payload: %T", decoded)
+	}
+}
+
+func TestFromLLMBareCodeSearchResultStaysReceipt(t *testing.T) {
+	decoded := FromLLM(LLMToolResult{
+		Tool: CodeSearchToolName, ToolCallID: "search-1",
+		Arguments: map[string]any{"searches": []any{map[string]any{"search_text": "x"}}},
+		Content:   "File: a.go\nMatch lines: 1\n1|x\n",
+	})
+	if _, ok := decoded.(*ToolReceipt); !ok {
+		t.Fatalf("bare code_search result should expose a broken batch envelope: %T", decoded)
 	}
 }

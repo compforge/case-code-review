@@ -50,6 +50,7 @@ from ccr_trajectory import (
     PromptFileCoverageEvaluator,
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
+    code_search_stats,
     file_read_fragmentation,
     file_read_stats,
     prompt_file_read_overlap,
@@ -115,6 +116,7 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
         "tool_freq": tool_frequencies(trajectory),
+        "code_searches": code_search_stats(trajectory),
         "file_reads": file_read_stats(trajectory),
         "prompt_overlap": prompt_file_read_overlap(trajectory),
         "read_fragmentation": file_read_fragmentation(trajectory),
@@ -304,6 +306,15 @@ def main() -> int:
                     print(
                         f"   read_fragmentation minimal={fragmented['minimal_ranges']} "
                         f"mergeable={fragmented['mergeable_reads']}"
+                    )
+                if sig["code_searches"]["calls"]:
+                    searches = sig["code_searches"]
+                    print(
+                        f"   code_search calls={searches['calls']} "
+                        f"requests={searches['requests']} rounds={searches['rounds']} "
+                        f"avg_batch={searches['average_batch']} "
+                        f"max_batch={searches['max_batch']} "
+                        f"calls/round={searches['calls_per_round']}"
                     )
                 for result in sig["evaluations"]:
                     if result["label"] == "fail":
