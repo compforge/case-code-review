@@ -49,18 +49,18 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "c1",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {"file_path": "a.go"},
                                 },
                                 {
                                     "tool_call_id": "c2",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {"file_path": "a.go"},
                                 },
                                 {
                                     "tool_call_id": "c3",
-                                    "function_name": "code_search",
-                                    "arguments": {"search_text": "Thing"},
+                                    "function_name": "search_code",
+                                    "arguments": {"query": "Thing"},
                                 },
                                 {
                                     "tool_call_id": "c4",
@@ -305,7 +305,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "r1",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {
                                         "file_path": "a.go",
                                         "start_line": 1,
@@ -314,7 +314,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 },
                                 {
                                     "tool_call_id": "r2",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {
                                         "file_path": "a.go",
                                         "start_line": 50,
@@ -369,12 +369,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "initial",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {"file_path": "a.go"},
                                 },
                                 {
                                     "tool_call_id": "runtime",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {"file_path": "b.go"},
                                 },
                             ],
@@ -382,11 +382,11 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 "results": [
                                     {
                                         "source_call_id": "initial",
-                                        "content": "Already available in the current context from the initial source context: a.go lines 10-20. Reuse that content; call file_read only for a range not shown there.",
+                                        "content": "Already available in the current context from the initial source context: a.go lines 10-20. Reuse that content; call read_files only for a range not shown there.",
                                     },
                                     {
                                         "source_call_id": "runtime",
-                                        "content": "Already available in the current context from an earlier file_read result: b.go lines 30-40. Reuse that content; call file_read only for a range not shown there.",
+                                        "content": "Already available in the current context from an earlier read_files result: b.go lines 30-40. Reuse that content; call read_files only for a range not shown there.",
                                     },
                                 ]
                             },
@@ -424,7 +424,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "batch-1",
-                                    "function_name": "file_read",
+                                    "function_name": "read_files",
                                     "arguments": {
                                         "reads": [
                                             {"file_path": "a.go", "start_line": 1, "end_line": 10},
@@ -480,11 +480,11 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "search-1",
-                                    "function_name": "code_search",
+                                    "function_name": "search_code",
                                     "arguments": {
                                         "searches": [
-                                            {"search_text": "Alpha"},
-                                            {"search_text": "Missing"},
+                                            {"query": "Alpha"},
+                                            {"query": "Missing"},
                                         ]
                                     },
                                 }

@@ -11,7 +11,7 @@ import (
 func TestExcludeToolDef(t *testing.T) {
 	defs := []llm.ToolDef{
 		{Type: "function", Function: llm.FunctionDef{Name: "task_done"}},
-		{Type: "function", Function: llm.FunctionDef{Name: "file_read"}},
+		{Type: "function", Function: llm.FunctionDef{Name: "read_files"}},
 		{Type: "function", Function: llm.FunctionDef{Name: "file_read_diff"}},
 		{Type: "function", Function: llm.FunctionDef{Name: "code_comment"}},
 	}

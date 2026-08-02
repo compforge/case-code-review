@@ -10,7 +10,7 @@ import (
 func TestFromLLMToolResultFamilies(t *testing.T) {
 	search := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{"search_text": "NewExecution"}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "NewExecution"}}},
 		Content: tool.EncodeCodeSearchResults([]string{
 			"File: internal/harness/execution.go\nMatch lines: 2\n10|func NewExecution\n20|NewExecution(spec)\n",
 		}),
@@ -63,7 +63,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 func TestFromLLMToolErrorStaysReceipt(t *testing.T) {
 	decoded := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"search_text": "x"}, Content: "Error: invalid pattern",
+		Arguments: map[string]any{"query": "x"}, Content: "Error: invalid pattern",
 	})
 	if _, ok := decoded.(*ToolReceipt); !ok {
 		t.Fatalf("recoverable error should not become a compactable search: %T", decoded)
@@ -71,7 +71,7 @@ func TestFromLLMToolErrorStaysReceipt(t *testing.T) {
 
 	decoded = FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-2", IsError: true,
-		Arguments: map[string]any{"search_text": "x"}, Content: "invalid regular expression",
+		Arguments: map[string]any{"query": "x"}, Content: "invalid regular expression",
 	})
 	if _, ok := decoded.(*ToolReceipt); !ok {
 		t.Fatalf("wire error metadata should take precedence over result wording: %T", decoded)
@@ -89,10 +89,10 @@ func TestFromLLMToolErrorStaysReceipt(t *testing.T) {
 func TestFromLLMBareCodeSearchResultStaysReceipt(t *testing.T) {
 	decoded := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{"search_text": "x"}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "x"}}},
 		Content:   "File: a.go\nMatch lines: 1\n1|x\n",
 	})
 	if _, ok := decoded.(*ToolReceipt); !ok {
-		t.Fatalf("bare code_search result should expose a broken batch envelope: %T", decoded)
+		t.Fatalf("bare search_code result should expose a broken batch envelope: %T", decoded)
 	}
 }

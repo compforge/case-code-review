@@ -117,7 +117,7 @@ make build
 │   ├── llm/              # LLM APIクライアント（Anthropic & OpenAI）
 │   ├── model/            # データモデル
 │   ├── session/          # レビューセッション管理
-│   ├── tool/             # 組み込みツール（file_read、code_searchなど）
+│   ├── tool/             # 組み込みツール（read_files、search_codeなど）
 │   ├── telemetry/        # OpenTelemetry統合
 │   └── viewer/           # WebUIセッションビューアー
 ├── pages/                # WebUIフロントエンド

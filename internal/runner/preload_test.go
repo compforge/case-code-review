@@ -144,7 +144,7 @@ func TestAssembleReviewMessages(t *testing.T) {
 		msg.NewFile("n.go", 5, 9, 9, "File: n.go (Total lines: 9)\nLINE_RANGE: 5-9\n5|z").
 			ConfigurePresentation("related caller n.go::C", ""),
 	}
-	notes := []string{"File: big.go — 99999 bytes exceeds the preload budget; read on demand via file_read"}
+	notes := []string{"File: big.go — 99999 bytes exceeds the preload budget; read on demand via read_files"}
 	a := &Runner{}
 
 	deb := session.Debrief{}

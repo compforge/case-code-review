@@ -11,7 +11,7 @@ import (
 )
 
 func TestToolDefsAreConvergent(t *testing.T) {
-	names := []string{"task_done", "code_comment", "post_bulletin", "file_read", "file_read_base", "code_search"}
+	names := []string{"task_done", "code_comment", "post_bulletin", "read_files", "read_base_files", "search_code"}
 	var input []llm.ToolDef
 	for _, name := range names {
 		input = append(input, llm.ToolDef{Function: llm.FunctionDef{Name: name}})
@@ -27,7 +27,7 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	if got["task_done"] {
 		t.Fatalf("Review 2 exposed redundant completion tool: %v", got)
 	}
-	for _, required := range []string{"file_read", "file_read_base", "code_search", SubmitAssessments.Name()} {
+	for _, required := range []string{"read_files", "read_base_files", "search_code", SubmitAssessments.Name()} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
 		}

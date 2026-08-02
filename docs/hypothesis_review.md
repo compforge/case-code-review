@@ -86,7 +86,7 @@ user: Hypothesis A(
         evidence_paths,
         prior_assessments=[]
       )
-assistant: tool_call(file_read_diff / file_read_base / file_read / code_search)
+assistant: tool_call(file_read_diff / read_base_files / read_files / search_code)
 tool: <typed evidence result>
 assistant: tool_call(submit_assessments)
 tool: <accepted; execution completes>

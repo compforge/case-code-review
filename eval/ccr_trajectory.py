@@ -164,9 +164,9 @@ class EmptySearchEvaluator:
         self, trajectory: Trajectory, reference: Trajectory | None = None
     ) -> Evaluation:
         del reference
-        searches = [step for step in _tool_steps(trajectory) if step.name == "code_search"]
+        searches = [step for step in _tool_steps(trajectory) if step.name == "search_code"]
         if not searches:
-            return _not_evaluated(self.name, "Trajectory contains no code_search calls.")
+            return _not_evaluated(self.name, "Trajectory contains no search_code calls.")
         total = 0
         empty = []
         for step in searches:
@@ -179,7 +179,7 @@ class EmptySearchEvaluator:
                 if (
                     len(text) < self.minimum_result_chars
                     or text.startswith("Error:")
-                    or text.startswith("code_search timed out")
+                    or text.startswith("search_code timed out")
                 ):
                     empty.append(f"{step.step_id}:{index + 1}")
         return _ratio_evaluation(
@@ -193,7 +193,7 @@ class EmptySearchEvaluator:
 
 @dataclass(frozen=True, slots=True)
 class FileReadCoverageEvaluator:
-    """Score how much file_read output adds coverage not seen earlier."""
+    """Score how much read_files output adds coverage not seen earlier."""
 
     name: str = "file_read_coverage"
     weight: float = 1.0
@@ -208,7 +208,7 @@ class FileReadCoverageEvaluator:
         overlapping_steps: list[str] = []
 
         for step in _tool_steps(trajectory):
-            if step.name != "file_read" or step.status == "error":
+            if step.name != "read_files" or step.status == "error":
                 continue
             for path, start, end in _file_read_ranges(step):
                 delivered = end - start + 1
@@ -223,7 +223,7 @@ class FileReadCoverageEvaluator:
 
         if total_lines == 0:
             return _not_evaluated(
-                self.name, "Trajectory contains no successful ranged file_read output."
+                self.name, "Trajectory contains no successful ranged read_files output."
             )
         score = round(novel_lines / total_lines, 3)
         return Evaluation(
@@ -239,7 +239,7 @@ class FileReadCoverageEvaluator:
 
 @dataclass(frozen=True, slots=True)
 class PromptFileCoverageEvaluator:
-    """Measure file_read content already visible in initial File messages."""
+    """Measure read_files content already visible in initial File messages."""
 
     name: str = "file_read_prompt_novelty"
     weight: float = 1.0
@@ -251,7 +251,7 @@ class PromptFileCoverageEvaluator:
         overlap = prompt_file_read_overlap(trajectory)
         if overlap["total_lines"] == 0:
             return _not_evaluated(
-                self.name, "Trajectory contains no successful ranged file_read output."
+                self.name, "Trajectory contains no successful ranged read_files output."
             )
         novel = overlap["total_lines"] - overlap["covered_lines"]
         score = round(novel / overlap["total_lines"], 3)
@@ -281,7 +281,7 @@ class FileReadFragmentationEvaluator:
         fragmentation = file_read_fragmentation(trajectory)
         calls = fragmentation["calls"]
         if calls == 0:
-            return _not_evaluated(self.name, "Trajectory contains no ranged file_read output.")
+            return _not_evaluated(self.name, "Trajectory contains no ranged read_files output.")
         merged = fragmentation["minimal_ranges"]
         return Evaluation(
             name=self.name,
@@ -466,7 +466,7 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
 
     reads: Counter[str] = Counter()
     for step in _tool_steps(trajectory):
-        if step.name != "file_read":
+        if step.name != "read_files":
             continue
         reads.update(
             str(request.get("file_path") or "?")
@@ -478,7 +478,7 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
 def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
     """Describe how file reads are spread across model turns."""
 
-    calls = [step for step in _tool_steps(trajectory) if step.name == "file_read"]
+    calls = [step for step in _tool_steps(trajectory) if step.name == "read_files"]
     if not calls:
         return {
             "calls": 0,
@@ -504,7 +504,7 @@ def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
 def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
     """Describe query batching separately from tool-call frequency."""
 
-    calls = [step for step in _tool_steps(trajectory) if step.name == "code_search"]
+    calls = [step for step in _tool_steps(trajectory) if step.name == "search_code"]
     if not calls:
         return {
             "calls": 0,
@@ -542,7 +542,7 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
     unmeasured = 0
     overlapping_steps: list[str] = []
     for step in _tool_steps(trajectory):
-        if step.name != "file_read":
+        if step.name != "read_files":
             continue
         request_count = max(len(_file_read_requests(step)), 1)
         if step.status == "error":
@@ -606,7 +606,7 @@ def file_read_fragmentation(trajectory: Trajectory) -> dict[str, Any]:
 
     by_path: dict[str, list[tuple[int, int, str]]] = {}
     for step in _tool_steps(trajectory):
-        if step.name != "file_read" or step.status == "error":
+        if step.name != "read_files" or step.status == "error":
             continue
         for path, start, end in _file_read_observed_ranges(step):
             by_path.setdefault(path, []).append((start, end, step.step_id))
@@ -682,7 +682,7 @@ def _code_search_requests(step: Step) -> list[dict[str, Any]]:
         return [item for item in searches if isinstance(item, dict)]
     # Historical ATIF remains analyzable even though the runtime only accepts
     # searches[]. This is a trace reader, not a public execution entrypoint.
-    if "search_text" in arguments:
+    if "query" in arguments:
         return [arguments]
     return []
 
@@ -742,7 +742,7 @@ def _already_available_ranges(step: Step) -> list[tuple[str, str, int, int]]:
     for response in _file_read_result_parts(step):
         match = re.search(
             r"Already available in the current context from "
-            r"(the initial source context|an earlier file_read result): "
+            r"(the initial source context|an earlier read_files result): "
             r"(.+?) lines (\d+)-(\d+)\.",
             response,
         )

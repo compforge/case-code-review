@@ -36,7 +36,7 @@ func analyzeFileReads(r *ReviewScope) FileReadMetrics {
 	readCounts := map[string]int{}
 	for _, card := range r.Calls {
 		for _, call := range card.ToolCalls {
-			if call.Name != "file_read" {
+			if call.Name != "read_files" {
 				continue
 			}
 			metrics.Calls++

@@ -22,6 +22,9 @@ import (
 const (
 	maxBulletinsPerExecution = 3
 	maxBulletinTextRunes     = 300
+	// Planning is a finite checklist, not permission to consume the full
+	// provider turn ceiling. Leave one following turn for final submission.
+	maxInvestigationTurns = 12
 )
 
 type Outcome struct {
@@ -146,6 +149,7 @@ func (e *Executor) Run(
 		FileDedupEnabled:        e.fileDedup,
 		FileEvictEnabled:        e.fileEvict,
 		WrapUpPrompt:            e.wrapUpPrompt,
+		WrapUpAfterTurns:        maxInvestigationTurns,
 		WrapUpAllowedTools:      []string{SubmitHypotheses.Name()},
 		CompletionTool:          SubmitHypotheses.Name(),
 		CompletionPrompt:        "The Unit Review is not complete until you call submit_hypotheses exactly once. Submit an empty hypotheses array when no material issue remains.",

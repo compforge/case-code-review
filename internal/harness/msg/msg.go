@@ -7,7 +7,7 @@
 // Why a domain layer (see docs/harness.md): wire roles erase identity.
 // Once a file's content is flattened into a user-role string, nothing can
 // tell it apart from instructions — so it can't be deduplicated against a
-// later file_read, evicted by staleness when the context tightens, or
+// later read_files, evicted by staleness when the context tightens, or
 // re-rendered for a provider that prefers tool_result form. Typed messages
 // keep that identity until the last moment; rendering decisions become
 // per-type policy in one place instead of assembly-time string concatenation.

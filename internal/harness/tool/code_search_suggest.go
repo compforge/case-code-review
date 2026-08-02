@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Empty-search rescue: when a code_search returns zero hits the agent is
+// Empty-search rescue: when a search_code returns zero hits the agent is
 // usually guessing an identifier name that doesn't exist (measured on real
 // review trajectories: ~half of all searches). A bare "No matches found"
 // gives it nothing to climb on, so the next guess is just as blind — each

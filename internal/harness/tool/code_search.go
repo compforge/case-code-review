@@ -20,7 +20,7 @@ const (
 	gitGrepTimeout          = 10 * time.Second
 )
 
-// CodeSearchRequest is one independent query in code_search's batch-only
+// CodeSearchRequest is one independent query in search_code's batch-only
 // contract. The stable shape lets the model confirm several known leads in a
 // single turn instead of spending one LLM round per query.
 type CodeSearchRequest struct {
@@ -30,8 +30,7 @@ type CodeSearchRequest struct {
 	UsePerlRegexp bool
 }
 
-// ParseCodeSearchRequests parses searches[]. The former top-level
-// search_text shape is intentionally not accepted by the runtime.
+// ParseCodeSearchRequests parses the provider's only contract: searches[].
 func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 	values, ok := args["searches"].([]any)
 	if !ok || len(values) == 0 {
@@ -47,7 +46,7 @@ func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 			return nil, fmt.Errorf("searches[%d] must be an object", i)
 		}
 		requests[i] = CodeSearchRequest{
-			SearchText:    stringValue(item["search_text"]),
+			SearchText:    stringValue(item["query"]),
 			FilePatterns:  stringValues(item["file_patterns"]),
 			CaseSensitive: boolValue(item["case_sensitive"]),
 			UsePerlRegexp: boolValue(item["use_perl_regexp"]),
@@ -136,7 +135,7 @@ func (p *CodeSearchProvider) executeOne(
 	maxCount int,
 ) (string, error) {
 	if strings.TrimSpace(request.SearchText) == "" {
-		return "Error: search_text is blank", nil
+		return "Error: query is blank", nil
 	}
 	for _, pattern := range request.FilePatterns {
 		// A pathspec containing .. can make git grep read outside RepoDir.
@@ -153,7 +152,7 @@ func (p *CodeSearchProvider) executeOne(
 		maxCount,
 	)
 	if err != nil {
-		return "", fmt.Errorf("code_search failed: %w", err)
+		return "", fmt.Errorf("search_code failed: %w", err)
 	}
 	return result, nil
 }
@@ -248,7 +247,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return "code_search timed out. Try narrowing file_patterns to a more specific path.", nil
+			return "search_code timed out. Try narrowing file_patterns to a more specific path.", nil
 		}
 		if errors.Is(err, context.Canceled) {
 			return "", err

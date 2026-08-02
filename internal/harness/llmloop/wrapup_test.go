@@ -105,9 +105,9 @@ func TestWrapUp_DeadlineForcesVerdictTurn(t *testing.T) {
 
 func TestWrapUp_RoundBudgetForcesVerdictTurn(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResp("code_search", `{"search_text":"x"}`), // round 1 (3 left after)
-		toolCallResp("code_search", `{"search_text":"y"}`), // round 2 (2 left → wrap-up fires before round 3)
-		toolCallResp("task_done", `{}`),                    // round 3: obeys wrap-up
+		toolCallResp("search_code", `{"query":"x"}`), // round 1 (3 left after)
+		toolCallResp("search_code", `{"query":"y"}`), // round 2 (2 left → wrap-up fires before round 3)
+		toolCallResp("task_done", `{}`),              // round 3: obeys wrap-up
 	}}
 	r := newWrapUpRunner(client, 4)
 
@@ -136,7 +136,7 @@ func TestWrapUp_RoundBudgetForcesVerdictTurn(t *testing.T) {
 
 func TestWrapUp_NoTaskDoneRecordsIncomplete(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResp("code_search", `{"search_text":"x"}`), // repeated for every round
+		toolCallResp("search_code", `{"query":"x"}`), // repeated for every round
 	}}
 	r := newWrapUpRunner(client, 3)
 

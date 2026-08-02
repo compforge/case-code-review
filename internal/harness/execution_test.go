@@ -383,15 +383,15 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
-		toolCallResponseID("call-2", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{
-			toolDef("file_read"),
+			toolDef("read_files"),
 			toolDef("task_done"),
 		},
 		Tools:            registry,
@@ -420,7 +420,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 		}
 		text := message.ExtractText()
 		switch {
-		case strings.Contains(text, "Already available in the current context from an earlier file_read result"):
+		case strings.Contains(text, "Already available in the current context from an earlier read_files result"):
 			covered++
 		case strings.Contains(text, "func F() {}"):
 			full++
@@ -447,7 +447,7 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	}
 	domain, ok := normalized[0].(domainMessage)
 	if !ok {
-		t.Fatalf("file_read result stayed wire-shaped: %T", normalized[0])
+		t.Fatalf("read_files result stayed wire-shaped: %T", normalized[0])
 	}
 	batch, ok := domain.value.(*msg.FileBatch)
 	if !ok || len(batch.Files()) != 1 {
@@ -463,7 +463,7 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 	assistant := wireToAgentMessage(llm.NewToolCallMessage("", []llm.ToolCall{{
 		ID: "search-1", Type: "function",
-		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"search_text":"NewExecution"}]}`},
+		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"query":"NewExecution"}]}`},
 	}}))
 	result := wireToAgentMessage(llm.NewToolResultMessage(
 		"search-1", tool.EncodeCodeSearchResults([]string{
@@ -498,7 +498,7 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 	}
 	manager.remember(nil, projection.Messages, projection.Usage, "test", false)
 	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
-		t.Fatal("baseline source must not suppress a current-snapshot file_read")
+		t.Fatal("baseline source must not suppress a current-snapshot read_files")
 	}
 }
 
@@ -510,7 +510,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
@@ -520,7 +520,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 			msg.NewFile("pkg/a.go", 1, 3, 3, body).
 				ConfigurePresentation("code under review", ""),
 		},
-		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		ToolDefs:         []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:            registry,
 		MaxTurns:         2,
 		ContextWindow:    10_000,
@@ -530,7 +530,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 		t.Fatal(err)
 	}
 	if result.State != OutcomeCompleted || provider.calls != 0 {
-		t.Fatalf("result=%+v provider calls=%d, want completed without executing file_read", result, provider.calls)
+		t.Fatalf("result=%+v provider calls=%d, want completed without executing read_files", result, provider.calls)
 	}
 	if !strings.Contains(requestText(client.Requests()[1]), "Already available in the current context from the initial source context") {
 		t.Fatalf("second request lacks preload coverage notice: %#v", client.Requests()[1].Messages)
@@ -550,7 +550,7 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"},{"file_path":"pkg/b.go"}]}`, nil),
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"},{"file_path":"pkg/b.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
@@ -559,7 +559,7 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 1, 3, 3, preload),
 		},
-		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		ToolDefs:         []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:            registry,
 		MaxTurns:         2,
 		ContextWindow:    10_000,
@@ -636,14 +636,14 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	registry.Register(provider)
 	registry.Freeze()
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:          client,
 		Messages:           []msg.Msg{msg.Text("user", "review")},
-		ToolDefs:           []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:              registry,
 		MaxTurns:           2,
 		WrapUpPrompt:       "wrap up now",
@@ -677,7 +677,7 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":20}]}`, nil),
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":20}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	_, err := runExecution(context.Background(), ExecutionSpec{
@@ -686,7 +686,7 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 10, 20, 30, "File: pkg/a.go (Total lines: 30)\nLINE_RANGE: 10-20\n10|func F() {}\n"),
 		},
-		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		ToolDefs:         []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:            registry,
 		MaxTurns:         2,
 		ContextWindow:    10_000,
@@ -819,6 +819,49 @@ func TestExecutionInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 	if !strings.Contains(requestText(requests[1]), "wrap up now") ||
 		!strings.Contains(requestText(requests[2]), "wrap up now") {
 		t.Fatal("wrap-up must be injected and retained for the final two turns")
+	}
+}
+
+func TestExecutionWrapsUpAfterPlannedInvestigationTurns(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
+		return "ok", nil
+	}))
+	registry.Freeze()
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "echo", `{}`, nil),
+		toolCallResponseID("call-2", "echo", `{}`, nil),
+		toolCallResponseID("call-3", "task_done", `{}`, nil),
+	}}
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages:  []msg.Msg{msg.Text("user", "review")},
+		ToolDefs: []llm.ToolDef{
+			toolDef("echo"),
+			toolDef("task_done"),
+		},
+		Tools:            registry,
+		MaxTurns:         10,
+		WrapUpPrompt:     "wrap up now",
+		WrapUpAfterTurns: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+
+	requests := client.Requests()
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want 3", len(requests))
+	}
+	if strings.Contains(requestText(requests[1]), "wrap up now") {
+		t.Fatal("wrap-up was injected before two complete investigation turns")
+	}
+	if !strings.Contains(requestText(requests[2]), "wrap up now") {
+		t.Fatal("wrap-up was not injected on the first turn after the planned investigation window")
 	}
 }
 

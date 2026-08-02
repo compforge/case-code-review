@@ -7,7 +7,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// SearchBatch keeps code_search's one call/result pairing while exposing each
+// SearchBatch keeps search_code's one call/result pairing while exposing each
 // query as a typed SearchResult for independent compaction and diagnostics.
 type SearchBatch struct {
 	items      []searchBatchItem
@@ -35,7 +35,7 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 	for i, part := range parts {
 		trimmed := strings.TrimSpace(part)
 		if trimmed == "" || strings.HasPrefix(trimmed, "Error:") ||
-			strings.HasPrefix(trimmed, "code_search timed out") {
+			strings.HasPrefix(trimmed, "search_code timed out") {
 			items[i].raw = part
 			continue
 		}

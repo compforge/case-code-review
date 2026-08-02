@@ -46,7 +46,7 @@ func TestWriteDebrief(t *testing.T) {
 		rec.Response = rr
 		ss.TaskRecords[taskType] = append(ss.TaskRecords[taskType], rec)
 	}
-	mk(MainTask, "file_read")
+	mk(MainTask, "read_files")
 	mk(MainTask, "task_done")
 	mk(PlanTask, "")
 
@@ -100,7 +100,7 @@ func TestWriteDebrief(t *testing.T) {
 		t.Fatalf("rounds off: %v", rounds)
 	}
 	tools := deb["tool_calls"].(map[string]any)
-	if tools["file_read"].(float64) != 1 || tools["task_done"].(float64) != 1 {
+	if tools["read_files"].(float64) != 1 || tools["task_done"].(float64) != 1 {
 		t.Fatalf("tool_calls off: %v", tools)
 	}
 	tokens := deb["tokens"].(map[string]any)

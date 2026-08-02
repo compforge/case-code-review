@@ -27,8 +27,8 @@ func TestFileFromLLM(t *testing.T) {
 		t.Fatalf("parsed identity off: %+v", f)
 	}
 	// Other tools and malformed results stay Raw.
-	if (&File{}).FromLLM(LLMToolResult{Tool: "code_search", ToolCallID: "c1", Content: "hits"}) {
-		t.Fatal("non-file_read must not promote")
+	if (&File{}).FromLLM(LLMToolResult{Tool: "search_code", ToolCallID: "c1", Content: "hits"}) {
+		t.Fatal("non-read_files must not promote")
 	}
 	if (&File{}).FromLLM(LLMToolResult{Tool: FileReadToolName, ToolCallID: "c1", Content: `Error: file "x" not found`}) {
 		t.Fatal("error result must not promote")
@@ -116,7 +116,7 @@ func TestFileStubKeepsPairing(t *testing.T) {
 	e := mkFile(t, "pkg/b.go", 10, 1, 10)
 	e.Stub(StubEvicted)
 	ew := e.Lower()
-	if txt := ew.ExtractText(); !strings.Contains(txt, "context budget") || !strings.Contains(txt, "file_read") {
+	if txt := ew.ExtractText(); !strings.Contains(txt, "context budget") || !strings.Contains(txt, "read_files") {
 		t.Fatalf("evicted stub text off: %q", txt)
 	}
 	f.Stub(StubEvicted)

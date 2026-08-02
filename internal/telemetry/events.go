@@ -82,7 +82,7 @@ func PrintTraceSummary(filesReviewed, commentsGenerated int64, inputTokens, outp
 
 // PrintToolCallStarted prints a line when a tool begins execution.
 // Args are summarized as key-value pairs (path, search terms, etc.).
-// Example: [ccr]   ▶ file_read "internal/config/rules/loader.go"
+// Example: [ccr]   ▶ read_files "internal/config/rules/loader.go"
 func PrintToolCallStarted(toolName string, args map[string]any) {
 	summary := summarizeArgs(args)
 	if summary != "" {
@@ -93,13 +93,13 @@ func PrintToolCallStarted(toolName string, args map[string]any) {
 }
 
 // PrintToolCallFinished prints a line when a tool finishes successfully.
-// Example: [ccr]   ✔ file_read "internal/config/rules/loader.go" (12ms)
+// Example: [ccr]   ✔ read_files "internal/config/rules/loader.go" (12ms)
 func PrintToolCallFinished(toolName string, dur time.Duration) {
 	fmt.Fprintf(console.Out(), "[ccr]   ✔ %s (%s)\n", toolName, FormatDuration(dur))
 }
 
 // PrintToolCallError prints a line when a tool fails.
-// Example: [ccr]   ✘ file_read "internal/config/rules/loader.go" failed: permission denied
+// Example: [ccr]   ✘ read_files "internal/config/rules/loader.go" failed: permission denied
 func PrintToolCallError(toolName string, err error) {
 	fmt.Fprintf(console.Err(), "[ccr]   ✘ %s failed: %v\n", toolName, err)
 }

@@ -93,8 +93,8 @@ type fileSource string
 
 const (
 	fileFromPreload  fileSource = "the initial source context"
-	fileFromTool     fileSource = "an earlier file_read result"
-	fileFromBaseline fileSource = "an earlier file_read_base result"
+	fileFromTool     fileSource = "an earlier read_files result"
+	fileFromBaseline fileSource = "an earlier read_base_files result"
 )
 
 type visibleFile struct {
@@ -327,7 +327,7 @@ func (m *contextManager) remember(
 }
 
 // coveredFileRead returns a lightweight result when the exact range requested
-// by file_read is already visible to the model. It checks the post-projection
+// by read_files is already visible to the model. It checks the post-projection
 // view, so content evicted or summarized out of the prompt never blocks a
 // legitimate re-read.
 func (m *contextManager) coveredFileRead(request tool.FileReadRequest) (string, bool) {
@@ -381,7 +381,7 @@ func (m *contextManager) coveredFileRead(request tool.FileReadRequest) (string, 
 
 func coveredReadMessage(filePath string, start, end int, source fileSource) string {
 	return fmt.Sprintf(
-		"Already available in the current context from %s: %s lines %d-%d. Reuse that content; call file_read only for a range not shown there.",
+		"Already available in the current context from %s: %s lines %d-%d. Reuse that content; call read_files only for a range not shown there.",
 		source, filePath, start, end,
 	)
 }
@@ -517,7 +517,7 @@ func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.Agent
 		return messages
 	}
 	var b strings.Builder
-	b.WriteString("Available file content already present in this request; reuse covered ranges instead of calling file_read:\n")
+	b.WriteString("Available file content already present in this request; reuse covered ranges instead of calling read_files:\n")
 	for _, file := range files {
 		fmt.Fprintf(&b, "- %s lines %d-%d", file.path, file.start, file.end)
 		if file.label != "" {

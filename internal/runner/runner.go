@@ -1096,7 +1096,7 @@ func clueRefs(clues []unit.Clue) []string {
 }
 
 // cluePaths preserves the relation that made a source file statically known
-// to the Unit. The viewer compares these paths with later file_read calls;
+// to the Unit. The viewer compares these paths with later read_files calls;
 // this is deliberately separate from SourcePreloads, which records what was
 // actually placed in the initial prompt.
 func cluePaths(clues []unit.Clue) map[string][]string {
@@ -1120,7 +1120,7 @@ func cluePaths(clues []unit.Clue) map[string][]string {
 	return paths
 }
 
-// fileReader unwraps the file_read tool's FileReader so the preload reads exactly
+// fileReader unwraps the read_files tool's FileReader so the preload reads exactly
 // what the tool would return (same path resolution, same review-mode ref).
 func (a *Runner) fileReader() *tool.FileReader {
 	if p, ok := a.args.Tools.Get(tool.FileRead.Name()); ok {

@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-// FileReadMaxLines is the largest range returned for one file_read batch member.
+// FileReadMaxLines is the largest range returned for one read_files batch member.
 // Context coverage checks use the same limit to recognize an exact repeat of
 // an unbounded read without executing the provider again.
 const FileReadMaxLines = 500
@@ -22,7 +22,7 @@ const FileReadMaxBatchLines = 2000
 // may spawn git subprocesses; the model should issue another batch if needed.
 const FileReadMaxBatch = 16
 
-// FileReadRequest is one range in file_read's batch-only request contract.
+// FileReadRequest is one range in read_files's batch-only request contract.
 // Even a single range is carried in reads[] so the model has one stable shape
 // and can batch independent reads without spending extra turns.
 type FileReadRequest struct {
@@ -31,9 +31,9 @@ type FileReadRequest struct {
 	EndLine   int
 }
 
-// ParseFileReadRequests parses the public reads[] contract. There is
-// intentionally no compatibility path for the former top-level file_path
-// shape: keeping one schema is what makes batching the default behavior.
+// ParseFileReadRequests parses the provider's only contract: reads[]. The
+// model boundary may wrap one direct item before it reaches this package, but
+// providers and domain handlers never carry a second argument shape.
 func ParseFileReadRequests(args map[string]any) ([]FileReadRequest, error) {
 	values, ok := args["reads"].([]any)
 	if !ok || len(values) == 0 {
@@ -93,7 +93,7 @@ func EncodeFileReadResults(results []string) string {
 }
 
 // DecodeFileReadResults splits the stable batch envelope while leaving each
-// file_read result body unchanged.
+// read_files result body unchanged.
 func DecodeFileReadResults(result string) ([]string, bool) {
 	matches := fileReadBatchHeader.FindAllStringIndex(result, -1)
 	if len(matches) == 0 || matches[0][0] != 0 {
@@ -111,7 +111,7 @@ func DecodeFileReadResults(result string) ([]string, bool) {
 }
 
 // DiffPaths records what this review's diff did to paths that no longer exist
-// at the review ref (renames and deletions). A file_read miss on such a path
+// at the review ref (renames and deletions). A read_files miss on such a path
 // is the model following a stale reference from the diff itself (rename
 // headers, leftover imports), so it gets redirected or explained instead of
 // surfacing a raw git error the model can't act on. Frozen after
@@ -139,7 +139,7 @@ type FileReadProvider struct {
 
 func NewFileRead(fr *FileReader) *FileReadProvider { return &FileReadProvider{FileReader: fr} }
 
-// NewFileReadBase creates the baseline counterpart of file_read. Runner sets
+// NewFileReadBase creates the baseline counterpart of read_files. Runner sets
 // its immutable base ref after resolving workspace/range/commit semantics and
 // before freezing the registry.
 func NewFileReadBase(fr *FileReader) *FileReadProvider {

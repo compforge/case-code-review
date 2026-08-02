@@ -117,7 +117,7 @@ make build
 │   ├── llm/              # LLM API 客户端（Anthropic & OpenAI）
 │   ├── model/            # 数据模型
 │   ├── session/          # 评审会话管理
-│   ├── tool/             # 内置工具（file_read, code_search 等）
+│   ├── tool/             # 内置工具（read_files, search_code 等）
 │   ├── telemetry/        # OpenTelemetry 集成
 │   └── viewer/           # WebUI 会话查看器
 ├── pages/                # WebUI 前端

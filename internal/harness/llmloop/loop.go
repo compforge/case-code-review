@@ -79,7 +79,7 @@ type Deps struct {
 	// Harness remains responsible for loop control, while the hook owns domain
 	// semantics such as turning code_comment arguments into findings.
 	ToolCallHook ToolCallHook
-	// FileDedupEnabled gates file_read result deduplication (the file_dedup
+	// FileDedupEnabled gates read_files result deduplication (the file_dedup
 	// feature gate): a later read covering an earlier one stubs the earlier
 	// copy in place, so the model pays for file content once.
 	FileDedupEnabled bool

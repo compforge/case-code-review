@@ -15,7 +15,7 @@ func TestWrapLowerRoundTrip(t *testing.T) {
 		llm.NewTextMessage("system", "you are a reviewer"),
 		llm.NewTextMessage("user", "review this"),
 		llm.NewToolCallMessage("thinking…", []llm.ToolCall{
-			{ID: "c1", Type: "function", Function: llm.FunctionCall{Name: "code_search", Arguments: `{"q":"x"}`}},
+			{ID: "c1", Type: "function", Function: llm.FunctionCall{Name: "search_code", Arguments: `{"q":"x"}`}},
 		}),
 		llm.NewToolResultMessage("c1", "3 hits"),
 		llm.NewTextMessage("assistant", "done"),

@@ -9,7 +9,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// File is a typed message for file content in the conversation — a file_read
+// File is a typed message for file content in the conversation — a read_files
 // tool result, or an initial source preload. It keeps the identity a wire message
 // erases — which path, which line range, what content, which tool call it
 // answers — so the loop can reason about file content as content: deduplicate
@@ -32,7 +32,7 @@ type File struct {
 	Path       string
 	Start, End int    // 1-indexed inclusive line range actually shown
 	Total      int    // total lines in the file at read time
-	Content    string // the rendered block (file_read's numbered-line format)
+	Content    string // the rendered block (read_files's numbered-line format)
 	Snapshot   FileSnapshot
 	Ref        string // populated for baseline snapshots when the provider reports it
 	// Label describes why this file is present without leaking Unit or Clue
@@ -61,7 +61,7 @@ type StubReason string
 const (
 	// StubSuperseded: a later read covers this one; the content is below.
 	StubSuperseded StubReason = "superseded"
-	// StubEvicted: elided under token pressure; re-derivable via file_read.
+	// StubEvicted: elided under token pressure; re-derivable via read_files.
 	StubEvicted StubReason = "evicted"
 )
 
@@ -94,7 +94,7 @@ func (f *File) render(level CompactionLevel) string {
 		text = fmt.Sprintf("File: %s lines %d-%d — superseded by a later read of the same content below; elided.",
 			f.Path, f.Start, f.End)
 	case StubEvicted:
-		text = fmt.Sprintf("File: %s lines %d-%d — elided to fit the context budget; call file_read again if you still need it.",
+		text = fmt.Sprintf("File: %s lines %d-%d — elided to fit the context budget; call read_files again if you still need it.",
 			f.Path, f.Start, f.End)
 	}
 	return text
@@ -172,8 +172,8 @@ func (f *File) Covers(g *File) bool {
 		f.Start <= g.Start && f.End >= g.End
 }
 
-// fileReadHeader matches the file_read tool's response header, which is the
-// tool's OUTPUT CONTRACT (internal/harness/tool/file_read.go): a "File:" line with the
+// fileReadHeader matches the read_files tool's response header, which is the
+// tool's OUTPUT CONTRACT (internal/harness/tool/read_files.go): a "File:" line with the
 // path and total, then a LINE_RANGE line with the displayed range. Parsing the
 // result (rather than the tool-call arguments) keeps this independent of
 // default-filling logic — the header states what was actually shown.
@@ -181,14 +181,14 @@ var fileReadHeader = regexp.MustCompile(`(?m)^File: (.+) \(Total lines: (\d+)\)\
 
 var baselineRefHeader = regexp.MustCompile(`(?m)^Baseline ref: (.+)$`)
 
-// visibleFileHeader recognizes both file_read results and preloaded File
+// visibleFileHeader recognizes both read_files results and preloaded File
 // messages. Preloaded files omit IS_TRUNCATED and, for whole files, LINE_RANGE;
 // in that shape the header's total is the visible 1..N range.
 var visibleFileHeader = regexp.MustCompile(`(?m)^File: (.+) \(Total lines: (\d+)\)\n(?:IS_TRUNCATED: (?:true|false)\n)?(?:LINE_RANGE: (\d+)-(\d+)\n)?`)
 
 // FileReadToolName is the tool whose results are promoted to File messages.
-const FileReadToolName = "file_read"
-const FileReadBaseToolName = "file_read_base"
+const FileReadToolName = "read_files"
+const FileReadBaseToolName = "read_base_files"
 
 // NewFile builds a File whose content entered the conversation OUTSIDE the
 // tool protocol — an initial source preload. Same identity, same dedup/evict
@@ -208,7 +208,7 @@ func (f *File) ConfigurePresentation(label, condensed string) *File {
 	return f
 }
 
-// IsToolResult reports whether this File entered through file_read rather than
+// IsToolResult reports whether this File entered through read_files rather than
 // the initial source context. Harness uses the distinction only for diagnostics and
 // duplicate-read guidance; both sources share the same context lifecycle.
 func (f *File) IsToolResult() bool { return f.toolCallID != "" }
@@ -245,7 +245,7 @@ func addContextLabel(content, label string) string {
 		return content + "\nCONTEXT: " + label
 	}
 	insertAt++
-	// Keep the file_read header contiguous. Visible-range detection and tool
+	// Keep the read_files header contiguous. Visible-range detection and tool
 	// protocol diagnostics intentionally share that stable header contract.
 	for _, prefix := range []string{"IS_TRUNCATED: ", "LINE_RANGE: "} {
 		if !strings.HasPrefix(content[insertAt:], prefix) {
