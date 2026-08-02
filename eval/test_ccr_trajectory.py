@@ -4,6 +4,7 @@ import unittest
 from ccr_trajectory import (
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
+    DurationEfficiencyEvaluator,
     EmptySearchEvaluator,
     FileReadCoverageEvaluator,
     FileReadFragmentationEvaluator,
@@ -11,6 +12,7 @@ from ccr_trajectory import (
     PromptFileCoverageEvaluator,
     REVIEW1,
     REVIEW2,
+    RoundEfficiencyEvaluator,
     ToolFailureEvaluator,
     code_search_stats,
     file_read_fragmentation,
@@ -20,7 +22,7 @@ from ccr_trajectory import (
     review_stage,
 )
 from trajectory_harness import RepeatedToolCallEvaluator, evaluate
-from trajectory_judge import objective_signals
+from trajectory_judge import main_deductions, objective_signals
 
 
 class CCRTrajectoryTest(unittest.TestCase):
@@ -104,6 +106,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                 FileReadCoverageEvaluator(),
                 PromptFileCoverageEvaluator(),
                 FileReadFragmentationEvaluator(),
+                RoundEfficiencyEvaluator(),
+                DurationEfficiencyEvaluator(),
                 HypothesisCompletionEvaluator(),
             ],
         )
@@ -119,6 +123,8 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(report.evaluations[4].score, 0.2)
         self.assertEqual(report.evaluations[5].score, 0.5)
         self.assertEqual(report.evaluations[6].score, 1)
+        self.assertEqual(report.evaluations[7].score, 1)
+        self.assertEqual(report.evaluations[8].score, 1)
         self.assertEqual(repeated_file_reads(self.trajectory), {"a.go": 2})
         self.assertEqual(
             file_read_stats(self.trajectory),
@@ -157,6 +163,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "file_read_coverage",
                 "file_read_prompt_novelty",
                 "file_read_fragmentation",
+                "round_efficiency",
+                "duration_efficiency",
                 "hypothesis_submission",
             ],
         )
@@ -208,9 +216,80 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "file_read_coverage",
                 "file_read_prompt_novelty",
                 "file_read_fragmentation",
+                "round_efficiency",
+                "duration_efficiency",
                 "assessment_submission",
             ],
         )
+
+    def test_lane_efficiency_is_normalized_by_accepted_assessments(self):
+        steps = []
+        for index in range(30):
+            raw = {
+                "step_id": index + 1,
+                "source": "agent",
+                "metrics": {"extra": {"duration_ms": 10_000}},
+            }
+            if index in (10, 29):
+                call_id = f"assessment-{index}"
+                raw["tool_calls"] = [
+                    {
+                        "tool_call_id": call_id,
+                        "function_name": "submit_assessments",
+                        "arguments": {"assessments": []},
+                    }
+                ]
+                raw["observation"] = {
+                    "results": [
+                        {
+                            "source_call_id": call_id,
+                            "content": json.dumps(
+                                {"accepted": [f"h-{index}"], "remaining": []}
+                            ),
+                        }
+                    ]
+                }
+            steps.append(raw)
+        root = {
+            "session_id": "lane-efficiency",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "lane-1",
+                    "extra": {"scope_kind": "lane"},
+                    "steps": steps,
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        rounds = RoundEfficiencyEvaluator().evaluate(trajectory)
+        duration = DurationEfficiencyEvaluator().evaluate(trajectory)
+
+        self.assertEqual(rounds.score, 0.8)
+        self.assertIn("2 review item(s)", rounds.explanation)
+        self.assertEqual(duration.score, 0.8)
+
+    def test_main_deductions_rank_total_score_loss(self):
+        deductions = main_deductions(
+            [
+                {
+                    "evaluations": [
+                        {"name": "duration", "label": "fail", "score": 0.4},
+                        {"name": "search", "label": "fail", "score": 0.7},
+                    ]
+                },
+                {
+                    "evaluations": [
+                        {"name": "duration", "label": "fail", "score": 0.5},
+                        {"name": "completion", "label": "pass", "score": 1.0},
+                    ]
+                },
+            ]
+        )
+
+        self.assertEqual(deductions[0]["name"], "duration")
+        self.assertEqual(deductions[0]["count"], 2)
+        self.assertEqual(deductions[0]["average_score"], 0.45)
 
     def test_file_read_coverage_scores_overlapping_ranges(self):
         root = {
