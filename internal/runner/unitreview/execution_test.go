@@ -35,7 +35,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	registry.Freeze()
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
-		unitToolResponse("call-2", "task_done", `{}`, "route-a", 3),
+		unitToolResponse("call-2", "submit_hypotheses", `{"hypotheses":[]}`, "route-a", 3),
 	}}
 	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
 	executor := NewExecutor(ExecutorConfig{
@@ -44,12 +44,11 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		Tools:     registry,
 		ToolDefs: []llm.ToolDef{
 			unitToolDef("echo"),
-			unitToolDef("task_done"),
 		},
 		Session:   history,
 		MaxTurns:  2,
 		MaxTokens: 1_000,
-	}, nil, nil)
+	}, &HypothesisHook{}, nil)
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
 		msg.Text("user", "review"),
@@ -63,7 +62,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	if executor.TotalTokensUsed() != 10 {
 		t.Fatalf("total tokens = %d, want 10", executor.TotalTokensUsed())
 	}
-	if got := executor.ToolCalls(); got["echo"] != 1 || got["task_done"] != 0 {
+	if got := executor.ToolCalls(); got["echo"] != 1 || got["submit_hypotheses"] != 1 {
 		t.Fatalf("unexpected tool counts: %v", got)
 	}
 	if got := executor.ModelsUsed(); got["route-a"] != 2 {
@@ -76,7 +75,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 
 func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
-		unitTextResponse("finished without task_done"),
+		unitTextResponse("finished without submitting"),
 	}}
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
@@ -109,19 +108,18 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 	})
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitToolResponse("call-1", "post_bulletin", `{"text":"check the callee","paths":["a.go"]}`, "", 0),
-		unitToolResponse("call-2", "task_done", `{}`, "", 0),
+		unitToolResponse("call-2", "submit_hypotheses", `{"hypotheses":[]}`, "", 0),
 	}}
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
 		ToolDefs: []llm.ToolDef{
 			unitToolDef("post_bulletin"),
-			unitToolDef("task_done"),
 		},
 		PostBulletin: true,
 		MaxTurns:     3,
 		MaxTokens:    1_000,
 		Session:      &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-	}, nil, sharedBoard)
+	}, &HypothesisHook{}, sharedBoard)
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
 		msg.Text("user", "review"),
@@ -151,7 +149,7 @@ func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 		scope:    session.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
 		turn:     2,
 	}
-	run.publishToolFact(ReportHypothesis.Name(), []byte(`{"path":"b.go"}`))
+	run.publishToolFact(SubmitHypotheses.Name(), []byte(`{"hypotheses":[]}`))
 	if posts := sharedBoard.Posted(); len(posts) != 0 {
 		t.Fatalf("an unassessed hypothesis must not become a confirmed board fact: %+v", posts)
 	}

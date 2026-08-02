@@ -66,30 +66,36 @@ func IDFor(h Hypothesis) string {
 	return "h-" + hex.EncodeToString(sum[:])[:12]
 }
 
-// ParseHypotheses parses report_hypothesis arguments without storing them.
+// ParseHypotheses parses the atomic Unit Review submission without storing it.
+// An explicitly empty array is a valid completed review with no hypotheses.
 func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
-	path, _ := args["path"].(string)
+	raw, present := args["hypotheses"]
+	if !present {
+		return nil, "Error: 'hypotheses' array is required"
+	}
 	var rawItems []any
-	switch raw := args["hypotheses"].(type) {
+	switch raw := raw.(type) {
 	case []any:
 		rawItems = raw
 	case string:
 		if err := json.Unmarshal([]byte(raw), &rawItems); err != nil {
 			return nil, fmt.Sprintf("Error: failed to parse 'hypotheses' JSON string: %v", err)
 		}
+	default:
+		return nil, "Error: 'hypotheses' must be an array"
 	}
 	if len(rawItems) == 0 {
-		return nil, "Error: 'hypotheses' array is required"
+		return nil, ""
 	}
 
 	out := make([]Hypothesis, 0, len(rawItems))
-	for _, raw := range rawItems {
+	for i, raw := range rawItems {
 		item, ok := raw.(map[string]any)
 		if !ok {
-			continue
+			return nil, fmt.Sprintf("Error: hypothesis %d must be an object", i+1)
 		}
 		h := Hypothesis{
-			Path:              path,
+			Path:              stringValue(item, "path"),
 			Content:           stringValue(item, "content"),
 			SuggestionCode:    stringValue(item, "suggestion_code"),
 			ExistingCode:      stringValue(item, "existing_code"),
@@ -104,14 +110,11 @@ func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
 		}
 		if h.Path == "" || h.Content == "" || h.ExistingCode == "" ||
 			h.Trigger == "" || h.Impact == "" || h.ChangeAttribution == "" ||
-			len(h.Evidence) == 0 {
-			continue
+			len(h.Evidence) == 0 || h.Category == "" || h.Severity == "" {
+			return nil, fmt.Sprintf("Error: hypothesis %d is incomplete or has an invalid category/severity", i+1)
 		}
 		h.ID = IDFor(h)
 		out = append(out, h)
-	}
-	if len(out) == 0 {
-		return nil, "Error: no complete hypothesis was provided"
 	}
 	return out, ""
 }

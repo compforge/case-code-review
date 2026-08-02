@@ -13,13 +13,9 @@ import (
 	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
-
-const wrapUpTimeReserve = 90 * time.Second
-const wrapUpTurnReserve = 2
 
 type domainMessage struct {
 	value      msg.Msg
@@ -85,17 +81,11 @@ func (m domainMessage) ToMessage() (agentgo.Message, bool) {
 type contextManager struct {
 	window       int
 	dedupEnabled bool
-	maxTurns     int
-	wrapUpPrompt string
-	scope        session.Scope
-	turnContext  TurnContextProvider
 	engine       *agentcontext.ContextEngine
 
 	mu           sync.Mutex
 	usage        *agentgo.ContextUsage
 	snapshot     *agentgo.ContextSnapshot
-	projectCount int
-	wrapUpIssued bool
 	visibleFiles []visibleFile
 }
 
@@ -123,10 +113,6 @@ func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextMana
 	manager := &contextManager{
 		window:       window,
 		dedupEnabled: spec.FileDedupEnabled,
-		maxTurns:     spec.MaxTurns,
-		wrapUpPrompt: spec.WrapUpPrompt,
-		scope:        spec.Scope,
-		turnContext:  spec.TurnContext,
 	}
 	if window > 0 && model != nil {
 		// Match CCR's existing 80% warning threshold while delegating the
@@ -162,20 +148,6 @@ func (m *contextManager) Project(
 	messages []agentgo.AgentMessage,
 ) (agentgo.ContextProjection, error) {
 	input := append([]agentgo.AgentMessage(nil), messages...)
-	commit := false
-	if m.turnContext != nil {
-		if extra := m.turnContext.PullTurnContext(ctx, m.scope); len(extra) > 0 {
-			input = append(input, wrapDomainMessages(msg.CloneAll(extra))...)
-			commit = true
-		}
-	}
-	if m.shouldWrapUp(ctx) {
-		input = append(input, domainMessage{
-			value:     msg.Text("user", m.wrapUpPrompt),
-			timestamp: time.Now(),
-		})
-		commit = true
-	}
 	view, usage, changed := m.rewrite(input, false)
 	projection := agentgo.ContextProjection{Messages: view, Usage: usage}
 	if m.engine != nil {
@@ -186,13 +158,13 @@ func (m *contextManager) Project(
 			// failure circuit breaker; this turn falls back to the deterministic
 			// dedup/evict view.
 			projection.Messages = view
-			if changed || commit {
+			if changed {
 				projection.CommitMessages = view
 				projection.ShouldCommit = true
 			}
 			projection.Messages = appendVisibleFileInventory(projection.Messages)
 			projection.Usage = m.estimateUsage(projection.Messages)
-			m.remember(messages, projection.Messages, projection.Usage, "project_fallback", changed || commit)
+			m.remember(messages, projection.Messages, projection.Usage, "project_fallback", changed)
 			return projection, nil
 		}
 		projection.Messages = engineProjection.Messages
@@ -201,17 +173,17 @@ func (m *contextManager) Project(
 			projection.CommitMessages = engineProjection.CommitMessages
 			projection.ShouldCommit = true
 			changed = true
-		} else if changed || commit {
+		} else if changed {
 			projection.CommitMessages = view
 			projection.ShouldCommit = true
 		}
-	} else if changed || commit {
+	} else if changed {
 		projection.CommitMessages = view
 		projection.ShouldCommit = true
 	}
 	projection.Messages = appendVisibleFileInventory(projection.Messages)
 	projection.Usage = m.estimateUsage(projection.Messages)
-	m.remember(messages, projection.Messages, projection.Usage, "project", changed || commit)
+	m.remember(messages, projection.Messages, projection.Usage, "project", changed)
 	return projection, nil
 }
 
@@ -303,39 +275,6 @@ func (m *contextManager) EstimateContext(messages []agentgo.AgentMessage) (int, 
 }
 
 func (m *contextManager) ContextWindow() int { return m.window }
-
-func (m *contextManager) WrapUpIssued() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.wrapUpIssued
-}
-
-func (m *contextManager) shouldWrapUp(ctx context.Context) bool {
-	if m.wrapUpPrompt == "" {
-		return false
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.projectCount++
-	if m.wrapUpIssued {
-		return false
-	}
-
-	nearTurnLimit := false
-	if m.maxTurns > 0 {
-		remaining := m.maxTurns - m.projectCount + 1
-		nearTurnLimit = remaining <= wrapUpTurnReserve
-	}
-	nearDeadline := false
-	if deadline, ok := ctx.Deadline(); ok {
-		nearDeadline = time.Until(deadline) < wrapUpTimeReserve
-	}
-	if nearTurnLimit || nearDeadline {
-		m.wrapUpIssued = true
-		return true
-	}
-	return false
-}
 
 func (m *contextManager) rewrite(
 	messages []agentgo.AgentMessage,

@@ -54,6 +54,75 @@ func TestExecutionCompletesWithTaskDone(t *testing.T) {
 	}
 }
 
+func TestExecutionCompletesWithDomainTerminalTool(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("submit-1", "submit_result", `{"items":[]}`, nil),
+	}}
+	handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+		if request.Tool.Name() != "submit_result" {
+			return tool.TaskCheckpoint{}, false
+		}
+		return tool.CompleteWith("Result accepted."), true
+	})
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:        client,
+		Messages:         []msg.Msg{msg.Text("user", "produce a result")},
+		ToolDefs:         []llm.ToolDef{toolDef("submit_result")},
+		ToolHandler:      handler,
+		CompletionTool:   "submit_result",
+		CompletionPrompt: "Call submit_result to complete.",
+		MaxTurns:         1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	requests := client.Requests()
+	if len(requests) != 1 || len(requests[0].Tools) != 1 || requests[0].Tools[0].Function.Name != "submit_result" {
+		t.Fatalf("custom terminal tool set = %+v", requests)
+	}
+}
+
+func TestExecutionKeepsRunningAfterRejectedTerminalSubmission(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("submit-1", "submit_result", `{"items":[{}]}`, nil),
+		toolCallResponseID("submit-2", "submit_result", `{"items":[]}`, nil),
+	}}
+	calls := 0
+	handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+		if request.Tool.Name() != "submit_result" {
+			return tool.TaskCheckpoint{}, false
+		}
+		calls++
+		if calls == 1 {
+			return tool.Of("Error: invalid result"), true
+		}
+		return tool.CompleteWith("Result accepted."), true
+	})
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:      client,
+		Messages:       []msg.Msg{msg.Text("user", "produce a result")},
+		ToolDefs:       []llm.ToolDef{toolDef("submit_result")},
+		ToolHandler:    handler,
+		CompletionTool: "submit_result",
+		MaxTurns:       2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 2 || calls != 2 {
+		t.Fatalf("unexpected result: %+v calls=%d", result, calls)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 || !strings.Contains(requestText(requests[1]), "Error: invalid result") {
+		t.Fatalf("rejected receipt was not preserved: %+v", requests)
+	}
+}
+
 func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 	if _, err := NewExecution(ExecutionSpec{}); err == nil {
 		t.Fatal("missing LLM client must be rejected at construction")

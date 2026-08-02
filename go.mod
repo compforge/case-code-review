@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/compforge/agentgo v0.0.0-20260801161339-0528c8e3939e
+	github.com/compforge/agentgo v0.0.0-20260802043939-522a34d3705b
 	github.com/odvcencio/gotreesitter v0.47.1
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8

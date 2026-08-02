@@ -1,5 +1,5 @@
 <review_task>
-Investigate the changed behavior in <current_file_diff>. Use the attached file messages and knowledge before fetching more context. Report only concrete issue Hypotheses worth independent review, then call `task_done`.
+Investigate the changed behavior in <current_file_diff>. Use the attached file messages and knowledge before fetching more context. Finish with exactly one `submit_hypotheses` call containing all concrete issues worth independent review, or an empty array when none remain.
 </review_task>
 
 // The following is the list of other files changed in this update.

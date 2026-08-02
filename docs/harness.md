@@ -122,7 +122,8 @@ ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo
 
 ### 3.3 预算是机制，完成策略属于调用方
 
-Harness 提供 token、tool round、deadline 等预算机制，以及“接近边界”的 hook。进入 wrap-up 时
+Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
+增量上下文与“接近边界”的 wrap-up。进入 wrap-up 时
 工具 schema 保持不变，只在消息尾部追加稳定的收敛指令；若调用方配置硬门，middleware 拒绝继续
 执行调查工具，但结果/完成工具仍可用。这样既不能靠忽略 prompt 继续空转，也不因中途换工具集破坏
 provider cache。调用方定义终态

@@ -7,35 +7,37 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-var ReportHypothesis = tool.Named("report_hypothesis")
+var SubmitHypotheses = tool.Named("submit_hypotheses")
 
 const (
-	HypothesisSubmitted       = "Hypothesis recorded for independent review."
+	HypothesesSubmitted       = "Unit review completed; hypotheses submitted for independent review."
 	InvestigationWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. " +
-		"Report every concrete remaining issue claim with report_hypothesis, including its trigger, impact, " +
-		"change attribution, evidence, and uncertainty; then call task_done. Do not call other tools."
+		"Submit every concrete remaining issue claim with submit_hypotheses, including its trigger, impact, " +
+		"change attribution, evidence, and uncertainty. Submit an empty array when no material claim remains. " +
+		"Do not call other tools."
 )
 
 func HypothesisToolDef() llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.FunctionDef{
-			Name: ReportHypothesis.Name(),
-			Description: "Record one or more falsifiable issue hypotheses found during investigation. " +
+			Name: SubmitHypotheses.Name(),
+			Description: "Complete this Unit Review by submitting every falsifiable issue hypothesis found during investigation. " +
 				"A separate reviewer will verify them before any comment is published. Report plausible, " +
-				"diff-caused defects with a concrete trigger and impact; state uncertainty instead of hiding it.",
+				"diff-caused defects with a concrete trigger and impact; state uncertainty instead of hiding it. " +
+				"Use an empty hypotheses array when no material issue remains. A successful call ends the review.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"path": map[string]any{
-						"type":        "string",
-						"description": "Repo-relative changed file containing the proposed comment anchor.",
-					},
 					"hypotheses": map[string]any{
 						"type": "array",
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
+								"path": map[string]any{
+									"type":        "string",
+									"description": "Repo-relative changed file containing the proposed comment anchor.",
+								},
 								"content": map[string]any{
 									"type":        "string",
 									"description": "Draft developer-facing explanation if the hypothesis survives Review and Trial.",
@@ -79,13 +81,13 @@ func HypothesisToolDef() llm.ToolDef {
 								},
 							},
 							"required": []string{
-								"content", "existing_code", "trigger", "impact", "change_attribution",
+								"path", "content", "existing_code", "trigger", "impact", "change_attribution",
 								"evidence", "uncertainty", "category", "severity",
 							},
 						},
 					},
 				},
-				"required": []string{"path", "hypotheses"},
+				"required": []string{"hypotheses"},
 			},
 		},
 	}
@@ -97,14 +99,19 @@ func InvestigationToolDefs(main []llm.ToolDef) []llm.ToolDef {
 	out := make([]llm.ToolDef, 0, len(main))
 	replaced := false
 	for _, def := range main {
-		if def.Function.Name == "code_comment" || def.Function.Name == ReportHypothesis.Name() {
-			out = append(out, HypothesisToolDef())
-			replaced = true
+		if def.Function.Name == tool.TaskDone.Name() {
+			continue
+		}
+		if def.Function.Name == "code_comment" || def.Function.Name == SubmitHypotheses.Name() {
+			if !replaced {
+				out = append(out, HypothesisToolDef())
+				replaced = true
+			}
 			continue
 		}
 		if def.Function.Name == tool.PostBulletin.Name() {
 			def.Function.Description = strings.ReplaceAll(
-				def.Function.Description, "code_comment", ReportHypothesis.Name(),
+				def.Function.Description, "code_comment", SubmitHypotheses.Name(),
 			)
 		}
 		out = append(out, def)

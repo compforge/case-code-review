@@ -16,8 +16,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-// HypothesisHook turns report_hypothesis calls into Runner-owned investigative
-// results. Finding conversion remains deferred until deterministic Trial.
+// HypothesisHook turns the terminal submit_hypotheses call into Runner-owned
+// investigative results. Finding conversion remains deferred until Trial.
 type HypothesisHook struct {
 	Collector    *Collector
 	WorkerPool   *harness.WorkerPool
@@ -39,16 +39,8 @@ func (h *HypothesisHook) HandleTool(
 	ctx context.Context,
 	call harness.ToolRequest,
 ) (tool.TaskCheckpoint, bool) {
-	if call.Tool != ReportHypothesis {
+	if call.Tool != SubmitHypotheses {
 		return tool.TaskCheckpoint{}, false
-	}
-
-	path := call.Scope.Path()
-	if path != "" {
-		reported, _ := call.Args["path"].(string)
-		if reported == "" || !slices.Contains(call.Scope.Paths, reported) {
-			call.Args["path"] = path
-		}
 	}
 
 	started := time.Now()
@@ -59,6 +51,9 @@ func (h *HypothesisHook) HandleTool(
 		return tool.Of(errMsg), true
 	}
 	for i := range hypotheses {
+		if !slices.Contains(call.Scope.Paths, hypotheses[i].Path) {
+			hypotheses[i].Path = call.Scope.Path()
+		}
 		hypotheses[i].Alias = call.Alias
 		hypotheses[i].OriginUnit = call.Scope.ID
 	}
@@ -104,14 +99,14 @@ func (h *HypothesisHook) HandleTool(
 			return nil
 		})
 		telemetry.RecordToolCall(asyncCtx, call.Tool.Name(), time.Since(started), true)
-		return tool.Of(HypothesisSubmitted), true
+		return tool.CompleteWith(HypothesesSubmitted), true
 	}
 
 	resolveAndCollect(ctx)
 	duration := time.Since(started)
 	telemetry.RecordToolCall(ctx, call.Tool.Name(), duration, true)
 	telemetry.PrintToolCallFinished(call.Tool.Name(), duration)
-	return tool.Of(HypothesisSubmitted), true
+	return tool.CompleteWith(HypothesesSubmitted), true
 }
 
 func (h *HypothesisHook) relocate(

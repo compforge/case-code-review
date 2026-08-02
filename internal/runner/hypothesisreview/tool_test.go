@@ -21,7 +21,7 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	for _, def := range defs {
 		got[def.Function.Name] = true
 	}
-	if got["code_comment"] || got["post_bulletin"] || got[unitreview.ReportHypothesis.Name()] {
+	if got["code_comment"] || got["post_bulletin"] || got[unitreview.SubmitHypotheses.Name()] {
 		t.Fatalf("convergent review exposed divergent tools: %v", got)
 	}
 	for _, required := range []string{"task_done", "file_read", "file_read_base", "code_search", SubmitAssessments.Name()} {
