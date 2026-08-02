@@ -16,6 +16,12 @@ type TaskCheckpoint struct {
 // Complete returns a checkpoint signaling task completion.
 func Complete() TaskCheckpoint { return TaskCheckpoint{Completed: true} }
 
+// CompleteWith returns a completion checkpoint whose receipt is preserved in
+// the transcript before the agent loop stops.
+func CompleteWith(data string) TaskCheckpoint {
+	return TaskCheckpoint{Data: data, Completed: true}
+}
+
 // Of returns a checkpoint with data.
 func Of(data string) TaskCheckpoint { return TaskCheckpoint{Data: data, Completed: false} }
 

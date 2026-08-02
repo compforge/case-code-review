@@ -49,7 +49,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 	}
 
 	receipt := FromLLM(LLMToolResult{
-		Tool: "report_hypothesis", ToolCallID: "result-1", Content: "Hypothesis recorded.",
+		Tool: "submit_hypotheses", ToolCallID: "result-1", Content: "Hypotheses submitted.",
 	})
 	if _, ok := receipt.(*ToolReceipt); !ok {
 		t.Fatalf("result tool should become ToolReceipt: %T", receipt)

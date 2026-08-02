@@ -11,7 +11,7 @@ List every active Hypothesis with its ID if present, trigger, impact, change att
 Record the source location, contract, diff, or tool observation actually checked and which Hypothesis it supports or contradicts. Keep negative searches and direct counter-evidence.
 
 ### Submitted Results
-Preserve every successful `report_hypothesis` or `submit_assessments` call. Submitted results must not be silently revised by the summary.
+Preserve every successful `submit_hypotheses` or `submit_assessments` call. Submitted results must not be silently revised by the summary.
 
 ### Pending Checks
 List the specific missing facts and the next targeted read-only lookup for each.

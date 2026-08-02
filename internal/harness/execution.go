@@ -51,11 +51,15 @@ type ExecutionSpec struct {
 	// injected without changing the advertised tool schemas. Nil leaves tool
 	// execution unchanged for callers that only need a textual reminder.
 	WrapUpAllowedTools []string
-	CompletionPrompt   string
+	// CompletionTool is the domain-selected terminal tool. Empty defaults to
+	// task_done. A non-default tool completes only when its ToolHandler returns
+	// a completed checkpoint, so invalid submissions remain recoverable.
+	CompletionTool   string
+	CompletionPrompt string
 	// ContinueFrom resumes with the exact committed context of an earlier
 	// ExecutionResult. The context remains opaque outside Harness.
 	ContinueFrom *ExecutionResult
-	// CompletionCheck lets a domain reject task_done until its required
+	// CompletionCheck lets a domain reject its completion tool until required
 	// outputs exist. Harness owns the stop mechanics but does not interpret
 	// what "complete" means for the caller's execution.
 	CompletionCheck         func(context.Context) (complete bool, guidance string)
@@ -88,6 +92,8 @@ type Execution struct {
 	contextManager   *contextManager
 	model            *chatModel
 	tools            []agentgo.Tool
+	turns            *turnController
+	completionTool   string
 	completionPrompt string
 	wrapUpAllowed    map[string]bool
 
@@ -113,9 +119,25 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	// The execution owns its input snapshot; later caller mutations cannot
 	// change a run that has already been assembled.
 	spec.Messages = msg.CloneAll(spec.Messages)
-	e := &Execution{spec: spec, completionPrompt: spec.CompletionPrompt}
+	e := &Execution{
+		spec:             spec,
+		completionTool:   spec.CompletionTool,
+		completionPrompt: spec.CompletionPrompt,
+	}
+	if e.completionTool == "" {
+		e.completionTool = tool.TaskDone.Name()
+	}
 	if e.completionPrompt == "" {
-		e.completionPrompt = defaultCompletionPrompt
+		if e.completionTool == tool.TaskDone.Name() {
+			e.completionPrompt = defaultCompletionPrompt
+		} else {
+			e.completionPrompt = fmt.Sprintf(
+				"The task is not complete until you successfully call %s.", e.completionTool,
+			)
+		}
+	}
+	if e.completionTool != tool.TaskDone.Name() && !hasToolDef(spec.ToolDefs, e.completionTool) {
+		return nil, fmt.Errorf("harness: completion tool %q is not defined", e.completionTool)
 	}
 	e.recorder = newExecutionRecorder(spec)
 	taskType := spec.TaskType
@@ -138,13 +160,14 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		taskType:  session.MemoryCompressionTask,
 	}
 	e.contextManager = newContextManager(spec, contextModel)
-	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed)
+	e.turns = newTurnController(spec)
+	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed, e.completionTool)
 	if len(spec.WrapUpAllowedTools) > 0 {
 		e.wrapUpAllowed = make(map[string]bool, len(spec.WrapUpAllowedTools))
 		for _, name := range spec.WrapUpAllowedTools {
 			e.wrapUpAllowed[name] = true
 		}
-		e.wrapUpAllowed[tool.TaskDone.Name()] = true
+		e.wrapUpAllowed[e.completionTool] = true
 	}
 	return e, nil
 }
@@ -163,8 +186,9 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		ToolResultMessageFactory: e.toolResultMessage,
 		CommitContext:            e.replaceContext,
 		CommitMessage:            e.appendContext,
+		BeforeTurn:               e.turns.BeforeTurn,
 		StopAfterTool: func(name string) bool {
-			return name == tool.TaskDone.Name() && e.completed.Load()
+			return name == e.completionTool && e.completed.Load()
 		},
 		StopGuard: func(_ context.Context, _ agentgo.StopInfo) agentgo.StopDecision {
 			if e.completed.Load() {
@@ -249,12 +273,12 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		defer func() {
 			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
-		if e.contextManager.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
+		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
 			return json.RawMessage(
 				"Investigation is closed. Submit the results already supported by the current context, then finish the task.",
 			), nil
 		}
-		if call.Name == tool.TaskDone.Name() && e.spec.CompletionCheck != nil {
+		if call.Name == e.completionTool && e.spec.CompletionCheck != nil {
 			complete, guidance := e.spec.CompletionCheck(ctx)
 			if !complete {
 				if guidance == "" {
@@ -294,6 +318,12 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 			return next(ctx, call.Args)
 		}
 		if checkpoint.Completed {
+			if call.Name == e.completionTool {
+				e.completed.Store(true)
+			}
+			if checkpoint.Data != "" {
+				return json.RawMessage(checkpoint.Data), nil
+			}
 			return json.RawMessage("Task completed successfully."), nil
 		}
 		return json.RawMessage(checkpoint.Data), nil
@@ -397,11 +427,16 @@ func (t taskDoneTool) Execute(context.Context, json.RawMessage) (json.RawMessage
 	return json.RawMessage("Task completed successfully."), nil
 }
 
-func adaptTools(defs []llm.ToolDef, registry *tool.Registry, completed *atomic.Bool) []agentgo.Tool {
+func adaptTools(
+	defs []llm.ToolDef,
+	registry *tool.Registry,
+	completed *atomic.Bool,
+	completionTool string,
+) []agentgo.Tool {
 	out := make([]agentgo.Tool, 0, len(defs)+1)
 	hasTaskDone := false
 	for _, def := range defs {
-		if def.Function.Name == tool.TaskDone.Name() {
+		if def.Function.Name == tool.TaskDone.Name() && completionTool == tool.TaskDone.Name() {
 			hasTaskDone = true
 			out = append(out, taskDoneTool{def: normalizedToolDef(def.Function), completed: completed})
 			continue
@@ -412,7 +447,7 @@ func adaptTools(defs []llm.ToolDef, registry *tool.Registry, completed *atomic.B
 		}
 		out = append(out, adaptedTool{def: normalizedToolDef(def.Function), provider: provider})
 	}
-	if !hasTaskDone {
+	if completionTool == tool.TaskDone.Name() && !hasTaskDone {
 		out = append(out, taskDoneTool{
 			def: normalizedToolDef(llm.FunctionDef{
 				Name:        tool.TaskDone.Name(),
@@ -422,6 +457,15 @@ func adaptTools(defs []llm.ToolDef, registry *tool.Registry, completed *atomic.B
 		})
 	}
 	return out
+}
+
+func hasToolDef(defs []llm.ToolDef, name string) bool {
+	for _, def := range defs {
+		if def.Function.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizedToolDef(def llm.FunctionDef) llm.FunctionDef {

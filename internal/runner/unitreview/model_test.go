@@ -8,9 +8,9 @@ import (
 
 func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 	hypotheses, errMsg := ParseHypotheses(map[string]any{
-		"path": "a.go",
 		"hypotheses": []any{
 			map[string]any{
+				"path":               "a.go",
 				"content":            "may return stale data",
 				"existing_code":      "return cached",
 				"trigger":            "cache entry expires during the request",
@@ -21,7 +21,6 @@ func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 				"category":           "Bug",
 				"severity":           " HIGH ",
 			},
-			map[string]any{"content": "only a suspicion"},
 		},
 	})
 	if errMsg != "" {
@@ -36,18 +35,41 @@ func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 	}
 }
 
+func TestParseHypothesesAcceptsExplicitEmptySubmission(t *testing.T) {
+	hypotheses, errMsg := ParseHypotheses(map[string]any{"hypotheses": []any{}})
+	if errMsg != "" || len(hypotheses) != 0 {
+		t.Fatalf("empty terminal submission = %+v, %q", hypotheses, errMsg)
+	}
+}
+
+func TestParseHypothesesRejectsWholeInvalidBatch(t *testing.T) {
+	_, errMsg := ParseHypotheses(map[string]any{"hypotheses": []any{
+		map[string]any{
+			"path": "a.go", "content": "valid-looking item",
+			"existing_code": "return cached", "trigger": "expired entry", "impact": "stale result",
+			"change_attribution": "expiry check removed", "evidence": []any{"a.go:10"},
+			"uncertainty": "", "category": "bug", "severity": "high",
+		},
+		map[string]any{"path": "b.go", "content": "incomplete item"},
+	}})
+	if errMsg == "" {
+		t.Fatal("an invalid item must reject the atomic submission")
+	}
+}
+
 func TestInvestigationToolDefsReplacePublicCommentTool(t *testing.T) {
 	input := []llm.ToolDef{
 		{Function: llm.FunctionDef{Name: "code_comment"}},
+		{Function: llm.FunctionDef{Name: "task_done"}},
 		{Function: llm.FunctionDef{
 			Name: "post_bulletin", Description: "Use code_comment for local issues.",
 		}},
 	}
 	defs := InvestigationToolDefs(input)
-	if len(defs) != 2 || defs[0].Function.Name != ReportHypothesis.Name() {
+	if len(defs) != 2 || defs[0].Function.Name != SubmitHypotheses.Name() {
 		t.Fatalf("code_comment was not replaced: %+v", defs)
 	}
-	if defs[1].Function.Description != "Use report_hypothesis for local issues." {
+	if defs[1].Function.Description != "Use submit_hypotheses for local issues." {
 		t.Fatalf("bulletin guidance was not updated: %q", defs[1].Function.Description)
 	}
 }

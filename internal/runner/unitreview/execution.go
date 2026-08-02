@@ -146,7 +146,9 @@ func (e *Executor) Run(
 		FileDedupEnabled:        e.fileDedup,
 		FileEvictEnabled:        e.fileEvict,
 		WrapUpPrompt:            e.wrapUpPrompt,
-		WrapUpAllowedTools:      []string{ReportHypothesis.Name(), tool.TaskDone.Name()},
+		WrapUpAllowedTools:      []string{SubmitHypotheses.Name()},
+		CompletionTool:          SubmitHypotheses.Name(),
+		CompletionPrompt:        "The Unit Review is not complete until you call submit_hypotheses exactly once. Submit an empty hypotheses array when no material issue remains.",
 		CompressionSystemPrompt: e.compressionSystemPrompt,
 		CompressionPrompt:       e.compressionPrompt,
 		CompressionUpdatePrompt: e.compressionPrompt,
@@ -169,7 +171,7 @@ func (e *Executor) Run(
 		e.RecordWarning(
 			"unit_incomplete",
 			scope.Path(),
-			fmt.Sprintf("review ended without task_done (%s); verdict is partial — do not read as clean", reason),
+			fmt.Sprintf("review ended without submit_hypotheses (%s); verdict is partial — do not read as clean", reason),
 		)
 	}
 	return Outcome{
@@ -321,7 +323,7 @@ func (e *Executor) countableTool(name string) bool {
 	if name == tool.TaskDone.Name() {
 		return false
 	}
-	if name == ReportHypothesis.Name() {
+	if name == SubmitHypotheses.Name() {
 		return true
 	}
 	if name == tool.PostBulletin.Name() {
@@ -415,7 +417,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 
 func (r *unitExecution) observesGenericTool(name string) bool {
 	return r.executor.countableTool(name) &&
-		name != ReportHypothesis.Name() &&
+		name != SubmitHypotheses.Name() &&
 		name != tool.PostBulletin.Name()
 }
 

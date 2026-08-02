@@ -129,7 +129,7 @@
   <text x="870" y="358" text-anchor="middle" class="label">Investigate broadly</text>
   <text x="870" y="387" text-anchor="middle" class="small">理解 diff · 重建行为 · 检查契约</text>
   <text x="870" y="415" text-anchor="middle" class="small">只读代码工具 · Clue / Messages</text>
-  <text x="870" y="442" text-anchor="middle" class="tiny">report_hypothesis · task_done</text>
+  <text x="870" y="442" text-anchor="middle" class="tiny">submit_hypotheses · 原子完成</text>
 
   <path d="M585 799 H630 V375 H685" class="flow"/>
   <text x="638" y="594" text-anchor="middle" class="tiny" transform="rotate(-90 638 594)">Unit</text>
