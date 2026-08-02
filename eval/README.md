@@ -24,7 +24,8 @@ eval/
 
 ### 1. 准备环境
 
-- Python 3.10+；基础采集脚本只使用标准库。
+- Python 3.10+；基础采集脚本只使用标准库。trajectory 诊断和 reviewbench 共用
+  `eval/reviewbench` 的 uv 环境，其中 `case-harness` 提供 `trajectory_harness`。
 - GitHub：安装 `gh` 并确认 `gh auth status` 成功。
 - GitLab：在当前 shell 或 secret manager 中提供 `GITLAB_TOKEN`，并设置 `GITLAB_HOST`；
   不要把 token 写入仓库文件。
@@ -182,10 +183,15 @@ python3 eval/collect.py \
 不调用 LLM 的客观链路诊断：
 
 ```bash
-python3 eval/trajectory_judge.py \
+uv run --project eval/reviewbench python eval/trajectory_judge.py \
   eval/data/runs/<collection-name>/<trajectory>.atif.jsonl \
   --no-llm
 ```
+
+诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
+`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索和 Unit
+完成度 Evaluator。确定性结果统一产生 0~1 score、label、explanation 与证据 step id；可选 LLM
+judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
 后验扫描 finding 指向的代码是否被后续提交修改：
 
@@ -243,11 +249,15 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
 ## 收口检查
 
 ```bash
+uv run --project eval/reviewbench python -m unittest discover \
+  -s eval -p 'test_*.py'
+
 python3 -m py_compile \
   eval/labels.py \
   eval/build_label_dataset.py \
   eval/build_hypothesis_dataset.py \
   eval/collect.py \
+  eval/ccr_trajectory.py \
   eval/posterior.py \
   eval/replay.py \
   eval/trajectory_judge.py

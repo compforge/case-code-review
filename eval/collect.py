@@ -138,7 +138,8 @@ def main() -> int:
     json.dump(comments, (out_dir / "comments.json").open("w"),
               ensure_ascii=False, indent=1)
     print(f"\nsessions={len(sessions)} units={n_units} code_comments={n_comments}")
-    print(f"next: python3 eval/trajectory_judge.py {out_dir}/<branch>.atif.jsonl --no-llm")
+    print("next: uv run --project eval/reviewbench python "
+          f"eval/trajectory_judge.py {out_dir}/<branch>.atif.jsonl --no-llm")
     return 0
 
 
