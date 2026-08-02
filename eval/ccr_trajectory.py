@@ -196,9 +196,7 @@ class FileReadCoverageEvaluator:
     """Score how much file_read output adds coverage not seen earlier."""
 
     name: str = "file_read_coverage"
-    # Coverage is diagnostic: adding it must not silently rebaseline the
-    # overall quality score produced by the established evaluators.
-    weight: float = 0.0
+    weight: float = 1.0
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
@@ -244,7 +242,7 @@ class PromptFileCoverageEvaluator:
     """Measure file_read content already visible in initial File messages."""
 
     name: str = "file_read_prompt_novelty"
-    weight: float = 0.0
+    weight: float = 1.0
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
@@ -274,7 +272,7 @@ class FileReadFragmentationEvaluator:
     """Detect adjacent or overlapping ranges that fit in fewer reads."""
 
     name: str = "file_read_fragmentation"
-    weight: float = 0.0
+    weight: float = 1.0
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
@@ -360,6 +358,70 @@ class AssessmentCompletionEvaluator:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class RoundEfficiencyEvaluator:
+    """Score inference rounds per Unit or completed Lane assessment."""
+
+    name: str = "round_efficiency"
+    weight: float = 1.0
+    target_rounds_per_item: int = 12
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        rounds = sum(step.operation == "inference" for step in trajectory.steps)
+        if rounds == 0:
+            return _not_evaluated(self.name, "Trajectory contains no model execution.")
+        items = _review_work_items(trajectory)
+        budget = self.target_rounds_per_item * items
+        score = min(1.0, round(budget / rounds, 3))
+        return Evaluation(
+            name=self.name,
+            score=score,
+            label="pass" if rounds <= budget else "fail",
+            explanation=(
+                f"{rounds} inference rounds for {items} review item(s); "
+                f"target is at most {budget} ({self.target_rounds_per_item} per item)."
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DurationEfficiencyEvaluator:
+    """Score model/tool duration per Unit or completed Lane assessment."""
+
+    name: str = "duration_efficiency"
+    weight: float = 1.0
+    review1_seconds_per_item: int = 180
+    review2_seconds_per_item: int = 120
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        duration = round(sum(step.duration_ms for step in trajectory.steps) / 1000)
+        if duration == 0:
+            return _not_evaluated(self.name, "Trajectory contains no recorded duration.")
+        items = _review_work_items(trajectory)
+        per_item = (
+            self.review2_seconds_per_item
+            if review_stage(trajectory) == REVIEW2
+            else self.review1_seconds_per_item
+        )
+        budget = per_item * items
+        score = min(1.0, round(budget / duration, 3))
+        return Evaluation(
+            name=self.name,
+            score=score,
+            label="pass" if duration <= budget else "fail",
+            explanation=(
+                f"{duration}s recorded duration for {items} review item(s); "
+                f"target is at most {budget}s ({per_item}s per item)."
+            ),
+        )
+
+
 def review_stage(trajectory: Trajectory) -> str:
     """Classify a CCR scope without relying on trajectory-id naming."""
 
@@ -375,6 +437,28 @@ def review_stage(trajectory: Trajectory) -> str:
     ):
         return REVIEW2
     return UNKNOWN_STAGE
+
+
+def _review_work_items(trajectory: Trajectory) -> int:
+    """Normalize a long-lived Review 2 Lane by the assessments it consumed."""
+
+    if review_stage(trajectory) != REVIEW2:
+        return 1
+    accepted = set()
+    completed_submissions = 0
+    for step in _tool_steps(trajectory):
+        if step.name != "submit_assessments" or step.status == "error":
+            continue
+        try:
+            result = json.loads(_tool_response(step))
+        except json.JSONDecodeError:
+            continue
+        values = result.get("accepted") or []
+        if isinstance(values, list):
+            accepted.update(str(value) for value in values)
+        if _assessment_completed(step):
+            completed_submissions += 1
+    return max(len(accepted), completed_submissions, 1)
 
 
 def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:

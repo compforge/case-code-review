@@ -41,6 +41,7 @@ from pathlib import Path
 from ccr_trajectory import (
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
+    DurationEfficiencyEvaluator,
     EmptySearchEvaluator,
     FileReadCoverageEvaluator,
     FileReadFragmentationEvaluator,
@@ -48,6 +49,7 @@ from ccr_trajectory import (
     REVIEW2,
     HypothesisCompletionEvaluator,
     PromptFileCoverageEvaluator,
+    RoundEfficiencyEvaluator,
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
     code_search_stats,
@@ -88,6 +90,8 @@ _COMMON_EVALUATORS = (
     FileReadCoverageEvaluator(),
     PromptFileCoverageEvaluator(),
     FileReadFragmentationEvaluator(),
+    RoundEfficiencyEvaluator(),
+    DurationEfficiencyEvaluator(),
 )
 
 _STAGE_EVALUATORS = {
@@ -124,6 +128,29 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "empty_searches": empty_searches,
         "tool_failures": tool_fails,
     }
+
+
+def main_deductions(signals: list[dict], limit: int = 3) -> list[dict]:
+    """Rank the stage's recurring score losses without hiding raw Evaluations."""
+
+    grouped: dict[str, list[float]] = {}
+    for signal in signals:
+        for result in signal["evaluations"]:
+            score = result.get("score")
+            if result.get("label") != "fail" or score is None:
+                continue
+            grouped.setdefault(result["name"], []).append(float(score))
+    ranked = [
+        {
+            "name": name,
+            "count": len(scores),
+            "average_score": round(sum(scores) / len(scores), 3),
+            "lost_score": round(sum(1 - score for score in scores), 3),
+        }
+        for name, scores in grouped.items()
+    ]
+    ranked.sort(key=lambda item: (-item["lost_score"], -item["count"], item["name"]))
+    return ranked[:limit]
 
 
 # ── judge pass (LLM over the chain, taxonomy-constrained) ────────────────────
@@ -351,6 +378,13 @@ def main() -> int:
             print(f"\n   {title} summary: score={average} "
                   f"rounds={sum(item['rounds'] for item in stage_signals)} "
                   f"duration={sum(item['duration_sec'] for item in stage_signals)}s")
+            deductions = main_deductions(stage_signals)
+            if deductions:
+                detail = ", ".join(
+                    f"{item['name']}({item['count']} chain(s), avg={item['average_score']})"
+                    for item in deductions
+                )
+                print(f"   main deductions: {detail}")
         print()
     if trajectories:
         print()
