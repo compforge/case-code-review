@@ -42,11 +42,17 @@ from ccr_trajectory import (
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     EmptySearchEvaluator,
+    FileReadCoverageEvaluator,
+    FileReadFragmentationEvaluator,
     REVIEW1,
     REVIEW2,
+    HypothesisCompletionEvaluator,
+    PromptFileCoverageEvaluator,
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
-    UnitCompletionEvaluator,
+    file_read_fragmentation,
+    file_read_stats,
+    prompt_file_read_overlap,
     repeated_file_reads,
     review_stage,
     tool_frequencies,
@@ -78,10 +84,13 @@ _COMMON_EVALUATORS = (
     RepeatedToolCallEvaluator(),
     ToolFailureEvaluator(),
     EmptySearchEvaluator(),
+    FileReadCoverageEvaluator(),
+    PromptFileCoverageEvaluator(),
+    FileReadFragmentationEvaluator(),
 )
 
 _STAGE_EVALUATORS = {
-    REVIEW1: (*_COMMON_EVALUATORS, UnitCompletionEvaluator()),
+    REVIEW1: (*_COMMON_EVALUATORS, HypothesisCompletionEvaluator()),
     REVIEW2: (*_COMMON_EVALUATORS, AssessmentCompletionEvaluator()),
     UNKNOWN_STAGE: _COMMON_EVALUATORS,
 }
@@ -106,6 +115,9 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
         "tool_freq": tool_frequencies(trajectory),
+        "file_reads": file_read_stats(trajectory),
+        "prompt_overlap": prompt_file_read_overlap(trajectory),
+        "read_fragmentation": file_read_fragmentation(trajectory),
         "repeated_reads": repeated_file_reads(trajectory),
         "empty_searches": empty_searches,
         "tool_failures": tool_fails,
@@ -275,6 +287,23 @@ def main() -> int:
                 print(f"   score={sig['score']} rounds={sig['rounds']} "
                       f"duration={sig['duration_sec']}s tools={sig['tool_freq']} "
                       f"empty_searches={sig['empty_searches']}")
+                if sig["file_reads"]["calls"]:
+                    reads = sig["file_reads"]
+                    print(f"   file_read calls={reads['calls']} rounds={reads['rounds']} "
+                          f"avg_batch={reads['average_batch']} max_batch={reads['max_batch']}")
+                    overlap = sig["prompt_overlap"]
+                    fragmented = sig["read_fragmentation"]
+                    print(
+                        f"   prompt_overlap full={overlap['fully_covered']} "
+                        f"partial={overlap['partially_covered']} new={overlap['new_context']} "
+                        f"runtime_repeat={overlap['runtime_covered']} "
+                        f"blocked={overlap['blocked']} failed={overlap['failed']} "
+                        f"lines={overlap['covered_lines']}/{overlap['total_lines']}"
+                    )
+                    print(
+                        f"   read_fragmentation minimal={fragmented['minimal_ranges']} "
+                        f"mergeable={fragmented['mergeable_reads']}"
+                    )
                 for result in sig["evaluations"]:
                     if result["label"] == "fail":
                         print(f"   ⚠ {result['name']}: {result['explanation']}")
