@@ -11,7 +11,7 @@ import (
 const (
 	CodeSearchToolName   = "search_code"
 	FileFindToolName     = "file_find"
-	FileReadDiffToolName = "file_read_diff"
+	FileReadDiffToolName = "read_diffs"
 )
 
 // LLMToolResult is the wire evidence needed to restore one typed result. The
@@ -125,7 +125,7 @@ func (d *Diff) FromLLM(result LLMToolResult) bool {
 		return false
 	}
 	*d = Diff{
-		Paths:      stringArguments(result.Arguments, "path_array"),
+		Paths:      stringArguments(result.Arguments, "paths"),
 		Content:    result.Content,
 		ToolCallID: result.ToolCallID,
 	}

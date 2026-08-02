@@ -234,7 +234,7 @@ func (p *FileReadProvider) executeOne(
 			filePath = to
 			lines, totalLines, err = p.FileReader.ReadLines(ctx, filePath, startLine, maxLines)
 		} else if p.diffPaths.deleted[filePath] {
-			return fmt.Sprintf("File %q was deleted in this diff; it no longer exists at the review ref. Use file_read_diff to see the removed content.", filePath), nil
+			return fmt.Sprintf("File %q was deleted in this diff; it no longer exists at the review ref. Use read_diffs to see the removed content.", filePath), nil
 		}
 	}
 	if err != nil && p.Tool() == FileReadBase {

@@ -431,6 +431,13 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	}
 }
 
+func TestDomainMessageDelegatesApplicationPriority(t *testing.T) {
+	domain := domainMessage{value: msg.NewFile("a.go", 1, 1, 1, "1|x").ConfigurePriority(42)}
+	if got := domain.Priority(); got != 42 {
+		t.Fatalf("domain priority = %d, want 42", got)
+	}
+}
+
 func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	result := tool.EncodeFileReadResults([]string{
 		"File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|package a\n",

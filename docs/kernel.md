@@ -20,11 +20,12 @@ Kernel 由两个知识层、Unit 和 Harness 组成：
 |---|---|---|
 | **Project** | Repository 中有哪些 Component、文件扮演什么角色、有哪些项目事实 | 解析代码语义、决定是否成 Finding |
 | **Language** | 源码中有哪些 definition、reference、call edge 和稳定身份 | 决定如何审、是否成 Finding |
-| **Unit** | 哪些改动应一起审，相关契约和邻域如何组织 | 运行 agent loop |
+| **Unit** | 哪些改动应一起审，本次 run 已获得哪些事实快照和阶段结论 | 运行 agent loop、决定阶段策略 |
 | **Harness** | 一次 agent execution 如何有界运行、完成并被观测 | 理解 Unit、Hypothesis、Finding |
 
-Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Unit 形成输入，用 Harness 执行两个阶段，
-再聚合领域结果。领域行为通过 execution spec、tool、hook 和 event 适配 Harness，而不是塞进执行内核。
+Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Unit 形成输入，用 Harness 执行两个
+agent Review，再交给确定性的 Trial（Review 3）并聚合领域结果。领域行为通过 execution spec、tool、hook
+和 event 适配 Harness，而不是塞进执行内核。
 
 评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
 Repository / Component 提供项目边界、可组合 FileRole（如 source + entrypoint / handler）和 manifest
@@ -46,26 +47,23 @@ Change ─▶ Component / FileRole
                   │     └─ entrypoint / handler ──────────▶ Clue
                   └─ manifest / lock ─────────────────────▶ Clue
                                       │
-                         ClueFinder ─▶ Unit.Clues ─▶ Review Messages
+                         ClueFinder ─▶ Unit{Fragments, Clues}
                                       │
                                       ▼
                               Unit Review (Review 1)
                                       │
-                                      ▼
-                                  Hypothesis
+                              append Hypothesis to Unit
                                       │
                               assign related Lane
                                       │
                                       ▼
                            Hypothesis Review (Review 2)
                                       │
-                                      ▼
-                                  Assessment
+                 append snapshots/results + Assessment to Unit
                                       │
-                              Trial delivery gate
+                         Trial delivery gate (Review 3)
                                       │
-                                      ▼
-                                    Finding
+                       append Decision to Unit ─▶ Finding
 ```
 
 这条链路借用了“调查—复核—裁决”的比喻，但对象是工程契约，不是角色扮演：
@@ -73,6 +71,9 @@ Change ─▶ Component / FileRole
 - `Clue / Unit == Review 1 ==> Hypothesis`：在一个行为范围内探索，提出可证伪的怀疑；
 - `Hypothesis == Lane / Review 2 ==> Assessment`：相关假设复用上下文，独立复核已有主张；
 - `Assessment == Trial ==> Finding`：确定性规则决定是否值得向开发者交付。
+
+Review 3 是 Trial 的流程别名，不引入第三个 agent loop 或新的领域对象。三个阶段借“吾日三省吾身”作
+记忆点：发现、复核之后，结论在交付前还要由确定性规则再审一次。
 
 两次 Review 的聚合维度不同：Unit Review 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；
 Hypothesis Review 把关系紧密的 Hypothesis 投入同一 Lane，串行复用 conversation 与证据。归 Lane
@@ -84,11 +85,11 @@ Hypothesis Review 把关系紧密的 Hypothesis 投入同一 Lane，串行复用
 
 - Project 拥有 Repository、Component、FileRole 与项目事实；
 - Language 拥有源码事实与置信度；
-- Unit 拥有行为作用域和上下文关系；
+- Unit 拥有一次 run 的行为作用域、不可变文件/diff/搜索快照和已接受的阶段结果；
 - Harness 拥有 execution 生命周期、工具机制、预算和观测事件；
-- Review 1 拥有 Hypothesis 的产生；
-- Review 2 拥有 Assessment；
-- Trial 拥有 Assessment 到 Finding 的确定性门禁。
+- Review 1 拥有 Hypothesis 的产生逻辑，并把结果追加到来源 Unit；
+- Review 2 拥有 Assessment 的产生逻辑，并把补充快照与结果追加到来源 Unit；
+- Trial 接收完整 Unit，拥有 Assessment 到 Finding 的确定性门禁，并把决策追加到来源 Unit。
 
 这些 owner 在 `internal/runner` 中分别落为 `formation`、`unitreview`、`hypothesisreview` 和
 `trial`；根 Runner 只串联阶段并处理 run 级持久化。Trial 不依赖 Harness、LLM 或 prompt。
@@ -98,16 +99,18 @@ Hypothesis Review 把关系紧密的 Hypothesis 投入同一 Lane，串行复用
 
 ### 3.2 Unit 与 Execution 是两种不同货币
 
-Unit 是评审领域作用域；Execution 是 Harness 的一次 agent 运行。当前通常一个 Review 1 Unit 对应
-一个 Execution，但两者不能合并成同一类型：未来重试、分案、并行证据核查或固定 Hypothesis 重放，
-都可能改变映射关系，而不改变 Unit 语义。
+Unit 是一次 run 的评审领域聚合根；Execution 是 Harness 的一次 agent 运行。当前通常一个 Review 1
+Unit 对应一个 Execution，但 Review 2 可以通过 Lane 为同一 Unit 产生更多 Execution。两者不能合并成
+同一类型：重试、并行证据核查或固定 Hypothesis 重放都可能改变映射关系，而不改变 Unit 语义。
 
 ### 3.3 先捕获确定上下文，再允许有界探索
 
 CCR 相比 file-only review 的优势来自两部分：
 
 1. Unit 在 loop 前携带可确定的 diff、Clue、契约和调用邻域；
-2. agent 在 loop 内用只读工具验证未知事实。
+2. agent 在 loop 内用只读工具验证未知事实，成功读取的文件快照、相关 diff 和搜索结果回到 Unit；
+3. Review 2 先复用形成 Hypothesis 时 Unit 已保留的事实，只为缺失事实继续读取；Trial 随后从同一
+   Unit 读取 Hypothesis、Assessment、receipt 与必要事实，而不是接收另一份临时材料包。
 
 全预载会放大成本，只给 diff 又会诱发猜测。初始消息与工具必须形成分工，并由统一上下文生命周期
 控制重复读取、淘汰和压缩。

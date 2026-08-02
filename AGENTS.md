@@ -47,13 +47,15 @@ git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fr
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
 
-Formation 把 Change 切成 Fragment，再按行为关系形成 Unit；Unit 持有 target Fragments 与相关 Clues。
-Runner 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有 Unit、Hypothesis 或 Finding。
+Formation 把 Change 切成 Fragment，再按行为关系形成 Unit；Unit 是一次 run 的评审聚合根，先持有
+Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结果以及 Hypothesis、Assessment 与 Trial decision。Runner
+把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有这些评审领域状态。
 
 ## 关键约定
 
 1. **Knowledge owner 唯一**：Project 拥有 Repository / Component / FileRole；Language 拥有源码事实与
-   稳定身份；Unit 拥有行为作用域和 Clues；Harness 只拥有 Execution 机制，依赖方向不得反转。
+   稳定身份；Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，
+   各 Review 阶段只拥有产生结果的逻辑，依赖方向不得反转。
 2. **Unit 不等于文件**：只有一个 target 文件时收为一个 File Unit；多文件改动按高置信行为关系形成
    call-chain Unit。目标是 Review 1 loop 不多于需评审文件数，同时不靠错误合并牺牲准确性。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial 用确定性

@@ -54,6 +54,7 @@ type Fragment struct {
 	Path       string
 	Symbols    []string
 	Diff       string
+	Status     string
 	Insertions int64
 	Deletions  int64
 }
@@ -76,6 +77,9 @@ type Unit struct {
 	// after formation, across the self/owner/caller/callee/used/project relations.
 	// See docs/unit-model.md.
 	Clues []Clue
+	// review is shared by value-copied Units and accumulates immutable evidence
+	// plus accepted outputs as the Unit moves through Review 1, Review 2 and Trial.
+	review *reviewState
 }
 
 // AllSymbols returns every symbol-id this Unit covers across its Fragments — the
@@ -165,9 +169,9 @@ func (FileSplitter) Split(d change.Change) ([]Fragment, error) {
 // exactly one function (ID "<path>#<symbol>"), else ScopeFile (ID the path).
 func UnitOf(f Fragment) Unit {
 	if len(f.Symbols) == 1 {
-		return Unit{ID: f.Path + "#" + symbolName(f.Symbols[0]), Scope: ScopeFunc, Formed: FormedFunc, Fragments: []Fragment{f}}
+		return Unit{ID: f.Path + "#" + symbolName(f.Symbols[0]), Scope: ScopeFunc, Formed: FormedFunc, Fragments: []Fragment{f}, review: newReviewState()}
 	}
-	return Unit{ID: f.Path, Scope: ScopeFile, Formed: FormedFile, Fragments: []Fragment{f}}
+	return Unit{ID: f.Path, Scope: ScopeFile, Formed: FormedFile, Fragments: []Fragment{f}, review: newReviewState()}
 }
 
 // CoalesceFile merges a file's Fragments into one ScopeFile Unit reviewing the
@@ -178,7 +182,7 @@ func CoalesceFile(d change.Change, frags []Fragment) Unit {
 	for _, f := range frags {
 		whole.Symbols = append(whole.Symbols, f.Symbols...)
 	}
-	return Unit{ID: d.NewPath, Scope: ScopeFile, Formed: FormedCoalesce, Fragments: []Fragment{whole}}
+	return Unit{ID: d.NewPath, Scope: ScopeFile, Formed: FormedCoalesce, Fragments: []Fragment{whole}, review: newReviewState()}
 }
 
 // CoalesceFragments groups the remaining fragments of one file without
@@ -196,6 +200,7 @@ func CoalesceFragments(frags []Fragment) Unit {
 		Scope:     ScopeFile,
 		Formed:    FormedCoalesce,
 		Fragments: append([]Fragment(nil), frags...),
+		review:    newReviewState(),
 	}
 }
 
@@ -210,7 +215,7 @@ func NewChainUnit(frags []Fragment) Unit {
 			names = append(names, symbolName(s))
 		}
 	}
-	return Unit{ID: "chain:" + strings.Join(names, "+"), Scope: ScopeCallChain, Formed: FormedChain, Fragments: frags}
+	return Unit{ID: "chain:" + strings.Join(names, "+"), Scope: ScopeCallChain, Formed: FormedChain, Fragments: frags, review: newReviewState()}
 }
 
 // symbolName returns the bare symbol from a symbol-id ("p/x.go::Svc.Get" -> "Svc.Get")

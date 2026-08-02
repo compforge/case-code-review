@@ -278,11 +278,11 @@ func TestInjectScanContentMap(t *testing.T) {
 
 	p, ok := a.args.Tools.Get(tool.FileReadDiff.Name())
 	if !ok {
-		t.Fatal("file_read_diff not registered")
+		t.Fatal("read_diffs not registered")
 	}
 	frd := p.(*tool.FileReadDiffProvider)
 	res, err := frd.Execute(t.Context(), map[string]any{
-		"path_array": []any{"x.go", "y.go", "missing.go"},
+		"paths": []any{"x.go", "y.go", "missing.go"},
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)

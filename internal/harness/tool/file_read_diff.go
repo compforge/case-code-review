@@ -43,7 +43,7 @@ func (p *FileReadDiffProvider) SetDiffMap(dm DiffMap) {
 func (p *FileReadDiffProvider) Tool() Tool { return FileReadDiff }
 
 func (p *FileReadDiffProvider) Execute(_ context.Context, args map[string]any) (string, error) {
-	pathArray, _ := args["path_array"].([]any)
+	pathArray, _ := args["paths"].([]any)
 	if len(pathArray) == 0 {
 		return "Error: no files found", nil
 	}

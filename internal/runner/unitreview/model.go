@@ -1,41 +1,18 @@
 package unitreview
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-// Hypothesis is a falsifiable issue claim produced by the investigative Unit
-// review. It is deliberately not a Finding: an independent Review must assess
-// both its evidential support and delivery value before Trial can publish it.
-type Hypothesis struct {
-	ID                string   `json:"id"`
-	OriginUnit        string   `json:"origin_unit,omitempty"`
-	Path              string   `json:"path"`
-	Content           string   `json:"content"`
-	SuggestionCode    string   `json:"suggestion_code,omitempty"`
-	ExistingCode      string   `json:"existing_code,omitempty"`
-	StartLine         int      `json:"start_line,omitempty"`
-	EndLine           int      `json:"end_line,omitempty"`
-	Trigger           string   `json:"trigger,omitempty"`
-	Impact            string   `json:"impact,omitempty"`
-	ChangeAttribution string   `json:"change_attribution,omitempty"`
-	Evidence          []string `json:"evidence,omitempty"`
-	Uncertainty       string   `json:"uncertainty,omitempty"`
-	Thinking          string   `json:"thinking,omitempty"`
-	Alias             string   `json:"alias,omitempty"`
-	Category          string   `json:"category,omitempty"`
-	Severity          string   `json:"severity,omitempty"`
-}
+type Hypothesis = unit.Hypothesis
 
-// Finding converts an approved Hypothesis into the public result shape.
-func (h Hypothesis) Finding() finding.Finding {
+// FindingFor converts an approved Hypothesis into the public result shape.
+func FindingFor(h Hypothesis) finding.Finding {
 	return finding.Finding{
 		HypothesisID:   h.ID,
 		Path:           h.Path,
@@ -51,20 +28,9 @@ func (h Hypothesis) Finding() finding.Finding {
 	}
 }
 
-// IDFor returns the content-stable identity used by Assessment to refer to a
-// Hypothesis. Identical proposals from sibling Units intentionally share an ID
-// so Trial also removes duplicate delivery.
-func IDFor(h Hypothesis) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		h.Path,
-		h.Content,
-		h.ExistingCode,
-		h.Trigger,
-		h.Impact,
-		h.ChangeAttribution,
-	}, "\x00")))
-	return "h-" + hex.EncodeToString(sum[:])[:12]
-}
+func IDFor(h Hypothesis) string { return unit.HypothesisIDFor(h) }
+
+func FingerprintFor(h Hypothesis) string { return unit.HypothesisFingerprintFor(h) }
 
 // ParseHypotheses parses the atomic Unit Review submission without storing it.
 // An explicitly empty array is a valid completed review with no hypotheses.
@@ -113,7 +79,7 @@ func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
 			len(h.Evidence) == 0 || h.Category == "" || h.Severity == "" {
 			return nil, fmt.Sprintf("Error: hypothesis %d is incomplete or has an invalid category/severity", i+1)
 		}
-		h.ID = IDFor(h)
+		h.Fingerprint = FingerprintFor(h)
 		out = append(out, h)
 	}
 	return out, ""
@@ -158,26 +124,3 @@ var (
 		"critical": true, "high": true, "medium": true, "low": true,
 	}
 )
-
-// Collector is a thread-safe store for investigative output.
-type Collector struct {
-	mu         sync.Mutex
-	hypotheses []Hypothesis
-}
-
-func NewCollector() *Collector { return &Collector{} }
-
-func (c *Collector) Add(h Hypothesis) {
-	if h.ID == "" {
-		h.ID = IDFor(h)
-	}
-	c.mu.Lock()
-	c.hypotheses = append(c.hypotheses, h)
-	c.mu.Unlock()
-}
-
-func (c *Collector) Hypotheses() []Hypothesis {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]Hypothesis(nil), c.hypotheses...)
-}

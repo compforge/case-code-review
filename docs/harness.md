@@ -94,7 +94,7 @@ ContextManager 才能判断两个范围是否
 
 - `read_files` / `read_base_files` → `FileBatch`（内部保留各个 `File`），current 与 baseline snapshot
   参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
-- `file_read_diff` → `Diff`，压缩时保留 path 与 hunk anchor；
+- `read_diffs` → `Diff`，压缩时保留 path 与 hunk anchor；
 - `search_code` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 

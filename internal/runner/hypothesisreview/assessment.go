@@ -11,59 +11,46 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-type Support string
+type Support = unit.Support
 
 const (
-	Supported    Support = "supported"
-	Contradicted Support = "contradicted"
-	Insufficient Support = "insufficient"
+	Supported    = unit.Supported
+	Contradicted = unit.Contradicted
+	Insufficient = unit.Insufficient
 )
 
-type Attribution string
+type Attribution = unit.Attribution
 
 const (
-	// Caused is factual causation, not intent or blame: reverting the current
-	// diff would remove or materially change the hypothesis' trigger or impact.
-	Caused             Attribution = "caused"
-	PreExisting        Attribution = "pre_existing"
-	AttributionUnknown Attribution = "unknown"
+	Caused             = unit.Caused
+	PreExisting        = unit.PreExisting
+	AttributionUnknown = unit.AttributionUnknown
 )
 
-type DeliveryValue string
+type DeliveryValue = unit.DeliveryValue
 
 const (
-	Actionable   DeliveryValue = "actionable"
-	LowValue     DeliveryValue = "low_value"
-	ValueUnknown DeliveryValue = "unknown"
+	Actionable   = unit.Actionable
+	LowValue     = unit.LowValue
+	ValueUnknown = unit.ValueUnknown
 )
 
-type Novelty string
+type Novelty = unit.Novelty
 
 const (
-	Novel            Novelty = "new"
-	DuplicateInCase  Novelty = "duplicate_in_case"
-	AlreadyDelivered Novelty = "already_delivered"
+	Novel            = unit.Novel
+	DuplicateInCase  = unit.DuplicateInCase
+	AlreadyDelivered = unit.AlreadyDelivered
 )
 
 // Assessment is the convergent Review's judgment of one Hypothesis. Support
 // answers whether the claim is true; attribution, value, and novelty separately
 // answer whether this review should deliver it. EvidenceReceipts are populated
 // by Runner from actual read-only tool executions, never trusted model text.
-type Assessment struct {
-	HypothesisID     string            `json:"hypothesis_id"`
-	Support          Support           `json:"support"`
-	Attribution      Attribution       `json:"attribution"`
-	Value            DeliveryValue     `json:"value"`
-	Novelty          Novelty           `json:"novelty"`
-	Reason           string            `json:"reason"`
-	Evidence         []string          `json:"evidence,omitempty"`
-	EvidenceReceipts []EvidenceReceipt `json:"evidence_receipts,omitempty"`
-	ReviewerAlias    string            `json:"reviewer_alias,omitempty"`
-	LaneID           string            `json:"lane_id,omitempty"`
-	SubmissionIndex  int               `json:"submission_index,omitempty"`
-}
+type Assessment = unit.Assessment
 
 var SubmitAssessments = tool.Named("submit_assessments")
 

@@ -207,7 +207,7 @@ func applyCLIExcludes(cc *commonContext, patterns []string) {
 
 // excludeToolDef returns a copy of defs with any entries whose function name
 // matches name removed. Used by `ocr scan` to hide tools that don't make
-// sense in full-scan mode (e.g. file_read_diff).
+// sense in full-scan mode (e.g. read_diffs).
 func excludeToolDef(defs []llm.ToolDef, name string) []llm.ToolDef {
 	out := make([]llm.ToolDef, 0, len(defs))
 	for _, d := range defs {

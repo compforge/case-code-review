@@ -26,7 +26,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 
 	diff := FromLLM(LLMToolResult{
 		Tool: FileReadDiffToolName, ToolCallID: "diff-1",
-		Arguments: map[string]any{"path_array": []any{"b.go", "a.go"}},
+		Arguments: map[string]any{"paths": []any{"b.go", "a.go"}},
 		Content:   "==== FILE: a.go ====\ndiff --git a/a.go b/a.go\n@@ -1 +1 @@\n-old\n+new\n",
 	})
 	diffResult, ok := diff.(*Diff)

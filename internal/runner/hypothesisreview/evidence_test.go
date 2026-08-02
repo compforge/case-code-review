@@ -9,6 +9,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 func TestReviewHandlerReceiptsComeFromExecutedReadTools(t *testing.T) {
@@ -21,7 +22,7 @@ func TestReviewHandlerReceiptsComeFromExecutedReadTools(t *testing.T) {
 	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 		Tool: tool.FileReadDiff,
 		Call: llm.ToolCall{ID: "call-diff"},
-		Args: map[string]any{"path_array": []any{"a.go", "missing.go"}},
+		Args: map[string]any{"paths": []any{"a.go", "missing.go"}},
 	})
 	if !handled || checkpoint.Data == "" {
 		t.Fatalf("unexpected tool result: handled=%v checkpoint=%+v", handled, checkpoint)
@@ -40,7 +41,8 @@ func TestReviewHandlerReceiptsEachSuccessfulBatchMember(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.NewFileRead(&tool.FileReader{RepoDir: dir, Mode: tool.ModeWorkspace}))
 	ledger := &EvidenceLedger{}
-	handler := &ReviewHandler{Evidence: ledger, Tools: registry}
+	reviewUnit := unit.UnitOf(unit.Fragment{Path: "target.go"})
+	handler := &ReviewHandler{Evidence: ledger, Tools: registry, Unit: &reviewUnit}
 	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 		Tool: tool.FileRead,
 		Call: llm.ToolCall{ID: "call-source"},
@@ -55,6 +57,10 @@ func TestReviewHandlerReceiptsEachSuccessfulBatchMember(t *testing.T) {
 	receipts := ledger.Receipts()
 	if len(receipts) != 1 || receipts[0].Kind != "source" || receipts[0].Ref != "a.go" {
 		t.Fatalf("unexpected receipts: %+v", receipts)
+	}
+	snapshots := reviewUnit.Review().FileSnapshots
+	if len(snapshots) != 1 || snapshots[0].Kind != unit.CurrentSnapshot || snapshots[0].Path != "a.go" {
+		t.Fatalf("Review 2 read was not retained on Unit: %+v", snapshots)
 	}
 }
 
@@ -82,5 +88,13 @@ func TestReviewHandlerReceiptsEachSuccessfulSearch(t *testing.T) {
 	receipts := ledger.Receipts()
 	if len(receipts) != 2 || receipts[0].Ref != "missing" || receipts[1].Ref != "package a" {
 		t.Fatalf("unexpected search receipts: %+v", receipts)
+	}
+}
+
+func TestEvidenceLedgerDeduplicatesRetainedReceipts(t *testing.T) {
+	receipt := EvidenceReceipt{ToolCallID: "unit:diff", Kind: "diff", Ref: "a.go"}
+	ledger := &EvidenceLedger{receipts: []EvidenceReceipt{receipt, receipt}}
+	if got := ledger.Receipts(); len(got) != 1 || got[0] != receipt {
+		t.Fatalf("deduplicated receipts = %+v, want %+v", got, receipt)
 	}
 }
