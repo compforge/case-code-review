@@ -24,6 +24,9 @@ var goProfile = profile{
 		}
 		if strings.EqualFold(path.Ext(file), ".go") {
 			roles := FileRoles{RoleSource}
+			if strings.HasSuffix(strings.ToLower(path.Base(file)), "_test.go") {
+				roles = append(roles, RoleTest)
+			}
 			// Go does not require this filename, but main.go is the dominant
 			// repository convention for an executable package boundary.
 			if strings.EqualFold(path.Base(file), "main.go") {

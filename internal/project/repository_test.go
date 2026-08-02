@@ -29,6 +29,7 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 		{"backend/pyproject.toml", "backend", Python, FileRoles{RoleManifest}, true},
 		{"backend/uv.lock", "backend", Python, FileRoles{RoleLock}, true},
 		{"cmd/ccr/main.go", ".", Go, FileRoles{RoleSource, RoleEntrypoint}, true},
+		{"internal/project/repository_test.go", ".", Go, FileRoles{RoleSource, RoleTest}, true},
 		{"go.mod", ".", Go, FileRoles{RoleManifest}, true},
 		{"go.sum", ".", Go, FileRoles{RoleLock}, true},
 		{"VERSION", ".", Go, FileRoles{RoleVersion}, true},
@@ -125,10 +126,13 @@ func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
 		roles FileRoles
 	}{
 		{"cli/src/app/main.tsx", "cli", TypeScript, FileRoles{RoleSource, RoleEntrypoint}},
+		{"cli/src/app/main.spec.tsx", "cli", TypeScript, FileRoles{RoleSource, RoleTest}},
 		{"cli/package.json", "cli", TypeScript, FileRoles{RoleManifest}},
 		{"cli/tsconfig.json", "cli", TypeScript, FileRoles{RoleManifest}},
 		{"cli/bun.lock", "cli", TypeScript, FileRoles{RoleLock}},
 		{"server/app.py", "server", Python, FileRoles{RoleSource}},
+		{"server/tests/test_app.py", "server", Python, FileRoles{RoleSource, RoleTest}},
+		{"server/conftest.py", "server", Python, FileRoles{RoleSource, RoleTest}},
 		{"server/harness/runtime.py", "server/harness", Python, FileRoles{RoleSource}},
 		{"src/index.ts", ".", TypeScript, FileRoles{RoleSource}},
 		{"src/cli/launcher.cjs", ".", TypeScript, FileRoles{RoleSource}},
