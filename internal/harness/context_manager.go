@@ -31,7 +31,12 @@ func (m domainMessage) Raw() agentgo.AgentMessage {
 	m.compaction = msg.CompactionNone
 	return m
 }
-func (m domainMessage) Priority() int { return 0 }
+func (m domainMessage) Priority() int {
+	if prioritized, ok := m.value.(msg.Prioritized); ok {
+		return prioritized.Priority()
+	}
+	return 0
+}
 func (m domainMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	raw := m.value.ToLLM(msg.CompactionNone)
 	rawTokens := llm.CountTokens(raw.ExtractText())
@@ -365,7 +370,7 @@ func (m *contextManager) coveredFileRead(request tool.FileReadRequest) (string, 
 			continue
 		}
 		if visible.source == fileFromTool {
-			return coveredReadMessage(filePath, start, end, visible.source), true
+			return coveredReadMessage(filePath, start, end, visible.description()), true
 		}
 		preload = visible
 	}
@@ -374,12 +379,19 @@ func (m *contextManager) coveredFileRead(request tool.FileReadRequest) (string, 
 		if requestedEnd > 0 {
 			end = min(end, requestedEnd)
 		}
-		return coveredReadMessage(filePath, start, end, preload.source), true
+		return coveredReadMessage(filePath, start, end, preload.description()), true
 	}
 	return "", false
 }
 
-func coveredReadMessage(filePath string, start, end int, source fileSource) string {
+func (f visibleFile) description() string {
+	if f.label != "" {
+		return fmt.Sprintf("%s (%s)", f.source, f.label)
+	}
+	return string(f.source)
+}
+
+func coveredReadMessage(filePath string, start, end int, source string) string {
 	return fmt.Sprintf(
 		"Already available in the current context from %s: %s lines %d-%d. Reuse that content; call read_files only for a range not shown there.",
 		source, filePath, start, end,

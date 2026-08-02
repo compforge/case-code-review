@@ -16,7 +16,7 @@ var (
 	FileRead     = Tool{name: "read_files"}
 	FileReadBase = Tool{name: "read_base_files"}
 	FileFind     = Tool{name: "file_find"}
-	FileReadDiff = Tool{name: "file_read_diff"}
+	FileReadDiff = Tool{name: "read_diffs"}
 	CodeSearch   = Tool{name: "search_code"}
 	PostBulletin = Tool{name: "post_bulletin"}
 )

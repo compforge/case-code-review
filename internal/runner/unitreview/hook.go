@@ -19,7 +19,6 @@ import (
 // HypothesisHook turns the terminal submit_hypotheses call into Runner-owned
 // investigative results. Finding conversion remains deferred until Trial.
 type HypothesisHook struct {
-	Collector    *Collector
 	WorkerPool   *harness.WorkerPool
 	Session      *session.SessionHistory
 	ChangeLookup func(path string) *change.Change
@@ -28,7 +27,7 @@ type HypothesisHook struct {
 	Model        string
 	Relocation   bool
 	RecordUsage  func(*llm.UsageInfo)
-	// OnResolved runs after anchoring/relocation and collection, when the
+	// OnResolved runs after anchoring/relocation, when the
 	// Hypothesis is stable enough to enter downstream Lane assignment.
 	OnResolved func(Hypothesis)
 }
@@ -61,7 +60,7 @@ func (h *HypothesisHook) HandleTool(
 	resolveAndCollect := func(workCtx context.Context) {
 		for i := range hypotheses {
 			hypothesis := &hypotheses[i]
-			draft := hypothesis.Finding()
+			draft := FindingFor(*hypothesis)
 			var ch *change.Change
 			if h.ChangeLookup != nil {
 				ch = h.ChangeLookup(hypothesis.Path)
@@ -73,10 +72,8 @@ func (h *HypothesisHook) HandleTool(
 			hypothesis.StartLine = draft.StartLine
 			hypothesis.EndLine = draft.EndLine
 			hypothesis.ExistingCode = draft.ExistingCode
+			hypothesis.Fingerprint = FingerprintFor(*hypothesis)
 			hypothesis.ID = IDFor(*hypothesis)
-			if h.Collector != nil {
-				h.Collector.Add(*hypothesis)
-			}
 			if h.OnResolved != nil {
 				h.OnResolved(*hypothesis)
 			}

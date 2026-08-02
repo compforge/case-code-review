@@ -215,16 +215,16 @@
     }
   },
   {
-    "name": "file_read_diff",
+    "name": "read_diffs",
     "plan_task": true,
     "main_task": true,
     "definition": {
-      "name": "file_read_diff",
-      "description": "The tool is used to view the changes made to other files in the list of modifications. Call this tool when you discover suspected code issues but need to check changes in other files to confirm whether the problem actually exists. This tool will respond in git diff format.\n\nOutput example:\n==== FILE: path/to/file1.txt ====\n--- a/path/to/file1.txt\n+++ b/path/to/file1.txt\n@@ -10,1 +10,1 @@\n- old content\n+ new content\n\n==== FILE: path/to/file2.txt ====\n@@ -5,1 +5,2 @@\n  - old content\n  + new content1\n  + new content2",
+      "name": "read_diffs",
+      "description": "Read the reviewed diff for one or more paths. Always pass paths, including for a single file. Batch all independent diff reads already known; results are returned in git diff format.",
       "parameters": {
         "type": "object",
         "properties": {
-          "path_array": {
+          "paths": {
             "type": "array",
             "items": {
               "type": "string"
@@ -233,7 +233,7 @@
           }
         },
         "required": [
-          "path_array"
+          "paths"
         ]
       }
     }

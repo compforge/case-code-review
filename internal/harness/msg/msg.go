@@ -48,6 +48,13 @@ type Compactable interface {
 	MaxCompaction() CompactionLevel
 }
 
+// Prioritized lets the application state which messages should retain detail
+// longest. Higher values compact later; messages without it use priority 0.
+type Prioritized interface {
+	Msg
+	Priority() int
+}
+
 // ToolResultMsg preserves the tool identity needed to reconstruct typed
 // results after AgentGo or a context strategy temporarily lowers them.
 type ToolResultMsg interface {

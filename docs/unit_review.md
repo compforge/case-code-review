@@ -21,8 +21,9 @@ Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 R
 - 每个 Unit 都形成明确终态，不让轮次耗尽伪装成 clean；
 - 以相关上下文密度换效果，不以无限搜索和无限预载换安全感。
 
-这里的 lead 只是 Unit Review 内部的临时调查状态，不新增公开领域对象。第一个需要持久化、进入
-Lane 调度和 eval 的结果仍然是 Hypothesis。
+这里的 lead 只是 Unit Review 内部的临时调查状态，不新增公开领域对象。成功进入上下文或由工具读取的
+文件快照、相关 diff 和搜索结果直接追加到 Unit；第一个需要持久化、进入 Lane 调度和 eval 的判断结果仍然是挂在来源
+Unit 上的 Hypothesis。
 
 ## 问题画像
 
@@ -106,7 +107,7 @@ Unit + Review Messages
     │      ├── falsified / low value ──▶ 丢弃
     │      └── plausible + falsifiable ──▶ Hypothesis
     │
-    └── submit_hypotheses([] | [...]) ──▶ completed UnitResult
+    └── submit_hypotheses([] | [...]) ──▶ append to Unit ──▶ completed Review 1
 ```
 
 lead 应按价值排序，而不是要求机械覆盖多条路径。一次补证链通常是以下之一：
@@ -169,7 +170,7 @@ AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、c
 middleware 将执行能力收敛为：
 
 ```text
-reject execution: search_code / file_find / read_files / file_read_diff / read_base_files
+reject execution: search_code / file_find / read_files / read_diffs / read_base_files
 allow execution:  submit_hypotheses
 ```
 
@@ -235,7 +236,7 @@ assistant: <assistant text, if any> + tool_calls(search_code, read_files(reads=[
 tool:      SearchResult(query=..., hits=...)
 tool:      FileBatch(files=[C, D, ...], snapshot=current)
 
-assistant: <assistant text, if any> + tool_calls(read_base_files, file_read_diff, ...)
+assistant: <assistant text, if any> + tool_calls(read_base_files, read_diffs, ...)
 tool:      FileBatch(files=[C, D, ...], snapshot=baseline)
 tool:      Diff(paths=[...])
 

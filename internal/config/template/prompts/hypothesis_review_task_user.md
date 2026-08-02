@@ -8,7 +8,7 @@ The change set, background, rules, clues, and hypothesis below are the material 
 {{change_set}}
 ```
 
-Use `file_read_diff` to inspect the complete diff for each path relevant to a hypothesis. Use `read_base_files` to compare the exact baseline when deciding whether the change introduced the behavior. Use `read_files` and `search_code` for surrounding implementation and call-path evidence.
+The originating Unit already supplies the target diff plus file, related-diff, and search snapshots retained from Review 1. Verify that Unit context first. Call `read_diffs`, `read_base_files`, `read_files`, or `search_code` only for a specific fact still missing; batch independent targets in one call.
 
 ### Evidence paths already visited by Unit Review
 

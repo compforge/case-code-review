@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 const (
@@ -66,8 +66,6 @@ type Executor struct {
 	toolCalls  map[string]int64
 	modelMu    sync.Mutex
 	models     map[string]int
-	readMu     sync.Mutex
-	readPaths  map[string]map[string]bool
 }
 
 type ExecutorConfig struct {
@@ -120,11 +118,13 @@ func (e *Executor) Run(
 	ctx context.Context,
 	messages []msg.Msg,
 	scope session.Scope,
+	reviewUnit *unit.Unit,
 ) (Outcome, error) {
 	run := &unitExecution{
 		executor:       e,
 		ctx:            ctx,
 		scope:          scope,
+		reviewUnit:     reviewUnit,
 		bulletinBudget: maxBulletinsPerExecution,
 	}
 	var turnContext harness.TurnContextProvider
@@ -276,63 +276,6 @@ func (e *Executor) ModelsUsed() map[string]int {
 	return out
 }
 
-// ReadPaths returns the successful repository paths inspected by one Unit
-// Review. Runner uses this runtime footprint only to relate Hypotheses; it is
-// not promoted into Harness or the Hypothesis domain model.
-func (e *Executor) ReadPaths(scopeID string) []string {
-	e.readMu.Lock()
-	defer e.readMu.Unlock()
-	set := e.readPaths[scopeID]
-	out := make([]string, 0, len(set))
-	for path := range set {
-		out = append(out, path)
-	}
-	sort.Strings(out)
-	return out
-}
-
-func (e *Executor) recordReadPaths(scopeID, name string, arguments json.RawMessage, result string) {
-	var args map[string]any
-	if json.Unmarshal(arguments, &args) != nil {
-		return
-	}
-	var paths []string
-	switch name {
-	case tool.FileRead.Name(), tool.FileReadBase.Name():
-		requests, err := tool.ParseFileReadRequests(args)
-		if err != nil {
-			return
-		}
-		parts, ok := tool.DecodeFileReadResults(result)
-		if !ok || len(parts) != len(requests) {
-			return
-		}
-		for i, request := range requests {
-			if request.FilePath != "" && strings.Contains(parts[i], "File: ") {
-				paths = append(paths, request.FilePath)
-			}
-		}
-	case tool.FileReadDiff.Name():
-		paths = append(paths, argumentStrings(args["path_array"])...)
-	default:
-		return
-	}
-	if len(paths) == 0 {
-		return
-	}
-	e.readMu.Lock()
-	if e.readPaths == nil {
-		e.readPaths = make(map[string]map[string]bool)
-	}
-	if e.readPaths[scopeID] == nil {
-		e.readPaths[scopeID] = make(map[string]bool)
-	}
-	for _, path := range paths {
-		e.readPaths[scopeID][path] = true
-	}
-	e.readMu.Unlock()
-}
-
 func (e *Executor) countableTool(name string) bool {
 	if name == tool.TaskDone.Name() {
 		return false
@@ -351,9 +294,10 @@ func (e *Executor) countableTool(name string) bool {
 }
 
 type unitExecution struct {
-	executor *Executor
-	ctx      context.Context
-	scope    session.Scope
+	executor   *Executor
+	ctx        context.Context
+	scope      session.Scope
+	reviewUnit *unit.Unit
 
 	mu             sync.Mutex
 	turn           int
@@ -415,7 +359,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 		r.publishToolFact(event.Tool, event.Arguments)
 	case harness.EventToolEnd:
 		if !event.IsError && !strings.HasPrefix(strings.TrimSpace(eventResultText(event.Result)), "Error:") {
-			r.executor.recordReadPaths(r.scope.ID, event.Tool, event.Arguments, eventResultText(event.Result))
+			AttachToolResult(r.reviewUnit, event.Tool, event.Arguments, eventResultText(event.Result))
 		}
 		if !r.observesGenericTool(event.Tool) {
 			return

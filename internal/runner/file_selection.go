@@ -57,7 +57,7 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 			Relation: unit.RelProject,
 			Ref:      path,
 			Text: fmt.Sprintf(
-				"changed %s `%s` in this %s component; treat it as project context and inspect its diff with file_read_diff only when relevant",
+				"changed %s `%s` in this %s component; treat it as project context and inspect its diff with read_diffs only when relevant",
 				selection.Roles, path, selection.Component.Kind,
 			),
 		})

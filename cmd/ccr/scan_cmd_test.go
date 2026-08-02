@@ -12,16 +12,16 @@ func TestExcludeToolDef(t *testing.T) {
 	defs := []llm.ToolDef{
 		{Type: "function", Function: llm.FunctionDef{Name: "task_done"}},
 		{Type: "function", Function: llm.FunctionDef{Name: "read_files"}},
-		{Type: "function", Function: llm.FunctionDef{Name: "file_read_diff"}},
+		{Type: "function", Function: llm.FunctionDef{Name: "read_diffs"}},
 		{Type: "function", Function: llm.FunctionDef{Name: "code_comment"}},
 	}
-	got := excludeToolDef(defs, "file_read_diff")
+	got := excludeToolDef(defs, "read_diffs")
 	if len(got) != 3 {
 		t.Fatalf("expected 3 defs, got %d", len(got))
 	}
 	for _, d := range got {
-		if d.Function.Name == "file_read_diff" {
-			t.Errorf("file_read_diff should have been removed")
+		if d.Function.Name == "read_diffs" {
+			t.Errorf("read_diffs should have been removed")
 		}
 	}
 	// Input slice must not be mutated.

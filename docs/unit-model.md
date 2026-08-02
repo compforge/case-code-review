@@ -14,6 +14,10 @@ CCR 不把“文件”直接等同于评审任务。文件是源码的存储边�
 CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文件改动收为一个 Unit，跨文件
 协作改动通过 call-chain 合并后可以进一步减少 loop。
 
+这种可变粒度依赖 Language Knowledge 提供足够可靠的 caller/callee 关系；随着
+[`gotreesitter`](https://github.com/odvcencio/gotreesitter) 的跨语言解析、符号定位和调用分析能力成熟，
+Formation 才能把分散在不同文件、但共同完成一个行为变化的 Fragment 实用地归入同一 Unit。
+
 一个 Git Repository 可以包含多个 manifest 定义的 **Component**，例如 `backend/pyproject.toml`
 定义 Python Component、仓根 `go.mod` 定义 Go Component、`cli/package.json` 定义 TypeScript
 Component。Component 是静态项目边界，Unit 是一次 diff 动态形成的评审边界；一个 Component
@@ -21,7 +25,7 @@ Component。Component 是静态项目边界，Unit 是一次 diff 动态形成�
 
 ```text
 Git Change ─▶ Component / FileRole
-                   ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues} ─▶ Review Messages
+                   ├─ source ─▶ Fragment ─────────────▶ Unit{Fragments, Clues, Review State}
                    │     └─ entrypoint / handler ─▶ project Clue ─────▲
                    ├─ manifest / lock ────────────▶ project Clue ─────▲
                    └─ version ─▶ no Unit Review
@@ -33,7 +37,7 @@ Git Change ─▶ Component / FileRole
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
 | `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、test、entrypoint、handler、manifest、lock、version |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
-| `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
+| `Unit` | 一次 run 的评审聚合根：稳定行为范围，以及逐阶段追加的事实快照、Hypothesis、Assessment 和 Trial decision |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
 
 FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
@@ -111,8 +115,10 @@ Unit
 ### 2.4 初始消息与按需工具
 
 初始消息只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
-未知路径和低概率细节由 Unit Review 通过只读工具按需获取。Review Messages 是从 Unit 到 Execution
-的直接投影，不再引入额外领域对象。
+未知路径和低概率细节由 Review loop 通过只读工具按需获取。实际进入上下文或由工具成功读取的仓库
+事实按其真实形状追加到 Unit：文件内容是 `FileSnapshot`，额外变更切片是 `DiffSnapshot`，检索输出是
+`SearchResult`；Unit 自身目标 diff 仍只来自 Fragment，避免重复事实源。Review Messages 是这些完整
+事实到 Execution 的可压缩投影，不再引入一个泛化的材料对象。
 
 这条边界同时控制两个风险：
 
@@ -145,11 +151,21 @@ Language 负责产出 definition、reference、call edge 等源码事实；Unit 
 图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Clue 的证据来源，
 其错误成本取决于消费位置：展示错一个候选影响有限，错误合并 Unit 则会改变整个评审边界。
 
-### 3.3 Unit 在一次 run 内是有生命周期的对象
+### 3.3 Unit 在一次 run 内是追加式聚合根
 
-Unit 在形成后保持稳定身份，并沿主链路逐步获得 Clues、Execution 结果和 Hypothesis。
-并发调度只改变执行时机，不改变 Unit 的语义归属。默认关闭的 Review Team 试验可以通过 Board /
-Bulletin 交换跨 Unit 主张，但同样不得反向修改已确定的静态 Unit 边界。
+Unit 在 formation 后保持稳定身份和 Fragment 边界，并沿主链路追加四类状态：Review 实际读取的
+文件/diff/搜索快照、Review 1 提出的 Hypothesis、Review 2 接受的 Assessment，以及 Trial decision。阶段包拥有
+“如何产生”的逻辑，Unit 只保存“关于这个行为范围已经知道什么”，不吸收 Lane conversation、turn、
+token 等执行状态；后者仍属于 Harness Session。
+
+快照始终保存完整 raw 内容；Runner 为不同 Execution 投影独立的 File/Diff/Search AgentMessage，由消息
+类型定义压缩方式，并按当前 Review 阶段赋予保留优先级。消息压缩不会反向修改 Unit，因此 Review 2
+和 Trial 看到的领域事实不受某次 prompt 投影影响。
+
+Hypothesis `ID` 标识来源 Unit 中的一次主张，`Fingerprint` 标识跨 Unit / revision 的同一底层 claim。
+因此每个 Unit 都能保留自己的完整轨迹，而 Trial 仍可按 Fingerprint 去重交付。并发调度只改变执行
+时机，不改变状态的语义归属。默认关闭的 Review Team 试验可以通过 Board / Bulletin 交换跨 Unit
+主张，但同样不得反向修改已确定的静态 Unit 边界。
 
 ### 3.4 效果评估不能只看 comment 数
 

@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> Agentic code review organized around behavioral Units, two-stage evidence review, and language/project knowledge. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
+> Agentic code review organized around behavioral Units, two agent reviews plus deterministic Trial, and language/project knowledge. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
 
 ## Philosophy
 
@@ -28,15 +28,17 @@ A **Unit** is one behavioral review scope. Depending on the change, it can be:
 
 This makes review granularity more flexible than file-by-file review. The practical goal is for Review 1 to use no more loops than there are reviewable files, and fewer when related cross-file changes can be reviewed together.
 
-### Review 1 discovers; Review 2 verifies
+Making Unit—not file—the basic review boundary depends on practical caller/callee discovery. This has become feasible as [`gotreesitter`](https://github.com/odvcencio/gotreesitter) has matured in cross-language parsing, symbol resolution, and call analysis.
+
+### Review 1 discovers; Review 2 verifies; Review 3 gates
 
 | stage | responsibility | output | public-prosecution analogy |
 |---|---|---|---|
 | **Unit Review (Review 1)** | explore a Unit, follow evidence, identify plausible defects | `Hypothesis` | investigation proposes a case theory |
 | **Hypothesis Review (Review 2)** | independently check source, diff, baseline, impact, attribution, and duplication | `Assessment` | prosecutor reviews whether evidence supports the allegation |
-| **Trial** | apply deterministic delivery gates | `Finding` or rejection | court gate decides what may be delivered |
+| **Trial (Review 3)** | apply deterministic delivery gates | `Finding` or rejection | court gate decides what may be delivered |
 
-The analogy explains separation of duties; these are code-review stages, not legal simulations. Review 1 is encouraged to discover. Review 2 is encouraged to disprove weak hypotheses. Trial is deterministic so incomplete or unsupported work cannot silently become a public comment.
+The analogy explains separation of duties; these are code-review stages, not legal simulations. Review 1 is encouraged to discover. Review 2 is encouraged to disprove weak hypotheses. **Review 3** is an alias for deterministic Trial, not another agent loop, so incomplete or unsupported work cannot silently become a public comment. The three passes also echo the Chinese mnemonic “吾日三省吾身”: review the result repeatedly before delivering it.
 
 ### Language Knowledge and Project Knowledge
 
@@ -113,7 +115,7 @@ Run `ccr review --help` for the full command and feature list.
 
 ## Status
 
-Actively developed. Current foundations include project-aware file roles, language analysis, Unit formation, two-stage evidence review, cross-revision history, bounded agent execution, and an observable session viewer.
+Actively developed. Current foundations include project-aware file roles, language analysis, Unit formation, two agent review stages plus deterministic Trial, cross-revision history, bounded agent execution, and an observable session viewer.
 
 ## License
 

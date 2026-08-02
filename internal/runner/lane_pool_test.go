@@ -59,15 +59,19 @@ func TestLanePoolUsesUnitReviewReadOverlap(t *testing.T) {
 		testReviewUnit("u-1", "a.go", "a.go::A"),
 		testReviewUnit("u-2", "b.go", "b.go::B"),
 	}
-	reads := map[string][]string{
-		"u-1": {"shared/x.go", "shared/y.go", "left.go"},
-		"u-2": {"shared/x.go", "shared/y.go", "right.go"},
+	for i := range units {
+		units[i].InitReviewState()
+	}
+	for _, path := range []string{"shared/x.go", "shared/y.go", "left.go"} {
+		units[0].AddFileSnapshot(unit.FileSnapshot{Kind: unit.CurrentSnapshot, Path: path, Content: path})
+	}
+	for _, path := range []string{"shared/x.go", "shared/y.go", "right.go"} {
+		units[1].AddFileSnapshot(unit.FileSnapshot{Kind: unit.CurrentSnapshot, Path: path, Content: path})
 	}
 	var inputs []hypothesisreview.ReviewInput
 	var mu sync.Mutex
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units,
-		ReadPaths: func(id string) []string { return reads[id] },
 		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
 			mu.Lock()
 			inputs = append(inputs, input)
@@ -82,8 +86,8 @@ func TestLanePoolUsesUnitReviewReadOverlap(t *testing.T) {
 		t.Fatalf("high read overlap did not share a Lane: %+v", inputs)
 	}
 	for _, input := range inputs {
-		if !slices.Contains(input.EvidencePaths, "shared/x.go") || !slices.Contains(input.EvidencePaths, "shared/y.go") {
-			t.Fatalf("Review input did not retain its Unit Review read footprint: %v", input.EvidencePaths)
+		if !slices.Contains(input.Paths(), "shared/x.go") || !slices.Contains(input.Paths(), "shared/y.go") {
+			t.Fatalf("Review input did not retain its Unit snapshots: %v", input.Paths())
 		}
 	}
 }
@@ -92,6 +96,12 @@ func TestLaneSerializesRelatedHypothesesAndContinuesContext(t *testing.T) {
 	units := []unit.Unit{
 		testReviewUnit("u-1", "a.go", "a.go::A"),
 		testReviewUnit("u-2", "a.go", "a.go::B"),
+	}
+	for i := range units {
+		units[i].InitReviewState()
+		units[i].AddFileSnapshot(unit.FileSnapshot{
+			Kind: unit.CurrentSnapshot, Path: "shared.go", Content: "File: shared.go (Total lines: 1)\n1|shared",
+		})
 	}
 	firstStarted := make(chan hypothesisreview.ReviewInput, 1)
 	secondStarted := make(chan hypothesisreview.ReviewInput, 1)
@@ -136,11 +146,39 @@ func TestLaneSerializesRelatedHypothesesAndContinuesContext(t *testing.T) {
 	if second.LaneID != first.LaneID {
 		t.Fatalf("related Hypotheses changed Lane: %s != %s", second.LaneID, first.LaneID)
 	}
+	if len(first.FileSnapshots) != 1 || len(second.FileSnapshots) != 0 {
+		t.Fatalf("Lane snapshot delta first=%+v second=%+v, want shared file injected once", first.FileSnapshots, second.FileSnapshots)
+	}
 	if len(second.PriorAssessments) != 1 || second.PriorAssessments[0].HypothesisID != "h-1" {
 		t.Fatalf("prior assessments = %+v", second.PriorAssessments)
 	}
+	if got := units[0].Review().Assessments; len(got) != 1 || got[0].HypothesisID != "h-1" {
+		t.Fatalf("Assessment was not attached to origin Unit: %+v", got)
+	}
 	if len(second.PriorEvidence) != 1 || second.PriorEvidence[0].Ref != "a.go" {
 		t.Fatalf("prior evidence = %+v", second.PriorEvidence)
+	}
+}
+
+func TestLaneReinjectsContextWhenNoContinuationWasCreated(t *testing.T) {
+	reviewUnit := testReviewUnit("u-1", "a.go", "a.go::A")
+	reviewUnit.InitReviewState()
+	reviewUnit.AddFileSnapshot(unit.FileSnapshot{Kind: unit.CurrentSnapshot, Path: "shared.go", Content: "shared"})
+
+	var snapshotsPerCall []int
+	pool := newLanePool(lanePoolConfig{
+		Context: context.Background(), Units: []unit.Unit{reviewUnit},
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+			snapshotsPerCall = append(snapshotsPerCall, len(input.FileSnapshots))
+			return hypothesisreview.ReviewResult{} // setup failed: no retained Execution
+		},
+	})
+	pool.Submit(testHypothesis("h-1", "u-1", "a.go", "a.go:1"))
+	pool.Submit(testHypothesis("h-2", "u-1", "a.go", "a.go:2"))
+	pool.Finish()
+
+	if len(snapshotsPerCall) != 2 || snapshotsPerCall[0] != 1 || snapshotsPerCall[1] != 1 {
+		t.Fatalf("context snapshots per call = %v, want reinjection after setup failure", snapshotsPerCall)
 	}
 }
 

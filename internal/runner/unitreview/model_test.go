@@ -30,7 +30,7 @@ func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 		t.Fatalf("got %d hypotheses, want 1", len(hypotheses))
 	}
 	h := hypotheses[0]
-	if h.ID == "" || h.Category != "bug" || h.Severity != "high" {
+	if h.ID != "" || h.Fingerprint == "" || h.Category != "bug" || h.Severity != "high" {
 		t.Fatalf("unexpected hypothesis: %+v", h)
 	}
 }

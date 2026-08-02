@@ -2,8 +2,6 @@ package unitreview
 
 import (
 	"context"
-	"encoding/json"
-	"slices"
 	"sync"
 	"testing"
 
@@ -12,21 +10,18 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
-func TestExecutorTracksSuccessfulRepositoryReadPathsPerUnit(t *testing.T) {
-	executor := &Executor{}
+func TestAttachToolResultPreservesSuccessfulRepositorySnapshots(t *testing.T) {
 	readResult := func(path string) string {
 		return tool.EncodeFileReadResults([]string{"File: " + path + " (Total lines: 1)\nIS_TRUNCATED: false\nLINE_RANGE: 1-1\n1|x"})
 	}
-	executor.recordReadPaths("unit-1", tool.FileRead.Name(), json.RawMessage(`{"reads":[{"file_path":"a.go"}]}`), readResult("a.go"))
-	executor.recordReadPaths("unit-1", tool.FileReadBase.Name(), json.RawMessage(`{"reads":[{"file_path":"base.go"}]}`), readResult("base.go"))
-	executor.recordReadPaths("unit-1", tool.FileReadDiff.Name(), json.RawMessage(`{"path_array":["a.go","b.go"]}`), "diff")
-	executor.recordReadPaths("unit-2", tool.FileRead.Name(), json.RawMessage(`{"reads":[{"file_path":"other.go"}]}`), readResult("other.go"))
-	got := executor.ReadPaths("unit-1")
-	want := []string{"a.go", "b.go", "base.go"}
-	if !slices.Equal(got, want) {
-		t.Fatalf("read paths = %v, want %v", got, want)
+	reviewUnit := unit.UnitOf(unit.Fragment{Path: "target.go"})
+	AttachToolResult(&reviewUnit, tool.FileRead.Name(), []byte(`{"reads":[{"file_path":"a.go"}]}`), readResult("a.go"))
+	snapshots := reviewUnit.Review().FileSnapshots
+	if len(snapshots) != 1 || snapshots[0].Path != "a.go" || snapshots[0].Kind != unit.CurrentSnapshot || snapshots[0].Content == "" {
+		t.Fatalf("snapshots = %+v", snapshots)
 	}
 }
 
@@ -55,7 +50,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}})
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +84,7 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}})
+	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +121,7 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []msg.Msg{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}})
+	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

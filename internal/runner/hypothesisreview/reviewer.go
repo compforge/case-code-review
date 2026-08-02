@@ -16,7 +16,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 type Config struct {
@@ -71,6 +70,7 @@ func Review(
 		condensed := renderReviewPrompt(message.Content, config, input, true, continueFrom != nil)
 		messages = append(messages, newHypothesisMessage(full, condensed))
 	}
+	messages = append(messages, reviewContextMessages(input)...)
 
 	if config.Task.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -79,7 +79,9 @@ func Review(
 	}
 
 	collector := NewAssessmentCollector(input.Hypothesis.ID)
-	evidence := &EvidenceLedger{receipts: append([]EvidenceReceipt(nil), input.PriorEvidence...)}
+	seedReceipts := UnitReceipts(input.Unit)
+	seedReceipts = append(seedReceipts, input.PriorEvidence...)
+	evidence := &EvidenceLedger{receipts: seedReceipts}
 	assessmentHook := &AssessmentHook{
 		Collector: collector, Evidence: evidence, LaneID: input.LaneID,
 		OnAccepted: config.OnAssessment,
@@ -94,6 +96,7 @@ func Review(
 			Assessments: assessmentHook,
 			Evidence:    evidence,
 			Tools:       config.Tools,
+			Unit:        &input.Unit,
 		},
 		Session: config.Session,
 		Scope: session.Scope{
@@ -151,8 +154,8 @@ func renderReviewPrompt(
 	retainedLaneContext bool,
 ) string {
 	hypothesisJSON, _ := json.Marshal(input.Hypothesis)
-	changesJSON, _ := json.Marshal(reviewChangeSet(input.Changes))
-	clues := reviewClues(input.Clues)
+	changesJSON, _ := json.Marshal(reviewChangeSet(input.Unit))
+	clues := reviewClues(input.Unit.Clues)
 	if condensed {
 		for i := range clues {
 			clues[i].Text = ""
@@ -164,7 +167,7 @@ func renderReviewPrompt(
 		priorJSON, _ := json.Marshal(input.PriorAssessments)
 		priorContext = "```json\n" + string(priorJSON) + "\n```"
 	}
-	evidencePathsJSON, _ := json.Marshal(input.EvidencePaths)
+	evidencePathsJSON, _ := json.Marshal(input.Paths())
 
 	content := source
 	content = strings.ReplaceAll(content, "{{change_set}}", string(changesJSON))
@@ -207,21 +210,16 @@ type reviewChange struct {
 	Deletions  int64  `json:"deletions"`
 }
 
-func reviewChangeSet(changes []change.Change) []reviewChange {
-	out := make([]reviewChange, 0, len(changes))
-	for _, changed := range changes {
-		status := "modified"
-		switch {
-		case changed.IsNew:
-			status = "added"
-		case changed.IsDeleted:
-			status = "deleted"
-		case changed.IsRenamed:
-			status = "renamed"
+func reviewChangeSet(reviewUnit unit.Unit) []reviewChange {
+	out := make([]reviewChange, 0, len(reviewUnit.Fragments))
+	for _, fragment := range reviewUnit.Fragments {
+		status := fragment.Status
+		if status == "" {
+			status = "changed"
 		}
 		out = append(out, reviewChange{
-			Path: changed.NewPath, Status: status,
-			Insertions: changed.Insertions, Deletions: changed.Deletions,
+			Path: fragment.Path, Status: status,
+			Insertions: fragment.Insertions, Deletions: fragment.Deletions,
 		})
 	}
 	return out

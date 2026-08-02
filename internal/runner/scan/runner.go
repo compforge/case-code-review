@@ -272,7 +272,7 @@ func (a *Runner) lookupChange(path string) *change.Change {
 	return nil
 }
 
-// injectScanContentMap fills the file_read_diff tool's DiffMap with full
+// injectScanContentMap fills the read_diffs tool's DiffMap with full
 // file content keyed by path, so if the model calls it the tool returns
 // the whole file rather than failing.
 func (a *Runner) injectScanContentMap() {

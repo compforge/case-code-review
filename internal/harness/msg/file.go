@@ -41,6 +41,7 @@ type File struct {
 	// CondensedContent is an optional producer-authored lower-cost rendering.
 	// Harness never parses source/JSON/TOML to invent this representation.
 	CondensedContent string
+	priority         int
 
 	toolCallID string     // non-empty: entered via the tool protocol; pairing must survive
 	stubbed    StubReason // "" = full content
@@ -140,6 +141,7 @@ func (f *File) FromLLM(result LLMToolResult) bool {
 func (f *File) Lower() llm.Message { return f.ToLLM(CompactionNone) }
 
 func (f *File) MaxCompaction() CompactionLevel { return CompactionReference }
+func (f *File) Priority() int                  { return f.priority }
 
 func (f *File) ToolName() string {
 	if f.Snapshot == SnapshotBaseline {
@@ -205,6 +207,13 @@ func NewFile(path string, start, end, total int, content string) *File {
 func (f *File) ConfigurePresentation(label, condensed string) *File {
 	f.Label = label
 	f.CondensedContent = condensed
+	return f
+}
+
+// ConfigurePriority sets execution-local retention importance without making
+// it part of the immutable repository snapshot stored on a Unit.
+func (f *File) ConfigurePriority(priority int) *File {
+	f.priority = priority
 	return f
 }
 

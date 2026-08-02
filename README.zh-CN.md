@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> 围绕行为 Unit、两阶段证据评审和 Language / Project Knowledge 构建的 Agentic Code Review CLI。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
+> 围绕行为 Unit、两次 Agent Review、确定性 Trial 和 Language / Project Knowledge 构建的 Agentic Code Review CLI。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
 
 ## 理念
 
@@ -28,15 +28,17 @@ ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现
 
 因此 Unit 比逐文件评审更灵活。实践目标是 Review 1 loop 数不多于需评审文件数；当跨文件改动存在明确关系时，用更少的 loop 一起理解它们。
 
-### Review 1 发现，Review 2 验证
+Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提是 caller/callee 关系已经具备实用的分析能力；这受益于 [`gotreesitter`](https://github.com/odvcencio/gotreesitter) 在跨语言语法解析、符号定位和调用分析上的持续成熟。
+
+### Review 1 发现，Review 2 验证，Review 3 门禁
 
 | 阶段 | 职责 | 产出 | 公检法类比 |
 |---|---|---|---|
 | **Unit Review（Review 1）** | 探索 Unit、沿证据调查、提出可能的缺陷 | `Hypothesis` | 公安侦查并提出案件假设 |
 | **Hypothesis Review（Review 2）** | 独立核对源码、diff、baseline、影响、归因与重复性 | `Assessment` | 检察院复核指控是否有证据支持 |
-| **Trial** | 执行确定性的交付门禁 | `Finding` 或驳回 | 法院门禁决定什么可以交付 |
+| **Trial（Review 3）** | 执行确定性的交付门禁 | `Finding` 或驳回 | 法院门禁决定什么可以交付 |
 
-这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；Trial 使用确定性规则，避免不完整或证据不足的结果悄悄变成公开评论。
+这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；**Review 3 是 Trial 的别名**，不是第三个 agent loop，而是用确定性规则决定是否交付。三个阶段也借“吾日三省吾身”作记忆点：结论在交付前要经过反复审视。
 
 ### Language Knowledge 与 Project Knowledge
 
@@ -113,7 +115,7 @@ ccr review --feature doc=off
 
 ## 状态
 
-活跃开发中。当前基础包括：项目感知 FileRole、语言分析、Unit formation、两阶段证据 Review、跨 revision history、有界 Agent 执行和可观测 Session Viewer。
+活跃开发中。当前基础包括：项目感知 FileRole、语言分析、Unit formation、两次 Agent Review 与确定性 Trial、跨 revision history、有界 Agent 执行和可观测 Session Viewer。
 
 ## License
 

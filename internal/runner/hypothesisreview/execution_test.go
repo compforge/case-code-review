@@ -9,8 +9,10 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
@@ -79,6 +81,86 @@ func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
 	}
 }
 
+func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.T) {
+	hypothesis := completeHypothesis("h-1", "a.go")
+	reviewUnit := unit.UnitOf(unit.Fragment{Path: "a.go", Diff: "+fixed"})
+	reviewUnit.AddFileSnapshot(unit.FileSnapshot{
+		Kind: unit.CurrentSnapshot, Path: "a.go", Start: 1, End: 1, Total: 1,
+		Content: "File: a.go (Total lines: 1)\n1|fixed",
+	})
+	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+		reviewToolResponse("call-1", SubmitAssessments.Name(), `{"assessments":[{
+			"hypothesis_id":"h-1","support":"supported","attribution":"caused",
+			"value":"actionable","novelty":"new","reason":"Unit evidence proves it",
+			"evidence":["a.go:1"]
+		}]}`),
+	}}
+	result := Review(context.Background(), Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"},
+			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{evidence_paths}}"},
+		}},
+		LLMClient: client,
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  1,
+		MaxTokens: 2_000,
+	}, ReviewInput{LaneID: "l-1", Unit: reviewUnit, Hypothesis: hypothesis}, nil)
+
+	if len(result.Assessments) != 1 || len(result.Assessments[0].EvidenceReceipts) == 0 {
+		t.Fatalf("assessment did not inherit Unit evidence: %+v", result.Assessments)
+	}
+	foundSnapshot := false
+	if len(client.requests) == 1 {
+		for _, message := range client.requests[0].Messages {
+			foundSnapshot = foundSnapshot || strings.Contains(message.ExtractText(), "fixed")
+		}
+	}
+	if !foundSnapshot {
+		t.Fatalf("Unit snapshots were not supplied to Review 2: %+v", client.requests)
+	}
+}
+
+func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
+	hypothesis := completeHypothesis("h-1", "a.go")
+	reviewUnit := unit.UnitOf(unit.Fragment{Path: "a.go", Diff: "+fixed"})
+	reviewUnit.AddFileSnapshot(unit.FileSnapshot{
+		Kind: unit.CurrentSnapshot, Path: "a.go", Start: 1, End: 1, Total: 1,
+		Content: "File: a.go (Total lines: 1)\n1|fixed",
+	})
+	provider := &countingReviewReadProvider{}
+	registry := tool.NewRegistry()
+	registry.Register(provider)
+	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+		reviewToolResponse("read-1", tool.FileRead.Name(), `{"reads":[{"file_path":"a.go"}]}`),
+		reviewAssessmentResponse("submit-1", hypothesis.ID),
+	}}
+	result := Review(context.Background(), Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"},
+			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}}"},
+		}},
+		LLMClient: client,
+		ToolDefs: []llm.ToolDef{{
+			Type: "function", Function: llm.FunctionDef{Name: tool.FileRead.Name()},
+		}},
+		Tools: registry, Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns: 2, MaxTokens: 2_000, FileDedup: true,
+	}, ReviewInput{LaneID: "l-1", Unit: reviewUnit, Hypothesis: hypothesis}, nil)
+
+	if len(result.Assessments) != 1 || provider.calls != 0 {
+		t.Fatalf("assessment=%+v provider calls=%d, want retained coverage without provider read", result.Assessments, provider.calls)
+	}
+	covered := false
+	if len(client.requests) >= 2 {
+		for _, message := range client.requests[1].Messages {
+			covered = covered || strings.Contains(message.ExtractText(), "retained Unit context in this Lane")
+		}
+	}
+	if !covered {
+		t.Fatalf("covered read did not explain retained Unit/Lane context: %+v", client.requests)
+	}
+}
+
 func TestRenderReviewPromptDoesNotRepeatRetainedLaneHistory(t *testing.T) {
 	input := ReviewInput{
 		PriorAssessments: []Assessment{{HypothesisID: "h-prior", Reason: "prior decision"}},
@@ -117,12 +199,14 @@ func reviewAssessmentResponse(callID, hypothesisID string) *llm.ChatResponse {
 
 type assessmentScriptedClient struct {
 	responses []*llm.ChatResponse
+	requests  []llm.ChatRequest
 }
 
 func (c *assessmentScriptedClient) CompletionsWithCtx(
 	_ context.Context,
-	_ llm.ChatRequest,
+	request llm.ChatRequest,
 ) (*llm.ChatResponse, error) {
+	c.requests = append(c.requests, request)
 	response := c.responses[0]
 	c.responses = c.responses[1:]
 	return response, nil
@@ -141,4 +225,12 @@ func reviewToolResponse(id, name, arguments string) *llm.ChatResponse {
 			FinishReason: "tool_calls",
 		}},
 	}
+}
+
+type countingReviewReadProvider struct{ calls int }
+
+func (p *countingReviewReadProvider) Tool() tool.Tool { return tool.FileRead }
+func (p *countingReviewReadProvider) Execute(context.Context, map[string]any) (string, error) {
+	p.calls++
+	return "unexpected provider read", nil
 }

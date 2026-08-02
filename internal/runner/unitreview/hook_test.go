@@ -9,8 +9,8 @@ import (
 )
 
 func TestHypothesisHookAnchorsOutputToUnitScope(t *testing.T) {
-	collector := NewCollector()
-	hook := &HypothesisHook{Collector: collector}
+	var hypotheses []Hypothesis
+	hook := &HypothesisHook{OnResolved: func(h Hypothesis) { hypotheses = append(hypotheses, h) }}
 	checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
 		Scope: session.Scope{
 			ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"},
@@ -34,14 +34,13 @@ func TestHypothesisHookAnchorsOutputToUnitScope(t *testing.T) {
 	if !handled || !checkpoint.Completed || checkpoint.Data != HypothesesSubmitted {
 		t.Fatalf("unexpected hook result: handled=%v checkpoint=%+v", handled, checkpoint)
 	}
-	hypotheses := collector.Hypotheses()
 	if len(hypotheses) != 1 || hypotheses[0].Path != "a.go" || hypotheses[0].OriginUnit != "chain" {
 		t.Fatalf("hypothesis must stay inside its Unit scope: %+v", hypotheses)
 	}
 }
 
 func TestHypothesisHookCompletesWithNoHypotheses(t *testing.T) {
-	hook := &HypothesisHook{Collector: NewCollector()}
+	hook := &HypothesisHook{}
 	checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
 		Scope: session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}},
 		Tool:  SubmitHypotheses,

@@ -18,7 +18,7 @@ You are not continuing the investigation and you are not rewarded for preserving
 - If a claim depends on code outside the diff, inspect that code. If it depends on business intent not present in the requirement, contracts, rules, or repository, mark the missing fact instead of inventing it.
 - Pre-existing behavior that this diff does not introduce or materially change is not an actionable finding for this review.
 - When the current hypothesis describes the same underlying defect as an earlier one in this Lane, mark it `duplicate_in_case` and name the canonical hypothesis ID in the reason.
-- Before marking a hypothesis supported, call `file_read_diff` for its anchor path. Use `read_base_files` whenever attribution is not already decisive from an added-file diff. CCR records these tool executions as evidence receipts; prose citations alone cannot pass Trial.
+- Before marking a hypothesis supported, verify its anchor diff from the retained Unit context or `read_diffs`. Use `read_base_files` whenever attribution is not already decisive from an added-file diff. CCR records both Unit snapshots and read-only tool executions as evidence receipts; prose citations alone cannot pass Trial.
 
 ## Completion
 

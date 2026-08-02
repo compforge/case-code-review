@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"path"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/go-stdx/slicesx"
 )
 
@@ -23,10 +21,8 @@ const laneReviewWorkers = 2
 type lanePoolConfig struct {
 	Context      context.Context
 	Units        []unit.Unit
-	Changes      []change.Change
 	Selections   map[string]fileSelection
 	Concurrency  int
-	ReadPaths    func(string) []string
 	Review       func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult
 	OnHypothesis func(unitreview.Hypothesis)
 	OnAssigned   func(hypothesisreview.ReviewInput, string)
@@ -43,12 +39,10 @@ type lanePool struct {
 	finish     chan struct{}
 	loopDone   chan struct{}
 
-	mu          sync.Mutex
-	hypotheses  []unitreview.Hypothesis
-	assessments []hypothesisreview.Assessment
-	seen        map[string]bool
-	laneWG      sync.WaitGroup
-	sem         chan struct{}
+	mu     sync.Mutex
+	seen   map[string]bool
+	laneWG sync.WaitGroup
+	sem    chan struct{}
 }
 
 type reviewCandidate struct {
@@ -65,6 +59,7 @@ type reviewLane struct {
 	id           string
 	candidates   []reviewCandidate
 	inputs       chan hypothesisreview.ReviewInput
+	contextIDs   map[string]bool
 	priorResults []hypothesisreview.Assessment
 	evidence     []hypothesisreview.EvidenceReceipt
 	continuation *harness.ExecutionResult
@@ -87,6 +82,7 @@ func newLanePool(config lanePoolConfig) *lanePool {
 		sem:        make(chan struct{}, config.Concurrency),
 	}
 	for _, reviewUnit := range config.Units {
+		reviewUnit.InitReviewState()
 		p.units[reviewUnit.ID] = reviewUnit
 	}
 	go p.loop()
@@ -105,20 +101,13 @@ func (p *lanePool) Submit(hypothesis unitreview.Hypothesis) {
 	}
 }
 
-func (p *lanePool) Finish() ([]unitreview.Hypothesis, []hypothesisreview.Assessment) {
+func (p *lanePool) Finish() {
 	select {
 	case p.finish <- struct{}{}:
 	case <-p.loopDone:
 	}
 	<-p.loopDone
 	p.laneWG.Wait()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	hypotheses := append([]unitreview.Hypothesis(nil), p.hypotheses...)
-	assessments := append([]hypothesisreview.Assessment(nil), p.assessments...)
-	sort.Slice(hypotheses, func(i, j int) bool { return hypotheses[i].ID < hypotheses[j].ID })
-	sort.Slice(assessments, func(i, j int) bool { return assessments[i].HypothesisID < assessments[j].HypothesisID })
-	return hypotheses, assessments
 }
 
 func (p *lanePool) loop() {
@@ -156,7 +145,6 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 		return
 	}
 	p.seen[candidate.hypothesis.ID] = true
-	p.hypotheses = append(p.hypotheses, candidate.hypothesis)
 	p.mu.Unlock()
 	if p.config.OnHypothesis != nil {
 		p.config.OnHypothesis(candidate.hypothesis)
@@ -165,15 +153,16 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	lane := selectLane(*lanes, candidate)
 	if lane == nil {
 		lane = &reviewLane{
-			id:     laneID(candidate.hypothesis.ID),
-			inputs: make(chan hypothesisreview.ReviewInput, len(p.units)+1),
+			id:         laneID(candidate.hypothesis.ID),
+			inputs:     make(chan hypothesisreview.ReviewInput, len(p.units)+1),
+			contextIDs: make(map[string]bool),
 		}
 		*lanes = append(*lanes, lane)
 		p.laneWG.Add(1)
 		go p.runLane(lane)
 	}
 	lane.candidates = append(lane.candidates, candidate)
-	input := buildReviewInput(candidate, p.config.Changes)
+	input := buildReviewInput(candidate)
 	input.LaneID = lane.id
 	if p.config.OnAssigned != nil {
 		p.config.OnAssigned(input, "lane_assigned")
@@ -184,8 +173,9 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 func (p *lanePool) runLane(lane *reviewLane) {
 	defer p.laneWG.Done()
 	for input := range lane.inputs {
+		lane.takeContextDelta(&input)
 		input.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
-		input.PriorEvidence = append([]hypothesisreview.EvidenceReceipt(nil), lane.evidence...)
+		input.PriorEvidence = append(input.PriorEvidence, lane.evidence...)
 		select {
 		case p.sem <- struct{}{}:
 		case <-p.config.Context.Done():
@@ -199,17 +189,69 @@ func (p *lanePool) runLane(lane *reviewLane) {
 		if result.Execution.State != "" {
 			execution := result.Execution
 			lane.continuation = &execution
+			// Commit context identities only after an Execution actually retained
+			// the projected messages. A setup failure leaves no continuation, so
+			// the next hypothesis must receive the snapshots again.
+			lane.rememberUnitContext(input.Unit)
 		}
 		lane.priorResults = append(lane.priorResults, result.Assessments...)
+		for _, assessment := range result.Assessments {
+			input.Unit.AddAssessment(assessment)
+		}
 		// The ledger is cumulative. A panicking or failed reviewer may return no
 		// result, but must not erase receipts already earned by this Lane.
 		if len(result.EvidenceReceipts) > 0 {
 			lane.evidence = append([]hypothesisreview.EvidenceReceipt(nil), result.EvidenceReceipts...)
 		}
-		p.mu.Lock()
-		p.assessments = append(p.assessments, result.Assessments...)
-		p.mu.Unlock()
 	}
+}
+
+func (l *reviewLane) takeContextDelta(input *hypothesisreview.ReviewInput) {
+	input.ContextDelta = true
+	for _, fragment := range input.Unit.Fragments {
+		id := fragmentContextID(fragment)
+		if !l.contextIDs[id] {
+			input.Fragments = append(input.Fragments, fragment)
+		}
+	}
+	snapshot := input.Unit.Review()
+	for _, file := range snapshot.FileSnapshots {
+		if !l.contextIDs[file.ID] {
+			input.FileSnapshots = append(input.FileSnapshots, file)
+		}
+	}
+	for _, diff := range snapshot.RelatedDiffs {
+		if !l.contextIDs[diff.ID] {
+			input.RelatedDiffs = append(input.RelatedDiffs, diff)
+		}
+	}
+	for _, result := range snapshot.SearchResults {
+		if !l.contextIDs[result.ID] {
+			input.SearchResults = append(input.SearchResults, result)
+		}
+	}
+}
+
+func (l *reviewLane) rememberUnitContext(reviewUnit unit.Unit) {
+	for _, fragment := range reviewUnit.Fragments {
+		l.contextIDs[fragmentContextID(fragment)] = true
+	}
+	snapshot := reviewUnit.Review()
+	for _, file := range snapshot.FileSnapshots {
+		l.contextIDs[file.ID] = true
+	}
+	for _, diff := range snapshot.RelatedDiffs {
+		l.contextIDs[diff.ID] = true
+	}
+	for _, result := range snapshot.SearchResults {
+		l.contextIDs[result.ID] = true
+	}
+}
+
+func fragmentContextID(fragment unit.Fragment) string {
+	return unit.DiffSnapshotIDFor(unit.DiffSnapshot{
+		Paths: []string{fragment.Path}, Content: fragment.Diff,
+	})
 }
 
 func laneID(hypothesisID string) string {
@@ -250,9 +292,22 @@ func newReviewCandidate(h unitreview.Hypothesis, reviewUnit unit.Unit, config la
 			candidate.evidencePaths[file] = true
 		}
 	}
-	if config.ReadPaths != nil {
-		for _, file := range config.ReadPaths(h.OriginUnit) {
-			if !candidate.targetPaths[file] {
+	snapshot := reviewUnit.Review()
+	for _, file := range snapshot.FileSnapshots {
+		if file.Path != "" && !candidate.targetPaths[file.Path] {
+			candidate.readPaths[file.Path] = true
+		}
+	}
+	for _, diff := range snapshot.RelatedDiffs {
+		for _, file := range diff.Paths {
+			if file != "" && !candidate.targetPaths[file] {
+				candidate.readPaths[file] = true
+			}
+		}
+	}
+	for _, result := range snapshot.SearchResults {
+		for _, file := range result.Paths {
+			if file != "" && !candidate.targetPaths[file] {
 				candidate.readPaths[file] = true
 			}
 		}
@@ -313,31 +368,9 @@ func commonDirectoryDepth(left, right string) int {
 	return depth
 }
 
-func buildReviewInput(candidate reviewCandidate, changes []change.Change) hypothesisreview.ReviewInput {
-	paths := make(map[string]bool)
-	for file := range candidate.targetPaths {
-		paths[file] = true
-	}
-	for file := range candidate.evidencePaths {
-		paths[file] = true
-	}
-	for file := range candidate.readPaths {
-		paths[file] = true
-	}
-	evidencePaths := make([]string, 0, len(paths))
-	for file := range paths {
-		evidencePaths = append(evidencePaths, file)
-	}
-	sort.Strings(evidencePaths)
-	reviewChanges := make([]change.Change, 0, len(changes))
-	for _, changed := range changes {
-		if paths[effectivePath(changed)] {
-			reviewChanges = append(reviewChanges, changed)
-		}
-	}
+func buildReviewInput(candidate reviewCandidate) hypothesisreview.ReviewInput {
 	return hypothesisreview.ReviewInput{
-		Changes: reviewChanges, Hypothesis: candidate.hypothesis,
-		Clues: collectReviewClues([]unit.Unit{candidate.unit}), EvidencePaths: evidencePaths,
+		Unit: candidate.unit, Hypothesis: candidate.hypothesis,
 	}
 }
 

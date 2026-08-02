@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,7 +29,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
-	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/runner/trial"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
@@ -192,10 +192,7 @@ type Runner struct {
 	analyzer *language.Analyzer
 	// board is the Review Team's shared case board for this run (nil when the
 	// review_team gate is off). See docs/unit_review.md.
-	board *board.Registry
-	// hypotheses contains the divergent Unit Review output. It is separate from
-	// args.Findings so unassessed suspicions can never leak into public results.
-	hypotheses     *unitreview.Collector
+	board          *board.Registry
 	hypothesisHook *unitreview.HypothesisHook
 }
 
@@ -296,9 +293,7 @@ func New(args Args) *Runner {
 	if f.Enabled(feature.ReviewTeam) {
 		a.board = board.New()
 	}
-	hypotheses := unitreview.NewCollector()
 	hypothesisHook := &unitreview.HypothesisHook{
-		Collector:    hypotheses,
 		WorkerPool:   args.WorkerPool,
 		Session:      args.Session,
 		ChangeLookup: a.findChange,
@@ -307,7 +302,6 @@ func New(args Args) *Runner {
 		Model:        args.Model,
 		Relocation:   f.Enabled(feature.Relocation),
 	}
-	a.hypotheses = hypotheses
 	a.hypothesisHook = hypothesisHook
 	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
 	a.executor = unitreview.NewExecutor(unitreview.ExecutorConfig{
@@ -536,6 +530,18 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	if err != nil {
 		return nil, err
 	}
+	unitByID := make(map[string]unit.Unit, len(units))
+	changeStatus := make(map[string]string, len(a.changes))
+	for _, changed := range a.changes {
+		changeStatus[effectivePath(changed)] = diffStatus(changed)
+	}
+	for i := range units {
+		units[i].InitReviewState()
+		for j := range units[i].Fragments {
+			units[i].Fragments[j].Status = changeStatus[units[i].Fragments[j].Path]
+		}
+		unitByID[units[i].ID] = units[i]
+	}
 
 	if a.features.Enabled(feature.RepoMap) {
 		a.repoMap = a.buildRepoMap(units)
@@ -549,12 +555,19 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		task := a.args.Template.HypothesisReviewTask
 		if task != nil && len(task.Messages) > 0 {
 			reviewLanes = newLanePool(lanePoolConfig{
-				Context: ctx, Units: units, Changes: a.changes, Selections: a.fileSelections,
-				Concurrency: laneReviewWorkers,
-				ReadPaths:   a.executor.ReadPaths, Review: a.reviewHypothesis,
+				Context: ctx, Units: units, Selections: a.fileSelections,
+				Concurrency:  laneReviewWorkers,
+				Review:       a.reviewHypothesis,
 				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 			})
-			a.hypothesisHook.OnResolved = reviewLanes.Submit
+		}
+	}
+	a.hypothesisHook.OnResolved = func(hypothesis unitreview.Hypothesis) {
+		if reviewUnit, ok := unitByID[hypothesis.OriginUnit]; ok {
+			reviewUnit.AddHypothesis(hypothesis)
+		}
+		if reviewLanes != nil {
+			reviewLanes.Submit(hypothesis)
 		}
 	}
 
@@ -631,12 +644,11 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		a.args.WorkerPool.Await()
 	}
 
-	var hypotheses []unitreview.Hypothesis
-	var assessments []hypothesisreview.Assessment
 	if reviewLanes != nil {
-		hypotheses, assessments = reviewLanes.Finish()
-	} else {
-		hypotheses = a.hypotheses.Hypotheses()
+		reviewLanes.Finish()
+	}
+	hypotheses := unitHypotheses(units)
+	if reviewLanes == nil {
 		a.persistHypotheses(hypotheses)
 	}
 
@@ -646,6 +658,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	var comments []finding.Finding
+	var decisions []unit.TrialDecision
 	if a.features.Enabled(feature.HypothesisReview) {
 		if reviewLanes == nil && len(hypotheses) > 0 {
 			a.recordWarning(
@@ -653,12 +666,12 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
 			)
 		}
-		comments = trial.Run(hypotheses, assessments)
+		comments, decisions = trial.Run(units)
 	} else {
 		// Gate-off is the one-stage baseline used by eval ablations.
-		comments = trial.Bypass(hypotheses)
+		comments, decisions = trial.Bypass(units)
 	}
-	a.persistTrialDecisions(hypotheses, assessments)
+	a.persistTrialDecisions(units, decisions)
 	for _, comment := range comments {
 		a.args.Findings.Add(comment)
 	}
@@ -728,9 +741,18 @@ func (a *Runner) persistHypotheses(hypotheses []unitreview.Hypothesis) {
 	}
 }
 
+func unitHypotheses(units []unit.Unit) []unitreview.Hypothesis {
+	var hypotheses []unitreview.Hypothesis
+	for _, reviewUnit := range units {
+		hypotheses = append(hypotheses, reviewUnit.Review().Hypotheses...)
+	}
+	sort.Slice(hypotheses, func(i, j int) bool { return hypotheses[i].ID < hypotheses[j].ID })
+	return hypotheses
+}
+
 func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
 	a.session.WriteArtifact("review_hypothesis", map[string]any{
-		"id": h.ID, "origin_unit": h.OriginUnit, "path": h.Path,
+		"id": h.ID, "fingerprint": h.Fingerprint, "origin_unit": h.OriginUnit, "path": h.Path,
 		"content": h.Content, "existing_code": h.ExistingCode,
 		"start_line": h.StartLine, "end_line": h.EndLine,
 		"trigger": h.Trigger, "impact": h.Impact,
@@ -741,21 +763,26 @@ func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
 }
 
 func (a *Runner) persistTrialDecisions(
-	hypotheses []unitreview.Hypothesis,
-	assessments []hypothesisreview.Assessment,
+	units []unit.Unit,
+	decisions []unit.TrialDecision,
 ) {
-	byID := make(map[string]unitreview.Hypothesis, len(hypotheses))
-	for _, hypothesis := range hypotheses {
-		byID[hypothesis.ID] = hypothesis
+	assessmentByID := make(map[string]unit.Assessment)
+	for _, reviewUnit := range units {
+		for _, assessment := range reviewUnit.Review().Assessments {
+			assessmentByID[assessment.HypothesisID] = assessment
+		}
 	}
-	for _, assessment := range assessments {
-		hypothesis, ok := byID[assessment.HypothesisID]
-		a.session.WriteArtifact("trial_decision", map[string]any{
-			"lane_id":                     assessment.LaneID,
-			"assessment_submission_index": assessment.SubmissionIndex,
-			"hypothesis_id":               assessment.HypothesisID,
-			"passed_trial":                ok && trial.Passes(hypothesis, assessment),
-		})
+	for _, decision := range decisions {
+		artifact := map[string]any{
+			"hypothesis_id": decision.HypothesisID,
+			"passed_trial":  decision.Passed,
+			"delivered":     decision.Delivered,
+		}
+		if assessment, exists := assessmentByID[decision.HypothesisID]; exists {
+			artifact["lane_id"] = assessment.LaneID
+			artifact["assessment_submission_index"] = assessment.SubmissionIndex
+		}
+		a.session.WriteArtifact("trial_decision", artifact)
 	}
 }
 
@@ -1071,7 +1098,8 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		return nil
 	}
 
-	outcome, err := a.executor.Run(ctx, domain, sc)
+	unitreview.AttachMessages(&u, domain)
+	outcome, err := a.executor.Run(ctx, domain, sc, &u)
 	deb.Outcome, deb.Reason = outcome.State, outcome.Reason
 	deb.BoardPulled = outcome.BoardPulled
 	deb.BoardInjectedTokens = outcome.BoardInjectedTokens

@@ -9,16 +9,14 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 // EvidenceReceipt proves that the convergent reviewer actually obtained a
 // repository fact. It is produced by CCR while executing a read-only tool; the
 // model can describe evidence, but cannot mint receipts.
-type EvidenceReceipt struct {
-	ToolCallID string `json:"tool_call_id,omitempty"`
-	Kind       string `json:"kind"`
-	Ref        string `json:"ref"`
-}
+type EvidenceReceipt = unit.EvidenceReceipt
 
 // EvidenceLedger starts from the Lane's retained receipts and appends facts
 // read by the current Hypothesis Review.
@@ -37,7 +35,14 @@ func (l *EvidenceLedger) Record(request harness.ToolRequest, result string) {
 func (l *EvidenceLedger) Receipts() []EvidenceReceipt {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := append([]EvidenceReceipt(nil), l.receipts...)
+	seen := make(map[EvidenceReceipt]bool, len(l.receipts))
+	out := make([]EvidenceReceipt, 0, len(l.receipts))
+	for _, receipt := range l.receipts {
+		if !seen[receipt] {
+			seen[receipt] = true
+			out = append(out, receipt)
+		}
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Kind == out[j].Kind {
 			return out[i].Ref < out[j].Ref
@@ -53,8 +58,8 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 	case tool.FileReadDiff:
 		base.Kind = "diff"
 		var out []EvidenceReceipt
-		for _, path := range stringSlice(request.Args["path_array"]) {
-			// file_read_diff accepts several paths and omits misses. Receipt only
+		for _, path := range stringSlice(request.Args["paths"]) {
+			// read_diffs accepts several paths and omits misses. Receipt only
 			// the paths whose diff block was actually returned.
 			if !strings.Contains(result, "==== FILE: "+path+" ====") {
 				continue
@@ -147,6 +152,7 @@ type ReviewHandler struct {
 	Assessments *AssessmentHook
 	Evidence    *EvidenceLedger
 	Tools       *tool.Registry
+	Unit        *unit.Unit
 }
 
 func (h *ReviewHandler) HandleTool(
@@ -170,8 +176,11 @@ func (h *ReviewHandler) HandleTool(
 	if err != nil {
 		return tool.Of(fmt.Sprintf("Error: %v", err)), true
 	}
-	if h.Evidence != nil && !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
-		h.Evidence.Record(request, result)
+	if !strings.HasPrefix(strings.TrimSpace(result), "Error:") {
+		if h.Evidence != nil {
+			h.Evidence.Record(request, result)
+		}
+		unitreview.AttachResult(h.Unit, request.Tool.Name(), request.Args, result)
 	}
 	return tool.Of(result), true
 }

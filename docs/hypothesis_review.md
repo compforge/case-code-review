@@ -15,8 +15,9 @@ Hypothesis ── assign Lane ──▶ Hypothesis Review ──▶ Assessment �
 - Hypothesis Review 一次只判断一个已提交 Hypothesis，不新造 issue；
 - Trial 不运行 LLM，只把满足交付策略的 Assessment 转为 Finding。
 
-核心领域对象只有 Hypothesis、Assessment 和 Finding。Lane 是 Review 2 的运行边界；Change、Clue、
-prior Assessment 等材料在调用时投影为 `ReviewInput`，它只是包接口输入，不是新的领域对象。
+Unit 是一次 run 的聚合根：Hypothesis、后续读到的文件/diff/搜索快照、Assessment 与 Trial decision 都回到其
+来源 Unit。Lane 只是 Review 2 的运行边界；Unit、当前 Hypothesis 和前案状态在调用时投影为
+`ReviewInput`，它只是包接口输入，不是新的领域对象。
 
 ## 2. 流程
 
@@ -38,7 +39,8 @@ Lane 拥有上下文、顺序和生命周期，Hypothesis 本身不承载这些�
 
 ### 2.2 独立复核
 
-Review 2 收到当前 Hypothesis、相关 Change / Clue、Unit Review 实际读取路径和 Lane 前案后，分别判断：
+Review 2 收到当前 Hypothesis、来源 Unit 的 Change / Clue 投影、形成该主张时实际读取的事实快照和
+Lane 前案后，分别判断：
 
 | 轴 | 问题 | 结果 |
 |---|---|---|
@@ -52,9 +54,10 @@ Finding。
 
 ### 2.3 只读证据与 receipt
 
-Review 2 可以读取 diff、baseline、当前源码和搜索结果，但不能发布 Finding。模型提交的 evidence 文本
-只是引用；Runner 同时记录实际只读工具调用形成 receipt。Trial 要求评论锚点存在匹配的 diff receipt，
-防止模型只靠叙述伪造“已经核实”。
+Review 2 先检查 Unit 已保留的 diff、baseline、源码和搜索结果，只在缺少决定性事实时继续调用只读
+工具；新读到的事实同样追加到来源 Unit。模型提交的 evidence 文本只是引用；Runner 为 Unit 快照
+和成功只读工具调用签发 receipt。Trial 要求评论锚点存在匹配的 diff receipt，防止模型只靠叙述伪造
+“已经核实”。
 
 receipt 是完整性机制，不是主流程中的领域对象。它随 Assessment 持久化，供 Trial、Viewer 和 eval
 核对。
@@ -83,22 +86,28 @@ user: Hypothesis A(
         claim,
         change_set,
         clues,
-        evidence_paths,
+        unit_context=[target_diff, file_snapshots, related_diffs, search_results...],
         prior_assessments=[]
       )
-assistant: tool_call(file_read_diff / read_base_files / read_files / search_code)
+assistant: <decide from retained Unit context, or read only a missing fact>
+assistant: tool_call(read_diffs / read_base_files / read_files / search_code)  # optional
 tool: <typed evidence result>
 assistant: tool_call(submit_assessments)
 tool: <accepted; execution completes>
 
-user: Hypothesis B(...)  # 同一 Lane，只追加新材料，复用前面的 conversation
+user: Hypothesis B(...)  # 同一 Lane，只追加新快照/结果，复用前面的 conversation
 ...
 ```
 
-continuation 保留先前的 assistant、file/tool result 和 Assessment；新一轮只追加当前 Hypothesis 及其
-增量 Change / Clue / navigation hints，不重复挂载旧 file message、Assessment 或 receipt。receipt 账本由
-Runner 在模型上下文之外累计，继续供 Trial 校验；若旧文件内容已被 compaction 压到不足以判断，模型
-仍可按需重新读取。
+continuation 保留先前的 assistant、file/tool result 和 Assessment；Lane 按各快照/结果的稳定 ID 记录已注入事实，
+新一轮只追加当前 Hypothesis 与来源 Unit 的增量上下文，不重复挂载已经可见的旧 file message、
+Assessment 或 receipt。文件快照仍投影为独立 typed message，而不是把整个 Unit 打包成一条巨型消息，
+从而可以分别做范围覆盖、压缩和淘汰。receipt 账本由 Runner 在模型上下文之外累计，继续供 Trial
+校验；若旧文件内容已被 compaction 压到不足以判断，模型仍可按需重新读取。
+
+`read_files` 会先检查当前 Lane conversation 中实际可见的文件范围。完整覆盖时不访问 provider，而是
+明确提示内容已经来自 retained Unit context 或 earlier read result；只有路径已知、范围不完整或正文
+已被压缩掉时才正常读取，避免把“曾经见过路径”误当成“当前仍有证据”。
 
 Supporting Change / Clue 可以在预算压力下降级，但当前 Hypothesis 不能被删除或只剩 ID。稳定前缀和
 尾部追加有利于 provider cache，也避免每次复核重新读取相同上下文。
@@ -117,6 +126,8 @@ matching diff receipt exists
 ```
 
 Finding 是通过交付门禁后的结果，不是“模型又重复了一遍 Hypothesis”。
+Trial 的当前规则虽然只读取 Hypothesis、Assessment 和 receipt，但入口接收完整 Unit；以后增加更复杂
+的确定性门禁时，仍能核对同一份文件/diff/搜索快照，不需要再设计 Review 2 到 Trial 的材料协议。
 
 ## 3. 关键设计
 
@@ -124,6 +135,9 @@ Finding 是通过交付门禁后的结果，不是“模型又重复了一遍 Hy
 
 Lane 的存在依据是独立生命周期：它有稳定 ID、串行队列、continuation、证据账本和前案判断。它不拥有
 Hypothesis 真伪，也不把目录接近直接升级为业务相关。这样调度和判断保持分离。
+
+Unit 才拥有领域事实和阶段结果；Lane 不复制或接管这些状态。相同 claim 出现在不同 Unit 时保留不同
+Hypothesis ID，Lane / Trial 使用 Fingerprint 识别底层同一问题，从而兼顾来源可追踪与交付去重。
 
 ### 3.2 Review 2 只收敛
 
