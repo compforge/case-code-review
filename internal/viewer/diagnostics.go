@@ -102,7 +102,7 @@ func buildSessionDiagnostics(vs *ViewSession, signals sessionSignals) SessionDia
 			} else {
 				d.Review1Missed++
 			}
-			d.CoveredReads += review.FileReads.CoveredCalls
+			d.CoveredReads += review.FileReads.CoveredRequests
 			d.RepeatedReads += review.FileReads.SamePathRepeats
 		case Review2Stage:
 			d.Review2Runs++

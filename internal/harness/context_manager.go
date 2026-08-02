@@ -330,17 +330,19 @@ func (m *contextManager) remember(
 // by file_read is already visible to the model. It checks the post-projection
 // view, so content evicted or summarized out of the prompt never blocks a
 // legitimate re-read.
-func (m *contextManager) coveredFileRead(args map[string]any) (string, bool) {
+func (m *contextManager) coveredFileRead(request tool.FileReadRequest) (string, bool) {
 	if !m.dedupEnabled {
 		return "", false
 	}
-	filePath, _ := args["file_path"].(string)
-	filePath = path.Clean(filePath)
+	filePath := path.Clean(request.FilePath)
 	if filePath == "." || filePath == "" {
 		return "", false
 	}
-	start := positiveInt(args["start_line"], 1)
-	requestedEnd := positiveInt(args["end_line"], 0)
+	start := request.StartLine
+	if start <= 0 {
+		start = 1
+	}
+	requestedEnd := request.EndLine
 	if requestedEnd > 0 && requestedEnd < start {
 		return "", false
 	}
@@ -384,58 +386,58 @@ func coveredReadMessage(filePath string, start, end int, source fileSource) stri
 	)
 }
 
-func positiveInt(value any, fallback int) int {
-	switch n := value.(type) {
-	case float64:
-		if n > 0 {
-			return int(n)
-		}
-	case int:
-		if n > 0 {
-			return n
-		}
-	}
-	return fallback
-}
-
 func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 	var out []visibleFile
 	for _, message := range messages {
 		switch value := message.(type) {
 		case domainMessage:
-			file, ok := value.value.(*msg.File)
-			if !ok || file.Stubbed() || value.compaction >= msg.CompactionReference {
-				continue
+			var files []*msg.File
+			switch typed := value.value.(type) {
+			case *msg.File:
+				files = []*msg.File{typed}
+			case *msg.FileBatch:
+				files = typed.Files()
 			}
-			source := fileFromPreload
-			if file.IsToolResult() {
-				if file.Snapshot == msg.SnapshotBaseline {
+			for _, file := range files {
+				if file.Stubbed() || value.compaction >= msg.CompactionReference {
+					continue
+				}
+				source := fileFromPreload
+				if _, batch := value.value.(*msg.FileBatch); batch || file.IsToolResult() {
+					if file.Snapshot == msg.SnapshotBaseline {
+						source = fileFromBaseline
+					} else {
+						source = fileFromTool
+					}
+				}
+				out = append(out, visibleFile{
+					path: path.Clean(file.Path), start: file.Start, end: file.End,
+					total: file.Total, source: source, label: file.Label, snapshot: file.Snapshot,
+				})
+			}
+		case agentgo.Message:
+			parts, batch := tool.DecodeFileReadResults(value.TextContent())
+			if !batch {
+				parts = []string{value.TextContent()}
+			}
+			for _, part := range parts {
+				filePath, start, end, total, ok := msg.VisibleFileRange(part)
+				if !ok {
+					continue
+				}
+				source := fileFromPreload
+				snapshot := msg.SnapshotCurrent
+				if toolName := metadataString(value.Metadata, "tool_name"); toolName == msg.FileReadBaseToolName {
 					source = fileFromBaseline
-				} else {
+					snapshot = msg.SnapshotBaseline
+				} else if value.Role == agentgo.RoleTool || toolName == msg.FileReadToolName {
 					source = fileFromTool
 				}
+				out = append(out, visibleFile{
+					path: path.Clean(filePath), start: start, end: end,
+					total: total, source: source, label: msg.VisibleFileLabel(part), snapshot: snapshot,
+				})
 			}
-			out = append(out, visibleFile{
-				path: path.Clean(file.Path), start: file.Start, end: file.End,
-				total: file.Total, source: source, label: file.Label, snapshot: file.Snapshot,
-			})
-		case agentgo.Message:
-			filePath, start, end, total, ok := msg.VisibleFileRange(value.TextContent())
-			if !ok {
-				continue
-			}
-			source := fileFromPreload
-			snapshot := msg.SnapshotCurrent
-			if toolName := metadataString(value.Metadata, "tool_name"); toolName == msg.FileReadBaseToolName {
-				source = fileFromBaseline
-				snapshot = msg.SnapshotBaseline
-			} else if value.Role == agentgo.RoleTool || toolName == msg.FileReadToolName {
-				source = fileFromTool
-			}
-			out = append(out, visibleFile{
-				path: path.Clean(filePath), start: start, end: end,
-				total: total, source: source, label: msg.VisibleFileLabel(value.TextContent()), snapshot: snapshot,
-			})
 		}
 	}
 	return out
@@ -500,31 +502,13 @@ func countContextTokens(messages []agentgo.AgentMessage) int {
 }
 
 func compactCoveredFiles(messages []agentgo.AgentMessage) (compacted int) {
-	for i := len(messages) - 1; i >= 0; i-- {
-		newer, ok := messages[i].(domainMessage)
-		if !ok || newer.compaction >= msg.CompactionReference {
-			continue
-		}
-		newerFile, ok := newer.value.(*msg.File)
-		if !ok || newerFile.Stubbed() {
-			continue
-		}
-		for j := 0; j < i; j++ {
-			older, ok := messages[j].(domainMessage)
-			if !ok || older.compaction >= msg.CompactionReference {
-				continue
-			}
-			olderFile, ok := older.value.(*msg.File)
-			if !ok || olderFile.Stubbed() || !newerFile.Covers(olderFile) ||
-				olderFile.MaxCompaction() < msg.CompactionReference {
-				continue
-			}
-			older.compaction = msg.CompactionReference
-			messages[j] = older
-			compacted++
+	values := make([]msg.Msg, 0, len(messages))
+	for _, message := range messages {
+		if domain, ok := message.(domainMessage); ok && domain.compaction < msg.CompactionReference {
+			values = append(values, domain.value)
 		}
 	}
-	return compacted
+	return msg.DedupFiles(values)
 }
 
 func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.AgentMessage {

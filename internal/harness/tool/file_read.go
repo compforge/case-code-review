@@ -4,13 +4,107 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"regexp"
 	"strings"
+	"sync"
 )
 
-// FileReadMaxLines is the largest range returned by one file_read call.
+// FileReadMaxLines is the largest range returned for one file_read batch member.
 // Context coverage checks use the same limit to recognize an exact repeat of
 // an unbounded read without executing the provider again.
 const FileReadMaxLines = 500
+
+// FileReadMaxBatch bounds fan-out from one model response. Commit/range reads
+// may spawn git subprocesses; the model should issue another batch if needed.
+const FileReadMaxBatch = 16
+
+// FileReadRequest is one range in file_read's batch-only request contract.
+// Even a single range is carried in reads[] so the model has one stable shape
+// and can batch independent reads without spending extra turns.
+type FileReadRequest struct {
+	FilePath  string
+	StartLine int
+	EndLine   int
+}
+
+// ParseFileReadRequests parses the public reads[] contract. There is
+// intentionally no compatibility path for the former top-level file_path
+// shape: keeping one schema is what makes batching the default behavior.
+func ParseFileReadRequests(args map[string]any) ([]FileReadRequest, error) {
+	values, ok := args["reads"].([]any)
+	if !ok || len(values) == 0 {
+		return nil, fmt.Errorf("reads must be a non-empty array")
+	}
+	if len(values) > FileReadMaxBatch {
+		return nil, fmt.Errorf("reads may contain at most %d items", FileReadMaxBatch)
+	}
+	requests := make([]FileReadRequest, len(values))
+	for i, value := range values {
+		item, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("reads[%d] must be an object", i)
+		}
+		requests[i] = FileReadRequest{
+			FilePath:  stringValue(item["file_path"]),
+			StartLine: intValue(item["start_line"]),
+			EndLine:   intValue(item["end_line"]),
+		}
+	}
+	return requests, nil
+}
+
+// FileReadArgs rebuilds the public tool arguments for a subset of requests.
+// Context middleware uses it after removing ranges already visible to the
+// model, while preserving the same batch-only provider contract.
+func FileReadArgs(requests []FileReadRequest) map[string]any {
+	reads := make([]any, len(requests))
+	for i, request := range requests {
+		item := map[string]any{"file_path": request.FilePath}
+		if request.StartLine > 0 {
+			item["start_line"] = request.StartLine
+		}
+		if request.EndLine > 0 {
+			item["end_line"] = request.EndLine
+		}
+		reads[i] = item
+	}
+	return map[string]any{"reads": reads}
+}
+
+var fileReadBatchHeader = regexp.MustCompile(`(?m)^===== FILE_READ RESULT \d+/\d+ =====\n`)
+
+// EncodeFileReadResults joins ordered per-range results into one tool result.
+// One LLM tool call must still receive exactly one tool-result message.
+func EncodeFileReadResults(results []string) string {
+	var out strings.Builder
+	for i, result := range results {
+		if i > 0 {
+			out.WriteByte('\n')
+		}
+		fmt.Fprintf(&out, "===== FILE_READ RESULT %d/%d =====\n", i+1, len(results))
+		out.WriteString(strings.TrimRight(result, "\n"))
+		out.WriteByte('\n')
+	}
+	return out.String()
+}
+
+// DecodeFileReadResults splits the stable batch envelope while leaving each
+// file_read result body unchanged.
+func DecodeFileReadResults(result string) ([]string, bool) {
+	matches := fileReadBatchHeader.FindAllStringIndex(result, -1)
+	if len(matches) == 0 || matches[0][0] != 0 {
+		return nil, false
+	}
+	items := make([]string, len(matches))
+	for i, match := range matches {
+		end := len(result)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		items[i] = strings.TrimSpace(result[match[1]:end])
+	}
+	return items, true
+}
 
 // DiffPaths records what this review's diff did to paths that no longer exist
 // at the review ref (renames and deletions). A file_read miss on such a path
@@ -32,7 +126,7 @@ func NewDiffPaths(renamedTo map[string]string, deleted map[string]bool) DiffPath
 	return DiffPaths{renamedTo: r, deleted: d}
 }
 
-// FileReadProvider reads file content at a given path and optional line range.
+// FileReadProvider reads independent file ranges concurrently as one tool call.
 type FileReadProvider struct {
 	FileReader *FileReader
 	diffPaths  DiffPaths
@@ -67,7 +161,29 @@ func (p *FileReadProvider) Tool() Tool {
 }
 
 func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (string, error) {
-	filePath, _ := args["file_path"].(string)
+	requests, err := ParseFileReadRequests(args)
+	if err != nil {
+		return "Error: " + err.Error(), nil
+	}
+	results := make([]string, len(requests))
+	var wg sync.WaitGroup
+	for i, request := range requests {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := p.executeOne(ctx, request)
+			if err != nil {
+				result = "Error: " + err.Error()
+			}
+			results[i] = result
+		}()
+	}
+	wg.Wait()
+	return EncodeFileReadResults(results), nil
+}
+
+func (p *FileReadProvider) executeOne(ctx context.Context, request FileReadRequest) (string, error) {
+	filePath := request.FilePath
 	if filePath == "" {
 		return "Error: file_path is required", nil
 	}
@@ -75,31 +191,31 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		return "Baseline is the empty tree; the requested file did not exist before this change.", nil
 	}
 
-	startLine, hasStart := args["start_line"].(float64)
-	endLine, hasEnd := args["end_line"].(float64)
-	if !hasStart || startLine <= 0 {
+	startLine := request.StartLine
+	endLine := request.EndLine
+	if startLine <= 0 {
 		startLine = 1
 	}
-	if !hasEnd || endLine <= 0 {
+	if endLine <= 0 {
 		endLine = 0
 	}
 
 	maxLines := FileReadMaxLines
 	if endLine > 0 {
-		requested := int(endLine) - int(startLine) + 1
+		requested := endLine - startLine + 1
 		if requested <= 0 {
 			// A reversed range is a model tool-call mistake (same class as a
 			// missing file_path above), not a fatal condition. Return it as a
 			// recoverable observation so the loop feeds it back and the model
 			// can retry with a corrected range, instead of aborting the review.
-			return fmt.Sprintf("Error: invalid line range: start_line %d is greater than end_line %d", int(startLine), int(endLine)), nil
+			return fmt.Sprintf("Error: invalid line range: start_line %d is greater than end_line %d", startLine, endLine), nil
 		}
 		if requested < maxLines {
 			maxLines = requested
 		}
 	}
 
-	lines, totalLines, err := p.FileReader.ReadLines(ctx, filePath, int(startLine), maxLines)
+	lines, totalLines, err := p.FileReader.ReadLines(ctx, filePath, startLine, maxLines)
 	var renameNote string
 	if err != nil {
 		// The miss may be the model chasing a path this very diff moved or
@@ -107,7 +223,7 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		if to, ok := p.diffPaths.renamedTo[filePath]; ok {
 			renameNote = fmt.Sprintf("NOTE: %q was renamed to %q in this diff; showing the renamed file.\n", filePath, to)
 			filePath = to
-			lines, totalLines, err = p.FileReader.ReadLines(ctx, filePath, int(startLine), maxLines)
+			lines, totalLines, err = p.FileReader.ReadLines(ctx, filePath, startLine, maxLines)
 		} else if p.diffPaths.deleted[filePath] {
 			return fmt.Sprintf("File %q was deleted in this diff; it no longer exists at the review ref. Use file_read_diff to see the removed content.", filePath), nil
 		}
@@ -119,18 +235,18 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		return "", fmt.Errorf("file %q not found: %w", filePath, err)
 	}
 
-	if totalLines > 0 && int(startLine)-1 >= totalLines {
-		return "", fmt.Errorf("file %q has only %d lines, requested range %d-%d", filePath, totalLines, int(startLine), int(endLine))
+	if totalLines > 0 && startLine-1 >= totalLines {
+		return "", fmt.Errorf("file %q has only %d lines, requested range %d-%d", filePath, totalLines, startLine, endLine)
 	}
 
 	effectiveEnd := totalLines
-	if endLine > 0 && int(endLine) < effectiveEnd {
-		effectiveEnd = int(endLine)
+	if endLine > 0 && endLine < effectiveEnd {
+		effectiveEnd = endLine
 	}
-	fullRange := effectiveEnd - (int(startLine) - 1)
+	fullRange := effectiveEnd - (startLine - 1)
 	truncated := fullRange > FileReadMaxLines
 
-	displayEnd := int(startLine) - 1 + len(lines)
+	displayEnd := startLine - 1 + len(lines)
 
 	var sb strings.Builder
 	if p.Tool() == FileReadBase {
@@ -139,12 +255,28 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 	sb.WriteString(renameNote)
 	sb.WriteString(fmt.Sprintf("File: %s (Total lines: %d)\n", filePath, totalLines))
 	sb.WriteString(fmt.Sprintf("IS_TRUNCATED: %t\n", truncated))
-	sb.WriteString(fmt.Sprintf("LINE_RANGE: %d-%d\n", int(startLine), displayEnd))
+	sb.WriteString(fmt.Sprintf("LINE_RANGE: %d-%d\n", startLine, displayEnd))
 	for i, line := range lines {
-		sb.WriteString(fmt.Sprintf("%d|%s\n", int(startLine)+i, line))
+		sb.WriteString(fmt.Sprintf("%d|%s\n", startLine+i, line))
 	}
 	if truncated {
 		sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", FileReadMaxLines))
 	}
 	return sb.String(), nil
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
+func intValue(value any) int {
+	switch number := value.(type) {
+	case float64:
+		return int(number)
+	case int:
+		return number
+	default:
+		return 0
+	}
 }

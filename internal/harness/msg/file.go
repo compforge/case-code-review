@@ -69,6 +69,14 @@ const (
 // meaningful tokens. Shape selection lives HERE, not at construction: paired
 // content answers its tool call, unpaired content is user text.
 func (f *File) ToLLM(level CompactionLevel) llm.Message {
+	text := f.render(level)
+	if f.toolCallID != "" {
+		return llm.NewToolResultMessage(f.toolCallID, text)
+	}
+	return llm.NewTextMessage("user", text)
+}
+
+func (f *File) render(level CompactionLevel) string {
 	text := f.Content
 	if level == CompactionCondensed && f.CondensedContent != "" {
 		text = f.CondensedContent
@@ -89,10 +97,7 @@ func (f *File) ToLLM(level CompactionLevel) llm.Message {
 		text = fmt.Sprintf("File: %s lines %d-%d — elided to fit the context budget; call file_read again if you still need it.",
 			f.Path, f.Start, f.End)
 	}
-	if f.toolCallID != "" {
-		return llm.NewToolResultMessage(f.toolCallID, text)
-	}
-	return llm.NewTextMessage("user", text)
+	return text
 }
 
 // FromLLM restores a file tool result into this message. Keep it beside ToLLM:
@@ -273,14 +278,18 @@ func VisibleFileLabel(text string) string {
 // different file states, but within one review loop the workspace/ref is
 // fixed, so same path + covered range ⇒ same content.
 func DedupFiles(messages []Msg) (stubbed int) {
-	for i := len(messages) - 1; i >= 0; i-- {
-		newer, ok := messages[i].(*File)
-		if !ok || newer.Stubbed() {
+	var files []*File
+	for _, message := range messages {
+		files = append(files, filesInMessage(message)...)
+	}
+	for i := len(files) - 1; i >= 0; i-- {
+		newer := files[i]
+		if newer.Stubbed() {
 			continue
 		}
 		for j := range i {
-			older, ok := messages[j].(*File)
-			if !ok || older.Stubbed() {
+			older := files[j]
+			if older.Stubbed() {
 				continue
 			}
 			if newer.Covers(older) {
@@ -290,4 +299,15 @@ func DedupFiles(messages []Msg) (stubbed int) {
 		}
 	}
 	return stubbed
+}
+
+func filesInMessage(message Msg) []*File {
+	switch value := message.(type) {
+	case *File:
+		return []*File{value}
+	case *FileBatch:
+		return value.Files()
+	default:
+		return nil
+	}
 }

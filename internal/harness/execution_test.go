@@ -383,8 +383,8 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go"}`, nil),
-		toolCallResponseID("call-2", "file_read", `{"file_path":"pkg/a.go"}`, nil),
+		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-2", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
@@ -432,7 +432,9 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 }
 
 func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
-	result := "File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|package a\n"
+	result := tool.EncodeFileReadResults([]string{
+		"File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|package a\n",
+	})
 	wire := wireToAgentMessage(llm.NewToolResultMessage("call-1", result))
 	wire.Metadata = map[string]any{
 		"tool_name":    msg.FileReadToolName,
@@ -447,8 +449,13 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("file_read result stayed wire-shaped: %T", normalized[0])
 	}
-	file, ok := domain.value.(*msg.File)
-	if !ok || file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 || !file.IsToolResult() {
+	batch, ok := domain.value.(*msg.FileBatch)
+	if !ok || len(batch.Files()) != 1 {
+		t.Fatalf("promoted message = %#v", domain.value)
+	}
+	file := batch.Files()[0]
+	if file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 ||
+		batch.ToLLM(msg.CompactionNone).ToolCallID != "call-1" {
 		t.Fatalf("promoted message = %#v", domain.value)
 	}
 }
@@ -488,7 +495,7 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager.remember(nil, projection.Messages, projection.Usage, "test", false)
-	if _, covered := manager.coveredFileRead(map[string]any{"file_path": "pkg/a.go"}); covered {
+	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
 		t.Fatal("baseline source must not suppress a current-snapshot file_read")
 	}
 }
@@ -501,7 +508,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go"}`, nil),
+		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
@@ -529,6 +536,43 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	if first := requestText(client.Requests()[0]); !strings.Contains(first, "Available file content already present") ||
 		!strings.Contains(first, "pkg/a.go lines 1-3 — code under review") {
 		t.Fatalf("first request lacks visible-file inventory: %q", first)
+	}
+}
+
+func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
+	preload := "File: pkg/a.go (Total lines: 3)\n1|package a\n2|\n3|func A() {}\n"
+	body := "File: pkg/b.go (Total lines: 2)\nIS_TRUNCATED: false\nLINE_RANGE: 1-2\n1|package b\n2|func B() {}\n"
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: body}
+	registry.Register(provider)
+	registry.Freeze()
+
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"},{"file_path":"pkg/b.go"}]}`, nil),
+		toolCallResponseID("call-2", "task_done", `{}`, nil),
+	}}
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages: []msg.Msg{
+			msg.Text("user", "review this unit"),
+			msg.NewFile("pkg/a.go", 1, 3, 3, preload),
+		},
+		ToolDefs:         []llm.ToolDef{toolDef("file_read"), toolDef("task_done")},
+		Tools:            registry,
+		MaxTurns:         2,
+		ContextWindow:    10_000,
+		FileDedupEnabled: true,
+	})
+	if err != nil || result.State != OutcomeCompleted {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	requests, parseErr := tool.ParseFileReadRequests(provider.args)
+	if provider.calls != 1 || parseErr != nil || len(requests) != 1 || requests[0].FilePath != "pkg/b.go" {
+		t.Fatalf("provider calls=%d args=%v parsed=%+v err=%v", provider.calls, provider.args, requests, parseErr)
+	}
+	text := requestText(client.Requests()[1])
+	if !strings.Contains(text, "Already available in the current context") || !strings.Contains(text, "File: pkg/b.go") {
+		t.Fatalf("merged batch result missing covered/fresh members: %q", text)
 	}
 }
 
@@ -590,7 +634,7 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	registry.Register(provider)
 	registry.Freeze()
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go"}`, nil),
+		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 
@@ -631,7 +675,7 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 	registry.Freeze()
 
 	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("call-1", "file_read", `{"file_path":"pkg/a.go","start_line":1,"end_line":20}`, nil),
+		toolCallResponseID("call-1", "file_read", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":20}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	_, err := runExecution(context.Background(), ExecutionSpec{
@@ -848,12 +892,14 @@ func (f turnContextFunc) PullTurnContext(ctx context.Context, scope session.Scop
 type fileReadProvider struct {
 	body  string
 	calls int
+	args  map[string]any
 }
 
 func (p *fileReadProvider) Tool() tool.Tool { return tool.FileRead }
-func (p *fileReadProvider) Execute(context.Context, map[string]any) (string, error) {
+func (p *fileReadProvider) Execute(_ context.Context, args map[string]any) (string, error) {
 	p.calls++
-	return p.body, nil
+	p.args = args
+	return tool.EncodeFileReadResults([]string{p.body}), nil
 }
 
 type scriptedClient struct {

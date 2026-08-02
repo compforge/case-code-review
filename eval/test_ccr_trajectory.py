@@ -121,7 +121,14 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(repeated_file_reads(self.trajectory), {"a.go": 2})
         self.assertEqual(
             file_read_stats(self.trajectory),
-            {"calls": 2, "rounds": 1, "average_batch": 2.0, "max_batch": 2},
+            {
+                "calls": 2,
+                "requests": 2,
+                "rounds": 1,
+                "average_batch": 1.0,
+                "max_batch": 1,
+                "calls_per_round": 2.0,
+            },
         )
         self.assertEqual(
             prompt_file_read_overlap(self.trajectory),
@@ -316,6 +323,62 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(overlap["runtime_covered"], 1)
         self.assertEqual(overlap["covered_lines"], 11)
         self.assertEqual(overlap["total_lines"], 11)
+
+    def test_batch_file_read_counts_requests_and_preserves_item_ranges(self):
+        result = (
+            "===== FILE_READ RESULT 1/2 =====\n"
+            "File: a.go (Total lines: 20)\nLINE_RANGE: 1-10\n1|a\n"
+            "===== FILE_READ RESULT 2/2 =====\n"
+            "File: b.go (Total lines: 30)\nLINE_RANGE: 11-20\n11|b\n"
+        )
+        root = {
+            "session_id": "batch",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-batch",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "batch-1",
+                                    "function_name": "file_read",
+                                    "arguments": {
+                                        "reads": [
+                                            {"file_path": "a.go", "start_line": 1, "end_line": 10},
+                                            {"file_path": "b.go", "start_line": 11, "end_line": 20},
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {"source_call_id": "batch-1", "content": result}
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(repeated_file_reads(trajectory), {})
+        self.assertEqual(
+            file_read_stats(trajectory),
+            {
+                "calls": 1,
+                "requests": 2,
+                "rounds": 1,
+                "average_batch": 2.0,
+                "max_batch": 2,
+                "calls_per_round": 1.0,
+            },
+        )
+        self.assertEqual(file_read_fragmentation(trajectory)["calls"], 2)
+        self.assertEqual(prompt_file_read_overlap(trajectory)["new_context"], 2)
 
 
 if __name__ == "__main__":

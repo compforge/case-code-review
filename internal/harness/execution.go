@@ -291,42 +291,75 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		if err := json.Unmarshal(call.Args, &args); err != nil {
 			return next(ctx, call.Args)
 		}
-		if call.Name == tool.FileRead.Name() {
-			if result, covered := e.contextManager.coveredFileRead(args); covered {
-				return json.RawMessage(result), nil
+		execute := func(raw json.RawMessage, parsed map[string]any) (json.RawMessage, error) {
+			if e.spec.ToolHandler == nil {
+				return next(ctx, raw)
 			}
-		}
-		if e.spec.ToolHandler == nil {
-			return next(ctx, call.Args)
-		}
-		recorded := e.recorder.call(call.ID)
-		checkpoint, handled := e.spec.ToolHandler.HandleTool(ctx, ToolRequest{
-			Scope: e.spec.Scope,
-			Tool:  tool.OfName(call.Name),
-			Call: llm.ToolCall{
-				ID:   call.ID,
-				Type: "function",
-				Function: llm.FunctionCall{
-					Name:      call.Name,
-					Arguments: string(call.Args),
+			recorded := e.recorder.call(call.ID)
+			checkpoint, handled := e.spec.ToolHandler.HandleTool(ctx, ToolRequest{
+				Scope: e.spec.Scope,
+				Tool:  tool.OfName(call.Name),
+				Call: llm.ToolCall{
+					ID:   call.ID,
+					Type: "function",
+					Function: llm.FunctionCall{
+						Name:      call.Name,
+						Arguments: string(raw),
+					},
 				},
-			},
-			Args:  args,
-			Alias: recorded.alias,
-		})
-		if !handled {
-			return next(ctx, call.Args)
-		}
-		if checkpoint.Completed {
-			if call.Name == e.completionTool {
-				e.completed.Store(true)
+				Args:  parsed,
+				Alias: recorded.alias,
+			})
+			if !handled {
+				return next(ctx, raw)
 			}
-			if checkpoint.Data != "" {
-				return json.RawMessage(checkpoint.Data), nil
+			if checkpoint.Completed {
+				if call.Name == e.completionTool {
+					e.completed.Store(true)
+				}
+				if checkpoint.Data != "" {
+					return json.RawMessage(checkpoint.Data), nil
+				}
+				return json.RawMessage("Task completed successfully."), nil
 			}
-			return json.RawMessage("Task completed successfully."), nil
+			return json.RawMessage(checkpoint.Data), nil
 		}
-		return json.RawMessage(checkpoint.Data), nil
+
+		if call.Name != tool.FileRead.Name() {
+			return execute(call.Args, args)
+		}
+		requests, err := tool.ParseFileReadRequests(args)
+		if err != nil {
+			return execute(call.Args, args)
+		}
+		results := make([]string, len(requests))
+		remaining := make([]tool.FileReadRequest, 0, len(requests))
+		positions := make([]int, 0, len(requests))
+		for i, request := range requests {
+			if result, covered := e.contextManager.coveredFileRead(request); covered {
+				results[i] = result
+				continue
+			}
+			remaining = append(remaining, request)
+			positions = append(positions, i)
+		}
+		if len(remaining) == 0 {
+			return json.RawMessage(tool.EncodeFileReadResults(results)), nil
+		}
+		subset := tool.FileReadArgs(remaining)
+		raw, _ := json.Marshal(subset)
+		response, err := execute(raw, subset)
+		if err != nil || len(remaining) == len(requests) {
+			return response, err
+		}
+		fresh, ok := tool.DecodeFileReadResults(string(response))
+		if !ok || len(fresh) != len(remaining) {
+			return response, nil
+		}
+		for i, result := range fresh {
+			results[positions[i]] = result
+		}
+		return json.RawMessage(tool.EncodeFileReadResults(results)), nil
 	}
 }
 

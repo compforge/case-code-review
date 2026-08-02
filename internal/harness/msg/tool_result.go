@@ -187,7 +187,7 @@ type llmDecoder interface {
 // The dispatcher contains no message-specific parsing; each decoder sits next
 // to that type's ToLLM so the two directions evolve together.
 func FromLLM(result LLMToolResult) Msg {
-	decoders := []llmDecoder{&File{}, &SearchResult{}, &Diff{}}
+	decoders := []llmDecoder{&FileBatch{}, &File{}, &SearchResult{}, &Diff{}}
 	for _, decoder := range decoders {
 		if decoder.FromLLM(result) {
 			return decoder

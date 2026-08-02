@@ -47,7 +47,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		},
 		HasSourcePreloads: true,
 		HasContextPaths:   true,
-		FileReads:         FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
+		FileReads:         FileReadMetrics{Calls: 4, Requests: 4, UniqueFiles: 3, CoveredRequests: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1},
 		Status:            "completed",
 		Outcome:           "completed",
 		HasDebrief:        true,

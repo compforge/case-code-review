@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -10,8 +11,8 @@ func TestExportSessionATIF(t *testing.T) {
 	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z"}
 {"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"},"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"llm_request","scope_id":"u1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z"}
-{"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"","tool_calls":[{"id":"c1","name":"file_read","arguments":"{\"file_path\":\"a.go\"}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"duration_ms":5000,"timestamp":"2026-07-02T10:00:06Z"}
-{"type":"tool_call","scope_id":"u1","tool_name":"file_read","arguments":"{\"file_path\":\"a.go\"}","result":"1|package a","ok":true,"timestamp":"2026-07-02T10:00:06Z"}
+{"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"","tool_calls":[{"id":"c1","name":"file_read","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"duration_ms":5000,"timestamp":"2026-07-02T10:00:06Z"}
+{"type":"tool_call","scope_id":"u1","tool_name":"file_read","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"timestamp":"2026-07-02T10:00:06Z"}
 {"type":"llm_request","scope_id":"u1","request_no":2,"messages":[{"role":"system","content":"be a reviewer"}],"timestamp":"2026-07-02T10:00:07Z"}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"looks fine","usage":{"prompt_tokens":200,"completion_tokens":20},"duration_ms":3000,"timestamp":"2026-07-02T10:00:10Z"}
 `
@@ -56,11 +57,12 @@ func TestExportSessionATIF(t *testing.T) {
 	if st.Source != "agent" || len(st.ToolCalls) != 1 || st.ToolCalls[0].FunctionName != "file_read" {
 		t.Fatalf("agent step: %+v", st)
 	}
-	if st.ToolCalls[0].Arguments["file_path"] != "a.go" {
+	reads, ok := st.ToolCalls[0].Arguments["reads"].([]any)
+	if !ok || len(reads) != 1 || reads[0].(map[string]any)["file_path"] != "a.go" {
 		t.Fatalf("arguments not decoded: %v", st.ToolCalls[0].Arguments)
 	}
 	if st.Observation == nil || len(st.Observation.Results) != 1 ||
-		st.Observation.Results[0].SourceCallID != "c1" || st.Observation.Results[0].Content != "1|package a" {
+		st.Observation.Results[0].SourceCallID != "c1" || !strings.Contains(st.Observation.Results[0].Content, "1|package a") {
 		t.Fatalf("observation pairing: %+v", st.Observation)
 	}
 	if st.Metrics.PromptTokens != 100 || st.Metrics.CompletionTokens != 10 {

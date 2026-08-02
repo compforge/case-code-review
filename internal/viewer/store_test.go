@@ -290,11 +290,8 @@ func TestLoadSessionBuildsFileReadSignals(t *testing.T) {
 	}
 	transcript := strings.Join([]string{
 		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"user","content":"review"}]}`,
-		`{"type":"llm_response","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","content":"reading","tool_calls":[{"name":"file_read","arguments":"{\"file_path\":\"a.go\"}"},{"name":"file_read","arguments":"{\"file_path\":\"caller.go\"}"},{"name":"file_read","arguments":"{\"file_path\":\"caller.go\",\"start_line\":20}"},{"name":"file_read","arguments":"{\"file_path\":\"other.go\"}"}]}`,
-		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"Already available in the current context from the initial source context: a.go lines 1-10.","ok":true}`,
-		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"caller","ok":true}`,
-		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"caller range","ok":true}`,
-		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"other","ok":true}`,
+		`{"type":"llm_response","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","content":"reading","tool_calls":[{"id":"batch-1","name":"file_read","arguments":"{\"reads\":[{\"file_path\":\"a.go\"},{\"file_path\":\"caller.go\"},{\"file_path\":\"caller.go\",\"start_line\":20},{\"file_path\":\"other.go\"}]}"}]}`,
+		`{"type":"tool_call","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_call_id":"batch-1","tool_name":"file_read","result":"===== FILE_READ RESULT 1/4 =====\nAlready available in the current context from the initial source context: a.go lines 1-10.\n===== FILE_READ RESULT 2/4 =====\ncaller\n===== FILE_READ RESULT 3/4 =====\ncaller range\n===== FILE_READ RESULT 4/4 =====\nother","ok":true}`,
 		`{"type":"debrief","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","source_preloads":["whole a.go"],"context_paths":{"caller":["caller.go"],"callee":["callee.go"]}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
@@ -309,7 +306,7 @@ func TestLoadSessionBuildsFileReadSignals(t *testing.T) {
 		t.Fatalf("reviews = %d, want 1", len(got.Reviews))
 	}
 	review := got.Reviews[0]
-	want := FileReadMetrics{Calls: 4, UniqueFiles: 3, CoveredCalls: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1}
+	want := FileReadMetrics{Calls: 1, Requests: 4, UniqueFiles: 3, CoveredRequests: 1, SamePathRepeats: 1, PreloadedFiles: 1, UnitKnownFiles: 2, CallGraphFiles: 1}
 	if review.FileReads != want {
 		t.Fatalf("file read metrics = %+v, want %+v", review.FileReads, want)
 	}

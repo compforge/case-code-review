@@ -287,7 +287,7 @@ func (e *Executor) ReadPaths(scopeID string) []string {
 	return out
 }
 
-func (e *Executor) recordReadPaths(scopeID, name string, arguments json.RawMessage) {
+func (e *Executor) recordReadPaths(scopeID, name string, arguments json.RawMessage, result string) {
 	var args map[string]any
 	if json.Unmarshal(arguments, &args) != nil {
 		return
@@ -295,8 +295,18 @@ func (e *Executor) recordReadPaths(scopeID, name string, arguments json.RawMessa
 	var paths []string
 	switch name {
 	case tool.FileRead.Name(), tool.FileReadBase.Name():
-		if path, _ := args["file_path"].(string); path != "" {
-			paths = append(paths, path)
+		requests, err := tool.ParseFileReadRequests(args)
+		if err != nil {
+			return
+		}
+		parts, ok := tool.DecodeFileReadResults(result)
+		if !ok || len(parts) != len(requests) {
+			return
+		}
+		for i, request := range requests {
+			if request.FilePath != "" && strings.Contains(parts[i], "File: ") {
+				paths = append(paths, request.FilePath)
+			}
 		}
 	case tool.FileReadDiff.Name():
 		paths = append(paths, argumentStrings(args["path_array"])...)
@@ -401,7 +411,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 		r.publishToolFact(event.Tool, event.Arguments)
 	case harness.EventToolEnd:
 		if !event.IsError && !strings.HasPrefix(strings.TrimSpace(eventResultText(event.Result)), "Error:") {
-			r.executor.recordReadPaths(r.scope.ID, event.Tool, event.Arguments)
+			r.executor.recordReadPaths(r.scope.ID, event.Tool, event.Arguments, eventResultText(event.Result))
 		}
 		if !r.observesGenericTool(event.Tool) {
 			return
@@ -466,17 +476,22 @@ func (r *unitExecution) publishToolFact(name string, raw json.RawMessage) {
 	var bulletin board.Bulletin
 	switch name {
 	case tool.FileRead.Name():
-		path, _ := args["file_path"].(string)
-		if path == "" {
+		requests, err := tool.ParseFileReadRequests(args)
+		if err != nil {
 			return
 		}
-		text := "read " + path
-		start := argumentInt(args["start_line"])
-		if start > 0 {
-			text = fmt.Sprintf("read %s:%d-%d", path, start, argumentInt(args["end_line"]))
+		paths := make([]string, 0, len(requests))
+		for _, request := range requests {
+			if request.FilePath != "" {
+				paths = append(paths, request.FilePath)
+			}
+		}
+		if len(paths) == 0 {
+			return
 		}
 		bulletin = board.Bulletin{
-			Level: board.LevelConfirmed, Paths: []string{path}, Text: text,
+			Level: board.LevelConfirmed, Paths: paths,
+			Text: fmt.Sprintf("read %d file range(s): %s", len(requests), strings.Join(paths, ", ")),
 		}
 	default:
 		return

@@ -116,6 +116,8 @@ func CloneAll(msgs []Msg) []Msg {
 		case *File:
 			cp := *value
 			out[i] = &cp
+		case *FileBatch:
+			out[i] = value.clone()
 		case *Board:
 			cp := *value
 			out[i] = &cp

@@ -310,7 +310,7 @@ func TestExecute_Truncation(t *testing.T) {
 	p := NewFileRead(fr)
 
 	result, err := p.Execute(context.Background(), map[string]any{
-		"file_path": "big.txt",
+		"reads": []any{map[string]any{"file_path": "big.txt"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -340,9 +340,9 @@ func TestExecute_ReversedRange_ReturnsRecoverableError(t *testing.T) {
 	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 
 	result, err := p.Execute(context.Background(), map[string]any{
-		"file_path":  "c.txt",
-		"start_line": float64(300),
-		"end_line":   float64(100),
+		"reads": []any{map[string]any{
+			"file_path": "c.txt", "start_line": float64(300), "end_line": float64(100),
+		}},
 	})
 	if err != nil {
 		t.Fatalf("reversed range must not return a fatal error, got: %v", err)
@@ -360,9 +360,9 @@ func TestExecute_WithEndLine(t *testing.T) {
 	p := NewFileRead(fr)
 
 	result, err := p.Execute(context.Background(), map[string]any{
-		"file_path":  "c.txt",
-		"start_line": float64(2),
-		"end_line":   float64(4),
+		"reads": []any{map[string]any{
+			"file_path": "c.txt", "start_line": float64(2), "end_line": float64(4),
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -392,7 +392,9 @@ func TestExecute_RenamedPath_RedirectsToNewPath(t *testing.T) {
 	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	p.SetDiffPaths(NewDiffPaths(map[string]string{"old.txt": "new.txt"}, nil))
 
-	out, err := p.Execute(context.Background(), map[string]any{"file_path": "old.txt"})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"reads": []any{map[string]any{"file_path": "old.txt"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -413,7 +415,9 @@ func TestExecute_DeletedPath_ExplainsDeletion(t *testing.T) {
 	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	p.SetDiffPaths(NewDiffPaths(nil, map[string]bool{"gone.txt": true}))
 
-	out, err := p.Execute(context.Background(), map[string]any{"file_path": "gone.txt"})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"reads": []any{map[string]any{"file_path": "gone.txt"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,8 +431,11 @@ func TestExecute_MissWithoutDiffPaths_StillErrors(t *testing.T) {
 
 	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 
-	if _, err := p.Execute(context.Background(), map[string]any{"file_path": "nope.txt"}); err == nil {
-		t.Fatal("expected not-found error for a path absent from the diff maps")
+	out, err := p.Execute(context.Background(), map[string]any{
+		"reads": []any{map[string]any{"file_path": "nope.txt"}},
+	})
+	if err != nil || !strings.Contains(out, "Error:") {
+		t.Fatalf("missing batch member = %q, %v; want an item-local error", out, err)
 	}
 }
 
@@ -437,8 +444,45 @@ func TestFileReadBaseIdentifiesEmptyTree(t *testing.T) {
 	if p.Tool() != FileReadBase {
 		t.Fatalf("tool = %s, want %s", p.Tool().Name(), FileReadBase.Name())
 	}
-	out, err := p.Execute(context.Background(), map[string]any{"file_path": "new.go"})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"reads": []any{map[string]any{"file_path": "new.go"}},
+	})
 	if err != nil || !strings.Contains(out, "empty tree") {
 		t.Fatalf("empty baseline result = %q, %v", out, err)
+	}
+}
+
+func TestExecuteBatchPreservesOrderAndItemErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "a.txt", "a\n")
+	writeTestFile(t, dir, "b.txt", "b\n")
+	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+
+	out, err := p.Execute(context.Background(), map[string]any{
+		"reads": []any{
+			map[string]any{"file_path": "b.txt"},
+			map[string]any{"file_path": "missing.txt"},
+			map[string]any{"file_path": "a.txt"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeFileReadResults(out)
+	if !ok || len(results) != 3 {
+		t.Fatalf("batch result = %q, parsed=%d ok=%t", out, len(results), ok)
+	}
+	if !strings.Contains(results[0], "File: b.txt") ||
+		!strings.HasPrefix(results[1], "Error:") ||
+		!strings.Contains(results[2], "File: a.txt") {
+		t.Fatalf("batch order/error isolation off: %#v", results)
+	}
+}
+
+func TestExecuteRejectsFormerSingularShape(t *testing.T) {
+	p := NewFileRead(&FileReader{RepoDir: t.TempDir(), Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{"file_path": "a.txt"})
+	if err != nil || !strings.Contains(out, "reads must be a non-empty array") {
+		t.Fatalf("singular args = %q, %v; want batch-only contract error", out, err)
 	}
 }

@@ -202,19 +202,16 @@ class FileReadCoverageEvaluator:
         for step in _tool_steps(trajectory):
             if step.name != "file_read" or step.status == "error":
                 continue
-            read_range = _file_read_range(step)
-            if read_range is None:
-                continue
-            path, start, end = read_range
-            delivered = end - start + 1
-            prior = covered.setdefault(path, [])
-            overlap = _covered_lines(prior, start, end)
-            if overlap:
-                overlapping_steps.append(step.step_id)
-            total_lines += delivered
-            novel_lines += delivered - overlap
-            prior.append((start, end))
-            covered[path] = _merge_ranges(prior)
+            for path, start, end in _file_read_ranges(step):
+                delivered = end - start + 1
+                prior = covered.setdefault(path, [])
+                overlap = _covered_lines(prior, start, end)
+                if overlap:
+                    overlapping_steps.append(step.step_id)
+                total_lines += delivered
+                novel_lines += delivered - overlap
+                prior.append((start, end))
+                covered[path] = _merge_ranges(prior)
 
         if total_lines == 0:
             return _not_evaluated(
@@ -377,26 +374,36 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
     for step in _tool_steps(trajectory):
         if step.name != "file_read":
             continue
-        arguments = _tool_arguments(step)
-        paths = arguments.get("file_paths") or [arguments.get("file_path", "?")]
-        if isinstance(paths, str):
-            paths = [paths]
-        reads.update(str(path) for path in paths)
+        reads.update(
+            str(request.get("file_path") or "?")
+            for request in _file_read_requests(step)
+        )
     return {path: count for path, count in reads.items() if count > 1}
 
 
 def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
     """Describe how file reads are spread across model turns."""
 
-    reads = [step for step in _tool_steps(trajectory) if step.name == "file_read"]
-    if not reads:
-        return {"calls": 0, "rounds": 0, "average_batch": 0.0, "max_batch": 0}
-    batches = Counter(step.parent_step_id for step in reads)
+    calls = [step for step in _tool_steps(trajectory) if step.name == "file_read"]
+    if not calls:
+        return {
+            "calls": 0,
+            "requests": 0,
+            "rounds": 0,
+            "average_batch": 0.0,
+            "max_batch": 0,
+            "calls_per_round": 0.0,
+        }
+    batches = [max(len(_file_read_requests(step)), 1) for step in calls]
+    rounds = len({step.parent_step_id for step in calls})
+    requests = sum(batches)
     return {
-        "calls": len(reads),
-        "rounds": len(batches),
-        "average_batch": round(len(reads) / len(batches), 2),
-        "max_batch": max(batches.values()),
+        "calls": len(calls),
+        "requests": requests,
+        "rounds": rounds,
+        "average_batch": round(requests / len(calls), 2),
+        "max_batch": max(batches),
+        "calls_per_round": round(len(calls) / rounds, 2),
     }
 
 
@@ -417,11 +424,15 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
     for step in _tool_steps(trajectory):
         if step.name != "file_read":
             continue
+        request_count = max(len(_file_read_requests(step)), 1)
         if step.status == "error":
-            failed += 1
+            failed += request_count
             continue
-        available = _already_available_range(step)
-        if available is not None:
+        if _tool_response(step).startswith("Investigation is closed."):
+            blocked += request_count
+            continue
+        available_ranges = _already_available_ranges(step)
+        for available in available_ranges:
             source, _, start, end = available
             if source == "initial":
                 delivered = end - start + 1
@@ -431,27 +442,21 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
                 overlapping_steps.append(step.step_id)
             else:
                 runtime_covered += 1
-            continue
-        if _tool_response(step).startswith("Investigation is closed."):
-            blocked += 1
-            continue
-        read_range = _file_read_range(step)
-        if read_range is None:
-            unmeasured += 1
-            continue
-        path, start, end = read_range
-        delivered = end - start + 1
-        overlap = _covered_lines(context_ranges.get(path, []), start, end)
-        total_lines += delivered
-        covered_lines += overlap
-        if overlap == delivered:
-            fully_covered += 1
-            overlapping_steps.append(step.step_id)
-        elif overlap:
-            partially_covered += 1
-            overlapping_steps.append(step.step_id)
-        else:
-            new_context += 1
+        ranges = _file_read_ranges(step)
+        for path, start, end in ranges:
+            delivered = end - start + 1
+            overlap = _covered_lines(context_ranges.get(path, []), start, end)
+            total_lines += delivered
+            covered_lines += overlap
+            if overlap == delivered:
+                fully_covered += 1
+                overlapping_steps.append(step.step_id)
+            elif overlap:
+                partially_covered += 1
+                overlapping_steps.append(step.step_id)
+            else:
+                new_context += 1
+        unmeasured += max(0, request_count - len(available_ranges) - len(ranges))
     return {
         "calls": (
             fully_covered
@@ -483,11 +488,8 @@ def file_read_fragmentation(trajectory: Trajectory) -> dict[str, Any]:
     for step in _tool_steps(trajectory):
         if step.name != "file_read" or step.status == "error":
             continue
-        read_range = _file_read_observed_range(step)
-        if read_range is None:
-            continue
-        path, start, end = read_range
-        by_path.setdefault(path, []).append((start, end, step.step_id))
+        for path, start, end in _file_read_observed_ranges(step):
+            by_path.setdefault(path, []).append((start, end, step.step_id))
 
     calls = sum(len(ranges) for ranges in by_path.values())
     minimal_ranges = 0
@@ -541,44 +543,69 @@ def _tool_response(step: Step) -> str:
     return ""
 
 
-def _file_read_range(step: Step) -> tuple[str, int, int] | None:
-    response = _tool_response(step)
-    path_match = re.search(r"(?m)^File:\s*(.+?)\s+\(Total lines:", response)
-    range_match = re.search(r"(?m)^LINE_RANGE:\s*(\d+)-(\d+)\s*$", response)
-    if not range_match:
-        return None
+def _file_read_requests(step: Step) -> list[dict[str, Any]]:
     arguments = _tool_arguments(step)
-    path = path_match.group(1) if path_match else arguments.get("file_path")
-    if not path:
-        return None
-    start, end = map(int, range_match.groups())
-    if start <= 0 or end < start:
-        return None
-    return str(path), start, end
+    reads = arguments.get("reads")
+    if isinstance(reads, list):
+        return [item for item in reads if isinstance(item, dict)]
+    # Historical ATIF remains analyzable even though the runtime no longer
+    # accepts the former singular tool shape.
+    if arguments.get("file_path"):
+        return [arguments]
+    return []
 
 
-def _file_read_observed_range(step: Step) -> tuple[str, int, int] | None:
-    read_range = _file_read_range(step)
-    if read_range is not None:
-        return read_range
-    available = _already_available_range(step)
-    if available is None:
-        return None
-    _, path, start, end = available
-    return path, start, end
-
-
-def _already_available_range(step: Step) -> tuple[str, str, int, int] | None:
-    match = re.match(
-        r"Already available in the current context from "
-        r"(the initial source context|an earlier file_read result): "
-        r"(.+?) lines (\d+)-(\d+)\.",
-        _tool_response(step),
+def _file_read_result_parts(step: Step) -> list[str]:
+    response = _tool_response(step)
+    markers = list(
+        re.finditer(r"(?m)^===== FILE_READ RESULT \d+/\d+ =====\n", response)
     )
-    if not match:
-        return None
-    source = "initial" if match.group(1).startswith("the initial") else "runtime"
-    return source, match.group(2), int(match.group(3)), int(match.group(4))
+    if not markers or markers[0].start() != 0:
+        return [response]
+    return [
+        response[marker.end() : markers[index + 1].start() if index + 1 < len(markers) else len(response)].strip()
+        for index, marker in enumerate(markers)
+    ]
+
+
+def _file_read_ranges(step: Step) -> list[tuple[str, int, int]]:
+    requests = _file_read_requests(step)
+    ranges: list[tuple[str, int, int]] = []
+    for index, response in enumerate(_file_read_result_parts(step)):
+        path_match = re.search(r"(?m)^File:\s*(.+?)\s+\(Total lines:", response)
+        range_match = re.search(r"(?m)^LINE_RANGE:\s*(\d+)-(\d+)\s*$", response)
+        if not range_match:
+            continue
+        requested_path = requests[index].get("file_path") if index < len(requests) else None
+        path = path_match.group(1) if path_match else requested_path
+        if not path:
+            continue
+        start, end = map(int, range_match.groups())
+        if start > 0 and end >= start:
+            ranges.append((str(path), start, end))
+    return ranges
+
+
+def _file_read_observed_ranges(step: Step) -> list[tuple[str, int, int]]:
+    ranges = _file_read_ranges(step)
+    ranges.extend((path, start, end) for _, path, start, end in _already_available_ranges(step))
+    return ranges
+
+
+def _already_available_ranges(step: Step) -> list[tuple[str, str, int, int]]:
+    ranges = []
+    for response in _file_read_result_parts(step):
+        match = re.search(
+            r"Already available in the current context from "
+            r"(the initial source context|an earlier file_read result): "
+            r"(.+?) lines (\d+)-(\d+)\.",
+            response,
+        )
+        if not match:
+            continue
+        source = "initial" if match.group(1).startswith("the initial") else "runtime"
+        ranges.append((source, match.group(2), int(match.group(3)), int(match.group(4))))
+    return ranges
 
 
 def _context_file_ranges(trajectory: Trajectory) -> dict[str, list[tuple[int, int]]]:
