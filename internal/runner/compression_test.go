@@ -23,6 +23,6 @@ func TestReviewCompressionPromptsAdaptTemplateContext(t *testing.T) {
 	}
 	if strings.Contains(instruction, "{{context}}") ||
 		!strings.Contains(instruction, "conversation supplied above") {
-		t.Fatalf("instruction was not adapted for agentcore: %q", instruction)
+		t.Fatalf("instruction was not adapted for agentgo: %q", instruction)
 	}
 }

@@ -16,22 +16,23 @@ import (
 )
 
 // reviewDossier delegates one immutable packet to the convergent Review 2
-// loop. Dossier formation and scheduling stay in Runner; the review package
+// loop. Lane assignment and scheduling stay in Runner; the review package
 // owns only evidence gathering and Assessment production.
 func (a *Runner) reviewDossier(
 	ctx context.Context,
 	dossier hypothesisreview.Dossier,
-) (assessments []hypothesisreview.Assessment) {
+	continueFrom *harness.ExecutionResult,
+) (result hypothesisreview.ReviewResult) {
 	task := a.args.Template.HypothesisReviewTask
 	if task == nil || len(task.Messages) == 0 || len(dossier.Hypotheses) == 0 {
-		return nil
+		return hypothesisreview.ReviewResult{}
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s: %v\n%s\n", dossier.ID, recovered, debug.Stack())
 			telemetry.ErrorEvent(ctx, "hypothesis_review.panic", fmt.Errorf("panic: %v", recovered))
 			a.recordWarning("hypothesis_review_error", "", fmt.Sprintf("dossier %s panic: %v", dossier.ID, recovered))
-			assessments = nil
+			result = hypothesisreview.ReviewResult{}
 		}
 	}()
 	return hypothesisreview.Review(ctx, hypothesisreview.Config{
@@ -53,7 +54,7 @@ func (a *Runner) reviewDossier(
 		RecordWarning:           a.recordWarning,
 		OnAssessment:            a.persistAssessmentSubmission,
 		Events:                  a.hypothesisReviewEvents(ctx),
-	}, dossier)
+	}, dossier, continueFrom)
 }
 
 func collectDossierClues(units []unit.Unit) []unit.Clue {
@@ -80,8 +81,8 @@ func (a *Runner) persistDossier(dossier hypothesisreview.Dossier, reason string)
 		ids = append(ids, hypothesis.ID)
 	}
 	a.session.WriteArtifact("review_dossier", map[string]any{
-		"id": dossier.ID, "hypothesis_ids": ids, "paths": dossier.Paths(),
-		"prior_dossier_ids": dossier.PriorDossierIDs, "sealed_by": reason,
+		"id": dossier.ID, "lane_id": dossier.LaneID, "hypothesis_ids": ids, "paths": dossier.Paths(),
+		"prior_dossier_ids": dossier.PriorDossierIDs, "assigned_by": reason,
 	})
 }
 
@@ -89,6 +90,7 @@ func (a *Runner) persistAssessmentSubmission(submission hypothesisreview.Assessm
 	assessment := submission.Assessment
 	a.session.WriteArtifact("review_assessment", map[string]any{
 		"dossier_id":       assessment.DossierID,
+		"lane_id":          assessment.LaneID,
 		"submission_index": assessment.SubmissionIndex,
 		"replaced":         submission.Replaced,
 		"hypothesis_id":    assessment.HypothesisID,

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/voocel/agentcore"
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -74,6 +74,43 @@ func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 	}
 	if _, err := execution.Run(context.Background()); err == nil {
 		t.Fatal("an Execution must not be reused")
+	}
+}
+
+func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("done-1", "task_done", `{}`, nil),
+		toolCallResponseID("done-2", "task_done", `{}`, nil),
+	}}
+	first, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages:  []msg.Msg{msg.Text("user", "first dossier")},
+		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
+		MaxTurns:  1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:    client,
+		Messages:     []msg.Msg{msg.Text("user", "second dossier")},
+		ToolDefs:     []llm.ToolDef{toolDef("task_done")},
+		MaxTurns:     1,
+		ContinueFrom: &first,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.State != OutcomeCompleted {
+		t.Fatalf("second execution = %+v", second)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want 2", len(requests))
+	}
+	text := requestText(requests[1])
+	if !strings.Contains(text, "first dossier") || !strings.Contains(text, "second dossier") {
+		t.Fatalf("continued request lost Lane context: %q", text)
 	}
 }
 
@@ -333,7 +370,7 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 		"tool_call_id": "call-1",
 	}
 
-	normalized, _ := normalizeContextMessages([]agentcore.AgentMessage{wire})
+	normalized, _ := normalizeContextMessages([]agentgo.AgentMessage{wire})
 	if len(normalized) != 1 {
 		t.Fatalf("normalized messages = %d", len(normalized))
 	}
@@ -357,7 +394,7 @@ func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 	))
 	result.Metadata = map[string]any{"tool_call_id": "search-1"}
 
-	normalized, changed := normalizeContextMessages([]agentcore.AgentMessage{assistant, result})
+	normalized, changed := normalizeContextMessages([]agentgo.AgentMessage{assistant, result})
 	if !changed || len(normalized) != 2 {
 		t.Fatalf("normalized=%d changed=%t", len(normalized), changed)
 	}
@@ -430,7 +467,7 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	content := func(path string) string {
 		return fmt.Sprintf("File: %s (Total lines: 80)\n%s", path, strings.Repeat("1|source evidence for review\n", 80))
 	}
-	messages := []agentcore.AgentMessage{
+	messages := []agentgo.AgentMessage{
 		domainMessage{value: msg.Text("system", "stable system")},
 		domainMessage{value: msg.Text("user", "stable task")},
 		domainMessage{value: msg.NewFile("a.go", 1, 80, 80, content("a.go"))},
@@ -438,7 +475,7 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 		domainMessage{value: msg.NewFile("c.go", 1, 80, 80, content("c.go"))},
 	}
 	full := countContextTokens(messages)
-	tail := append([]agentcore.AgentMessage(nil), messages...)
+	tail := append([]agentgo.AgentMessage(nil), messages...)
 	last := tail[len(tail)-1].(domainMessage)
 	last.compaction = msg.CompactionReference
 	tail[len(tail)-1] = last
@@ -447,7 +484,7 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	manager := newContextManager(ExecutionSpec{
 		ContextWindow:    limit * 5 / 4,
 		FileEvictEnabled: true,
-	}, nil)
+	}, &chatModel{client: &scriptedClient{}})
 
 	projection, err := manager.Project(context.Background(), messages)
 	if err != nil {
@@ -470,8 +507,8 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstWire := manager.ConvertToLLM(projection.CommitMessages)
-	secondWire := manager.ConvertToLLM(second.Messages)
+	firstWire := agentgo.ToMessages(projection.CommitMessages)
+	secondWire := agentgo.ToMessages(second.Messages)
 	if firstWire[0].TextContent() != secondWire[0].TextContent() ||
 		firstWire[1].TextContent() != secondWire[1].TextContent() {
 		t.Fatal("stable prompt prefix changed after committed compaction")
@@ -588,7 +625,7 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	}
 }
 
-func TestExecutionUsesAgentcoreSummaryAndRecordsItsUsage(t *testing.T) {
+func TestExecutionUsesAgentGoSummaryAndRecordsItsUsage(t *testing.T) {
 	long := strings.Repeat("review evidence and reasoning ", 30)
 	messages := make([]msg.Msg, 0, 8)
 	for range 8 {

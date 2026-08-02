@@ -35,7 +35,7 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 	collector := NewAssessmentCollector("h-1", "h-2")
 	var submissions []AssessmentSubmission
 	hook := &AssessmentHook{
-		Collector: collector, DossierID: "d-1",
+		Collector: collector, DossierID: "d-1", LaneID: "l-1",
 		OnAccepted: func(submission AssessmentSubmission) { submissions = append(submissions, submission) },
 	}
 	call := func(id, value string) map[string]any {
@@ -73,6 +73,9 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 	}
 	if assessments[0].HypothesisID != "h-1" || assessments[0].Value != LowValue || assessments[0].SubmissionIndex != 2 {
 		t.Fatalf("last valid assessment did not win: %+v", assessments[0])
+	}
+	if assessments[0].LaneID != "l-1" {
+		t.Fatalf("assessment lane = %q, want l-1", assessments[0].LaneID)
 	}
 	if len(submissions) != 3 || !submissions[1].Replaced {
 		t.Fatalf("submission trail = %+v", submissions)

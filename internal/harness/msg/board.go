@@ -3,7 +3,7 @@ package msg
 import "github.com/qiankunli/case-code-review/internal/llm"
 
 // Board is the legacy llmloop's digest of peer units' bulletins. Active
-// AgentCore Unit Review owns this domain message in runner/unitreview. Like
+// AgentGo Unit Review owns this domain message in runner/unitreview. Like
 // File it is re-derivable — the content came from
 // the board and can be pulled again — so it participates in eviction: under
 // token pressure a stale board digest is shed before the model's own

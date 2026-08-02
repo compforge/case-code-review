@@ -11,15 +11,17 @@ import (
 	"github.com/qiankunli/go-stdx/slicesx"
 )
 
-// Dossier is the immutable evidence packet transferred from related divergent
-// Unit Reviews to one convergent Hypothesis Review. File paths are evidence
-// locations; membership follows behavioral and evidence relationships.
+// Dossier is the immutable evidence packet transferred from one divergent
+// Unit Review to a convergent Hypothesis Review. Lane assignment, rather than
+// Dossier mutation, groups related work for context reuse.
 type Dossier struct {
 	ID               string
+	LaneID           string
 	Changes          []change.Change
 	Hypotheses       []unitreview.Hypothesis
 	Clues            []unit.Clue
 	EvidencePaths    []string
+	PriorEvidence    []EvidenceReceipt
 	PriorDossierIDs  []string
 	PriorAssessments []Assessment
 }

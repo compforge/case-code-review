@@ -3,37 +3,37 @@ package harness
 import (
 	"encoding/json"
 
-	"github.com/voocel/agentcore"
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentcore.Event) {
+func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event) {
 	if sink == nil {
 		return
 	}
 
 	out := ExecutionEvent{}
 	switch event.Type {
-	case agentcore.EventModelResponse:
+	case agentgo.EventModelResponse:
 		out.Type = EventModelResponse
 		recorded := recorder.nextModel()
 		out.Alias = recorded.alias
 		out.Model = recorded.model
 		out.Duration = recorded.duration
-		if message, ok := event.Message.(agentcore.Message); ok {
-			wire := toLLMMessages([]agentcore.Message{message})
+		if message, ok := event.Message.(agentgo.Message); ok {
+			wire := toLLMMessages([]agentgo.Message{message})
 			if len(wire) == 1 {
 				out.Message = &wire[0]
 			}
 			out.Usage = usageInfo(message.Usage)
 		}
-	case agentcore.EventToolExecStart:
+	case agentgo.EventToolExecStart:
 		out.Type = EventToolStart
 		out.ToolCallID = event.ToolID
 		out.Tool = event.Tool
 		out.Arguments = cloneRaw(event.Args)
-	case agentcore.EventToolExecEnd:
+	case agentgo.EventToolExecEnd:
 		out.Type = EventToolEnd
 		out.ToolCallID = event.ToolID
 		out.Tool = event.Tool
@@ -42,10 +42,10 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 		recorded := recorder.call(event.ToolID)
 		out.Arguments = json.RawMessage(recorded.arguments)
 		out.Duration = recorded.duration
-	case agentcore.EventError:
+	case agentgo.EventError:
 		out.Type = EventExecutionError
 		out.Err = event.Err
-	case agentcore.EventAgentEnd:
+	case agentgo.EventAgentEnd:
 		out.Type = EventExecutionEnd
 		if event.Summary != nil {
 			out.EndReason = string(event.Summary.EndReason)
@@ -56,7 +56,7 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 	sink.OnExecutionEvent(out)
 }
 
-func usageInfo(usage *agentcore.Usage) *llm.UsageInfo {
+func usageInfo(usage *agentgo.Usage) *llm.UsageInfo {
 	if usage == nil {
 		return nil
 	}

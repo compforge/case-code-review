@@ -39,7 +39,7 @@ func TestDiscoverReposIncludesLatestBizID(t *testing.T) {
 	}
 }
 
-func TestLoadSessionKeepsAgentcorePromptsAndReviewArtifacts(t *testing.T) {
+func TestLoadSessionKeepsAgentGoPromptsAndReviewArtifacts(t *testing.T) {
 	root := t.TempDir()
 	repo := "example-repo"
 	sessionID := "session-1"
@@ -51,10 +51,10 @@ func TestLoadSessionKeepsAgentcorePromptsAndReviewArtifacts(t *testing.T) {
 		`{"type":"session_start","sessionId":"session-1","model":"test-model","biz_id":"github:org/repo#148"}`,
 		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"}]}`,
 		`{"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"}}`,
-		`{"type":"llm_request","scope_id":"hypothesis_review:dossier-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify evidence"},{"role":"user","content":"assess h-1"}]}`,
-		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","hypothesis_id":"h-1","submission_index":1}}`,
-		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","hypothesis_id":"h-1","submission_index":2,"replaced":true}}`,
-		`{"type":"artifact","artifact_kind":"trial_decision","data":{"dossier_id":"d-1","hypothesis_id":"h-1","assessment_submission_index":2,"passed_trial":false}}`,
+		`{"type":"llm_request","scope_id":"hypothesis_review:l-1","kind":"lane","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify evidence"},{"role":"user","content":"assess h-1"}]}`,
+		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","submission_index":1}}`,
+		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","submission_index":2,"replaced":true}}`,
+		`{"type":"artifact","artifact_kind":"trial_decision","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","assessment_submission_index":2,"passed_trial":false}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,9 +94,9 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 		`{"type":"llm_request","timestamp":"2026-07-31T00:00:04Z","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":2,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"},{"role":"assistant","content":"searching"},{"role":"user","content":"match"}]}`,
 		`{"type":"llm_response","timestamp":"2026-07-31T00:00:05Z","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","model":"test-model","content":"done","duration_ms":1200,"usage":{"prompt_tokens":150,"completion_tokens":15,"cache_read_tokens":90,"cache_write_tokens":0}}`,
 		`{"type":"debrief","timestamp":"2026-07-31T00:00:06Z","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go"}`,
-		`{"type":"llm_request","timestamp":"2026-07-31T00:00:07Z","scope_id":"hypothesis_review:dossier-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify"},{"role":"user","content":"assess"}]}`,
-		`{"type":"llm_response","timestamp":"2026-07-31T00:00:08Z","scope_id":"hypothesis_review:dossier-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","model":"test-model","content":"assessed","duration_ms":900,"usage":{"prompt_tokens":80,"completion_tokens":8,"cache_read_tokens":0,"cache_write_tokens":0}}`,
-		`{"type":"debrief","timestamp":"2026-07-31T00:00:09Z","scope_id":"hypothesis_review:dossier-1","kind":"run","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go"}`,
+		`{"type":"llm_request","timestamp":"2026-07-31T00:00:07Z","scope_id":"hypothesis_review:l-1","kind":"lane","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify"},{"role":"user","content":"assess"}]}`,
+		`{"type":"llm_response","timestamp":"2026-07-31T00:00:08Z","scope_id":"hypothesis_review:l-1","kind":"lane","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","model":"test-model","content":"assessed","duration_ms":900,"usage":{"prompt_tokens":80,"completion_tokens":8,"cache_read_tokens":0,"cache_write_tokens":0}}`,
+		`{"type":"debrief","timestamp":"2026-07-31T00:00:09Z","scope_id":"hypothesis_review:l-1","kind":"lane","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go"}`,
 		`{"type":"session_end","timestamp":"2026-07-31T00:00:10Z","duration_seconds":10,"files_reviewed":["a.go"],"diff_files":3,"diff_insertions":20,"diff_deletions":5}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {

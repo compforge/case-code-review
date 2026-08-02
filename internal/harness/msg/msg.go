@@ -17,12 +17,9 @@
 // on the wire; typed messages (file / board / bulletin …) are introduced one
 // consumer at a time.
 //
-// Invariant: lowering is 1:1 — one Msg lowers to exactly one llm.Message.
-// The compression engine partitions the conversation by message INDEX
-// (frozen/compress/active zones, assistant+tool rounds); a 1:N or dropping
-// lowering would silently misalign those zones. A future type that needs to
-// vanish from context must do so by being REMOVED from the []Msg (eviction),
-// not by lowering to nothing.
+// Harness adapts each Msg to AgentGo AgentMessage and preserves a 1:1 model
+// projection. AgentGo may ask that wrapper for a smaller representation, but
+// the domain value keeps its raw form for later compaction decisions.
 package msg
 
 import "github.com/qiankunli/case-code-review/internal/llm"
@@ -52,7 +49,7 @@ type Compactable interface {
 }
 
 // ToolResultMsg preserves the tool identity needed to reconstruct typed
-// results after AgentCore or a context strategy temporarily lowers them.
+// results after AgentGo or a context strategy temporarily lowers them.
 type ToolResultMsg interface {
 	Msg
 	ToolName() string

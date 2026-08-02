@@ -40,15 +40,29 @@ type Config struct {
 	Events                  harness.EventSink
 }
 
+type ReviewResult struct {
+	Assessments      []Assessment
+	EvidenceReceipts []EvidenceReceipt
+	Execution        harness.ExecutionResult
+}
+
 // Review performs the convergent, read-only evidence loop for one Dossier.
 // It produces Assessments only; deterministic delivery belongs to trial.
-func Review(ctx context.Context, config Config, dossier Dossier) []Assessment {
+func Review(
+	ctx context.Context,
+	config Config,
+	dossier Dossier,
+	continueFrom *harness.ExecutionResult,
+) ReviewResult {
 	if len(config.Task.Messages) == 0 || len(dossier.Hypotheses) == 0 {
-		return nil
+		return ReviewResult{}
 	}
 
 	messages := make([]msg.Msg, 0, len(config.Task.Messages))
 	for _, message := range config.Task.Messages {
+		if continueFrom != nil && message.Role != "user" {
+			continue
+		}
 		full := renderDossierPrompt(message.Content, config, dossier, false)
 		if message.Role != "user" {
 			messages = append(messages, msg.Text(message.Role, full))
@@ -69,9 +83,9 @@ func Review(ctx context.Context, config Config, dossier Dossier) []Assessment {
 		expected = append(expected, hypothesis.ID)
 	}
 	collector := NewAssessmentCollector(expected...)
-	evidence := &EvidenceLedger{}
+	evidence := &EvidenceLedger{receipts: append([]EvidenceReceipt(nil), dossier.PriorEvidence...)}
 	assessmentHook := &AssessmentHook{
-		Collector: collector, Evidence: evidence, DossierID: dossier.ID,
+		Collector: collector, Evidence: evidence, DossierID: dossier.ID, LaneID: dossier.LaneID,
 		OnAccepted: config.OnAssessment,
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
@@ -87,7 +101,7 @@ func Review(ctx context.Context, config Config, dossier Dossier) []Assessment {
 		},
 		Session: config.Session,
 		Scope: session.Scope{
-			ID: "hypothesis_review:" + dossier.ID, Kind: "run",
+			ID: "hypothesis_review:" + dossier.LaneID, Kind: "lane",
 			Type: "hypothesis_review", Paths: dossier.Paths(),
 		},
 		TaskType:           session.HypothesisReviewTask,
@@ -111,11 +125,12 @@ func Review(ctx context.Context, config Config, dossier Dossier) []Assessment {
 		CompressionPrompt:       config.CompressionPrompt,
 		CompressionUpdatePrompt: config.CompressionPrompt,
 		CompressionPrefixPrompt: config.CompressionPrompt,
+		ContinueFrom:            continueFrom,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Hypothesis review setup failed: %v\n", err)
 		warn(config, "hypothesis_review_error", fmt.Sprintf("dossier %s: %v", dossier.ID, err))
-		return nil
+		return ReviewResult{}
 	}
 	result, err := execution.Run(ctx)
 	if config.RecordUsage != nil {
@@ -134,7 +149,9 @@ func Review(ctx context.Context, config Config, dossier Dossier) []Assessment {
 	if missing := total - assessedHypothesisCount(dossier.Hypotheses, assessments); missing > 0 {
 		warn(config, "hypothesis_unassessed", fmt.Sprintf("dossier %s: %d of %d hypotheses were not assessed and will not pass Trial", dossier.ID, missing, total))
 	}
-	return assessments
+	return ReviewResult{
+		Assessments: assessments, EvidenceReceipts: evidence.Receipts(), Execution: result,
+	}
 }
 
 func renderDossierPrompt(source string, config Config, dossier Dossier, condensed bool) string {
@@ -150,6 +167,7 @@ func renderDossierPrompt(source string, config Config, dossier Dossier, condense
 	priorJSON, _ := json.Marshal(map[string]any{
 		"dossier_ids": dossier.PriorDossierIDs,
 		"assessments": dossier.PriorAssessments,
+		"evidence":    dossier.PriorEvidence,
 	})
 	evidencePathsJSON, _ := json.Marshal(dossier.EvidencePaths)
 

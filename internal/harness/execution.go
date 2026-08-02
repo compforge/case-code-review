@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/voocel/agentcore"
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -27,7 +28,7 @@ const (
 )
 
 // ExecutionSpec is the immutable input for one Harness execution. It uses CCR
-// types at the boundary so callers never need to import agentcore directly.
+// types at the boundary so callers never need to import agentgo directly.
 type ExecutionSpec struct {
 	LLMClient        llm.LLMClient
 	Model            string
@@ -51,6 +52,9 @@ type ExecutionSpec struct {
 	// execution unchanged for callers that only need a textual reminder.
 	WrapUpAllowedTools []string
 	CompletionPrompt   string
+	// ContinueFrom resumes with the exact committed context of an earlier
+	// ExecutionResult. The context remains opaque outside Harness.
+	ContinueFrom *ExecutionResult
 	// CompletionCheck lets a domain reject task_done until its required
 	// outputs exist. Harness owns the stop mechanics but does not interpret
 	// what "complete" means for the caller's execution.
@@ -70,10 +74,12 @@ type ExecutionResult struct {
 	Turns      int
 	ToolCalls  int
 	ToolErrors int
+
+	context []agentgo.AgentMessage
 }
 
 // Execution owns one Harness run from immutable input through terminal result.
-// AgentCore, context projection, recording, tools, and completion state remain
+// AgentGo, context projection, recording, tools, and completion state remain
 // private children of this lifecycle; callers only construct and Run it.
 type Execution struct {
 	spec ExecutionSpec
@@ -81,18 +87,21 @@ type Execution struct {
 	recorder         *executionRecorder
 	contextManager   *contextManager
 	model            *chatModel
-	tools            []agentcore.Tool
+	tools            []agentgo.Tool
 	completionPrompt string
 	wrapUpAllowed    map[string]bool
 
 	started   atomic.Bool
 	completed atomic.Bool
-	summary   *agentcore.RunSummary
+	summary   *agentgo.RunSummary
 	runErr    error
+
+	contextMu       sync.Mutex
+	contextMessages []agentgo.AgentMessage
 }
 
 // NewExecution validates and assembles one isolated Harness execution without
-// exposing AgentCore types to the review domain.
+// exposing AgentGo types to the review domain.
 func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	if spec.LLMClient == nil {
 		return nil, fmt.Errorf("harness: LLM client is required")
@@ -147,52 +156,94 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
 	}
 
-	config := agentcore.LoopConfig{
-		Model:          e.model,
-		MaxTurns:       e.spec.MaxTurns,
-		ContextManager: e.contextManager,
-		ConvertToLLM:   e.contextManager.ConvertToLLM,
+	config := agentgo.LoopConfig{
+		Model:                    e.model,
+		MaxTurns:                 e.spec.MaxTurns,
+		ContextManager:           e.contextManager,
+		ToolResultMessageFactory: e.toolResultMessage,
+		CommitContext:            e.replaceContext,
+		CommitMessage:            e.appendContext,
 		StopAfterTool: func(name string) bool {
 			return name == tool.TaskDone.Name() && e.completed.Load()
 		},
-		StopGuard: func(_ context.Context, _ agentcore.StopInfo) agentcore.StopDecision {
+		StopGuard: func(_ context.Context, _ agentgo.StopInfo) agentgo.StopDecision {
 			if e.completed.Load() {
-				return agentcore.StopDecision{Allow: true}
+				return agentgo.StopDecision{Allow: true}
 			}
-			return agentcore.StopDecision{InjectMessage: e.completionPrompt}
+			return agentgo.StopDecision{InjectMessage: e.completionPrompt}
 		},
-		Middlewares: []agentcore.ToolMiddleware{e.toolMiddleware()},
+		Middlewares: []agentgo.ToolMiddleware{e.toolMiddleware()},
 	}
 
-	events := agentcore.AgentLoop(
+	history := e.continuationContext()
+	e.replaceContext(history, nil)
+	e.contextManager.Sync(history)
+	events := agentgo.AgentLoop(
 		ctx,
 		wrapDomainMessages(e.spec.Messages),
-		agentcore.AgentContext{Tools: e.tools},
+		agentgo.AgentContext{Messages: history, Tools: e.tools},
 		config,
 	)
 	for event := range events {
 		emitExecutionEvent(e.spec.Events, e.recorder, event)
 		switch event.Type {
-		case agentcore.EventError:
+		case agentgo.EventError:
 			if event.Err != nil {
 				e.runErr = event.Err
 			}
-		case agentcore.EventToolExecEnd:
+		case agentgo.EventToolExecEnd:
 			if event.Tool != tool.TaskDone.Name() {
 				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError)
 			}
-		case agentcore.EventAgentEnd:
+		case agentgo.EventAgentEnd:
 			e.summary = event.Summary
 		}
 	}
 	return e.finish(ctx)
 }
 
-func (e *Execution) toolMiddleware() agentcore.ToolMiddleware {
+func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo.AgentMessage {
+	var args map[string]any
+	_ = json.Unmarshal(call.Args, &args)
+	decoded := msg.FromLLM(msg.LLMToolResult{
+		Tool: call.Name, ToolCallID: call.ID, Arguments: args,
+		Content: string(result.Content), IsError: result.IsError,
+	})
+	return domainMessage{value: decoded, timestamp: time.Now()}
+}
+
+func (e *Execution) continuationContext() []agentgo.AgentMessage {
+	if e.spec.ContinueFrom == nil {
+		return nil
+	}
+	return append([]agentgo.AgentMessage(nil), e.spec.ContinueFrom.context...)
+}
+
+func (e *Execution) appendContext(message agentgo.AgentMessage) error {
+	e.contextMu.Lock()
+	defer e.contextMu.Unlock()
+	e.contextMessages = append(e.contextMessages, message)
+	return nil
+}
+
+func (e *Execution) replaceContext(messages []agentgo.AgentMessage, _ *agentgo.ContextUsage) error {
+	e.contextMu.Lock()
+	defer e.contextMu.Unlock()
+	e.contextMessages = append([]agentgo.AgentMessage(nil), messages...)
+	return nil
+}
+
+func (e *Execution) contextSnapshot() []agentgo.AgentMessage {
+	e.contextMu.Lock()
+	defer e.contextMu.Unlock()
+	return append([]agentgo.AgentMessage(nil), e.contextMessages...)
+}
+
+func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 	return func(
 		ctx context.Context,
-		call agentcore.ToolCall,
-		next agentcore.ToolExecuteFunc,
+		call agentgo.ToolCall,
+		next agentgo.ToolExecuteFunc,
 	) (json.RawMessage, error) {
 		started := time.Now()
 		defer func() {
@@ -256,7 +307,8 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		result.ToolCalls = e.summary.ToolCalls
 		result.ToolErrors = e.summary.ToolErrors
 	}
-	if e.completed.Load() && e.summary != nil && e.summary.EndReason == agentcore.EndReasonStop {
+	result.context = e.contextSnapshot()
+	if e.completed.Load() && e.summary != nil && e.summary.EndReason == agentgo.EndReasonStop {
 		result.State = OutcomeCompleted
 		return result, nil
 	}
@@ -270,7 +322,7 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		result.Reason = context.Canceled.Error()
 		return result, ctx.Err()
 	}
-	if e.summary != nil && e.summary.EndReason == agentcore.EndReasonMaxTurns {
+	if e.summary != nil && e.summary.EndReason == agentgo.EndReasonMaxTurns {
 		result.State = OutcomeTruncated
 		result.Reason = string(e.summary.EndReason)
 		return result, nil
@@ -281,7 +333,7 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		return result, e.runErr
 	}
 	if e.summary == nil {
-		err := fmt.Errorf("harness: agentcore ended without a run summary")
+		err := fmt.Errorf("harness: agentgo ended without a run summary")
 		result.State = OutcomeLLMError
 		result.Reason = err.Error()
 		return result, err
@@ -292,18 +344,18 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 	return result, nil
 }
 
-func wireToAgentMessage(message llm.Message) agentcore.Message {
-	content := []agentcore.ContentBlock{agentcore.TextBlock(message.ExtractText())}
+func wireToAgentMessage(message llm.Message) agentgo.Message {
+	content := []agentgo.ContentBlock{agentgo.TextBlock(message.ExtractText())}
 	for _, call := range message.ToolCalls {
 		args := json.RawMessage(call.Function.Arguments)
-		content = append(content, agentcore.ToolCallBlock(agentcore.ToolCall{
+		content = append(content, agentgo.ToolCallBlock(agentgo.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
 			Args: args,
 		}))
 	}
-	agentMessage := agentcore.Message{
-		Role:    agentcore.Role(message.Role),
+	agentMessage := agentgo.Message{
+		Role:    agentgo.Role(message.Role),
 		Content: content,
 	}
 	if message.ToolCallID != "" {
@@ -345,8 +397,8 @@ func (t taskDoneTool) Execute(context.Context, json.RawMessage) (json.RawMessage
 	return json.RawMessage("Task completed successfully."), nil
 }
 
-func adaptTools(defs []llm.ToolDef, registry *tool.Registry, completed *atomic.Bool) []agentcore.Tool {
-	out := make([]agentcore.Tool, 0, len(defs)+1)
+func adaptTools(defs []llm.ToolDef, registry *tool.Registry, completed *atomic.Bool) []agentgo.Tool {
+	out := make([]agentgo.Tool, 0, len(defs)+1)
 	hasTaskDone := false
 	for _, def := range defs {
 		if def.Function.Name == tool.TaskDone.Name() {
