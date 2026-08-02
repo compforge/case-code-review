@@ -124,6 +124,9 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 	if len(review1.Tools) != 1 || review1.Tools[0].Name != "code_search" || review1.Tools[0].Calls != 1 {
 		t.Fatalf("Review 1 tools = %+v", review1.Tools)
 	}
+	if got.Reviews[1].Stage != Review2Stage || len(got.Reviews[1].Conversation) != 3 {
+		t.Fatalf("Review 2 conversation = %+v", got.Reviews[1])
+	}
 	if got.TokenUsage.TotalPromptTokens != 330 || got.TokenUsage.RequestCount != 3 {
 		t.Fatalf("session tokens = %+v", got.TokenUsage)
 	}
@@ -135,6 +138,55 @@ func TestLoadSessionBuildsReviewOverviewAndPromptGrowth(t *testing.T) {
 	}
 	if got.Summary.DiffInsertions != 20 || got.Summary.DiffDeletions != 5 {
 		t.Fatalf("session diff lines = +%d/-%d", got.Summary.DiffInsertions, got.Summary.DiffDeletions)
+	}
+}
+
+func TestLoadSessionBuildsPipelineDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	repo := "example-repo"
+	sessionID := "session-diagnostics"
+	dir := filepath.Join(root, repo)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"session_start","sessionId":"session-diagnostics"}`,
+		`{"type":"llm_request","scope_id":"unit-ok","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","messages":[{"role":"user","content":"review"}]}`,
+		`{"type":"llm_response","scope_id":"unit-ok","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_calls":[{"name":"file_read","arguments":"{\"file_path\":\"a.go\"}"}]}`,
+		`{"type":"tool_call","scope_id":"unit-ok","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","tool_name":"file_read","result":"Already available in the current context from the initial source context: a.go","ok":true}`,
+		`{"type":"debrief","scope_id":"unit-ok","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","outcome":"completed"}`,
+		`{"type":"llm_request","scope_id":"unit-cut","kind":"unit","scope":"file","paths":["b.go"],"filePath":"b.go","taskType":"main_task","messages":[{"role":"user","content":"review"}]}`,
+		`{"type":"debrief","scope_id":"unit-cut","kind":"unit","scope":"file","paths":["b.go"],"filePath":"b.go","outcome":"truncated","reason":"tool-round budget exhausted"}`,
+		`{"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1"}}`,
+		`{"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-2"}}`,
+		`{"type":"artifact","artifact_kind":"review_assessment","data":{"hypothesis_id":"h-1"}}`,
+		`{"type":"artifact","artifact_kind":"trial_decision","data":{"hypothesis_id":"h-1","passed_trial":false}}`,
+		`{"type":"session_end","files_reviewed":["a.go","b.go"],"diff_files":3}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadSession(root, repo, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := got.Diagnostics
+	if d.Status != "warning" || d.StatusLabel != "Partial" {
+		t.Fatalf("diagnostic status = %+v", d)
+	}
+	if d.Review1Runs != 2 || d.Review1Done != 1 || d.Review1Missed != 1 {
+		t.Fatalf("Review 1 diagnostics = %+v", d)
+	}
+	if d.Hypotheses != 2 || d.Assessments != 1 || d.Unassessed != 1 || d.TrialBlocked != 1 {
+		t.Fatalf("decision diagnostics = %+v", d)
+	}
+	if d.CoveredReads != 1 || len(d.Alerts) != 3 {
+		t.Fatalf("alerts = %+v, diagnostics = %+v", d.Alerts, d)
+	}
+	incomplete := got.Review("unit-cut")
+	if incomplete == nil || incomplete.Status != "incomplete" || incomplete.OutcomeReason != "tool-round budget exhausted" {
+		t.Fatalf("incomplete review = %+v", incomplete)
 	}
 }
 
@@ -181,6 +233,31 @@ func TestLoadSessionBuildsConversationAndMatchesToolsByID(t *testing.T) {
 	}
 	if review.Conversation[5].Kind != "user" || review.Conversation[5].Text != "finish now" {
 		t.Fatalf("new user message = %+v", review.Conversation[5])
+	}
+}
+
+func TestLoadSessionDoesNotInferReview2FromLegacyRunScope(t *testing.T) {
+	root := t.TempDir()
+	repo := "example-repo"
+	sessionID := "legacy-review2"
+	dir := filepath.Join(root, repo)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	transcript := strings.Join([]string{
+		`{"type":"llm_request","scope_id":"hypothesis_review:legacy","kind":"run","scope":"hypothesis_review","taskType":"hypothesis_review_task","messages":[{"role":"user","content":"assess"}]}`,
+		`{"type":"llm_response","scope_id":"hypothesis_review:legacy","kind":"run","scope":"hypothesis_review","taskType":"hypothesis_review_task","content":"done"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadSession(root, repo, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Reviews) != 0 || got.TokenUsage.RequestCount != 0 {
+		t.Fatalf("legacy run scope should not be projected: %+v", got)
 	}
 }
 

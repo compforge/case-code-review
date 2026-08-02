@@ -37,7 +37,7 @@ func (s ReviewStage) Label() string {
 // detail page can replay prompt growth across the agent loop.
 type ReviewRun struct {
 	ID                string   // scope id: unit.ID, run-level phase ID, or scan file path
-	Kind              string   // "unit" | "run" | "file"
+	Kind              string   // "unit" | "lane" | "file"
 	Scope             string   // func/file/callchain (units) | filter | scan
 	Paths             []string // member file(s)
 	FilePath          string   // representative path
@@ -55,6 +55,10 @@ type ReviewRun struct {
 	HasSourcePreloads bool
 	HasContextPaths   bool
 	FileReads         FileReadMetrics
+	Status            string // completed | incomplete
+	Outcome           string // debrief outcome when present
+	OutcomeReason     string
+	HasDebrief        bool
 
 	startedAt  time.Time
 	finishedAt time.Time
@@ -129,6 +133,7 @@ func finalizeReview(r *ReviewRun) {
 	toolIdx := map[string]*ToolUsage{}
 	previousPrompt := 0
 	previousMessages := 0
+	hasTaskDone := false
 
 	for _, card := range r.Calls {
 		r.Metrics.LLMCalls++
@@ -150,6 +155,9 @@ func finalizeReview(r *ReviewRun) {
 		}
 
 		for _, call := range card.ToolCalls {
+			if call.Name == "task_done" && call.Ok {
+				hasTaskDone = true
+			}
 			tool := toolIdx[call.Name]
 			if tool == nil {
 				tool = &ToolUsage{Name: call.Name}
@@ -175,6 +183,17 @@ func finalizeReview(r *ReviewRun) {
 	}
 	if r.Metrics.ElapsedSec == 0 && r.Metrics.LLMDurationMs > 0 {
 		r.Metrics.ElapsedSec = float64(r.Metrics.LLMDurationMs) / 1000
+	}
+	if r.HasDebrief {
+		if r.Outcome == "" || r.Outcome == "completed" {
+			r.Status = "completed"
+		} else {
+			r.Status = "incomplete"
+		}
+	} else if hasTaskDone {
+		r.Status = "completed"
+	} else {
+		r.Status = "incomplete"
 	}
 	if r.Stage == Review1Stage {
 		r.FileReads = analyzeFileReads(r)
@@ -281,7 +300,7 @@ func classifyReview(r *ReviewRun) ReviewStage {
 	if r.Kind == "unit" {
 		return Review1Stage
 	}
-	if r.Scope == "hypothesis_review" || len(r.Tasks[HypothesisReviewTask]) > 0 {
+	if r.Kind == "lane" && r.Scope == "hypothesis_review" {
 		return Review2Stage
 	}
 	if r.Kind == "file" || r.Scope == "scan" {
