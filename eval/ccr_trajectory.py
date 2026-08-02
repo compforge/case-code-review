@@ -7,6 +7,7 @@ knows its shape; judges consume ``trajectory_harness.Trajectory`` instead.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -181,10 +182,120 @@ class EmptySearchEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class UnitCompletionEvaluator:
-    """A review scope is complete only after the model calls task_done."""
+class FileReadCoverageEvaluator:
+    """Score how much file_read output adds coverage not seen earlier."""
 
-    name: str = "unit_completion"
+    name: str = "file_read_coverage"
+    # Coverage is diagnostic: adding it must not silently rebaseline the
+    # overall quality score produced by the established evaluators.
+    weight: float = 0.0
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        covered: dict[str, list[tuple[int, int]]] = {}
+        total_lines = 0
+        novel_lines = 0
+        overlapping_steps: list[str] = []
+
+        for step in _tool_steps(trajectory):
+            if step.name != "file_read" or step.status == "error":
+                continue
+            read_range = _file_read_range(step)
+            if read_range is None:
+                continue
+            path, start, end = read_range
+            delivered = end - start + 1
+            prior = covered.setdefault(path, [])
+            overlap = _covered_lines(prior, start, end)
+            if overlap:
+                overlapping_steps.append(step.step_id)
+            total_lines += delivered
+            novel_lines += delivered - overlap
+            prior.append((start, end))
+            covered[path] = _merge_ranges(prior)
+
+        if total_lines == 0:
+            return _not_evaluated(
+                self.name, "Trajectory contains no successful ranged file_read output."
+            )
+        score = round(novel_lines / total_lines, 3)
+        return Evaluation(
+            name=self.name,
+            score=score,
+            label="pass" if novel_lines == total_lines else "fail",
+            explanation=(
+                f"{novel_lines} of {total_lines} returned file lines added new coverage."
+            ),
+            step_ids=tuple(overlapping_steps),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PromptFileCoverageEvaluator:
+    """Measure file_read content already visible in initial File messages."""
+
+    name: str = "file_read_prompt_novelty"
+    weight: float = 0.0
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        overlap = prompt_file_read_overlap(trajectory)
+        if overlap["total_lines"] == 0:
+            return _not_evaluated(
+                self.name, "Trajectory contains no successful ranged file_read output."
+            )
+        novel = overlap["total_lines"] - overlap["covered_lines"]
+        score = round(novel / overlap["total_lines"], 3)
+        return Evaluation(
+            name=self.name,
+            score=score,
+            label="pass" if overlap["covered_lines"] == 0 else "fail",
+            explanation=(
+                f"{overlap['covered_lines']} of {overlap['total_lines']} returned file "
+                "lines were already visible in initial File messages."
+            ),
+            step_ids=tuple(overlap["overlapping_steps"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FileReadFragmentationEvaluator:
+    """Detect adjacent or overlapping ranges that fit in fewer reads."""
+
+    name: str = "file_read_fragmentation"
+    weight: float = 0.0
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> Evaluation:
+        del reference
+        fragmentation = file_read_fragmentation(trajectory)
+        calls = fragmentation["calls"]
+        if calls == 0:
+            return _not_evaluated(self.name, "Trajectory contains no ranged file_read output.")
+        merged = fragmentation["minimal_ranges"]
+        return Evaluation(
+            name=self.name,
+            score=round(merged / calls, 3),
+            label="pass" if calls == merged else "fail",
+            explanation=(
+                f"{calls} file reads collapse to {merged} adjacent or overlapping ranges; "
+                f"{fragmentation['mergeable_reads']} reads could merge if their targets "
+                "were known upfront."
+            ),
+            step_ids=tuple(fragmentation["fragmented_steps"]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class HypothesisCompletionEvaluator:
+    """A Review 1 Unit completes by successfully submitting Hypotheses."""
+
+    name: str = "hypothesis_submission"
     weight: float = 1.0
 
     def evaluate(
@@ -194,17 +305,18 @@ class UnitCompletionEvaluator:
         calls = _tool_steps(trajectory)
         if not calls and not any(step.operation == "inference" for step in trajectory.steps):
             return _not_evaluated(self.name, "Trajectory contains no model execution.")
-        done = [step.step_id for step in calls if step.name == "task_done"]
+        submissions = [step for step in calls if step.name == "submit_hypotheses"]
+        completed = [step.step_id for step in submissions if _hypotheses_completed(step)]
         return Evaluation(
             name=self.name,
-            score=1.0 if done else 0.0,
-            label="pass" if done else "fail",
+            score=1.0 if completed else 0.0,
+            label="pass" if completed else "fail",
             explanation=(
-                "Review scope called task_done."
-                if done
-                else "Review scope ended without task_done."
+                "Review 1 submitted its Hypotheses."
+                if completed
+                else "Review 1 ended without a valid Hypothesis submission."
             ),
-            step_ids=tuple(done),
+            step_ids=tuple(completed),
         )
 
 
@@ -273,6 +385,136 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
     return {path: count for path, count in reads.items() if count > 1}
 
 
+def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
+    """Describe how file reads are spread across model turns."""
+
+    reads = [step for step in _tool_steps(trajectory) if step.name == "file_read"]
+    if not reads:
+        return {"calls": 0, "rounds": 0, "average_batch": 0.0, "max_batch": 0}
+    batches = Counter(step.parent_step_id for step in reads)
+    return {
+        "calls": len(reads),
+        "rounds": len(batches),
+        "average_batch": round(len(reads) / len(batches), 2),
+        "max_batch": max(batches.values()),
+    }
+
+
+def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
+    """Classify reads by overlap with File messages supplied before the loop."""
+
+    context_ranges = _context_file_ranges(trajectory)
+    total_lines = 0
+    covered_lines = 0
+    fully_covered = 0
+    partially_covered = 0
+    new_context = 0
+    runtime_covered = 0
+    blocked = 0
+    failed = 0
+    unmeasured = 0
+    overlapping_steps: list[str] = []
+    for step in _tool_steps(trajectory):
+        if step.name != "file_read":
+            continue
+        if step.status == "error":
+            failed += 1
+            continue
+        available = _already_available_range(step)
+        if available is not None:
+            source, _, start, end = available
+            if source == "initial":
+                delivered = end - start + 1
+                total_lines += delivered
+                covered_lines += delivered
+                fully_covered += 1
+                overlapping_steps.append(step.step_id)
+            else:
+                runtime_covered += 1
+            continue
+        if _tool_response(step).startswith("Investigation is closed."):
+            blocked += 1
+            continue
+        read_range = _file_read_range(step)
+        if read_range is None:
+            unmeasured += 1
+            continue
+        path, start, end = read_range
+        delivered = end - start + 1
+        overlap = _covered_lines(context_ranges.get(path, []), start, end)
+        total_lines += delivered
+        covered_lines += overlap
+        if overlap == delivered:
+            fully_covered += 1
+            overlapping_steps.append(step.step_id)
+        elif overlap:
+            partially_covered += 1
+            overlapping_steps.append(step.step_id)
+        else:
+            new_context += 1
+    return {
+        "calls": (
+            fully_covered
+            + partially_covered
+            + new_context
+            + runtime_covered
+            + blocked
+            + failed
+            + unmeasured
+        ),
+        "fully_covered": fully_covered,
+        "partially_covered": partially_covered,
+        "new_context": new_context,
+        "runtime_covered": runtime_covered,
+        "blocked": blocked,
+        "failed": failed,
+        "unmeasured": unmeasured,
+        "covered_lines": covered_lines,
+        "total_lines": total_lines,
+        "overlap_rate": round(covered_lines / total_lines, 3) if total_lines else 0.0,
+        "overlapping_steps": overlapping_steps,
+    }
+
+
+def file_read_fragmentation(trajectory: Trajectory) -> dict[str, Any]:
+    """Return the conservative merge potential of observed file ranges."""
+
+    by_path: dict[str, list[tuple[int, int, str]]] = {}
+    for step in _tool_steps(trajectory):
+        if step.name != "file_read" or step.status == "error":
+            continue
+        read_range = _file_read_observed_range(step)
+        if read_range is None:
+            continue
+        path, start, end = read_range
+        by_path.setdefault(path, []).append((start, end, step.step_id))
+
+    calls = sum(len(ranges) for ranges in by_path.values())
+    minimal_ranges = 0
+    fragmented_steps: list[str] = []
+    for ranges in by_path.values():
+        current_end = 0
+        current_start = 0
+        for start, end, step_id in sorted(ranges):
+            mergeable = (
+                current_start > 0
+                and start <= current_end + 1
+                and max(current_end, end) - current_start + 1 <= 500
+            )
+            if mergeable:
+                current_end = max(current_end, end)
+                fragmented_steps.append(step_id)
+                continue
+            minimal_ranges += 1
+            current_start, current_end = start, end
+    return {
+        "calls": calls,
+        "minimal_ranges": minimal_ranges,
+        "mergeable_reads": calls - minimal_ranges,
+        "fragmented_steps": fragmented_steps,
+    }
+
+
 def tool_frequencies(trajectory: Trajectory) -> dict[str, int]:
     return dict(Counter(step.name for step in _tool_steps(trajectory)))
 
@@ -299,12 +541,99 @@ def _tool_response(step: Step) -> str:
     return ""
 
 
+def _file_read_range(step: Step) -> tuple[str, int, int] | None:
+    response = _tool_response(step)
+    path_match = re.search(r"(?m)^File:\s*(.+?)\s+\(Total lines:", response)
+    range_match = re.search(r"(?m)^LINE_RANGE:\s*(\d+)-(\d+)\s*$", response)
+    if not range_match:
+        return None
+    arguments = _tool_arguments(step)
+    path = path_match.group(1) if path_match else arguments.get("file_path")
+    if not path:
+        return None
+    start, end = map(int, range_match.groups())
+    if start <= 0 or end < start:
+        return None
+    return str(path), start, end
+
+
+def _file_read_observed_range(step: Step) -> tuple[str, int, int] | None:
+    read_range = _file_read_range(step)
+    if read_range is not None:
+        return read_range
+    available = _already_available_range(step)
+    if available is None:
+        return None
+    _, path, start, end = available
+    return path, start, end
+
+
+def _already_available_range(step: Step) -> tuple[str, str, int, int] | None:
+    match = re.match(
+        r"Already available in the current context from "
+        r"(the initial source context|an earlier file_read result): "
+        r"(.+?) lines (\d+)-(\d+)\.",
+        _tool_response(step),
+    )
+    if not match:
+        return None
+    source = "initial" if match.group(1).startswith("the initial") else "runtime"
+    return source, match.group(2), int(match.group(3)), int(match.group(4))
+
+
+def _context_file_ranges(trajectory: Trajectory) -> dict[str, list[tuple[int, int]]]:
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    for step in trajectory.steps:
+        if step.operation != "context":
+            continue
+        for message in step.output_messages:
+            for part in message.get("parts") or []:
+                content = part.get("content")
+                if not isinstance(content, str):
+                    continue
+                lines = content.splitlines()
+                if not lines:
+                    continue
+                header = re.match(r"^File:\s*(.+?)\s+\(Total lines:\s*(\d+)\)$", lines[0])
+                if not header:
+                    continue
+                path, total = header.group(1), int(header.group(2))
+                start, end = 1, total
+                for line in lines[1:6]:
+                    visible = re.match(r"^LINE_RANGE:\s*(\d+)-(\d+)$", line)
+                    if visible:
+                        start, end = map(int, visible.groups())
+                        break
+                    if re.match(r"^\d+\|", line):
+                        break
+                ranges.setdefault(path, []).append((start, end))
+    return {path: _merge_ranges(items) for path, items in ranges.items()}
+
+
+def _covered_lines(ranges: list[tuple[int, int]], start: int, end: int) -> int:
+    return sum(max(0, min(end, right) - max(start, left) + 1) for left, right in ranges)
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(ranges):
+        if not merged or start > merged[-1][1] + 1:
+            merged.append((start, end))
+            continue
+        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
 def _assessment_completed(step: Step) -> bool:
     try:
         result = json.loads(_tool_response(step))
     except json.JSONDecodeError:
         return False
     return bool(result.get("accepted")) and not result.get("remaining")
+
+
+def _hypotheses_completed(step: Step) -> bool:
+    return _tool_response(step).startswith("Unit review completed;")
 
 
 def _not_evaluated(name: str, explanation: str) -> Evaluation:

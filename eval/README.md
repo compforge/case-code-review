@@ -190,9 +190,13 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 ```
 
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
-`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索和 Unit
-完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：前者以 `task_done`，
-后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。确定性结果统一产生
+`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索、
+`file_read` 行覆盖率和 Unit
+完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：前者以 `submit_hypotheses`，
+后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。文件读取额外报告
+调用次数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
+小范围可合并出的理论最少读取数；这些是诊断项，不参与综合分，避免增加新
+Evaluator 时悄悄改变既有分数基线。确定性结果统一产生
 0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
 直接解析 ATIF 私有字段。
 
