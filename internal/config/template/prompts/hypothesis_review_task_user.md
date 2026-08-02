@@ -38,9 +38,7 @@ This is context gathered around the affected Units. It is not automatically evid
 
 These are completed assessments from earlier, strongly related hypotheses in this run. Treat them as prior decisions to reconcile, not as proof.
 
-```json
 {{prior_assessments}}
-```
 
 ### Hypothesis to review
 
@@ -48,4 +46,4 @@ These are completed assessments from earlier, strongly related hypotheses in thi
 {{hypothesis}}
 ```
 
-Gather only the missing evidence needed to decide this hypothesis. Submit its assessment immediately; after it has an assessment, call `task_done`.
+Gather only the missing evidence needed to decide this hypothesis. When the decision is ready, submit its assessment once; a valid submission ends this Review 2 execution.

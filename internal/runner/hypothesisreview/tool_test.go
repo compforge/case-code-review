@@ -24,7 +24,10 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	if got["code_comment"] || got["post_bulletin"] || got[unitreview.SubmitHypotheses.Name()] {
 		t.Fatalf("convergent review exposed divergent tools: %v", got)
 	}
-	for _, required := range []string{"task_done", "file_read", "file_read_base", "code_search", SubmitAssessments.Name()} {
+	if got["task_done"] {
+		t.Fatalf("Review 2 exposed redundant completion tool: %v", got)
+	}
+	for _, required := range []string{"file_read", "file_read_base", "code_search", SubmitAssessments.Name()} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
 		}

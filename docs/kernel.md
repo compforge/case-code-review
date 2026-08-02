@@ -115,8 +115,8 @@ CCR 相比 file-only review 的优势来自两部分：
 ### 3.4 发散与收敛使用不同完成契约
 
 Unit Review 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Hypothesis Review 只收敛，
-一次判断一个 Hypothesis 并立即提交 Assessment。当前输入已有判断时 `task_done` 才能完成；空文本或
-0 Finding 都不能单独证明完成。
+一次判断一个 Hypothesis；合法提交 Assessment 即完成当前 execution。空文本或 0 Finding 都不能单独
+证明完成。
 
 partial/incomplete 是一等结果。任何未完成 Unit 或未评估 Hypothesis 都应出现在输出和 session 中，
 不能混进 “Looks good to me”。

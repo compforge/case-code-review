@@ -2,7 +2,7 @@ package hypothesisreview
 
 import (
 	"context"
-	"errors"
+	"strings"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
@@ -26,29 +26,18 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 			"reason":"the checked caller reaches this path",
 			"evidence":["caller.go:12"]
 		}]}`),
-		reviewToolResponse("call-2", "task_done", `{}`),
 	}}
-	collector := NewAssessmentCollector()
+	collector := NewAssessmentCollector(hypothesis.ID)
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
-		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review the case")},
-		ToolDefs: []llm.ToolDef{
-			AssessmentToolDef(),
-			{
-				Type: "function",
-				Function: llm.FunctionDef{
-					Name: "task_done",
-					Parameters: map[string]any{
-						"type": "object", "properties": map[string]any{},
-					},
-				},
-			},
-		},
-		ToolHandler: &AssessmentHook{Collector: collector},
-		Session:     &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		Scope:       session.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
-		MaxTurns:    2,
-		MaxTokens:   1_000,
+		LLMClient:      client,
+		Messages:       []msg.Msg{msg.Text("user", "review the case")},
+		ToolDefs:       []llm.ToolDef{AssessmentToolDef()},
+		ToolHandler:    &AssessmentHook{Collector: collector},
+		CompletionTool: SubmitAssessments.Name(),
+		Session:        &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Scope:          session.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
+		MaxTurns:       2,
+		MaxTokens:      1_000,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,9 +58,8 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewToolResponse("call-1", "task_done", `{}`),
+		reviewAssessmentResponse("call-1", "not-the-current-hypothesis"),
 		reviewAssessmentResponse("call-2", hypothesis.ID),
-		reviewToolResponse("call-3", "task_done", `{}`),
 	}}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
@@ -79,34 +67,37 @@ func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{prior_assessments}}"},
 		}},
 		LLMClient: client,
-		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		MaxTurns:  3,
+		MaxTurns:  2,
 		MaxTokens: 2_000,
 	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
 	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
 		t.Fatalf("assessments = %+v, want current hypothesis", result.Assessments)
 	}
 	if len(client.responses) != 0 {
-		t.Fatalf("Review stopped before completion guard was satisfied")
+		t.Fatalf("Review stopped before the current hypothesis was accepted")
 	}
 }
 
-func TestReviewReturnsAcceptedAssessmentsAfterLLMFailure(t *testing.T) {
-	hypothesis := completeHypothesis("h-1", "a.go")
-	client := &failingAssessmentClient{first: reviewAssessmentResponse("call-1", hypothesis.ID)}
-	result := Review(context.Background(), Config{
-		Task: template.LlmConversation{Messages: []template.ChatMessage{
-			{Role: "system", Content: "verify"}, {Role: "user", Content: "{{hypothesis}}"},
-		}},
-		LLMClient: client,
-		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		MaxTurns:  2,
-		MaxTokens: 2_000,
-	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
-	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
-		t.Fatalf("accepted partial assessment was lost: %+v", result.Assessments)
+func TestRenderReviewPromptDoesNotRepeatRetainedLaneHistory(t *testing.T) {
+	input := ReviewInput{
+		PriorAssessments: []Assessment{{HypothesisID: "h-prior", Reason: "prior decision"}},
+		PriorEvidence:    []EvidenceReceipt{{ToolCallID: "receipt-prior", Ref: "prior.go"}},
+	}
+	retained := renderReviewPrompt("{{prior_assessments}}", Config{}, input, false, true)
+	if strings.Contains(retained, "h-prior") || strings.Contains(retained, "receipt-prior") {
+		t.Fatalf("retained Lane history was repeated: %q", retained)
+	}
+	if !strings.Contains(retained, "retained conversation") {
+		t.Fatalf("retained Lane guidance missing: %q", retained)
+	}
+
+	fallback := renderReviewPrompt("{{prior_assessments}}", Config{}, input, false, false)
+	if !strings.Contains(fallback, "h-prior") {
+		t.Fatalf("prior assessment missing without continuation: %q", fallback)
+	}
+	if strings.Contains(fallback, "receipt-prior") {
+		t.Fatalf("Runner-only evidence receipt leaked into prompt: %q", fallback)
 	}
 }
 
@@ -126,19 +117,6 @@ func reviewAssessmentResponse(callID, hypothesisID string) *llm.ChatResponse {
 
 type assessmentScriptedClient struct {
 	responses []*llm.ChatResponse
-}
-
-type failingAssessmentClient struct {
-	first *llm.ChatResponse
-	calls int
-}
-
-func (c *failingAssessmentClient) CompletionsWithCtx(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
-	c.calls++
-	if c.calls == 1 {
-		return c.first, nil
-	}
-	return nil, errors.New("provider unavailable")
 }
 
 func (c *assessmentScriptedClient) CompletionsWithCtx(

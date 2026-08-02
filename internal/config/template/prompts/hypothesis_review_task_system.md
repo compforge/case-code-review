@@ -22,4 +22,4 @@ You are not continuing the investigation and you are not rewarded for preserving
 
 ## Completion
 
-Submit the assessment as soon as the decision is ready; a later valid submission replaces an earlier judgment for the same hypothesis. After the supplied hypothesis has an assessment, call `task_done`. The final Trial is deterministic: only `supported + caused + actionable + new` with a matching diff evidence receipt can become a Finding.
+Submit the assessment only when the decision is ready. A valid `submit_assessments` call records the current hypothesis and ends this Review 2 execution; no separate completion tool is required. The final Trial is deterministic: only `supported + caused + actionable + new` with a matching diff evidence receipt can become a Finding.

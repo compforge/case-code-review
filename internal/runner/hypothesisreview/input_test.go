@@ -18,8 +18,8 @@ func TestHypothesisMessageCompactionKeepsClaim(t *testing.T) {
 	}
 	input.EvidencePaths = []string{"a.go", "shared/context.go"}
 	template := "hypothesis={{hypothesis}} clues={{clues}} paths={{evidence_paths}} prior={{prior_assessments}}"
-	full := renderReviewPrompt(template, Config{}, input, false)
-	condensed := renderReviewPrompt(template, Config{}, input, true)
+	full := renderReviewPrompt(template, Config{}, input, false, false)
+	condensed := renderReviewPrompt(template, Config{}, input, true, false)
 	message := newHypothesisMessage(full, condensed)
 
 	lowered := message.ToLLM(msg.CompactionCondensed)

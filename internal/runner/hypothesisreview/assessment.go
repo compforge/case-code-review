@@ -178,6 +178,9 @@ func (h *AssessmentHook) HandleTool(
 		"rejected_unknown": rejected,
 		"remaining":        h.Collector.Missing(),
 	})
+	if h.Collector.Complete() {
+		return tool.CompleteWith(string(result)), true
+	}
 	return tool.Of(string(result)), true
 }
 
@@ -245,9 +248,8 @@ func AssessmentToolDef() llm.ToolDef {
 		Type: "function",
 		Function: llm.FunctionDef{
 			Name: SubmitAssessments.Name(),
-			Description: "Submit one or more completed hypothesis assessments as soon as they are decided. " +
-				"Call this tool repeatedly for partial batches; later valid submissions replace earlier judgments for the same hypothesis. " +
-				"This records review judgments for deterministic Trial and does not publish comments.",
+			Description: "Submit the completed assessment for the current hypothesis when the decision is ready. " +
+				"A valid submission records the judgment for deterministic Trial and ends this Review 2 execution; it does not publish comments.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
