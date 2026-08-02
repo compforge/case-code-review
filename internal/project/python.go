@@ -20,6 +20,9 @@ var pythonProfile = profile{
 		case ".py", ".pyi":
 			roles := FileRoles{RoleSource}
 			base := strings.ToLower(path.Base(file))
+			if extension == ".py" && (base == "conftest.py" || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")) {
+				roles = append(roles, RoleTest)
+			}
 			if extension == ".py" && base == "__main__.py" {
 				roles = append(roles, RoleEntrypoint)
 			}

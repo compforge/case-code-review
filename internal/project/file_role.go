@@ -15,10 +15,11 @@ const (
 	RoleVersion    FileRole = "version"
 	RoleEntrypoint FileRole = "entrypoint"
 	RoleHandler    FileRole = "handler"
+	RoleTest       FileRole = "test"
 )
 
 // FileRoles is the composable role set for one file. Source remains present
-// when a file is also an entrypoint or handler, so admission and semantic
+// when a file is also an entrypoint, handler, or test, so admission and semantic
 // importance do not compete for one enum slot.
 type FileRoles []FileRole
 

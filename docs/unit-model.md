@@ -31,7 +31,7 @@ Git Change ─▶ Component / FileRole
 |---|---|
 | `Change` | Git 层的一份文件变更 |
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
-| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、entrypoint、handler、manifest、lock、version |
+| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、test、entrypoint、handler、manifest、lock、version |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 一次 Unit Review 的行为范围，同时持有 target Fragments 与相关 Clues |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
@@ -43,6 +43,10 @@ FileRole 也不等于证据强度；同一个 lockfile 对依赖问题可能
 关键，对业务状态流转则只是背景。
 Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Unit
 Clue，未来 Review 2 可以按 Hypothesis 与 Lane 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
+
+`test` 与 `source` 可组合：Go 的 `*_test.go`、Python 的常见测试模块和 TypeScript 的
+`*.test.*` / `*.spec.*` 仍是可执行源码，同时带有测试职责。FileRole 只记录这个事实，不在分类阶段
+直接决定跳过 review；是否独立形成 Unit、并入源码 Unit 或采用更轻量的测试视角由后续 formation 决定。
 
 ## 2. 流程
 

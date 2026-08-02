@@ -30,7 +30,11 @@ var typeScriptProfile = profile{
 		switch extension {
 		case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs":
 			roles := FileRoles{RoleSource}
-			if strings.EqualFold(strings.TrimSuffix(base, extension), "main") {
+			stem := strings.TrimSuffix(base, extension)
+			if strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec") {
+				roles = append(roles, RoleTest)
+			}
+			if strings.EqualFold(stem, "main") {
 				roles = append(roles, RoleEntrypoint)
 			}
 			return roles
