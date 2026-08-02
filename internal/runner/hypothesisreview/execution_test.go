@@ -66,28 +66,26 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	}
 }
 
-func TestReviewRequiresEveryHypothesisAndAcceptsIncrementalSubmissions(t *testing.T) {
-	one := completeHypothesis("h-1", "a.go")
-	two := completeHypothesis("h-2", "b.go")
+func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
+	hypothesis := completeHypothesis("h-1", "a.go")
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewAssessmentResponse("call-1", one.ID),
-		reviewToolResponse("call-2", "task_done", `{}`),
-		reviewAssessmentResponse("call-3", two.ID),
-		reviewToolResponse("call-4", "task_done", `{}`),
+		reviewToolResponse("call-1", "task_done", `{}`),
+		reviewAssessmentResponse("call-2", hypothesis.ID),
+		reviewToolResponse("call-3", "task_done", `{}`),
 	}}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
 			{Role: "system", Content: "verify"},
-			{Role: "user", Content: "{{hypotheses}} {{dossier}} {{clues}} {{prior_assessments}}"},
+			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{prior_assessments}}"},
 		}},
 		LLMClient: client,
 		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		MaxTurns:  4,
+		MaxTurns:  3,
 		MaxTokens: 2_000,
-	}, Dossier{ID: "d-1", LaneID: "l-1", Hypotheses: []unitreview.Hypothesis{one, two}}, nil)
-	if len(result.Assessments) != 2 {
-		t.Fatalf("assessments = %+v, want both hypotheses", result.Assessments)
+	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
+	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
+		t.Fatalf("assessments = %+v, want current hypothesis", result.Assessments)
 	}
 	if len(client.responses) != 0 {
 		t.Fatalf("Review stopped before completion guard was satisfied")
@@ -99,14 +97,14 @@ func TestReviewReturnsAcceptedAssessmentsAfterLLMFailure(t *testing.T) {
 	client := &failingAssessmentClient{first: reviewAssessmentResponse("call-1", hypothesis.ID)}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
-			{Role: "system", Content: "verify"}, {Role: "user", Content: "{{hypotheses}}"},
+			{Role: "system", Content: "verify"}, {Role: "user", Content: "{{hypothesis}}"},
 		}},
 		LLMClient: client,
 		ToolDefs:  []llm.ToolDef{{Type: "function", Function: llm.FunctionDef{Name: "task_done"}}},
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 		MaxTurns:  2,
 		MaxTokens: 2_000,
-	}, Dossier{ID: "d-1", LaneID: "l-1", Hypotheses: []unitreview.Hypothesis{hypothesis}}, nil)
+	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
 	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
 		t.Fatalf("accepted partial assessment was lost: %+v", result.Assessments)
 	}

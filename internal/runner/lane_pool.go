@@ -27,20 +27,19 @@ type lanePoolConfig struct {
 	Selections   map[string]fileSelection
 	Concurrency  int
 	ReadPaths    func(string) []string
-	Review       func(context.Context, hypothesisreview.Dossier, *harness.ExecutionResult) hypothesisreview.ReviewResult
+	Review       func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult
 	OnHypothesis func(unitreview.Hypothesis)
-	OnDossier    func(hypothesisreview.Dossier, string)
+	OnAssigned   func(hypothesisreview.ReviewInput, string)
 }
 
-// lanePool is Review 2's only scheduler. Every resolved Hypothesis becomes an
-// immutable Dossier immediately; related Dossiers share one serial Lane and
-// therefore one retained AgentGo context, while unrelated Lanes may run in
-// parallel under the global worker bound.
+// lanePool is Review 2's only scheduler. Related Hypotheses share one serial
+// Lane and therefore one retained AgentGo context, while unrelated Lanes may
+// run in parallel under the global worker bound.
 type lanePool struct {
 	config lanePoolConfig
 	units  map[string]unit.Unit
 
-	candidates chan dossierCandidate
+	candidates chan reviewCandidate
 	finish     chan struct{}
 	loopDone   chan struct{}
 
@@ -52,7 +51,7 @@ type lanePool struct {
 	sem         chan struct{}
 }
 
-type dossierCandidate struct {
+type reviewCandidate struct {
 	hypothesis    unitreview.Hypothesis
 	unit          unit.Unit
 	targetPaths   map[string]bool
@@ -63,13 +62,12 @@ type dossierCandidate struct {
 }
 
 type reviewLane struct {
-	id            string
-	candidates    []dossierCandidate
-	lastDossierID string
-	dossiers      chan hypothesisreview.Dossier
-	priorResults  []hypothesisreview.Assessment
-	evidence      []hypothesisreview.EvidenceReceipt
-	continuation  *harness.ExecutionResult
+	id           string
+	candidates   []reviewCandidate
+	inputs       chan hypothesisreview.ReviewInput
+	priorResults []hypothesisreview.Assessment
+	evidence     []hypothesisreview.EvidenceReceipt
+	continuation *harness.ExecutionResult
 }
 
 func newLanePool(config lanePoolConfig) *lanePool {
@@ -82,7 +80,7 @@ func newLanePool(config lanePoolConfig) *lanePool {
 	p := &lanePool{
 		config:     config,
 		units:      make(map[string]unit.Unit, len(config.Units)),
-		candidates: make(chan dossierCandidate, len(config.Units)*2+1),
+		candidates: make(chan reviewCandidate, len(config.Units)*2+1),
 		finish:     make(chan struct{}),
 		loopDone:   make(chan struct{}),
 		seen:       make(map[string]bool),
@@ -99,7 +97,7 @@ func (p *lanePool) Submit(hypothesis unitreview.Hypothesis) {
 	if hypothesis.ID == "" {
 		return
 	}
-	candidate := newDossierCandidate(hypothesis, p.units[hypothesis.OriginUnit], p.config)
+	candidate := newReviewCandidate(hypothesis, p.units[hypothesis.OriginUnit], p.config)
 	select {
 	case p.candidates <- candidate:
 	case <-p.loopDone:
@@ -137,21 +135,21 @@ func (p *lanePool) loop() {
 					p.assign(&lanes, candidate)
 				default:
 					for _, lane := range lanes {
-						close(lane.dossiers)
+						close(lane.inputs)
 					}
 					return
 				}
 			}
 		case <-p.config.Context.Done():
 			for _, lane := range lanes {
-				close(lane.dossiers)
+				close(lane.inputs)
 			}
 			return
 		}
 	}
 }
 
-func (p *lanePool) assign(lanes *[]*reviewLane, candidate dossierCandidate) {
+func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	p.mu.Lock()
 	if p.seen[candidate.hypothesis.ID] {
 		p.mu.Unlock()
@@ -164,34 +162,30 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate dossierCandidate) {
 		p.config.OnHypothesis(candidate.hypothesis)
 	}
 
-	dossier := buildDossier(candidate, p.config.Changes)
 	lane := selectLane(*lanes, candidate)
 	if lane == nil {
 		lane = &reviewLane{
-			id:       laneID(dossier.ID),
-			dossiers: make(chan hypothesisreview.Dossier, len(p.units)+1),
+			id:     laneID(candidate.hypothesis.ID),
+			inputs: make(chan hypothesisreview.ReviewInput, len(p.units)+1),
 		}
 		*lanes = append(*lanes, lane)
 		p.laneWG.Add(1)
 		go p.runLane(lane)
 	}
-	dossier.LaneID = lane.id
-	if lane.lastDossierID != "" {
-		dossier.PriorDossierIDs = []string{lane.lastDossierID}
-	}
-	lane.lastDossierID = dossier.ID
 	lane.candidates = append(lane.candidates, candidate)
-	if p.config.OnDossier != nil {
-		p.config.OnDossier(dossier, "lane_assigned")
+	input := buildReviewInput(candidate, p.config.Changes)
+	input.LaneID = lane.id
+	if p.config.OnAssigned != nil {
+		p.config.OnAssigned(input, "lane_assigned")
 	}
-	lane.dossiers <- dossier
+	lane.inputs <- input
 }
 
 func (p *lanePool) runLane(lane *reviewLane) {
 	defer p.laneWG.Done()
-	for dossier := range lane.dossiers {
-		dossier.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
-		dossier.PriorEvidence = append([]hypothesisreview.EvidenceReceipt(nil), lane.evidence...)
+	for input := range lane.inputs {
+		input.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
+		input.PriorEvidence = append([]hypothesisreview.EvidenceReceipt(nil), lane.evidence...)
 		select {
 		case p.sem <- struct{}{}:
 		case <-p.config.Context.Done():
@@ -199,7 +193,7 @@ func (p *lanePool) runLane(lane *reviewLane) {
 		}
 		result := hypothesisreview.ReviewResult{}
 		if p.config.Review != nil {
-			result = p.config.Review(p.config.Context, dossier, lane.continuation)
+			result = p.config.Review(p.config.Context, input, lane.continuation)
 		}
 		<-p.sem
 		if result.Execution.State != "" {
@@ -218,11 +212,12 @@ func (p *lanePool) runLane(lane *reviewLane) {
 	}
 }
 
-func laneID(dossierID string) string {
-	return "l-" + strings.TrimPrefix(dossierID, "d-")
+func laneID(hypothesisID string) string {
+	sum := sha256.Sum256([]byte(hypothesisID))
+	return "l-" + hex.EncodeToString(sum[:])[:12]
 }
 
-func selectLane(lanes []*reviewLane, candidate dossierCandidate) *reviewLane {
+func selectLane(lanes []*reviewLane, candidate reviewCandidate) *reviewLane {
 	var selected *reviewLane
 	bestScore := -1
 	for _, lane := range lanes {
@@ -240,8 +235,8 @@ func selectLane(lanes []*reviewLane, candidate dossierCandidate) *reviewLane {
 	return selected
 }
 
-func newDossierCandidate(h unitreview.Hypothesis, reviewUnit unit.Unit, config lanePoolConfig) dossierCandidate {
-	candidate := dossierCandidate{
+func newReviewCandidate(h unitreview.Hypothesis, reviewUnit unit.Unit, config lanePoolConfig) reviewCandidate {
+	candidate := reviewCandidate{
 		hypothesis: h, unit: reviewUnit,
 		targetPaths: make(map[string]bool), evidencePaths: make(map[string]bool), readPaths: make(map[string]bool),
 	}
@@ -269,7 +264,7 @@ func newDossierCandidate(h unitreview.Hypothesis, reviewUnit unit.Unit, config l
 	return candidate
 }
 
-func candidateRelated(candidate dossierCandidate, group []dossierCandidate) bool {
+func candidateRelated(candidate reviewCandidate, group []reviewCandidate) bool {
 	for _, member := range group {
 		if candidate.hypothesis.OriginUnit != "" && candidate.hypothesis.OriginUnit == member.hypothesis.OriginUnit {
 			return true
@@ -299,7 +294,7 @@ func highReadOverlap(left, right map[string]bool) bool {
 	return union > 0 && float64(shared)/float64(union) >= 0.5
 }
 
-func localityScore(left, right dossierCandidate) int {
+func localityScore(left, right reviewCandidate) int {
 	if left.componentRoot == "" || left.componentRoot != right.componentRoot {
 		return 0
 	}
@@ -318,7 +313,7 @@ func commonDirectoryDepth(left, right string) int {
 	return depth
 }
 
-func buildDossier(candidate dossierCandidate, changes []change.Change) hypothesisreview.Dossier {
+func buildReviewInput(candidate reviewCandidate, changes []change.Change) hypothesisreview.ReviewInput {
 	paths := make(map[string]bool)
 	for file := range candidate.targetPaths {
 		paths[file] = true
@@ -334,17 +329,15 @@ func buildDossier(candidate dossierCandidate, changes []change.Change) hypothesi
 		evidencePaths = append(evidencePaths, file)
 	}
 	sort.Strings(evidencePaths)
-	sum := sha256.Sum256([]byte(candidate.hypothesis.ID))
-	dossierChanges := make([]change.Change, 0, len(changes))
+	reviewChanges := make([]change.Change, 0, len(changes))
 	for _, changed := range changes {
 		if paths[effectivePath(changed)] {
-			dossierChanges = append(dossierChanges, changed)
+			reviewChanges = append(reviewChanges, changed)
 		}
 	}
-	return hypothesisreview.Dossier{
-		ID: "d-" + hex.EncodeToString(sum[:])[:12], Changes: dossierChanges,
-		Hypotheses: []unitreview.Hypothesis{candidate.hypothesis},
-		Clues:      collectDossierClues([]unit.Unit{candidate.unit}), EvidencePaths: evidencePaths,
+	return hypothesisreview.ReviewInput{
+		Changes: reviewChanges, Hypothesis: candidate.hypothesis,
+		Clues: collectReviewClues([]unit.Unit{candidate.unit}), EvidencePaths: evidencePaths,
 	}
 }
 

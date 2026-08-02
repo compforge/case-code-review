@@ -52,9 +52,10 @@ func TestLoadSessionKeepsAgentGoPromptsAndReviewArtifacts(t *testing.T) {
 		`{"type":"llm_request","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"}]}`,
 		`{"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"}}`,
 		`{"type":"llm_request","scope_id":"hypothesis_review:l-1","kind":"lane","scope":"hypothesis_review","paths":["a.go"],"filePath":"a.go","taskType":"hypothesis_review_task","request_no":1,"messages":[{"role":"system","content":"verify evidence"},{"role":"user","content":"assess h-1"}]}`,
-		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","submission_index":1}}`,
-		`{"type":"artifact","artifact_kind":"review_assessment","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","submission_index":2,"replaced":true}}`,
-		`{"type":"artifact","artifact_kind":"trial_decision","data":{"dossier_id":"d-1","lane_id":"l-1","hypothesis_id":"h-1","assessment_submission_index":2,"passed_trial":false}}`,
+		`{"type":"artifact","artifact_kind":"review_lane_assignment","data":{"lane_id":"l-1","hypothesis_id":"h-1","paths":["a.go"]}}`,
+		`{"type":"artifact","artifact_kind":"review_assessment","data":{"lane_id":"l-1","hypothesis_id":"h-1","submission_index":1}}`,
+		`{"type":"artifact","artifact_kind":"review_assessment","data":{"lane_id":"l-1","hypothesis_id":"h-1","submission_index":2,"replaced":true}}`,
+		`{"type":"artifact","artifact_kind":"trial_decision","data":{"lane_id":"l-1","hypothesis_id":"h-1","assessment_submission_index":2,"passed_trial":false}}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(filepath.Join(dir, sessionID+".jsonl"), []byte(transcript), 0o600); err != nil {
 		t.Fatal(err)
@@ -73,7 +74,7 @@ func TestLoadSessionKeepsAgentGoPromptsAndReviewArtifacts(t *testing.T) {
 	if len(got.Reviews) != 2 || got.Reviews[0].Stage != Review1Stage || got.Reviews[1].Stage != Review2Stage {
 		t.Fatalf("reviews = %+v, want Review 1 plus Review 2", got.Reviews)
 	}
-	if len(got.Artifacts) != 4 || got.Artifacts[1].Status != "superseded" || got.Artifacts[2].Status != "current" || !strings.Contains(got.Artifacts[3].Data, `"passed_trial": false`) {
+	if len(got.Artifacts) != 5 || got.Artifacts[2].Status != "superseded" || got.Artifacts[3].Status != "current" || !strings.Contains(got.Artifacts[4].Data, `"passed_trial": false`) {
 		t.Fatalf("artifacts = %+v", got.Artifacts)
 	}
 }

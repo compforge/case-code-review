@@ -35,7 +35,7 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 	collector := NewAssessmentCollector("h-1", "h-2")
 	var submissions []AssessmentSubmission
 	hook := &AssessmentHook{
-		Collector: collector, DossierID: "d-1", LaneID: "l-1",
+		Collector: collector, LaneID: "l-1",
 		OnAccepted: func(submission AssessmentSubmission) { submissions = append(submissions, submission) },
 	}
 	call := func(id, value string) map[string]any {
@@ -61,8 +61,8 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 		t.Fatalf("remaining after partial submit = %+v", remaining)
 	}
 	call("h-1", "low_value")
-	rejected := call("not-in-dossier", "unknown")
-	if got := rejected["rejected_unknown"].([]any); len(got) != 1 || got[0] != "not-in-dossier" {
+	rejected := call("not-in-review", "unknown")
+	if got := rejected["rejected_unknown"].([]any); len(got) != 1 || got[0] != "not-in-review" {
 		t.Fatalf("unknown IDs = %+v", got)
 	}
 	call("h-2", "unknown")

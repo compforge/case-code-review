@@ -84,7 +84,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 	}}
 	first, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "first dossier")},
+		Messages:  []msg.Msg{msg.Text("user", "first hypothesis")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  1,
 	})
@@ -93,7 +93,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 	}
 	second, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:    client,
-		Messages:     []msg.Msg{msg.Text("user", "second dossier")},
+		Messages:     []msg.Msg{msg.Text("user", "second hypothesis")},
 		ToolDefs:     []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:     1,
 		ContinueFrom: &first,
@@ -109,7 +109,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", len(requests))
 	}
 	text := requestText(requests[1])
-	if !strings.Contains(text, "first dossier") || !strings.Contains(text, "second dossier") {
+	if !strings.Contains(text, "first hypothesis") || !strings.Contains(text, "second hypothesis") {
 		t.Fatalf("continued request lost Lane context: %q", text)
 	}
 }

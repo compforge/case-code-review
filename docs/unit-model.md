@@ -42,7 +42,7 @@ FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什�
 FileRole 也不等于证据强度；同一个 lockfile 对依赖问题可能
 关键，对业务状态流转则只是背景。
 Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Unit
-Clue，未来 Review 2 可以按 Dossier 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
+Clue，未来 Review 2 可以按 Hypothesis 与 Lane 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
 
 ## 2. 流程
 
@@ -64,8 +64,8 @@ Clue，未来 Review 2 可以按 Dossier 再选择相关项目事实，而不是
 用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
 扩展名规则，保持已有行为。
 
-`entrypoint` / `handler` 不替代 `source`，而是作为 `self/project` Clue 随 Unit 进入 Review 1，随后
-随 Dossier 进入 Review 2。入口文件提示评审初始化、配置装配和生命周期；handler 提示评审输入契约、
+`entrypoint` / `handler` 不替代 `source`，而是作为 `self/project` Clue 随 Unit 进入 Review 1，并在
+需要时投影到对应 Hypothesis 的 Review 2 输入。入口文件提示评审初始化、配置装配和生命周期；handler 提示评审输入契约、
 鉴权、校验、service 调用和响应语义。Language 只提取 decorator / call 等源码事实，Project 再把
 `@router.get/post/...`、`@app.get/post/...` 解释为 FastAPI handler；`routers/`、`routes.py`、
 `handlers/`、`views/` 等路径名本身不构成 handler 证据。角色是项目先验，不直接证明某条 Finding；
@@ -144,8 +144,8 @@ Language 负责产出 definition、reference、call edge 等源码事实；Unit 
 ### 3.3 Unit 在一次 run 内是有生命周期的对象
 
 Unit 在形成后保持稳定身份，并沿主链路逐步获得 Clues、Execution 结果和 Hypothesis。
-并发调度只改变执行时机，不改变 Unit 的语义归属。跨 Unit 共享的信息由 Unit Review 的 Board /
-Bulletin 机制表达，不反向修改已确定的静态 Unit 边界。
+并发调度只改变执行时机，不改变 Unit 的语义归属。默认关闭的 Review Team 试验可以通过 Board /
+Bulletin 交换跨 Unit 主张，但同样不得反向修改已确定的静态 Unit 边界。
 
 ### 3.4 效果评估不能只看 comment 数
 
@@ -163,5 +163,5 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 
 - [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
 - [`language.md`](language.md) — symbol、definition、reference 与图事实的生产边界
-- [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与跨 Unit 协作
-- [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 跨 Unit 归案后的复核与 Trial
+- [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与效果优化
+- [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 在 Lane 中的复核与 Trial

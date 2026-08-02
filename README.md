@@ -10,7 +10,7 @@ A diff alone is too little to review well: it cannot tell whether a change break
 
 **2. Review per *Unit*, not per file.** A Unit is one behavioral review scope: a function, a file, or a cross-file call chain. When the diff has only one reviewable file, it becomes one file Unit. When changed functions across files call each other, ccr merges them into one call-chain Unit because separate file loops would read the same code anyway. The goal is no more Review 1 loops than reviewable files, and fewer when the change crosses file boundaries.
 
-**3. Separate discovery from decision.** Each Unit Review produces zero or more falsifiable Hypotheses, not public comments. Every Hypothesis becomes an immutable Dossier; related Dossiers share a Review 2 Lane so prior context and evidence are reused, while unrelated Lanes run concurrently. Deterministic Trial rules publish only supported, actionable and non-duplicate Findings caused by the current change.
+**3. Separate discovery from decision.** Each Unit Review produces zero or more falsifiable Hypotheses, not public comments. Related Hypotheses share a Hypothesis Review Lane so prior context and evidence are reused, while unrelated Lanes run concurrently. Deterministic Trial rules publish only supported, actionable and non-duplicate Findings caused by the current change.
 
 ccr does not try to read the whole repository or enumerate every possible issue. It uses relevant, bounded context to catch concrete mistakes that are easy to miss while implementing a requirement — boundary handling, error paths, API misuse, or a broken caller assumption. Hidden business constraints need explicit background, specs, cases or rules; loading more unrelated code cannot manufacture that knowledge. Syntax stays lint's job.
 

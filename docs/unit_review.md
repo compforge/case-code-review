@@ -9,8 +9,8 @@ Unit Review（Review 1）的职责是从一个代码行为作用域中发现**�
 问题主张**，不是在一个 loop 内完成终审：
 
 ```text
-Clue / Unit == Review 1 ==> Hypothesis ==> Dossier ==> Lane
-                                                 == Review 2 ==> Assessment == Trial ==> Finding
+Clue / Unit == Unit Review ==> Hypothesis ==> Lane / Hypothesis Review
+                                             ==> Assessment == Trial ==> Finding
 ```
 
 Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 Review 1 应优化为**有界的线索筛查**：
@@ -21,8 +21,8 @@ Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 R
 - 每个 Unit 都形成明确终态，不让轮次耗尽伪装成 clean；
 - 以相关上下文密度换效果，不以无限搜索和无限预载换安全感。
 
-这里的 lead 只是 Review 1 内部的临时调查状态，不新增公开领域对象。第一个需要持久化、进入
-Dossier 和 eval 的结果仍然是 Hypothesis。
+这里的 lead 只是 Unit Review 内部的临时调查状态，不新增公开领域对象。第一个需要持久化、进入
+Lane 调度和 eval 的结果仍然是 Hypothesis。
 
 ## 问题画像
 
@@ -236,7 +236,7 @@ tool:      Diff(paths=[...])
 
 ```text
 [durable conversation above]
-user: <incremental BoardDigest>                 # 有新的相关跨 Unit 事实时
+user: <incremental BoardDigest>                 # 仅 Review Team 试验开启且有新事实时
 user: <wrap-up: stop investigation and submit> # 临近 turn/deadline 边界时只追加一次
 user: <available file path/range inventory>     # request-only 尾消息，不写回 transcript
 ```
@@ -253,7 +253,7 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 - 完整 `file_read` 结果降为使用过的范围、path/line 和摘要；
 - `code_search` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
   不在后续多轮携带完整相似词建议；
-- Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
+- 试验性的 Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
 
 压缩等级只由 ContextManager 在预算趋紧时选择，消息自己决定对应形态。默认从尾部向前压并在够用
 时停止，使 system/task 和较早消息保持稳定；已经提交的压缩不再反向展开。模型请求末尾会附一份
@@ -273,15 +273,16 @@ Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/calle
 静态知道的路径。Viewer 将二者分别与 `file_read` 对比：前者判断预载是否命中，后者回答“静态分析
 本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
 
-### 7. 跨 Unit 协作只交换高价值主张
+### 7. 试验特性：Review Team 跨 Unit 协作
 
-多个 Unit 可以通过 run 级 Board 共享已经确认的事实和可能影响其他 Unit 的主张，但 Board 不是
-第二套 transcript，也不改变静态 Unit 边界：
+`review_team` 与 `post_bulletin` 默认关闭，不属于 Unit Review 的稳定完成路径。试验开启后，多个 Unit
+可以通过 run 级 Board 共享已经确认的事实和可能影响其他 Unit 的主张，但 Board 不是第二套
+transcript，也不改变静态 Unit 边界：
 
 - Bulletin 区分 `intent`、`observation`、`confirmed`，并携带 path / symbol 供相关 Unit 路由；
 - 注入使用增量、相关性排序和数量上限，避免每轮广播整块 Board；
 - 自动 file-read 记录等操作日志默认不共享，它们只说明“做过什么”，不说明“发现了什么”；
-- 最终 Hypothesis 进入 Dossier 和 Session；Board 只是一轮 run 内的临时协作读模型。
+- 最终 Hypothesis 进入 Lane 调度和 Session；Board 只是一轮 run 内的临时协作读模型。
 
 Board 的语义属于 Runner Review 扩展；Harness 只提供通用 event 和 turn-context provider。这样既能
 让 Unit 像队友一样交换材料，又不把“代码评审团队”固化进执行内核。

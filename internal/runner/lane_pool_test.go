@@ -31,9 +31,9 @@ func TestLanePoolUsesStrongRelationsAndOnlyWeightsLocality(t *testing.T) {
 	var mu sync.Mutex
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Selections: selections,
-		Review: func(_ context.Context, dossier hypothesisreview.Dossier, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
 			mu.Lock()
-			lanes[dossier.Hypotheses[0].ID] = dossier.LaneID
+			lanes[input.Hypothesis.ID] = input.LaneID
 			mu.Unlock()
 			return hypothesisreview.ReviewResult{}
 		},
@@ -44,13 +44,13 @@ func TestLanePoolUsesStrongRelationsAndOnlyWeightsLocality(t *testing.T) {
 	pool.Finish()
 
 	if len(lanes) != 3 {
-		t.Fatalf("reviewed Dossiers = %v, want one per Hypothesis", lanes)
+		t.Fatalf("reviewed Hypotheses = %v, want all inputs", lanes)
 	}
 	if lanes["h-1"] == "" || lanes["h-1"] != lanes["h-2"] {
 		t.Fatalf("related evidence was not assigned to one Lane: %v", lanes)
 	}
 	if lanes["h-3"] == lanes["h-1"] {
-		t.Fatalf("locality alone merged unrelated Dossiers: %v", lanes)
+		t.Fatalf("locality alone merged unrelated Hypotheses: %v", lanes)
 	}
 }
 
@@ -63,14 +63,14 @@ func TestLanePoolUsesUnitReviewReadOverlap(t *testing.T) {
 		"u-1": {"shared/x.go", "shared/y.go", "left.go"},
 		"u-2": {"shared/x.go", "shared/y.go", "right.go"},
 	}
-	var dossiers []hypothesisreview.Dossier
+	var inputs []hypothesisreview.ReviewInput
 	var mu sync.Mutex
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units,
 		ReadPaths: func(id string) []string { return reads[id] },
-		Review: func(_ context.Context, dossier hypothesisreview.Dossier, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
 			mu.Lock()
-			dossiers = append(dossiers, dossier)
+			inputs = append(inputs, input)
 			mu.Unlock()
 			return hypothesisreview.ReviewResult{}
 		},
@@ -78,44 +78,44 @@ func TestLanePoolUsesUnitReviewReadOverlap(t *testing.T) {
 	pool.Submit(testHypothesis("h-1", "u-1", "a.go", "a.go:1"))
 	pool.Submit(testHypothesis("h-2", "u-2", "b.go", "b.go:1"))
 	pool.Finish()
-	if len(dossiers) != 2 || dossiers[0].LaneID != dossiers[1].LaneID {
-		t.Fatalf("high read overlap did not share a Lane: %+v", dossiers)
+	if len(inputs) != 2 || inputs[0].LaneID != inputs[1].LaneID {
+		t.Fatalf("high read overlap did not share a Lane: %+v", inputs)
 	}
-	for _, dossier := range dossiers {
-		if !slices.Contains(dossier.EvidencePaths, "shared/x.go") || !slices.Contains(dossier.EvidencePaths, "shared/y.go") {
-			t.Fatalf("Dossier did not retain its Unit Review read footprint: %v", dossier.EvidencePaths)
+	for _, input := range inputs {
+		if !slices.Contains(input.EvidencePaths, "shared/x.go") || !slices.Contains(input.EvidencePaths, "shared/y.go") {
+			t.Fatalf("Review input did not retain its Unit Review read footprint: %v", input.EvidencePaths)
 		}
 	}
 }
 
-func TestLaneSerializesRelatedDossiersAndContinuesContext(t *testing.T) {
+func TestLaneSerializesRelatedHypothesesAndContinuesContext(t *testing.T) {
 	units := []unit.Unit{
 		testReviewUnit("u-1", "a.go", "a.go::A"),
 		testReviewUnit("u-2", "a.go", "a.go::B"),
 	}
-	firstStarted := make(chan hypothesisreview.Dossier, 1)
-	secondStarted := make(chan hypothesisreview.Dossier, 1)
+	firstStarted := make(chan hypothesisreview.ReviewInput, 1)
+	secondStarted := make(chan hypothesisreview.ReviewInput, 1)
 	releaseFirst := make(chan struct{})
 	var calls atomic.Int64
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Concurrency: 2,
-		Review: func(_ context.Context, dossier hypothesisreview.Dossier, continuation *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, continuation *harness.ExecutionResult) hypothesisreview.ReviewResult {
 			if calls.Add(1) == 1 {
 				if continuation != nil {
-					t.Error("first Dossier unexpectedly received continuation")
+					t.Error("first Hypothesis unexpectedly received continuation")
 				}
-				firstStarted <- dossier
+				firstStarted <- input
 				<-releaseFirst
 				return hypothesisreview.ReviewResult{
-					Assessments:      []hypothesisreview.Assessment{{HypothesisID: dossier.Hypotheses[0].ID, DossierID: dossier.ID}},
+					Assessments:      []hypothesisreview.Assessment{{HypothesisID: input.Hypothesis.ID, LaneID: input.LaneID}},
 					EvidenceReceipts: []hypothesisreview.EvidenceReceipt{{Kind: "diff", Ref: "a.go"}},
 					Execution:        harness.ExecutionResult{State: harness.OutcomeCompleted},
 				}
 			}
 			if continuation == nil {
-				t.Error("second related Dossier did not continue the Lane context")
+				t.Error("second related Hypothesis did not continue the Lane context")
 			}
-			secondStarted <- dossier
+			secondStarted <- input
 			return hypothesisreview.ReviewResult{}
 		},
 	})
@@ -126,18 +126,15 @@ func TestLaneSerializesRelatedDossiersAndContinuesContext(t *testing.T) {
 	finished := make(chan struct{})
 	go func() { pool.Finish(); close(finished) }()
 	select {
-	case dossier := <-secondStarted:
-		t.Fatalf("related Dossier started before its Lane was idle: %+v", dossier)
+	case input := <-secondStarted:
+		t.Fatalf("related Hypothesis started before its Lane was idle: %+v", input)
 	case <-time.After(30 * time.Millisecond):
 	}
 	close(releaseFirst)
 	second := <-secondStarted
 	<-finished
 	if second.LaneID != first.LaneID {
-		t.Fatalf("related Dossiers changed Lane: %s != %s", second.LaneID, first.LaneID)
-	}
-	if len(second.PriorDossierIDs) != 1 || second.PriorDossierIDs[0] != first.ID {
-		t.Fatalf("prior dossier IDs = %v, want %s", second.PriorDossierIDs, first.ID)
+		t.Fatalf("related Hypotheses changed Lane: %s != %s", second.LaneID, first.LaneID)
 	}
 	if len(second.PriorAssessments) != 1 || second.PriorAssessments[0].HypothesisID != "h-1" {
 		t.Fatalf("prior assessments = %+v", second.PriorAssessments)
@@ -158,7 +155,7 @@ func TestLanePoolRunsIndependentLanesConcurrently(t *testing.T) {
 	var active, maximum atomic.Int64
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Concurrency: 2,
-		Review: func(context.Context, hypothesisreview.Dossier, *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult {
 			now := active.Add(1)
 			for {
 				old := maximum.Load()

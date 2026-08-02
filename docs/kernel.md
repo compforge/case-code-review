@@ -31,7 +31,7 @@ Repository / Component 提供项目边界、可组合 FileRole（如 source + en
 等项目知识，未来也可承接文档与规则。长期看，一个 Repository 还应提供开发与 review 共同消费的
 记忆文件，使项目约定、历史决策和业务背景不必分别维护两份；具体存储协议不属于当前 Kernel 契约。
 它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 将 Clue 汇入 Unit，Review 2
-将来可面向 Dossier 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
+可面向 Hypothesis 与 Lane 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
 
 ## 2. 总体流程
 
@@ -54,8 +54,6 @@ Change ─▶ Component / FileRole
                                       ▼
                                   Hypothesis
                                       │
-                                form Dossier
-                                      │
                               assign related Lane
                                       │
                                       ▼
@@ -64,7 +62,7 @@ Change ─▶ Component / FileRole
                                       ▼
                                   Assessment
                                       │
-                                Trial (rules)
+                              Trial delivery gate
                                       │
                                       ▼
                                     Finding
@@ -73,13 +71,12 @@ Change ─▶ Component / FileRole
 这条链路借用了“调查—复核—裁决”的比喻，但对象是工程契约，不是角色扮演：
 
 - `Clue / Unit == Review 1 ==> Hypothesis`：在一个行为范围内探索，提出可证伪的怀疑；
-- `Hypothesis / Dossier == Lane / Review 2 ==> Assessment`：相关案卷复用上下文，独立复核已有假设；
+- `Hypothesis == Lane / Review 2 ==> Assessment`：相关假设复用上下文，独立复核已有主张；
 - `Assessment == Trial ==> Finding`：确定性规则决定是否值得向开发者交付。
 
-两次 Review 的聚合维度不同：Review 1 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；每个
-Hypothesis 随即形成不可变 Dossier，Review 2 再把关系紧密的 Dossier 投入同一 Lane，串行复用
-conversation 与证据。归 Lane 依据行为与证据关系，Project 目录距离只作加权，不把文件边界误当成
-问题边界；不相关 Lane 可以并行。
+两次 Review 的聚合维度不同：Unit Review 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；
+Hypothesis Review 把关系紧密的 Hypothesis 投入同一 Lane，串行复用 conversation 与证据。归 Lane
+依据行为与证据关系，Project 目录距离只作加权，不把文件边界误当成问题边界；不相关 Lane 可以并行。
 
 ## 3. 关键设计
 
@@ -117,8 +114,8 @@ CCR 相比 file-only review 的优势来自两部分：
 
 ### 3.4 发散与收敛使用不同完成契约
 
-Review 1 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Review 2 只收敛，并为当前
-Dossier 中的 Hypothesis 边判断边提交 Assessment。只有全部成员已有判断时 `task_done` 才能完成；空文本或
+Unit Review 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Hypothesis Review 只收敛，
+一次判断一个 Hypothesis 并立即提交 Assessment。当前输入已有判断时 `task_done` 才能完成；空文本或
 0 Finding 都不能单独证明完成。
 
 partial/incomplete 是一等结果。任何未完成 Unit 或未评估 Hypothesis 都应出现在输出和 session 中，
@@ -133,8 +130,8 @@ support、causation、value、novelty 分轴；Runner 签发真实 evidence rece
 ### 3.6 Harness 保持领域中立
 
 Harness 可以提供 typed messages、context、tools、hooks、events、budget、completion 和 session，
-但不 import Unit / Finding，也不内建“代码评审团队”。Review Team、Dossier、Assessment 等能力是
-Runner 上的 review extension，通过通用机制接入。
+但不 import Unit / Finding，也不内建“代码评审团队”。Lane、Assessment 以及试验性的 Review Team
+都是 Runner 上的 review extension，通过通用机制接入。
 
 旧 `llmloop` 可以保留作隔离参考，但新的领域链路只依赖统一 Harness execution，避免两套运行时同时
 演进。
@@ -170,7 +167,7 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 |---|---|
 | [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue、上下文与图消费 |
 | [`unit_review.md`](unit_review.md) | Review 1 的探索、收敛、跨 Unit 协作和效果优化 |
-| [`hypothesis_review.md`](hypothesis_review.md) | Dossier、Review 2、Assessment、receipt 与 Trial |
+| [`hypothesis_review.md`](hypothesis_review.md) | Lane、Hypothesis Review、Assessment、receipt 与 Trial |
 | [`harness.md`](harness.md) | Execution、上下文生命周期、工具、Session JSONL 与 Viewer |
 | [`language.md`](language.md) | 多语言源码事实、身份、索引与置信度 |
 

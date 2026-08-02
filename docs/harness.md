@@ -47,7 +47,7 @@ result, err := execution.Run(ctx)
 `Execution` 在构造时接管输入快照并组装 AgentGo model、tool 和 context 契约。它是单次使用的
 运行实体；一次 Execution 的 Recorder、ContextManager、完成状态和其它运行事实不能被另一个 scope
 复用。需要延续 conversation 时，调用方只把前一个 `ExecutionResult` 作为 `ContinueFrom` 交给新
-`ExecutionSpec`；AgentGo message context 仍封装在 Harness 内。Review 2 Lane 用这一入口串行复核相关案卷。
+`ExecutionSpec`；AgentGo message context 仍封装在 Harness 内。Review 2 Lane 用这一入口串行复核相关 Hypothesis。
 
 ### 2.2 每轮模型与工具循环
 
@@ -97,7 +97,7 @@ ContextManager 才能判断两个范围是否
 - `code_search` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
-无法识别的普通 LLM 消息退化为 `Raw`。初始任务、Board 等只由 CCR 内部创建的单向消息没有可恢复的
+无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
 wire 来源，因此只定义 `ToLLM`。
 
 降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
@@ -161,7 +161,7 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 - 每轮实际发送的 prompt、LLM response、stop reason 和 usage；
 - tool call 参数、结果、耗时、成功状态和所属 request；
 - warning、completion 状态和 Execution 级统计；
-- Hypothesis、Dossier/Lane、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
+- Hypothesis、Lane assignment、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
   与 Trial 分开记录，使中断前已完成的判断和后续覆盖过程仍可还原。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化
