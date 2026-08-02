@@ -12,7 +12,7 @@ import (
 )
 
 // ToolRequest is the Harness-level view of one validated tool call. It keeps
-// agentcore's call type inside the adapter while giving domain extensions the
+// agentgo's call type inside the adapter while giving domain extensions the
 // scope and served-model identity they need.
 type ToolRequest struct {
 	Scope session.Scope
@@ -45,7 +45,7 @@ const (
 	EventExecutionError ExecutionEventType = "execution_error"
 )
 
-// ExecutionEvent is the agentcore-free event stream exposed by Harness.
+// ExecutionEvent is the agentgo-free event stream exposed by Harness.
 // Consumers may persist, render, or measure it without depending on the
 // execution library's event schema.
 type ExecutionEvent struct {

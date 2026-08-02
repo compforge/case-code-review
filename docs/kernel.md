@@ -54,7 +54,9 @@ Change ─▶ Component / FileRole
                                       ▼
                                   Hypothesis
                                       │
-                              group into Dossier
+                                form Dossier
+                                      │
+                              assign related Lane
                                       │
                                       ▼
                            Hypothesis Review (Review 2)
@@ -71,12 +73,13 @@ Change ─▶ Component / FileRole
 这条链路借用了“调查—复核—裁决”的比喻，但对象是工程契约，不是角色扮演：
 
 - `Clue / Unit == Review 1 ==> Hypothesis`：在一个行为范围内探索，提出可证伪的怀疑；
-- `Hypothesis / Dossier == Review 2 ==> Assessment`：跨 Unit 归案，独立复核已有假设；
+- `Hypothesis / Dossier == Lane / Review 2 ==> Assessment`：相关案卷复用上下文，独立复核已有假设；
 - `Assessment == Trial ==> Finding`：确定性规则决定是否值得向开发者交付。
 
-两次 Review 的聚合维度不同：Review 1 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；Review 2
-把流式到达且关系紧密的 Hypothesis 归入多个有界 Dossier，以比较重复、矛盾和共同证据。归案依据
-行为与证据关系，Project 目录距离只作加权，不把文件边界误当成问题边界。
+两次 Review 的聚合维度不同：Review 1 按行为形成 Unit，以减少重复 loop 并补齐局部上下文；每个
+Hypothesis 随即形成不可变 Dossier，Review 2 再把关系紧密的 Dossier 投入同一 Lane，串行复用
+conversation 与证据。归 Lane 依据行为与证据关系，Project 目录距离只作加权，不把文件边界误当成
+问题边界；不相关 Lane 可以并行。
 
 ## 3. 关键设计
 
@@ -114,8 +117,8 @@ CCR 相比 file-only review 的优势来自两部分：
 
 ### 3.4 发散与收敛使用不同完成契约
 
-Review 1 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Review 2 只收敛，并为 Dossier
-中的 Hypothesis 边判断边提交 Assessment。只有全部成员已有判断时 `task_done` 才能完成；空文本或
+Review 1 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Review 2 只收敛，并为当前
+Dossier 中的 Hypothesis 边判断边提交 Assessment。只有全部成员已有判断时 `task_done` 才能完成；空文本或
 0 Finding 都不能单独证明完成。
 
 partial/incomplete 是一等结果。任何未完成 Unit 或未评估 Hypothesis 都应出现在输出和 session 中，

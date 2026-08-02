@@ -9,6 +9,18 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
+func TestGetOrCreateScopeMergesLanePaths(t *testing.T) {
+	sh := &SessionHistory{Scopes: make(map[string]*ScopeSession)}
+	first := sh.GetOrCreateScope(Scope{ID: "hypothesis_review:l-1", Kind: "lane", Type: "hypothesis_review", Paths: []string{"a.go"}})
+	second := sh.GetOrCreateScope(Scope{ID: "hypothesis_review:l-1", Kind: "lane", Type: "hypothesis_review", Paths: []string{"b.go", "a.go"}})
+	if first != second {
+		t.Fatal("one Lane must reuse one session scope")
+	}
+	if len(second.Paths) != 2 || second.Paths[0] != "a.go" || second.Paths[1] != "b.go" {
+		t.Fatalf("Lane paths = %v, want [a.go b.go]", second.Paths)
+	}
+}
+
 func TestWriteDebrief(t *testing.T) {
 	t.Setenv(evalTagEnv, "corpus-v1")
 	repoDir := t.TempDir()

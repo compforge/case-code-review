@@ -46,7 +46,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		},
 		ToolHandler: &AssessmentHook{Collector: collector},
 		Session:     &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		Scope:       session.Scope{ID: "hypothesis_review:dossier", Kind: "run"},
+		Scope:       session.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
 		MaxTurns:    2,
 		MaxTokens:   1_000,
 	})
@@ -75,7 +75,7 @@ func TestReviewRequiresEveryHypothesisAndAcceptsIncrementalSubmissions(t *testin
 		reviewAssessmentResponse("call-3", two.ID),
 		reviewToolResponse("call-4", "task_done", `{}`),
 	}}
-	assessments := Review(context.Background(), Config{
+	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypotheses}} {{dossier}} {{clues}} {{prior_assessments}}"},
@@ -85,9 +85,9 @@ func TestReviewRequiresEveryHypothesisAndAcceptsIncrementalSubmissions(t *testin
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 		MaxTurns:  4,
 		MaxTokens: 2_000,
-	}, Dossier{ID: "d-1", Hypotheses: []unitreview.Hypothesis{one, two}})
-	if len(assessments) != 2 {
-		t.Fatalf("assessments = %+v, want both hypotheses", assessments)
+	}, Dossier{ID: "d-1", LaneID: "l-1", Hypotheses: []unitreview.Hypothesis{one, two}}, nil)
+	if len(result.Assessments) != 2 {
+		t.Fatalf("assessments = %+v, want both hypotheses", result.Assessments)
 	}
 	if len(client.responses) != 0 {
 		t.Fatalf("Review stopped before completion guard was satisfied")
@@ -97,7 +97,7 @@ func TestReviewRequiresEveryHypothesisAndAcceptsIncrementalSubmissions(t *testin
 func TestReviewReturnsAcceptedAssessmentsAfterLLMFailure(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
 	client := &failingAssessmentClient{first: reviewAssessmentResponse("call-1", hypothesis.ID)}
-	assessments := Review(context.Background(), Config{
+	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
 			{Role: "system", Content: "verify"}, {Role: "user", Content: "{{hypotheses}}"},
 		}},
@@ -106,9 +106,9 @@ func TestReviewReturnsAcceptedAssessmentsAfterLLMFailure(t *testing.T) {
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 		MaxTurns:  2,
 		MaxTokens: 2_000,
-	}, Dossier{ID: "d-1", Hypotheses: []unitreview.Hypothesis{hypothesis}})
-	if len(assessments) != 1 || assessments[0].HypothesisID != hypothesis.ID {
-		t.Fatalf("accepted partial assessment was lost: %+v", assessments)
+	}, Dossier{ID: "d-1", LaneID: "l-1", Hypotheses: []unitreview.Hypothesis{hypothesis}}, nil)
+	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
+		t.Fatalf("accepted partial assessment was lost: %+v", result.Assessments)
 	}
 }
 

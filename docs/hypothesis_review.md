@@ -3,13 +3,14 @@
 ## 1. 理念 / 概念
 
 Unit Review 负责发散：在每个行为范围内提出值得核实的 Hypothesis。Hypothesis Review 负责收敛：
-把相关假设归入同一 Dossier，复核证据、变化归因、交付价值和重复性，再交给确定性的 Trial。
+把每个假设及其材料形成 Dossier，按关系投入可复用上下文的 Lane，复核证据、变化归因、交付价值和
+重复性，再交给确定性的 Trial。
 拆成两阶段的重要原因是 LLM 领域里“生成候选”通常比“验证给定候选”更难：前者需要开放搜索并追求
 召回，后者面对封闭集合查找支持与反证并追求精度。两者需要不同的 role、上下文和完成契约。
 
 ```text
-Hypothesis[] ─▶ Dossier ─▶ Hypothesis Review ─▶ Assessment[] ─▶ Trial ─▶ Finding[]
-  怀疑与线索       同一案件             独立复核             结构化判断      确定裁决
+Hypothesis ─▶ Dossier ─▶ Lane / Hypothesis Review ─▶ Assessment ─▶ Trial ─▶ Finding
+    怀疑          卷宗材料          相关案卷复用经验与上下文        结构化判断      确定裁决
 ```
 
 两次 Review 的 system role 必须不同：
@@ -25,24 +26,23 @@ Review 2 是可替换的验证策略，不是 Hypothesis 或 Dossier 的所有�
 
 ## 2. 流程
 
-### 2.1 形成 Dossier
+### 2.1 Dossier 与 Lane
 
-Dossier 是 Review 2 的输入边界。它按问题关系而不是文件边界组织假设，包含：
+Dossier 是 Review 1 向 Review 2 移交的不可变材料。一个已解析完成的 Hypothesis 立即形成一个
+Dossier，不等待其它 Unit Review，也不在开放案卷中继续聚合。它包含：
 
 - 待复核的 Hypothesis 及其 trigger、impact、锚点和已有证据；
 - 形成这些假设时涉及的 Unit 输入、结构化 evidence 和实际文件读取路径；
 - review snapshot 的 diff 与 baseline 读取能力；
-- 同一 case 内可用于识别重复或互相矛盾的假设；
 - 已经向当前 PR/MR 交付过的 finding，作为 prior delivery。
 
-Hypothesis 完成锚点解析后立即进入归案协调器，不等待所有 Unit Review 结束。协调器按同一行为范围、
-改动符号、结构化 evidence 和高重合的实际读取路径识别强关系；Repository / Component 和目录公共祖先
-只在多个候选案卷间加权，不能单独触发合案。这样既不会形成一个无法完成的巨型 Review 2，也不退化
-为一个 Review 1 对应一个 Review 2。
+Lane 是触发和承载 Review 2 的执行边界。`LanePool` 按同一 Unit、改动符号、结构化 evidence 和高重合的
+实际读取路径选择已有 Lane；Repository / Component 和目录公共祖先只作多个候选 Lane 的距离加权，
+不能单独建立问题关系。找不到相关 Lane 时立即创建新 Lane。
 
-开放 Dossier 在一段静默、最长等待、成员容量到达或 Review 1 全部结束时封案。封案后不可变；迟到的
-强相关 Hypothesis 形成新 Dossier，引用并等待前案结果后再复核。等待发生在获取 Review 2 并发槽之前，
-避免后案占满执行容量。屏障式“全部 Review 1 完成后再 Review 2”只是同一协调模型只在最终 flush 的特例。
+同一 Lane 串行消费 Dossier，并保留 AgentGo conversation、已签发 evidence receipt 和前案 Assessment；
+因此后案能直接复用已经读过的文件和判断背景。不同 Lane 在全局并发上限内并行。这样不再需要静默窗口、
+开放案卷或 Dossier 编排器：Dossier 始终只是材料，Lane 才拥有 Review 2 的上下文与执行顺序。
 
 ### 2.2 独立复核
 
@@ -69,7 +69,7 @@ Assessment，至少包含四个正交判断：
 
 ### 2.4 增量提交与完整完成
 
-Review 2 的完成条件不是模型说 `task_done`，而是 Dossier 中每个 Hypothesis 都有一个合法 Assessment。
+Review 2 的完成条件不是模型说 `task_done`，而是当前 Dossier 中每个 Hypothesis 都有一个合法 Assessment。
 Reviewer 应在判断完成时立即调用 `submit_assessments`，可以单条或小批量多次提交，避免把所有结果押在
 最后一轮。对同一 Hypothesis 的后续合法提交替换前值；Session 保留每次提交，Trial 只消费最终判断。
 未知 ID 不进入案卷结果，缺项或非法枚举也不能被当成成功完成。
@@ -79,13 +79,14 @@ Reviewer 应在判断完成时立即调用 `submit_assessments`，可以单条�
 
 ### 2.5 Prompt 上下文形状
 
-Review 2 的初始案卷和后续工具结果都作为 typed message 进入 Harness；压缩可以收短 Change / Clue /
-前案摘要，但不能删除任何待评估 Hypothesis。大致组装过程是：
+Review 2 的 Dossier 和后续工具结果都作为 typed message 进入 Harness；压缩可以收短 Change / Clue /
+前案摘要，但不能删除当前待评估 Hypothesis。同一 Lane 首次运行建立 system 前缀，后续 Dossier 追加到
+已有 conversation：
 
 ```text
 system: <Review 2 convergence rules / closed-set contract>
 
-user: Dossier(
+user: Dossier A(
   dossier_id,
   hypotheses=[完整待评估集合],
   changes=[相关 diff 元信息],
@@ -103,9 +104,14 @@ tool: submit_assessments([已完成的部分判断])
 user: <hard wrap-up：只允许 submit_assessments / task_done>
 tool: submit_assessments([剩余判断])
 tool: task_done
+
+user: Dossier B(...)  # 同一 Lane，继续使用前面的 assistant/tool/context
+assistant: reasoning + tool calls
+tool: submit_assessments(...)
+tool: task_done
 ```
 
-稳定的 system / Dossier 前缀有利于 provider cache；新增证据和提交回执追加在尾部。Review 2 只能验证
+稳定的 Lane 前缀有利于 provider cache；新增案卷、证据和提交回执追加在尾部。Review 2 只能验证
 Dossier 里的既有 Hypothesis，不能通过 message 或工具重新发散出新问题。
 
 ### 2.6 Trial
@@ -149,11 +155,11 @@ Review 2 若被允许不断新造问题，就会再次发散，Dossier 无法形
 
 - Review 1 产生的 Hypothesis 数和对应 Unit 完成率；
 - 四个 Assessment 轴及 receipt 各拦截多少；
-- 未评估 Hypothesis 数、Dossier 大小、Review 2 工具轮次和耗时；
+- 未评估 Hypothesis 数、Lane 数、每个 Lane 的 Dossier 数、Review 2 工具轮次和耗时；
 - 最终 `important/minor/debatable/wrong/repeat` 标签；
 - 被拦截样本中的 missed，防止通过少报制造虚假准确率。
 
-Session 应在 Hypothesis 解析完成、Dossier 封案和每次 Assessment 提交时立即追加 artifact；Trial
+Session 应在 Hypothesis 解析完成、Dossier 分配 Lane 和每次 Assessment 提交时立即追加 artifact；Trial
 decision 另行记录并引用最终采用的 submission。这样进程中断后仍能还原部分进展，同一批固定
 Hypothesis 也可以独立重放 Review 2，而不必每次重跑昂贵的 Unit Review。
 

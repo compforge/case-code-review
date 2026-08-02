@@ -7,13 +7,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voocel/agentcore"
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// chatModel keeps CCR's provider routing and retry behavior behind agentcore's
+// chatModel keeps CCR's provider routing and retry behavior behind agentgo's
 // model contract. The execution kernel must not know which concrete provider
 // or LLMRouter served a request.
 type chatModel struct {
@@ -27,11 +27,11 @@ type chatModel struct {
 
 func (m *chatModel) Generate(
 	ctx context.Context,
-	messages []agentcore.Message,
-	tools []agentcore.ToolSpec,
-	opts ...agentcore.CallOption,
-) (*agentcore.LLMResponse, error) {
-	cfg := agentcore.ResolveCallConfig(opts)
+	messages []agentgo.Message,
+	tools []agentgo.ToolSpec,
+	opts ...agentgo.CallOption,
+) (*agentgo.LLMResponse, error) {
+	cfg := agentgo.ResolveCallConfig(opts)
 	maxTokens := cfg.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = m.maxTokens
@@ -50,32 +50,32 @@ func (m *chatModel) Generate(
 	if err != nil {
 		return nil, err
 	}
-	message, err := toAgentcoreResponse(resp)
+	message, err := toAgentGoResponse(resp)
 	if err != nil {
 		return nil, err
 	}
-	return &agentcore.LLMResponse{Message: message}, nil
+	return &agentgo.LLMResponse{Message: message}, nil
 }
 
 // CCR's current clients are non-streaming. A one-event stream preserves
-// agentcore's execution contract while provider streaming remains a separate
+// agentgo's execution contract while provider streaming remains a separate
 // concern from adopting the loop runtime.
 func (m *chatModel) GenerateStream(
 	ctx context.Context,
-	messages []agentcore.Message,
-	tools []agentcore.ToolSpec,
-	opts ...agentcore.CallOption,
-) (<-chan agentcore.StreamEvent, error) {
-	events := make(chan agentcore.StreamEvent, 1)
+	messages []agentgo.Message,
+	tools []agentgo.ToolSpec,
+	opts ...agentgo.CallOption,
+) (<-chan agentgo.StreamEvent, error) {
+	events := make(chan agentgo.StreamEvent, 1)
 	go func() {
 		defer close(events)
 		resp, err := m.Generate(ctx, messages, tools, opts...)
 		if err != nil {
-			events <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: err}
+			events <- agentgo.StreamEvent{Type: agentgo.StreamEventError, Err: err}
 			return
 		}
-		events <- agentcore.StreamEvent{
-			Type:       agentcore.StreamEventDone,
+		events <- agentgo.StreamEvent{
+			Type:       agentgo.StreamEventDone,
 			Message:    resp.Message,
 			StopReason: resp.Message.StopReason,
 		}
@@ -86,11 +86,11 @@ func (m *chatModel) GenerateStream(
 func (m *chatModel) SupportsTools() bool { return true }
 func (m *chatModel) ModelName() string   { return m.model }
 
-func toLLMMessages(messages []agentcore.Message) []llm.Message {
+func toLLMMessages(messages []agentgo.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(messages))
 	for _, message := range messages {
 		switch message.Role {
-		case agentcore.RoleAssistant:
+		case agentgo.RoleAssistant:
 			calls := message.ToolCalls()
 			toolCalls := make([]llm.ToolCall, 0, len(calls))
 			for _, call := range calls {
@@ -104,7 +104,7 @@ func toLLMMessages(messages []agentcore.Message) []llm.Message {
 				})
 			}
 			out = append(out, llm.NewToolCallMessage(message.TextContent(), toolCalls))
-		case agentcore.RoleTool:
+		case agentgo.RoleTool:
 			out = append(out, llm.NewToolResultMessage(
 				metadataString(message.Metadata, "tool_call_id"),
 				message.TextContent(),
@@ -116,7 +116,7 @@ func toLLMMessages(messages []agentcore.Message) []llm.Message {
 	return out
 }
 
-func toLLMToolDefs(tools []agentcore.ToolSpec) []llm.ToolDef {
+func toLLMToolDefs(tools []agentgo.ToolSpec) []llm.ToolDef {
 	out := make([]llm.ToolDef, 0, len(tools))
 	for _, tool := range tools {
 		parameters, _ := tool.Parameters.(map[string]any)
@@ -132,19 +132,19 @@ func toLLMToolDefs(tools []agentcore.ToolSpec) []llm.ToolDef {
 	return out
 }
 
-func toAgentcoreResponse(resp *llm.ChatResponse) (agentcore.Message, error) {
+func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 	if resp == nil || len(resp.Choices) == 0 {
-		return agentcore.Message{}, fmt.Errorf("harness: LLM returned no choices")
+		return agentgo.Message{}, fmt.Errorf("harness: LLM returned no choices")
 	}
 
 	choice := resp.Choices[0]
-	content := make([]agentcore.ContentBlock, 0, len(choice.Message.ToolCalls)+1)
+	content := make([]agentgo.ContentBlock, 0, len(choice.Message.ToolCalls)+1)
 	if text := resp.Content(); text != "" {
-		content = append(content, agentcore.TextBlock(text))
+		content = append(content, agentgo.TextBlock(text))
 	}
 	for _, call := range choice.Message.ToolCalls {
 		args := json.RawMessage(call.Function.Arguments)
-		toolCall := agentcore.ToolCall{
+		toolCall := agentgo.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
 			Args: args,
@@ -155,17 +155,17 @@ func toAgentcoreResponse(resp *llm.ChatResponse) (agentcore.Message, error) {
 			toolCall.ArgsRawText = call.Function.Arguments
 			toolCall.ArgsParseError = "invalid JSON tool arguments"
 		}
-		content = append(content, agentcore.ToolCallBlock(toolCall))
+		content = append(content, agentgo.ToolCallBlock(toolCall))
 	}
 
-	message := agentcore.Message{
-		Role:       agentcore.RoleAssistant,
+	message := agentgo.Message{
+		Role:       agentgo.RoleAssistant,
 		Content:    content,
 		StopReason: toStopReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0),
 		Timestamp:  time.Now(),
 	}
 	if resp.Usage != nil {
-		message.Usage = &agentcore.Usage{
+		message.Usage = &agentgo.Usage{
 			Provider:    resp.Alias,
 			Model:       resp.Model,
 			Input:       int(resp.Usage.PromptTokens),
@@ -178,21 +178,21 @@ func toAgentcoreResponse(resp *llm.ChatResponse) (agentcore.Message, error) {
 	return message, nil
 }
 
-func toStopReason(finishReason string, hasToolCalls bool) agentcore.StopReason {
+func toStopReason(finishReason string, hasToolCalls bool) agentgo.StopReason {
 	switch strings.ToLower(finishReason) {
 	case "length", "max_tokens":
-		return agentcore.StopReasonLength
+		return agentgo.StopReasonLength
 	case "error":
-		return agentcore.StopReasonError
+		return agentgo.StopReasonError
 	case "content_filter", "safety":
-		return agentcore.StopReasonSafety
+		return agentgo.StopReasonSafety
 	case "tool_calls", "tool_use":
-		return agentcore.StopReasonToolUse
+		return agentgo.StopReasonToolUse
 	}
 	if hasToolCalls {
-		return agentcore.StopReasonToolUse
+		return agentgo.StopReasonToolUse
 	}
-	return agentcore.StopReasonStop
+	return agentgo.StopReasonStop
 }
 
 func metadataString(metadata map[string]any, key string) string {

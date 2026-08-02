@@ -11,7 +11,7 @@ ExecutionSpec ──▶ Execution.Run ──▶ ExecutionResult
                       ├─ ContextManager
                       ├─ Tool / Hook adapters
                       ├─ Recorder
-                      └─ AgentCore loop
+                      └─ AgentGo loop
                               │
                               └─ events + session JSONL
 ```
@@ -19,11 +19,11 @@ ExecutionSpec ──▶ Execution.Run ──▶ ExecutionResult
 | 对象 | 责任 |
 |---|---|
 | `ExecutionSpec` | 一次执行的输入消息、工具、hook、预算和 scope |
-| `Execution` | 单次运行的聚合根，持有 ContextManager、Recorder、完成状态与 AgentCore loop 生命周期 |
+| `Execution` | 单次运行的聚合根，持有 ContextManager、Recorder、完成状态与 AgentGo loop 生命周期 |
 | `ContextManager` | 注入、去重、淘汰、压缩和投影上下文 |
 | `Tool Registry` | 把工具定义、provider 与执行身份绑定 |
 | `Hook / Event` | 提供领域扩展点和稳定观测事件 |
-| `ExecutionResult` | 返回完成状态、usage、工具统计和错误 |
+| `ExecutionResult` | 返回完成状态、usage、工具统计和错误；内部可携带后续 Execution 的不透明 continuation |
 | `Session` | 以稳定 JSONL 持久化实际发生的执行事实 |
 
 调用方可以用 `biz_id` 给整次 CCR 执行附加不透明业务身份。Harness 只在 `session_start` 持久化，
@@ -44,9 +44,10 @@ execution, err := harness.NewExecution(spec)
 result, err := execution.Run(ctx)
 ```
 
-`Execution` 在构造时接管输入快照并组装 AgentCore model、tool 和 context 契约。它是单次使用的
+`Execution` 在构造时接管输入快照并组装 AgentGo model、tool 和 context 契约。它是单次使用的
 运行实体；一次 Execution 的 Recorder、ContextManager、完成状态和其它运行事实不能被另一个 scope
-复用。Harness 外不直接创建或持有这些内部组件。
+复用。需要延续 conversation 时，调用方只把前一个 `ExecutionResult` 作为 `ContinueFrom` 交给新
+`ExecutionSpec`；AgentGo message context 仍封装在 Harness 内。Review 2 Lane 用这一入口串行复核相关案卷。
 
 ### 2.2 每轮模型与工具循环
 
@@ -71,7 +72,8 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 ### 3.1 Typed message 是内部语义，wire message 是边界投影
 
-Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义。模型返回的普通消息先进入
+Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义，并直接实现 AgentGo 的
+`AgentMessage` 契约。模型返回的普通消息先进入
 `Raw`，可识别的工具结果（例如 `file_read`）会重新提升为 `File`，因此后续压缩始终从 typed message
 视角出发。只有在调用模型前才降成 provider wire message：
 
@@ -80,8 +82,9 @@ msg.Msg / msg.File
    ── context lifecycle ──▶ lowered model messages
 ```
 
-每种消息通过 `ToLLM(CompactionLevel)` 自己定义 full、condensed、reference 等投影；Harness 外只
-提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
+CCR 消息仍通过 `ToLLM(CompactionLevel)` 定义 full、condensed、reference 等领域投影，Harness adapter
+把它映射为 AgentGo 的 `Raw / Compact / ToMessage`；只有 AgentGo 发起模型调用时才执行 `ToMessage`。
+Harness 外只提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
 ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
 
@@ -111,9 +114,9 @@ wire 来源，因此只定义 `ToLLM`。
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
-ContextManager 默认从完整消息开始，只有预算趋紧才单调提高压缩等级。当前优先从消息尾部向前压，
-够用即停：system/task 和更早的文件保持稳定，下次再从剩余尾部腾空间。压缩一旦提交，本 Execution
-内不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
+ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo Compactor 单调降低消息 fidelity，
+再做通用 tool-result trim 和 summary。默认先处理低优先级消息，同一优先级从尾部向前压，够用即停；
+压缩一旦提交不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
 但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
 统计和恢复行为会分裂。
 
@@ -137,12 +140,12 @@ Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用�
 这允许同一个 `file_read` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
 的能力。Runner 适配可以依赖 Harness，Harness 不依赖 Runner。
 
-### 3.5 AgentCore 是内核依赖，不是项目领域模型
+### 3.5 AgentGo 是内核依赖，不是项目领域模型
 
-AgentCore 负责模型循环和通用上下文机制。CCR 在 Harness 边界将自身 typed message、tool provider、
-hook 和事件适配进去，并把 AgentCore response 转回稳定 ExecutionResult。
+AgentGo 负责模型循环和通用上下文机制。CCR 在 Harness 边界将自身 typed message、tool provider、
+hook 和事件适配进去，并把 AgentGo response 转回稳定 ExecutionResult。
 
-AgentCore 类型不应泄漏到 Runner、Session Viewer 或 Unit 模型。这样替换执行内核、保留旧 `llmloop`
+AgentGo 类型不应泄漏到 Runner、Session Viewer 或 Unit 模型。这样替换执行内核、保留旧 `llmloop`
 作参考或并行演进 Viewer，都不会迫使评审领域一起迁移。
 
 ## 4. 可观测性：Session JSONL 与 HTML Viewer
@@ -158,7 +161,7 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 - 每轮实际发送的 prompt、LLM response、stop reason 和 usage；
 - tool call 参数、结果、耗时、成功状态和所属 request；
 - warning、completion 状态和 Execution 级统计；
-- Hypothesis、Dossier、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
+- Hypothesis、Dossier/Lane、Assessment submission、Trial decision 等由领域层追加的 artifact；Assessment
   与 Trial 分开记录，使中断前已完成的判断和后续覆盖过程仍可还原。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化
@@ -169,7 +172,7 @@ prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然
 
 ### 4.2 HTML Viewer 是诊断投影
 
-Viewer 只读取稳定 Session JSONL，不读取 AgentCore 内部对象，也不持有执行状态。它提供两个互补
+Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补
 视角：
 
 1. **Run Overview**：总 token、时间、模型、工具调用、文件/Unit 完成率和 warning，定位成本与

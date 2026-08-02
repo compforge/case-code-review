@@ -357,6 +357,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			run = &ReviewRun{ID: key, Kind: kind, Scope: scope, Paths: stringList(rec["paths"]), FilePath: fp, Tasks: make(map[TaskType][]*TaskCard)}
 			reviewIndex[key] = run
 			vs.Reviews = append(vs.Reviews, run)
+		} else {
+			run.Paths = mergeStrings(run.Paths, stringList(rec["paths"]))
 		}
 		return run
 	}
@@ -627,7 +629,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		finalizeReview(run)
 
 		rollupKey := run.FilePath
-		if run.Kind == "run" {
+		if run.Kind == "run" || run.Kind == "lane" {
 			rollupKey = "(run-level)"
 		}
 		ft := fileIdx[rollupKey]
@@ -691,6 +693,16 @@ func stringList(v any) []string {
 	for _, e := range arr {
 		if s, ok := e.(string); ok {
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func mergeStrings(left, right []string) []string {
+	out := append([]string(nil), left...)
+	for _, value := range right {
+		if value != "" && !slices.Contains(out, value) {
+			out = append(out, value)
 		}
 	}
 	return out

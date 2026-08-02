@@ -20,7 +20,8 @@ type EvidenceReceipt struct {
 	Ref        string `json:"ref"`
 }
 
-// EvidenceLedger is scoped to one Hypothesis Review execution.
+// EvidenceLedger starts from the Lane's retained receipts and appends facts
+// read by the current Dossier review.
 type EvidenceLedger struct {
 	mu       sync.Mutex
 	receipts []EvidenceReceipt

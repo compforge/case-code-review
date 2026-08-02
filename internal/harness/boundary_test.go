@@ -37,7 +37,7 @@ func TestHarnessDoesNotImportReviewDomain(t *testing.T) {
 	}
 }
 
-func TestAgentcoreDependencyStaysInsideHarness(t *testing.T) {
+func TestAgentGoDependencyStaysInsideHarness(t *testing.T) {
 	repoRoot, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -63,8 +63,8 @@ func TestAgentcoreDependencyStaysInsideHarness(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), "github.com/voocel/agentcore") {
-			t.Errorf("%s imports agentcore outside internal/harness", path)
+		if strings.Contains(string(data), "github.com/compforge/agentgo") {
+			t.Errorf("%s imports agentgo outside internal/harness", path)
 		}
 		return nil
 	})

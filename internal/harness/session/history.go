@@ -1,6 +1,6 @@
 // Package session provides a session history mechanism for collecting conversation
 // records during code review task execution. It organizes records by review scope
-// (a Unit, run-level Review, or file-level scan — see ScopeSession) and request type.
+// (a Unit, Review 2 Lane, or file-level scan — see ScopeSession) and request type.
 package session
 
 import (
@@ -74,9 +74,9 @@ func (sh *SessionHistory) SetDiffStats(files int, insertions, deletions int64) {
 // so two Units in the same file don't collide and a cross-file Unit stays whole.
 type ScopeSession struct {
 	mu          sync.Mutex
-	ID          string   // scope id: unit.ID, a run-level phase, or a scan file path
-	Kind        string   // "unit" | "file"
-	Scope       string   // func/file/callchain (units) | filter | scan
+	ID          string   // scope id: unit.ID, Lane ID, or a scan file path
+	Kind        string   // "unit" | "file" | "lane"
+	Scope       string   // func/file/callchain (units) | hypothesis_review | scan
 	Paths       []string // member file(s)
 	Path        string   // representative member path; comment anchor / log label
 	TaskRecords map[TaskType][]*TaskRecord
@@ -84,7 +84,7 @@ type ScopeSession struct {
 
 	// Unit lifecycle (see docs/unit-model.md): open → closing (Close
 	// called, async still in flight) → closed (debrief persisted). Scopes that
-	// never Close (scan / run-level passes) just stay open — the lifecycle is
+	// never Close (scan / Lane passes) just stay open — the lifecycle is
 	// opt-in for scopes that produce a debrief.
 	state         scopeState
 	pendingAsync  int      // async tasks registered via BeginAsync, not yet ended
@@ -101,13 +101,13 @@ const (
 	scopeClosed
 )
 
-// Scope identifies a review sub-session for recording: a Unit, or a file-level
-// pass. Callers build it from a unit.Unit, run-level Review, or scan file path;
+// Scope identifies a review sub-session for recording: a Unit, Lane, or a
+// file-level pass. Callers build it from a unit.Unit, Review 2 Lane, or scan file path;
 // SessionHistory keys ScopeSessions by ID.
 type Scope struct {
-	ID    string   // unit.ID, run-level phase ID, or scan file path
-	Kind  string   // "unit" | "file"
-	Type  string   // func/file/callchain (units) | filter | scan
+	ID    string   // unit.ID, Lane ID, or scan file path
+	Kind  string   // "unit" | "file" | "lane"
+	Type  string   // func/file/callchain (units) | hypothesis_review | scan
 	Paths []string // member file(s)
 }
 
@@ -301,6 +301,17 @@ func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
 			session:     sh,
 		}
 		sh.Scopes[sc.ID] = ss
+	} else {
+		seen := make(map[string]bool, len(ss.Paths)+len(sc.Paths))
+		for _, path := range ss.Paths {
+			seen[path] = true
+		}
+		for _, path := range sc.Paths {
+			if path != "" && !seen[path] {
+				ss.Paths = append(ss.Paths, path)
+				seen[path] = true
+			}
+		}
 	}
 	return ss
 }

@@ -544,18 +544,17 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		}
 	}
 
-	var dossierCoordinator *dossierCoordinator
+	var reviewLanes *lanePool
 	if a.features.Enabled(feature.HypothesisReview) {
 		task := a.args.Template.HypothesisReviewTask
 		if task != nil && len(task.Messages) > 0 {
-			dossierCoordinator = newDossierCoordinator(dossierCoordinatorConfig{
+			reviewLanes = newLanePool(lanePoolConfig{
 				Context: ctx, Units: units, Changes: a.changes, Selections: a.fileSelections,
-				QuietWindow: dossierQuietWindow, MaxWait: dossierMaxWait,
-				MaxHypotheses: dossierMaxHypotheses, Concurrency: dossierReviewWorkers,
-				ReadPaths: a.executor.ReadPaths, Review: a.reviewDossier,
-				OnHypothesis: a.persistHypothesis, OnSealed: a.persistDossier,
+				Concurrency: laneReviewWorkers,
+				ReadPaths:   a.executor.ReadPaths, Review: a.reviewDossier,
+				OnHypothesis: a.persistHypothesis, OnDossier: a.persistDossier,
 			})
-			a.hypothesisHook.OnResolved = dossierCoordinator.Submit
+			a.hypothesisHook.OnResolved = reviewLanes.Submit
 		}
 	}
 
@@ -621,8 +620,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	wg.Wait()
 
 	if dispatched == 0 {
-		if dossierCoordinator != nil {
-			dossierCoordinator.Finish()
+		if reviewLanes != nil {
+			reviewLanes.Finish()
 		}
 		return []finding.Finding{}, nil
 	}
@@ -634,8 +633,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var hypotheses []unitreview.Hypothesis
 	var assessments []hypothesisreview.Assessment
-	if dossierCoordinator != nil {
-		hypotheses, assessments = dossierCoordinator.Finish()
+	if reviewLanes != nil {
+		hypotheses, assessments = reviewLanes.Finish()
 	} else {
 		hypotheses = a.hypotheses.Hypotheses()
 		a.persistHypotheses(hypotheses)
@@ -648,7 +647,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var comments []finding.Finding
 	if a.features.Enabled(feature.HypothesisReview) {
-		if dossierCoordinator == nil && len(hypotheses) > 0 {
+		if reviewLanes == nil && len(hypotheses) > 0 {
 			a.recordWarning(
 				"hypothesis_review_unavailable", "",
 				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
@@ -753,6 +752,7 @@ func (a *Runner) persistTrialDecisions(
 		hypothesis, ok := byID[assessment.HypothesisID]
 		a.session.WriteArtifact("trial_decision", map[string]any{
 			"dossier_id":                  assessment.DossierID,
+			"lane_id":                     assessment.LaneID,
 			"assessment_submission_index": assessment.SubmissionIndex,
 			"hypothesis_id":               assessment.HypothesisID,
 			"passed_trial":                ok && trial.Passes(hypothesis, assessment),

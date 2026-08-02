@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/voocel/agentcore"
-	agentcontext "github.com/voocel/agentcore/context"
+	"github.com/compforge/agentgo"
+	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -18,7 +18,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-const contextWarningThreshold = 0.80
 const wrapUpTimeReserve = 90 * time.Second
 const wrapUpTurnReserve = 2
 
@@ -28,10 +27,38 @@ type domainMessage struct {
 	compaction msg.CompactionLevel
 }
 
-func (m domainMessage) GetRole() agentcore.Role {
-	return agentcore.Role(m.value.ToLLM(m.compaction).Role)
+func (m domainMessage) GetRole() agentgo.Role {
+	return agentgo.Role(m.value.ToLLM(m.compaction).Role)
 }
 func (m domainMessage) GetTimestamp() time.Time { return m.timestamp }
+func (m domainMessage) Raw() agentgo.AgentMessage {
+	m.compaction = msg.CompactionNone
+	return m
+}
+func (m domainMessage) Priority() int { return 0 }
+func (m domainMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
+	raw := m.value.ToLLM(msg.CompactionNone)
+	rawTokens := llm.CountTokens(raw.ExtractText())
+	if rawTokens <= 0 {
+		return m, 1
+	}
+	currentTokens := llm.CountTokens(m.TextContent())
+	if float64(currentTokens)/float64(rawTokens) <= expect {
+		return m, float64(currentTokens) / float64(rawTokens)
+	}
+	compactable, ok := m.value.(msg.Compactable)
+	if !ok {
+		return m, float64(currentTokens) / float64(rawTokens)
+	}
+	for level := m.compaction + 1; level <= compactable.MaxCompaction(); level++ {
+		m.compaction = level
+		currentTokens = llm.CountTokens(m.TextContent())
+		if float64(currentTokens)/float64(rawTokens) <= expect {
+			break
+		}
+	}
+	return m, float64(currentTokens) / float64(rawTokens)
+}
 func (m domainMessage) TextContent() string {
 	wire := m.value.ToLLM(m.compaction)
 	return wire.ExtractText()
@@ -40,6 +67,17 @@ func (m domainMessage) ThinkingContent() string { return "" }
 func (m domainMessage) HasToolCalls() bool {
 	return len(m.value.ToLLM(m.compaction).ToolCalls) > 0
 }
+func (m domainMessage) ToMessage() (agentgo.Message, bool) {
+	lowered := wireToAgentMessage(m.value.ToLLM(m.compaction))
+	lowered.Timestamp = m.timestamp
+	if result, ok := m.value.(msg.ToolResultMsg); ok && lowered.Role == agentgo.RoleTool {
+		if lowered.Metadata == nil {
+			lowered.Metadata = make(map[string]any)
+		}
+		lowered.Metadata["tool_name"] = result.ToolName()
+	}
+	return lowered, true
+}
 
 // contextManager keeps CCR's typed messages alive until the provider boundary.
 // Projection is deterministic: deduplicate covered file reads, then shed
@@ -47,7 +85,6 @@ func (m domainMessage) HasToolCalls() bool {
 type contextManager struct {
 	window       int
 	dedupEnabled bool
-	evictEnabled bool
 	maxTurns     int
 	wrapUpPrompt string
 	scope        session.Scope
@@ -55,8 +92,8 @@ type contextManager struct {
 	engine       *agentcontext.ContextEngine
 
 	mu           sync.Mutex
-	usage        *agentcore.ContextUsage
-	snapshot     *agentcore.ContextSnapshot
+	usage        *agentgo.ContextUsage
+	snapshot     *agentgo.ContextSnapshot
 	projectCount int
 	wrapUpIssued bool
 	visibleFiles []visibleFile
@@ -78,7 +115,7 @@ type visibleFile struct {
 	snapshot          msg.FileSnapshot
 }
 
-func newContextManager(spec ExecutionSpec, model agentcore.ChatModel) *contextManager {
+func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextManager {
 	window := spec.ContextWindow
 	if window == 0 {
 		window = spec.MaxTokens
@@ -86,7 +123,6 @@ func newContextManager(spec ExecutionSpec, model agentcore.ChatModel) *contextMa
 	manager := &contextManager{
 		window:       window,
 		dedupEnabled: spec.FileDedupEnabled,
-		evictEnabled: spec.FileEvictEnabled,
 		maxTurns:     spec.MaxTurns,
 		wrapUpPrompt: spec.WrapUpPrompt,
 		scope:        spec.Scope,
@@ -94,24 +130,28 @@ func newContextManager(spec ExecutionSpec, model agentcore.ChatModel) *contextMa
 	}
 	if window > 0 && model != nil {
 		// Match CCR's existing 80% warning threshold while delegating the
-		// actual trim/summary mechanics to agentcore.
+		// actual trim/summary mechanics to agentgo.
 		reserve := max(window/5, 1)
+		compactors := []agentcontext.Compactor{
+			agentcontext.NewToolResultCompactor(agentcontext.ToolResultMicrocompactConfig{}),
+			agentcontext.NewLightTrimCompactor(agentcontext.LightTrimConfig{}),
+			agentcontext.NewSummaryCompactor(agentcontext.FullSummaryConfig{
+				Model:               model,
+				KeepRecentTokens:    max(window/4, 1),
+				SystemPrompt:        spec.CompressionSystemPrompt,
+				SummaryPrompt:       spec.CompressionPrompt,
+				UpdateSummaryPrompt: spec.CompressionUpdatePrompt,
+				TurnPrefixPrompt:    spec.CompressionPrefixPrompt,
+			}),
+		}
+		if spec.FileEvictEnabled {
+			compactors = append([]agentcontext.Compactor{agentcontext.NewMessageCompactor()}, compactors...)
+		}
 		manager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{
 			ContextWindow:   window,
 			ReserveTokens:   reserve,
 			CommitOnProject: true,
-			Strategies: []agentcontext.Strategy{
-				agentcontext.NewToolResultMicrocompact(agentcontext.ToolResultMicrocompactConfig{}),
-				agentcontext.NewLightTrim(agentcontext.LightTrimConfig{}),
-				agentcontext.NewFullSummary(agentcontext.FullSummaryConfig{
-					Model:               model,
-					KeepRecentTokens:    max(window/4, 1),
-					SystemPrompt:        spec.CompressionSystemPrompt,
-					SummaryPrompt:       spec.CompressionPrompt,
-					UpdateSummaryPrompt: spec.CompressionUpdatePrompt,
-					TurnPrefixPrompt:    spec.CompressionPrefixPrompt,
-				}),
-			},
+			Compactor:       agentcontext.Chain(compactors...),
 		})
 	}
 	return manager
@@ -119,9 +159,9 @@ func newContextManager(spec ExecutionSpec, model agentcore.ChatModel) *contextMa
 
 func (m *contextManager) Project(
 	ctx context.Context,
-	messages []agentcore.AgentMessage,
-) (agentcore.ContextProjection, error) {
-	input := append([]agentcore.AgentMessage(nil), messages...)
+	messages []agentgo.AgentMessage,
+) (agentgo.ContextProjection, error) {
+	input := append([]agentgo.AgentMessage(nil), messages...)
 	commit := false
 	if m.turnContext != nil {
 		if extra := m.turnContext.PullTurnContext(ctx, m.scope); len(extra) > 0 {
@@ -137,15 +177,15 @@ func (m *contextManager) Project(
 		commit = true
 	}
 	view, usage, changed := m.rewrite(input, false)
-	projection := agentcore.ContextProjection{Messages: view, Usage: usage}
+	projection := agentgo.ContextProjection{Messages: view, Usage: usage}
 	if m.engine != nil {
-		engineProjection, err := m.engine.Project(ctx, lowerContextMessages(view))
+		engineProjection, err := m.engine.Project(ctx, view)
 		if err != nil {
 			// Compression is a context optimization, not permission to discard
 			// an otherwise runnable review turn. The engine keeps its own
 			// failure circuit breaker; this turn falls back to the deterministic
 			// dedup/evict view.
-			projection.Messages = lowerContextMessages(view)
+			projection.Messages = view
 			if changed || commit {
 				projection.CommitMessages = view
 				projection.ShouldCommit = true
@@ -177,14 +217,14 @@ func (m *contextManager) Project(
 
 func (m *contextManager) Compact(
 	ctx context.Context,
-	messages []agentcore.AgentMessage,
-	_ agentcore.CompactReason,
-) (agentcore.ContextCommitResult, error) {
+	messages []agentgo.AgentMessage,
+	_ agentgo.CompactReason,
+) (agentgo.ContextCommitResult, error) {
 	view, usage, changed := m.rewrite(messages, true)
 	if m.engine != nil {
-		result, err := m.engine.Compact(ctx, lowerContextMessages(view), agentcore.CompactReasonManual)
+		result, err := m.engine.Compact(ctx, view, agentgo.CompactReasonManual)
 		if err != nil {
-			return agentcore.ContextCommitResult{}, err
+			return agentgo.ContextCommitResult{}, err
 		}
 		if result.Changed {
 			m.remember(messages, result.Messages, result.Usage, "compact", true)
@@ -192,24 +232,23 @@ func (m *contextManager) Compact(
 		}
 	}
 	m.remember(messages, view, usage, "compact", changed)
-	return agentcore.ContextCommitResult{
+	return agentgo.ContextCommitResult{
 		Messages: view,
 		Usage:    usage,
 		Changed:  changed,
-		Strategy: "review_context",
 	}, nil
 }
 
 func (m *contextManager) RecoverOverflow(
 	ctx context.Context,
-	messages []agentcore.AgentMessage,
+	messages []agentgo.AgentMessage,
 	cause error,
-) (agentcore.ContextRecoveryResult, error) {
+) (agentgo.ContextRecoveryResult, error) {
 	view, usage, changed := m.rewrite(messages, true)
 	if m.engine != nil {
-		result, err := m.engine.RecoverOverflow(ctx, lowerContextMessages(view), cause)
+		result, err := m.engine.RecoverOverflow(ctx, view, cause)
 		if err != nil {
-			return agentcore.ContextRecoveryResult{}, err
+			return agentgo.ContextRecoveryResult{}, err
 		}
 		if result.Changed {
 			m.remember(messages, result.View, result.Usage, "overflow", true)
@@ -217,22 +256,21 @@ func (m *contextManager) RecoverOverflow(
 		}
 	}
 	m.remember(messages, view, usage, "overflow", changed)
-	return agentcore.ContextRecoveryResult{
+	return agentgo.ContextRecoveryResult{
 		View:           view,
 		CommitMessages: view,
 		Usage:          usage,
 		Changed:        changed,
 		ShouldCommit:   changed,
-		Strategy:       "review_context",
 	}, nil
 }
 
-func (m *contextManager) Sync(messages []agentcore.AgentMessage) {
+func (m *contextManager) Sync(messages []agentgo.AgentMessage) {
 	usage := m.estimateUsage(messages)
 	m.remember(messages, messages, usage, "baseline", false)
 }
 
-func (m *contextManager) Usage() *agentcore.ContextUsage {
+func (m *contextManager) Usage() *agentgo.ContextUsage {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.usage == nil {
@@ -242,7 +280,7 @@ func (m *contextManager) Usage() *agentcore.ContextUsage {
 	return &cp
 }
 
-func (m *contextManager) Snapshot() *agentcore.ContextSnapshot {
+func (m *contextManager) Snapshot() *agentgo.ContextSnapshot {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.snapshot == nil {
@@ -260,24 +298,7 @@ func (m *contextManager) Snapshot() *agentcore.ContextSnapshot {
 	return &cp
 }
 
-func (m *contextManager) ConvertToLLM(messages []agentcore.AgentMessage) []agentcore.Message {
-	out := make([]agentcore.Message, 0, len(messages))
-	for _, message := range messages {
-		switch value := message.(type) {
-		case domainMessage:
-			out = append(out, wireToAgentMessage(value.value.ToLLM(value.compaction)))
-		case agentcore.Message:
-			out = append(out, value)
-		case agentcontext.ContextSummary:
-			out = append(out, agentcontext.ContextConvertToLLM(
-				[]agentcore.AgentMessage{value},
-			)...)
-		}
-	}
-	return out
-}
-
-func (m *contextManager) EstimateContext(messages []agentcore.AgentMessage) (int, int, int) {
+func (m *contextManager) EstimateContext(messages []agentgo.AgentMessage) (int, int, int) {
 	return m.estimateTokens(messages), 0, 0
 }
 
@@ -317,30 +338,20 @@ func (m *contextManager) shouldWrapUp(ctx context.Context) bool {
 }
 
 func (m *contextManager) rewrite(
-	messages []agentcore.AgentMessage,
-	force bool,
-) ([]agentcore.AgentMessage, *agentcore.ContextUsage, bool) {
+	messages []agentgo.AgentMessage,
+	_ bool,
+) ([]agentgo.AgentMessage, *agentgo.ContextUsage, bool) {
 	view, changed := normalizeContextMessages(messages)
 	if m.dedupEnabled && compactCoveredFiles(view) > 0 {
 		changed = true
 	}
 
-	limit := int(float64(m.window) * contextWarningThreshold)
-	if force {
-		limit = 0
-	}
-	if m.evictEnabled && (force || limit > 0 && countContextTokens(view) > limit) {
-		if compactUntil(view, limit) > 0 {
-			changed = true
-		}
-	}
-
 	return view, m.estimateUsage(view), changed
 }
 
-func (m *contextManager) estimateUsage(messages []agentcore.AgentMessage) *agentcore.ContextUsage {
+func (m *contextManager) estimateUsage(messages []agentgo.AgentMessage) *agentgo.ContextUsage {
 	tokens := m.estimateTokens(messages)
-	usage := &agentcore.ContextUsage{
+	usage := &agentgo.ContextUsage{
 		Tokens:        tokens,
 		ContextWindow: m.window,
 	}
@@ -350,14 +361,14 @@ func (m *contextManager) estimateUsage(messages []agentcore.AgentMessage) *agent
 	return usage
 }
 
-func (m *contextManager) estimateTokens(messages []agentcore.AgentMessage) int {
+func (m *contextManager) estimateTokens(messages []agentgo.AgentMessage) int {
 	return countContextTokens(messages)
 }
 
 func (m *contextManager) remember(
-	baseline []agentcore.AgentMessage,
-	view []agentcore.AgentMessage,
-	usage *agentcore.ContextUsage,
+	baseline []agentgo.AgentMessage,
+	view []agentgo.AgentMessage,
+	usage *agentgo.ContextUsage,
 	scope string,
 	changed bool,
 ) {
@@ -365,13 +376,12 @@ func (m *contextManager) remember(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.usage = usage
-	m.snapshot = &agentcore.ContextSnapshot{
+	m.snapshot = &agentgo.ContextSnapshot{
 		BaselineUsage:      baselineUsage,
 		Usage:              usage,
 		Scope:              scope,
 		TranscriptMessages: len(baseline),
 		ActiveMessages:     len(view),
-		LastStrategy:       "review_context",
 		LastChanged:        changed,
 	}
 	m.visibleFiles = visibleFilesIn(view)
@@ -449,7 +459,7 @@ func positiveInt(value any, fallback int) int {
 	return fallback
 }
 
-func visibleFilesIn(messages []agentcore.AgentMessage) []visibleFile {
+func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 	var out []visibleFile
 	for _, message := range messages {
 		switch value := message.(type) {
@@ -470,7 +480,7 @@ func visibleFilesIn(messages []agentcore.AgentMessage) []visibleFile {
 				path: path.Clean(file.Path), start: file.Start, end: file.End,
 				total: file.Total, source: source, label: file.Label, snapshot: file.Snapshot,
 			})
-		case agentcore.Message:
+		case agentgo.Message:
 			filePath, start, end, total, ok := msg.VisibleFileRange(value.TextContent())
 			if !ok {
 				continue
@@ -480,7 +490,7 @@ func visibleFilesIn(messages []agentcore.AgentMessage) []visibleFile {
 			if toolName := metadataString(value.Metadata, "tool_name"); toolName == msg.FileReadBaseToolName {
 				source = fileFromBaseline
 				snapshot = msg.SnapshotBaseline
-			} else if value.Role == agentcore.RoleTool || toolName == msg.FileReadToolName {
+			} else if value.Role == agentgo.RoleTool || toolName == msg.FileReadToolName {
 				source = fileFromTool
 			}
 			out = append(out, visibleFile{
@@ -492,30 +502,30 @@ func visibleFilesIn(messages []agentcore.AgentMessage) []visibleFile {
 	return out
 }
 
-func wrapDomainMessages(messages []msg.Msg) []agentcore.AgentMessage {
-	out := make([]agentcore.AgentMessage, len(messages))
+func wrapDomainMessages(messages []msg.Msg) []agentgo.AgentMessage {
+	out := make([]agentgo.AgentMessage, len(messages))
 	for i, message := range messages {
 		out[i] = domainMessage{value: message, timestamp: time.Now(), compaction: msg.CompactionNone}
 	}
 	return out
 }
 
-func normalizeContextMessages(messages []agentcore.AgentMessage) ([]agentcore.AgentMessage, bool) {
+func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentMessage, bool) {
 	invocations := toolInvocations(messages)
-	out := make([]agentcore.AgentMessage, 0, len(messages))
+	out := make([]agentgo.AgentMessage, 0, len(messages))
 	changed := false
 	for _, message := range messages {
 		switch value := message.(type) {
 		case domainMessage:
 			cloned := msg.CloneAll([]msg.Msg{value.value})
 			out = append(out, domainMessage{value: cloned[0], timestamp: value.timestamp, compaction: value.compaction})
-		case agentcore.Message:
+		case agentgo.Message:
 			changed = true
-			wire := toLLMMessages([]agentcore.Message{value})
+			wire := toLLMMessages([]agentgo.Message{value})
 			if len(wire) == 0 {
 				continue
 			}
-			if value.Role == agentcore.RoleTool {
+			if value.Role == agentgo.RoleTool {
 				toolCallID := metadataString(value.Metadata, "tool_call_id")
 				invocation := invocations[toolCallID]
 				if invocation.name == "" {
@@ -542,28 +552,7 @@ func normalizeContextMessages(messages []agentcore.AgentMessage) ([]agentcore.Ag
 	return out, changed
 }
 
-func lowerContextMessages(messages []agentcore.AgentMessage) []agentcore.AgentMessage {
-	out := make([]agentcore.AgentMessage, 0, len(messages))
-	for _, message := range messages {
-		value, ok := message.(domainMessage)
-		if !ok {
-			out = append(out, message)
-			continue
-		}
-		lowered := wireToAgentMessage(value.value.ToLLM(value.compaction))
-		lowered.Timestamp = value.timestamp
-		if result, ok := value.value.(msg.ToolResultMsg); ok && lowered.Role == agentcore.RoleTool {
-			if lowered.Metadata == nil {
-				lowered.Metadata = make(map[string]any)
-			}
-			lowered.Metadata["tool_name"] = result.ToolName()
-		}
-		out = append(out, lowered)
-	}
-	return out
-}
-
-func countContextTokens(messages []agentcore.AgentMessage) int {
+func countContextTokens(messages []agentgo.AgentMessage) int {
 	var total int
 	for _, message := range messages {
 		total += llm.CountTokens(message.TextContent())
@@ -571,7 +560,7 @@ func countContextTokens(messages []agentcore.AgentMessage) int {
 	return total
 }
 
-func compactCoveredFiles(messages []agentcore.AgentMessage) (compacted int) {
+func compactCoveredFiles(messages []agentgo.AgentMessage) (compacted int) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		newer, ok := messages[i].(domainMessage)
 		if !ok || newer.compaction >= msg.CompactionReference {
@@ -599,37 +588,7 @@ func compactCoveredFiles(messages []agentcore.AgentMessage) (compacted int) {
 	return compacted
 }
 
-// compactUntil raises message-owned projections monotonically, from the tail
-// backward. Stable prefixes stay byte-identical for provider cache reuse; a
-// committed projection never expands again within the execution.
-func compactUntil(messages []agentcore.AgentMessage, limit int) (compacted int) {
-	for _, level := range []msg.CompactionLevel{msg.CompactionCondensed, msg.CompactionReference} {
-		for i := len(messages) - 1; i >= 0; i-- {
-			if limit > 0 && countContextTokens(messages) <= limit {
-				return compacted
-			}
-			value, ok := messages[i].(domainMessage)
-			if !ok || value.compaction >= level {
-				continue
-			}
-			candidate, ok := value.value.(msg.Compactable)
-			if !ok || candidate.MaxCompaction() < level {
-				continue
-			}
-			before := llm.CountTokens(value.TextContent())
-			value.compaction = level
-			after := llm.CountTokens(value.TextContent())
-			if after >= before {
-				continue
-			}
-			messages[i] = value
-			compacted++
-		}
-	}
-	return compacted
-}
-
-func appendVisibleFileInventory(messages []agentcore.AgentMessage) []agentcore.AgentMessage {
+func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 	files := visibleFilesIn(messages)
 	if len(files) == 0 {
 		return messages
@@ -653,14 +612,14 @@ type toolInvocation struct {
 	args map[string]any
 }
 
-func toolInvocations(messages []agentcore.AgentMessage) map[string]toolInvocation {
+func toolInvocations(messages []agentgo.AgentMessage) map[string]toolInvocation {
 	out := make(map[string]toolInvocation)
 	for _, message := range messages {
 		var calls []llm.ToolCall
 		switch value := message.(type) {
 		case domainMessage:
 			calls = value.value.ToLLM(value.compaction).ToolCalls
-		case agentcore.Message:
+		case agentgo.Message:
 			for _, call := range value.ToolCalls() {
 				calls = append(calls, llm.ToolCall{
 					ID: call.ID, Type: "function",
