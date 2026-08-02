@@ -463,10 +463,12 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 	assistant := wireToAgentMessage(llm.NewToolCallMessage("", []llm.ToolCall{{
 		ID: "search-1", Type: "function",
-		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"search_text":"NewExecution"}`},
+		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"search_text":"NewExecution"}]}`},
 	}}))
 	result := wireToAgentMessage(llm.NewToolResultMessage(
-		"search-1", "File: internal/harness/execution.go\nMatch lines: 1\n10|func NewExecution\n",
+		"search-1", tool.EncodeCodeSearchResults([]string{
+			"File: internal/harness/execution.go\nMatch lines: 1\n10|func NewExecution\n",
+		}),
 	))
 	result.Metadata = map[string]any{"tool_call_id": "search-1"}
 
@@ -475,8 +477,8 @@ func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 		t.Fatalf("normalized=%d changed=%t", len(normalized), changed)
 	}
 	domain := normalized[1].(domainMessage)
-	search, ok := domain.value.(*msg.SearchResult)
-	if !ok || search.Query != "NewExecution" {
+	search, ok := domain.value.(*msg.SearchBatch)
+	if !ok || len(search.Results()) != 1 || search.Results()[0].Query != "NewExecution" {
 		t.Fatalf("promoted search = %#v", domain.value)
 	}
 }

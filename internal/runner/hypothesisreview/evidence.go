@@ -69,7 +69,7 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 	case tool.FileRead:
 		return fileReadReceipts(base, "source", request.Args, result)
 	case tool.CodeSearch:
-		base.Kind, base.Ref = "search", stringValue(request.Args, "search_text")
+		return codeSearchReceipts(base, request.Args, result)
 	case tool.FileFind:
 		base.Kind, base.Ref = "discovery", stringValue(request.Args, "query_name")
 	default:
@@ -79,6 +79,34 @@ func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 		return nil
 	}
 	return []EvidenceReceipt{base}
+}
+
+func codeSearchReceipts(
+	base EvidenceReceipt,
+	args map[string]any,
+	result string,
+) []EvidenceReceipt {
+	requests, err := tool.ParseCodeSearchRequests(args)
+	if err != nil {
+		return nil
+	}
+	parts, ok := tool.DecodeCodeSearchResults(result)
+	if !ok || len(parts) != len(requests) {
+		return nil
+	}
+	var receipts []EvidenceReceipt
+	for i, request := range requests {
+		part := strings.TrimSpace(parts[i])
+		if request.SearchText == "" || part == "" || strings.HasPrefix(part, "Error:") ||
+			strings.HasPrefix(part, "code_search timed out") {
+			continue
+		}
+		receipt := base
+		receipt.Kind = "search"
+		receipt.Ref = request.SearchText
+		receipts = append(receipts, receipt)
+	}
+	return receipts
 }
 
 func fileReadReceipts(

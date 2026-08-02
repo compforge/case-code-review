@@ -14,6 +14,10 @@ import (
 // an unbounded read without executing the provider again.
 const FileReadMaxLines = 500
 
+// FileReadMaxBatchLines bounds source lines returned by one batch. Without a
+// shared budget, a valid 16-member call could inject 8,000 lines in one turn.
+const FileReadMaxBatchLines = 2000
+
 // FileReadMaxBatch bounds fan-out from one model response. Commit/range reads
 // may spawn git subprocesses; the model should issue another batch if needed.
 const FileReadMaxBatch = 16
@@ -165,13 +169,14 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 	if err != nil {
 		return "Error: " + err.Error(), nil
 	}
+	memberLimit := min(FileReadMaxLines, max(1, FileReadMaxBatchLines/len(requests)))
 	results := make([]string, len(requests))
 	var wg sync.WaitGroup
 	for i, request := range requests {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := p.executeOne(ctx, request)
+			result, err := p.executeOne(ctx, request, memberLimit)
 			if err != nil {
 				result = "Error: " + err.Error()
 			}
@@ -182,7 +187,11 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 	return EncodeFileReadResults(results), nil
 }
 
-func (p *FileReadProvider) executeOne(ctx context.Context, request FileReadRequest) (string, error) {
+func (p *FileReadProvider) executeOne(
+	ctx context.Context,
+	request FileReadRequest,
+	memberLimit int,
+) (string, error) {
 	filePath := request.FilePath
 	if filePath == "" {
 		return "Error: file_path is required", nil
@@ -200,7 +209,7 @@ func (p *FileReadProvider) executeOne(ctx context.Context, request FileReadReque
 		endLine = 0
 	}
 
-	maxLines := FileReadMaxLines
+	maxLines := memberLimit
 	if endLine > 0 {
 		requested := endLine - startLine + 1
 		if requested <= 0 {
@@ -244,7 +253,7 @@ func (p *FileReadProvider) executeOne(ctx context.Context, request FileReadReque
 		effectiveEnd = endLine
 	}
 	fullRange := effectiveEnd - (startLine - 1)
-	truncated := fullRange > FileReadMaxLines
+	truncated := fullRange > maxLines
 
 	displayEnd := startLine - 1 + len(lines)
 
@@ -260,7 +269,11 @@ func (p *FileReadProvider) executeOne(ctx context.Context, request FileReadReque
 		sb.WriteString(fmt.Sprintf("%d|%s\n", startLine+i, line))
 	}
 	if truncated {
-		sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", FileReadMaxLines))
+		if memberLimit < FileReadMaxLines {
+			sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines to keep this batch within the %d-line output budget. Please narrow your line range.\n", memberLimit, FileReadMaxBatchLines))
+		} else {
+			sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", FileReadMaxLines))
+		}
 	}
 	return sb.String(), nil
 }

@@ -479,6 +479,34 @@ func TestExecuteBatchPreservesOrderAndItemErrors(t *testing.T) {
 	}
 }
 
+func TestExecuteBatchSharesAggregateLineBudget(t *testing.T) {
+	dir := t.TempDir()
+	reads := make([]any, 5)
+	for i := range reads {
+		name := fmt.Sprintf("large-%d.txt", i)
+		writeTestFile(t, dir, name, strings.Repeat("x\n", 1000))
+		reads[i] = map[string]any{"file_path": name}
+	}
+	p := NewFileRead(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+
+	out, err := p.Execute(context.Background(), map[string]any{"reads": reads})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeFileReadResults(out)
+	if !ok || len(results) != len(reads) {
+		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
+	}
+	for i, result := range results {
+		if got := strings.Count(result, "|x\n"); got != 400 {
+			t.Fatalf("result %d source lines = %d, want 400", i, got)
+		}
+		if !strings.Contains(result, "within the 2000-line output budget") {
+			t.Fatalf("result %d missing aggregate budget note: %q", i, result)
+		}
+	}
+}
+
 func TestExecuteRejectsFormerSingularShape(t *testing.T) {
 	p := NewFileRead(&FileReader{RepoDir: t.TempDir(), Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{"file_path": "a.txt"})

@@ -39,7 +39,9 @@ func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
 		Runner:  gitcmd.New(0),
 	}
 	provider := tool.NewCodeSearch(reader).WithDefinitionSource(CodeSearchDefinitions(reader))
-	result, err := provider.Execute(context.Background(), map[string]any{"search_text": "HandleName"})
+	result, err := provider.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{"search_text": "HandleName"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,6 +12,7 @@ from ccr_trajectory import (
     REVIEW1,
     REVIEW2,
     ToolFailureEvaluator,
+    code_search_stats,
     file_read_fragmentation,
     file_read_stats,
     prompt_file_read_overlap,
@@ -379,6 +380,62 @@ class CCRTrajectoryTest(unittest.TestCase):
         )
         self.assertEqual(file_read_fragmentation(trajectory)["calls"], 2)
         self.assertEqual(prompt_file_read_overlap(trajectory)["new_context"], 2)
+
+    def test_batch_code_search_counts_queries_and_empty_members(self):
+        result = (
+            "===== CODE_SEARCH RESULT 1/2 =====\n"
+            "File: a.go\nMatch lines: 1\n10|func Alpha()\n"
+            "===== CODE_SEARCH RESULT 2/2 =====\n"
+            "No matches found\n"
+        )
+        root = {
+            "session_id": "search-batch",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-batch",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search-1",
+                                    "function_name": "code_search",
+                                    "arguments": {
+                                        "searches": [
+                                            {"search_text": "Alpha"},
+                                            {"search_text": "Missing"},
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {"source_call_id": "search-1", "content": result}
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            code_search_stats(trajectory),
+            {
+                "calls": 1,
+                "requests": 2,
+                "rounds": 1,
+                "average_batch": 2.0,
+                "max_batch": 2,
+                "calls_per_round": 1.0,
+            },
+        )
+        evaluation = EmptySearchEvaluator().evaluate(trajectory)
+        self.assertEqual(evaluation.score, 0.5)
+        self.assertEqual(evaluation.step_ids, ("1:tool:1:2",))
 
 
 if __name__ == "__main__":

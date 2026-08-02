@@ -400,13 +400,78 @@ func TestGitGrep_NonGitDirectoryNoMatch(t *testing.T) {
 func TestCodeSearch_RejectsTraversalPathspecs(t *testing.T) {
 	p := &CodeSearchProvider{FileReader: &FileReader{RepoDir: t.TempDir()}}
 	out, err := p.Execute(context.Background(), map[string]any{
-		"search_text":   "secret",
-		"file_patterns": []any{"../outside/*.go"},
+		"searches": []any{map[string]any{
+			"search_text":   "secret",
+			"file_patterns": []any{"../outside/*.go"},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "must not contain ..") {
 		t.Fatalf("traversal pathspec must be rejected, got: %q", out)
+	}
+}
+
+func TestCodeSearchBatchPreservesOrderAndItemErrors(t *testing.T) {
+	dir := setupTestRepo(t)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{
+			map[string]any{"search_text": "Util"},
+			map[string]any{"search_text": ""},
+			map[string]any{"search_text": "Hello"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != 3 {
+		t.Fatalf("batch result = %q, parsed=%d ok=%t", out, len(results), ok)
+	}
+	if !strings.Contains(results[0], "pkg/util.go") ||
+		!strings.HasPrefix(results[1], "Error: search_text is blank") ||
+		!strings.Contains(results[2], "hello.go") {
+		t.Fatalf("batch order/error isolation off: %#v", results)
+	}
+}
+
+func TestCodeSearchBatchSharesAggregateMatchBudget(t *testing.T) {
+	dir := setupTestRepo(t)
+	content := strings.Repeat("alpha beta gamma\n", 100)
+	if err := os.WriteFile(filepath.Join(dir, "many.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{
+			map[string]any{"search_text": "alpha"},
+			map[string]any{"search_text": "beta"},
+			map[string]any{"search_text": "gamma"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != 3 {
+		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
+	}
+	for i, result := range results {
+		if got := strings.Count(result, "|alpha beta gamma"); got != 66 {
+			t.Fatalf("result %d matches = %d, want 66", i, got)
+		}
+		if !strings.Contains(result, "first 66 results") {
+			t.Fatalf("result %d missing shared-budget note: %q", i, result)
+		}
+	}
+}
+
+func TestCodeSearchRejectsFormerSingularShape(t *testing.T) {
+	p := NewCodeSearch(&FileReader{RepoDir: t.TempDir(), Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{"search_text": "Hello"})
+	if err != nil || !strings.Contains(out, "searches must be a non-empty array") {
+		t.Fatalf("singular args = %q, %v; want batch-only contract error", out, err)
 	}
 }

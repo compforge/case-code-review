@@ -196,7 +196,8 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
 小范围可合并出的理论最少读取数；这些是诊断项，不参与综合分，避免增加新
-Evaluator 时悄悄改变既有分数基线。确定性结果统一产生
+Evaluator 时悄悄改变既有分数基线。`code_search` 同样区分 tool call、批内 query 和模型轮次，报告
+average/max batch；空搜索按 query 而不是按整次批量调用评分。确定性结果统一产生
 0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
 直接解析 ATIF 私有字段。
 

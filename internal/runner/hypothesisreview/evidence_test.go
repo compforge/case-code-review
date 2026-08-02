@@ -57,3 +57,30 @@ func TestReviewHandlerReceiptsEachSuccessfulBatchMember(t *testing.T) {
 		t.Fatalf("unexpected receipts: %+v", receipts)
 	}
 }
+
+func TestReviewHandlerReceiptsEachSuccessfulSearch(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := tool.NewRegistry()
+	registry.Register(tool.NewCodeSearch(&tool.FileReader{RepoDir: dir, Mode: tool.ModeWorkspace}))
+	ledger := &EvidenceLedger{}
+	handler := &ReviewHandler{Evidence: ledger, Tools: registry}
+	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
+		Tool: tool.CodeSearch,
+		Call: llm.ToolCall{ID: "call-search"},
+		Args: map[string]any{"searches": []any{
+			map[string]any{"search_text": "package a"},
+			map[string]any{"search_text": ""},
+			map[string]any{"search_text": "missing"},
+		}},
+	})
+	if !handled || checkpoint.Data == "" {
+		t.Fatalf("unexpected tool result: handled=%v checkpoint=%+v", handled, checkpoint)
+	}
+	receipts := ledger.Receipts()
+	if len(receipts) != 2 || receipts[0].Ref != "missing" || receipts[1].Ref != "package a" {
+		t.Fatalf("unexpected search receipts: %+v", receipts)
+	}
+}
