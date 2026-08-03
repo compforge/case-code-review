@@ -22,9 +22,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v7 adds projected
-// Context inventory and authoritative Execution terminal facts.
-const SchemaVersion = 7
+// protocol instead of guessing old record semantics. v8 adds monotonic
+// run-relative timing and authoritative Execution start facts.
+const SchemaVersion = 8
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -48,6 +48,7 @@ type jsonlWriter struct {
 	file       *os.File
 	writer     *bufio.Writer
 	lastUUID   string // tracks chain of records via parentUuid
+	startTime  time.Time
 }
 
 // newJSONLWriter creates and opens a new JSONL writer for the given session.
@@ -143,8 +144,18 @@ func (jw *jsonlWriter) writeRecordLocked(rec map[string]any) {
 	jw.writer.WriteByte('\n')
 }
 
+func (jw *jsonlWriter) elapsedMilliseconds() int64 {
+	if jw.startTime.IsZero() {
+		return 0
+	}
+	return time.Since(jw.startTime).Milliseconds()
+}
+
 // WriteSessionStart writes the initial session_start record.
 func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
+	// WriteSessionStart runs before the Session is shared with workers; the
+	// monotonic zero point remains immutable for the writer's lifetime.
+	jw.startTime = startTime
 	uuid := uuid.V4()
 	rec := map[string]any{
 		"uuid":           uuid,
@@ -152,6 +163,7 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 		"type":           "session_start",
 		"sessionId":      jw.sessionID,
 		"timestamp":      startTime.UTC().Format(time.RFC3339),
+		"elapsed_ms":     int64(0),
 		"schema_version": SchemaVersion,
 		"cwd":            jw.repoDir,
 		"gitBranch":      jw.gitBranch,
@@ -196,6 +208,29 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 	return uuid
 }
 
+// WriteExecutionStart persists the point at which Harness starts driving one
+// AgentGo loop. It precedes context projection and model requests.
+func (jw *jsonlWriter) WriteExecutionStart(ss *ScopeSession, start ExecutionStart) string {
+	uuid := uuid.V4()
+
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	rec := map[string]any{
+		"uuid":         uuid,
+		"parentUuid":   jw.lastUUID,
+		"type":         "execution_start",
+		"sessionId":    jw.sessionID,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":   jw.elapsedMilliseconds(),
+		"execution_id": start.ID,
+		"taskType":     string(start.TaskType),
+	}
+	addScopeFields(rec, ss)
+	jw.writeRecordLocked(rec)
+	jw.lastUUID = uuid
+	return uuid
+}
+
 // addScopeFields stamps the scope identity onto a per-record map: scope_id/kind/
 // scope/paths identify the review scope (a Unit, run-level Review, or scan pass); filePath
 // is the representative member path, kept for comment anchoring and file rollups.
@@ -219,6 +254,7 @@ func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, executionID string, tas
 		"type":       "llm_request",
 		"sessionId":  jw.sessionID,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms": jw.elapsedMilliseconds(),
 		"taskType":   string(taskType),
 		"request_no": requestNo,
 		"messages":   messages,
@@ -243,6 +279,7 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, ta
 		"type":        "llm_response",
 		"sessionId":   jw.sessionID,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"taskType":    string(taskType),
 		"model":       model,
 		"content":     content,
@@ -280,6 +317,7 @@ func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskT
 		"type":        "llm_error",
 		"sessionId":   jw.sessionID,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"taskType":    string(taskType),
 		"request_no":  requestNo,
 		"error":       errorMsg,
@@ -304,6 +342,7 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskT
 		"type":        "tool_call",
 		"sessionId":   jw.sessionID,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"taskType":    string(taskType),
 		"tool_name":   toolName,
 		"arguments":   arguments,
@@ -337,6 +376,7 @@ func (jw *jsonlWriter) WriteContextProjected(ss *ScopeSession, executionID strin
 		"type":          "context_projected",
 		"sessionId":     jw.sessionID,
 		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":    jw.elapsedMilliseconds(),
 		"execution_id":  executionID,
 		"taskType":      string(taskType),
 		"projection_no": projectionNo,
@@ -361,6 +401,7 @@ func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID stri
 		"type":            "context_compacted",
 		"sessionId":       jw.sessionID,
 		"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":      jw.elapsedMilliseconds(),
 		"execution_id":    executionID,
 		"taskType":        string(taskType),
 		"reason":          compaction.Reason,
@@ -397,6 +438,7 @@ func (jw *jsonlWriter) WriteExecutionEnd(ss *ScopeSession, end ExecutionEnd) str
 		"type":         "execution_end",
 		"sessionId":    jw.sessionID,
 		"timestamp":    time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":   jw.elapsedMilliseconds(),
 		"execution_id": end.ID,
 		"taskType":     string(end.TaskType),
 		"outcome":      end.Outcome,
@@ -427,6 +469,7 @@ func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
 		"type":        "debrief",
 		"sessionId":   jw.sessionID,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"outcome":     d.Outcome,
 		"formed":      d.Formed,
 		"fragments":   d.Fragments,
@@ -488,6 +531,7 @@ func (jw *jsonlWriter) WriteBoardPost(from string, turn, level int, paths, symbo
 		"type":       "board_post",
 		"sessionId":  jw.sessionID,
 		"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms": jw.elapsedMilliseconds(),
 		"from":       from,
 		"turn":       turn,
 		"level":      level,
@@ -511,6 +555,7 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 		"type":        "finding",
 		"sessionId":   jw.sessionID,
 		"timestamp":   time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"path":        f.Path,
 		"start_line":  f.StartLine,
 		"end_line":    f.EndLine,
@@ -522,6 +567,12 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 	}
 	if f.HypothesisID != "" {
 		rec["hypothesis_id"] = f.HypothesisID
+	}
+	if f.OriginUnit != "" {
+		rec["origin_unit"] = f.OriginUnit
+	}
+	if f.LaneID != "" {
+		rec["lane_id"] = f.LaneID
 	}
 	if f.Alias != "" {
 		rec["alias"] = f.Alias
@@ -552,6 +603,7 @@ func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any) string {
 		"artifact_kind": kind,
 		"sessionId":     jw.sessionID,
 		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":    jw.elapsedMilliseconds(),
 		"data":          data,
 	}
 	jw.writeRecordLocked(rec)
@@ -578,6 +630,7 @@ func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []s
 		"type":             "session_end",
 		"sessionId":        jw.sessionID,
 		"timestamp":        time.Now().UTC().Format(time.RFC3339),
+		"elapsed_ms":       jw.elapsedMilliseconds(),
 		"files_reviewed":   filesReviewed,
 		"duration_seconds": duration.Seconds(),
 		"llm_failures":     llmFailures,

@@ -131,7 +131,7 @@ func TestWriteFindings(t *testing.T) {
 	repoDir := t.TempDir()
 	sh := New(repoDir, "main", "test-model", SessionOptions{GitHead: "abc123def456"})
 	sh.WriteFindings([]Finding{
-		{HypothesisID: "h-123", Path: "a.go", StartLine: 3, EndLine: 5, SymbolID: "a.go::F", Fingerprint: "0123456789ab", Alias: "m1", Content: "off-by-one"},
+		{HypothesisID: "h-123", OriginUnit: "u-1", LaneID: "l-1", Path: "a.go", StartLine: 3, EndLine: 5, SymbolID: "a.go::F", Fingerprint: "0123456789ab", Alias: "m1", Content: "off-by-one"},
 		{Path: "b.go", StartLine: 9, EndLine: 9, Fingerprint: "ba9876543210", Content: "nil deref"},
 	})
 	sh.WriteArtifact("review_assessment", map[string]any{
@@ -165,8 +165,11 @@ func TestWriteFindings(t *testing.T) {
 	f := findings[0]
 	if f["path"] != "a.go" || f["symbol_id"] != "a.go::F" || f["fingerprint"] != "0123456789ab" ||
 		f["start_line"].(float64) != 3 || f["content"] != "off-by-one" || f["alias"] != "m1" ||
-		f["hypothesis_id"] != "h-123" {
+		f["hypothesis_id"] != "h-123" || f["origin_unit"] != "u-1" || f["lane_id"] != "l-1" {
 		t.Fatalf("finding record off: %v", f)
+	}
+	if _, ok := f["elapsed_ms"].(float64); !ok {
+		t.Fatalf("finding elapsed_ms missing: %v", f)
 	}
 	if len(artifacts) != 2 || artifacts[0]["artifact_kind"] != "review_assessment" ||
 		artifacts[1]["artifact_kind"] != "trial_decision" ||

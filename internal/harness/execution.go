@@ -83,6 +83,8 @@ type ExecutionSpec struct {
 // ExecutionResult contains runtime facts only. Unit coverage and Finding
 // judgment remain Runner responsibilities.
 type ExecutionResult struct {
+	ID         string
+	Duration   time.Duration
 	State      string
 	Reason     string
 	Usage      llm.UsageInfo
@@ -203,6 +205,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	}
 
 	startedAt := time.Now()
+	e.recorder.startExecution()
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
@@ -241,11 +244,13 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		}
 	}
 	result, err := e.finish(ctx)
+	result.ID = e.id
+	result.Duration = time.Since(startedAt)
 	taskType := e.spec.TaskType
 	if taskType == "" {
 		taskType = session.MainTask
 	}
-	e.recorder.finishExecution(taskType, result, time.Since(startedAt))
+	e.recorder.finishExecution(taskType, result, result.Duration)
 	return result, err
 }
 

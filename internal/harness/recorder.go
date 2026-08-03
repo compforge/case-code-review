@@ -72,6 +72,15 @@ func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem) 
 	r.session.WriteContextProjected(r.scope, r.executionID, r.taskType, projectionNo, items)
 }
 
+func (r *executionRecorder) startExecution() {
+	if r.session == nil {
+		return
+	}
+	r.session.WriteExecutionStart(r.scope, session.ExecutionStart{
+		ID: r.executionID, TaskType: r.taskType,
+	})
+}
+
 func (r *executionRecorder) beginModel(
 	taskType session.TaskType,
 	messages []llm.Message,
