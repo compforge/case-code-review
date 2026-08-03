@@ -101,6 +101,31 @@ func helper() {}
 	}
 }
 
+func TestJavaFileOutlinePreservesNestedOwners(t *testing.T) {
+	source := Source{Path: "Nested.java", Content: `class Outer {
+  class Inner {
+    int value;
+    void run() {}
+  }
+}
+`}
+	outline, err := NewAnalyzer("").FileOutline(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := outline.Render()
+	for _, want := range []string{
+		"- class class Outer",
+		"  - class class Inner",
+		"    - field int value",
+		"    - method void run()",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("nested Java outline missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestJSONFileOutlineKeepsKeysAndCompactsLongStrings(t *testing.T) {
 	outline, err := NewAnalyzer("").FileOutline(context.Background(), Source{
 		Path:    "config.json",

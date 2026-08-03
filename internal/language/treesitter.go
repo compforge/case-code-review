@@ -138,24 +138,45 @@ func newTreeSitterDefinition(source Source, name string, kind Kind, startByte, e
 }
 
 func assignTreeSitterOwners(path string, definitions []treeSitterDefinition) {
+	localNames := make([]string, len(definitions))
+	parents := make([]int, len(definitions))
 	for i := range definitions {
-		if definitions[i].Kind != KindMethod {
+		localNames[i] = definitions[i].Name
+		parents[i] = -1
+		if definitions[i].Callable() && definitions[i].Kind != KindMethod {
 			continue
 		}
 		owner := -1
 		for j := range definitions {
-			if i == j || definitions[j].Callable() || definitions[j].startByte > definitions[i].startByte || definitions[i].endByte > definitions[j].endByte {
+			if i == j || definitions[j].Callable() ||
+				definitions[j].startByte > definitions[i].startByte ||
+				definitions[i].endByte > definitions[j].endByte ||
+				(definitions[j].startByte == definitions[i].startByte && definitions[j].endByte == definitions[i].endByte) {
 				continue
 			}
 			if owner < 0 || definitions[j].endByte-definitions[j].startByte < definitions[owner].endByte-definitions[owner].startByte {
 				owner = j
 			}
 		}
-		if owner >= 0 {
-			definitions[i].Owner = definitions[owner].Name
-			definitions[i].Name = definitions[owner].Name + "." + definitions[i].Name
-			definitions[i].SymbolID = SymbolID(path, "", definitions[i].Name)
+		parents[i] = owner
+	}
+
+	qualified := make([]bool, len(definitions))
+	var qualify func(int)
+	qualify = func(index int) {
+		if qualified[index] {
+			return
 		}
+		if parent := parents[index]; parent >= 0 {
+			qualify(parent)
+			definitions[index].Owner = definitions[parent].Name
+			definitions[index].Name = definitions[parent].Name + "." + localNames[index]
+			definitions[index].SymbolID = SymbolID(path, "", definitions[index].Name)
+		}
+		qualified[index] = true
+	}
+	for i := range definitions {
+		qualify(i)
 	}
 }
 
