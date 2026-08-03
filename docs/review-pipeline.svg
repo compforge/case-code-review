@@ -135,12 +135,12 @@
 
   <rect x="340" y="420" width="460" height="105" rx="18" fill="#e8f4f6" class="soft-box"/>
   <text x="570" y="460" text-anchor="middle" class="label">Language Knowledge</text>
-  <text x="570" y="490" text-anchor="middle" class="small">syntax · symbols · calls · references</text>
-  <text x="570" y="515" text-anchor="middle" class="tiny">documentation and contract extraction</text>
+  <text x="570" y="490" text-anchor="middle" class="small">outline · symbols · calls · references</text>
+  <text x="570" y="515" text-anchor="middle" class="tiny">identity · proximity · authored bindings</text>
 
   <rect x="862" y="420" width="460" height="105" rx="18" fill="#e8f4f6" class="soft-box"/>
   <text x="1092" y="460" text-anchor="middle" class="label">Project Knowledge</text>
   <text x="1092" y="490" text-anchor="middle" class="small">Repository · Component · FileRole</text>
-  <text x="1092" y="515" text-anchor="middle" class="tiny">entrypoint · handler · manifest · lock</text>
+  <text x="1092" y="515" text-anchor="middle" class="tiny">spec · case · link · rule · doc</text>
   </g>
 </svg>

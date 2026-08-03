@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> 围绕行为 Unit、两次 Agent Review、确定性 Trial 和 Language / Project Knowledge 构建的 Agentic Code Review CLI。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
+> 由行为 Unit、两次 Agent Review、确定性 Trial 和 Language / Project Knowledge 组成的证据化 Agentic Review Pipeline。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
 
 ## 理念
 
@@ -9,8 +9,8 @@ Code Review 不是“把每个改动文件分别交给模型”。文件边界�
 ccr 围绕三个原则构建：
 
 1. **评审行为，而不是文件。** 一次评审应覆盖能够解释改动及其影响的最小作用域，ccr 将它称为 **Unit**。
-2. **把发现与验证分开。** 发现一个可能的问题是开放式任务；验证它是否真实、是否由当前改动造成、是否值得行动、是否重复则更收敛。不同任务应由不同 agent loop 承担。
-3. **提供相关 Knowledge，而不是最大 Context。** Language 结构和 Project 结构共同决定哪些改动应放在一起，以及哪些邻近证据值得交给模型。
+2. **用 Pipeline 分开发现与验证。** 发现一个可能的问题是开放式任务；验证它是否真实、是否由当前改动造成、是否值得行动、是否重复则更收敛。不同任务应由不同阶段和 agent loop 承担。
+3. **提供相关 Knowledge，而不是最大 Context。** Language Knowledge 解释代码结构，并把作者声明绑定到代码；Project Knowledge 同时解释项目结构以及代码必须守住的契约和业务场景。
 
 ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现需求时容易忽略的具体问题，例如 caller 假设被破坏、边界处理、错误路径和 API 误用。语法问题仍归 lint；隐含业务约束仍需要显式需求背景或作者提供的 Knowledge。
 
@@ -40,16 +40,18 @@ Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提
 
 这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；**Review 3 是 Trial 的别名**，不是第三个 agent loop，而是用确定性规则决定是否交付。三个阶段也借“吾日三省吾身”作记忆点：结论在交付前要经过反复审视。
 
+三个阶段组成增量 Pipeline，而不是前一阶段全部结束后才启动下一阶段。成熟 Hypothesis 可以在其它 Unit 仍调查时进入 Review 2 和 Trial，已经完成的结果不会因后续超时丢失；简单改动若已无 material lead，也可以立即结束，预算只是上限而不是目标耗时。
+
 ### Language Knowledge 与 Project Knowledge
 
 两类 Knowledge 共同支持 Unit formation 和两个评审阶段：
 
 | Knowledge | 提供什么 |
 |---|---|
-| **Language Knowledge** | 语法感知的 symbol、span、definition、reference、call、import、源码文档，以及作者契约的抽取与匹配 |
-| **Project Knowledge** | Repository / Component 边界、文件角色、entrypoint、handler、manifest、lock 和其它项目约定 |
+| **Language Knowledge** | 语法感知的 symbol、span、outline、definition、reference、call、import、symbol/file proximity（关系接近度），以及将作者声明绑定到代码的语法和稳定身份 |
+| **Project Knowledge** | Repository / Component / FileRole / entrypoint 等结构知识，以及 `spec`、`case`、`link`、`rule`、`doc` 等作者声明的 Biz Knowledge |
 
-spec、case、rule、link、源码文档等上下文不全是“语言知识”，但它们的抽取和定位强依赖语言语法分析。[`spec-case`](https://github.com/qiankunli/spec-case) 仍是可选的契约编写与分发方式，而不再是 ccr 的产品前提；没有采用它的仓库也能使用 ccr。
+Language 拥有如何抽取和绑定，Project Knowledge 拥有这些声明在当前项目里表达的业务含义。`spec / case / link / rule / doc` 正是 case-code-review 名字中 “case” 的来源。[`spec-case`](https://github.com/qiankunli/spec-case) 仍是可选的契约编写与分发方式；没有采用它的仓库也能使用 ccr。
 
 设计展开：[`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness 与可观测性`](docs/harness.md)
 

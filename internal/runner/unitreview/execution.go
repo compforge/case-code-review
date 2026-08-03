@@ -23,7 +23,7 @@ const (
 	maxBulletinsPerExecution = 3
 	maxBulletinTextRunes     = 300
 	// Planning is a finite checklist, not permission to consume the full
-	// provider turn ceiling. Leave one following turn for final submission.
+	// provider turn ceiling. The remaining turns are reserved for a final flush.
 	maxInvestigationTurns = 12
 )
 
@@ -151,8 +151,7 @@ func (e *Executor) Run(
 		WrapUpPrompt:            e.wrapUpPrompt,
 		WrapUpAfterTurns:        maxInvestigationTurns,
 		WrapUpAllowedTools:      []string{SubmitHypotheses.Name()},
-		CompletionTool:          SubmitHypotheses.Name(),
-		CompletionPrompt:        "The Unit Review is not complete until you call submit_hypotheses exactly once. Submit an empty hypotheses array when no material issue remains.",
+		NaturalCompletion:       true,
 		CompressionSystemPrompt: e.compressionSystemPrompt,
 		CompressionPrompt:       e.compressionPrompt,
 		CompressionUpdatePrompt: e.compressionPrompt,
@@ -175,7 +174,7 @@ func (e *Executor) Run(
 		e.RecordWarning(
 			"unit_incomplete",
 			scope.Path(),
-			fmt.Sprintf("review ended without submit_hypotheses (%s); verdict is partial — do not read as clean", reason),
+			fmt.Sprintf("unit review ended incomplete (%s); accepted hypotheses were retained — do not read as clean", reason),
 		)
 	}
 	return Outcome{

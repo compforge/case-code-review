@@ -73,11 +73,11 @@ system prompt 要求跟随多条 plausible path，独立 Plan 又先生成一批
 当前一个 Unit 最多 30 轮，但没有“一个 lead 可以花多少轮”“何时必须停止新增调查”的约束。
 wrap-up 只在接近上限时以文本提示注入，工具仍然可用；模型可以忽略提示继续搜索。
 
-### 3. 结果提交和完成是两个动作
+### 3. 成熟结果被囤到最后提交
 
-旧实现把“提交 Hypothesis”和“完成 Unit Review”拆成两个 tool call。在最后一轮提交结果时，可能已经
-没有下一轮表达完成，最终被记录为 truncated。反过来，没有 Hypothesis 的 Unit 也缺少一个可以原子
-表达“已检查、无主张”的终态结果。
+终态 `submit_hypotheses` 解决了“提交后还缺一次 task_done”的问题，却让模型倾向于先查完所有 lead、
+最后一次性交卷。一个 Unit 中已经成熟的问题因此无法提前进入 Review 2；若最难的 lead 耗尽 deadline，
+此前已经做出的 Hypothesis 也会一起丢失。
 
 ### 4. 文件不是硬边界，但提示仍暴露全量 ChangeSet
 
@@ -103,11 +103,13 @@ Unit + Review Messages
     │
     ├── 首轮定向：理解 changed behavior，形成 0..N 条 candidate lead
     │
-    ├── 有界补证：每条 lead 只走最短证据链
-    │      ├── falsified / low value ──▶ 丢弃
-    │      └── plausible + falsifiable ──▶ Hypothesis
+    ├── 按预期影响 / 补证成本处理 lead
+    │      ├── falsified / low value ──▶ 丢弃，继续下一条
+    │      └── plausible + falsifiable
+    │              └── submit_hypotheses([...])
+    │                    └── append Unit ─▶ Review 2 / Trial（Review 1 继续）
     │
-    └── submit_hypotheses([] | [...]) ──▶ append to Unit ──▶ completed Review 1
+    └── 无 material lead ──▶ natural completion
 ```
 
 lead 应按价值排序，而不是要求机械覆盖多条路径。一次补证链通常是以下之一：
@@ -135,34 +137,38 @@ Review 1 的 prompt 应明确：
 
 “多想几个方向”可以保留为内部推理自由，不能成为必须把每个方向变成工具调用的完成条件。
 
-### 2. 使用原子终态结果工具
+### 2. 成熟 Hypothesis 增量提交
 
-Review 1 的外部结果协议收敛为一次终态提交：
+`submit_hypotheses` 保留显式批量形状，但可以在一次 Review 1 中调用多次：
 
 ```text
-submit_hypotheses(hypotheses: [])
+submit_hypotheses(hypotheses: [mature_claim, ...])
 ```
 
-- 空数组表示完整检查后没有值得复核的问题；
-- 非空数组一次提交本 Unit 的全部 Hypothesis；
-- 调用成功即结束 Execution，不再额外等待 `task_done`；
-- payload 解析或领域接收失败时不结束，让模型有机会修正一次。
+- 每次提交当前已经具备 trigger、impact、diff attribution、源码锚点和最短证据链的主张；
+- 接受后立即追加到 Unit、持久化并进入 Lane，Review 1 继续下一个 lead；
+- 同时成熟的独立主张仍放在一个批量调用中；
+- payload 解析或领域接收失败时不接受，模型可以修正；
+- 没有剩余主张时自然结束，不需要空数组或 `task_done`。
 
-Harness 只提供领域无关的 completion-tool 配置；具体工具名、参数校验和 Hypothesis schema 仍由
-Runner Review 扩展拥有。只有 Runner 接受完整 payload 后才完成；空数组与非空结果使用同一条路径。
+Harness 只提供领域无关的 natural completion、wrap-up、ToolGate 和停止策略；具体工具名、参数校验和
+Hypothesis schema 仍由 Runner Review 扩展拥有。Hypothesis 是不可变提交边界；临时 lead 仍留在
+Execution 内，不能为了提前流水而降低准入标准。
 
 停止机制是一条显式状态机，而不是相信 assistant 文本：
 
 ```text
 running
   ├─ submit_hypotheses 校验失败 ─▶ running（返回错误，允许修正）
-  ├─ assistant 直接结束 ────────▶ StopGuard 注入交卷提示
-  ├─ submit_hypotheses 校验成功 ─▶ completed（StopAfterTool 立即结束）
-  └─ turn / deadline 耗尽 ───────▶ incomplete
+  ├─ submit_hypotheses 校验成功 ─▶ accepted ─▶ Review 2；Review 1 继续
+  ├─ assistant 自然结束 ────────▶ completed
+  ├─ wrap-up + 有成熟结果 ──────▶ final submit 后 Harness 收卷
+  ├─ wrap-up + 无成熟结果 ──────▶ natural completion
+  └─ deadline / provider failure ─▶ incomplete（已接受结果保留）
 ```
 
-AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、completion tool、StopGuard
-和停止状态；Runner 的 `HypothesisHook` 只负责整批校验与接收领域结果。三层都不互相偷走职责。
+AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、StopGuard 和停止状态；Runner
+的 `HypothesisHook` 只负责每批结果的校验与接收。三层都不互相偷走职责。
 
 ### 3. 探索预算结束后硬关闭调查工具
 
@@ -171,12 +177,12 @@ middleware 将执行能力收敛为：
 
 ```text
 reject execution: search_code / file_find / read_files / read_diffs / read_base_files
-allow execution:  submit_hypotheses
+allow execution:  submit_hypotheses（最终 flush）
 ```
 
 这由 Harness tool middleware 在本地执行边界强制，而不是只追加 wrap-up 文本。保留 schema 和稳定
-prompt 前缀是为了复用 provider cache。若模型仍调用被拒绝的调查工具，只再提供一次最终提交轮；
-再次忽略 completion contract 就标记 incomplete，避免同一句拒绝提示反复触发模型调用。最终阈值通过 replay 调整。
+prompt 前缀是为了复用 provider cache。若模型仍调用被拒绝的调查工具，只再提供一次收卷提示；再次
+忽略就标记 incomplete。最终 flush 只提交已经成熟的主张，不要求模型在最后一轮补完困难 lead。
 
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。
@@ -268,15 +274,15 @@ ContextManager 做统一投影：
 ```text
 [durable conversation above]
 user: <incremental BoardDigest>                 # 仅 Review Team 试验开启且有新事实时
-user: <wrap-up: stop investigation and submit> # 有限调查窗口或 turn/deadline 边界时只追加一次
+user: <wrap-up: stop investigation and flush mature claims> # 有限调查窗口或 turn/deadline 边界
 user: <available file path/range inventory>     # request-only 尾消息，不写回 transcript
 ```
 
 随后依次执行 covered-range 去重、typed compaction、必要时的通用 context strategy，最后统一降成 provider
 消息。`system + review task` 尽量保持稳定；文件、搜索和 diff 可以从 full 降为 condensed/reference，
 但 tool call/result 配对和消息顺序不变。Review Plan 是有限 lead 清单，Review 1 不因全局 turn 上限尚有
-余量而继续扩散；清单完成或有限调查窗口结束后进入 wrap-up。wrap-up 之后工具 schema 仍不变，执行层只允许终态提交工具，
-避免继续调查空转。
+余量而继续扩散；简单 Unit 可以很快自然结束，不必等待 wrap-up。有限调查窗口结束后才进入 wrap-up；
+工具 schema 仍不变，执行层只允许最终结果提交，避免继续调查空转。
 
 具体保留策略：
 
@@ -340,7 +346,7 @@ ChangeSet 合成一个巨型 Unit，否则只是把重复探索换成超大 prom
 ## 落地顺序
 
 1. **无代码基线**：固定 corpus 对比 `plan=on/off`，记录 Review 1 分阶段成本。
-2. **完成协议验证**：对比 terminal `submit_hypotheses` 上线前后的完成率、轮数和 Hypothesis 召回。
+2. **增量协议验证**：对比 terminal / incremental `submit_hypotheses` 的首次产出时间、完成率和召回。
 3. **有界探索调参**：基于硬 ToolGate 和终态预留逐步下调 turn budget。
 4. **上下文收窄**：只展示 directly-related changed files 和 Unit-scoped repo map。
 5. **历史淘汰**：按 lead/evidence 生命周期压缩旧工具结果。
@@ -355,7 +361,8 @@ Review 1 的效果不能用 Hypothesis 数量单独衡量。固定 workload 至�
 ### 健壮性
 
 - completed / truncated / timeout Unit 比例；
-- 终态工具成功率；
+- 首个 / 各 Hypothesis 的提交 turn 与耗时；
+- wrap-up 最终 flush 成功率；
 - 未提交结果的 Unit 数；
 - clean Unit 与有 Hypothesis Unit 的终态是否都可解释。
 

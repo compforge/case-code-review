@@ -23,7 +23,7 @@ Unit 是一次 run 的聚合根：Hypothesis、后续读到的文件/diff/搜索
 
 ### 2.1 Hypothesis 进入 Lane
 
-每个解析完成的 Hypothesis 立即进入 Review 2 调度，不等待全部 Unit Review 结束。`LanePool` 用强关系
+每个增量提交并解析完成的 Hypothesis 立即进入 Review 2 调度，不等待来源 Unit 或全部 Unit Review 结束。`LanePool` 用强关系
 选择 Lane：同一 Origin Unit、重叠的 target/evidence/read path、共同 symbol 或高比例读取重合都可
 建立关系；Repository / Component 和目录公共祖先只在多个候选 Lane 间加权，不能单独证明两个问题
 相关。
@@ -66,8 +66,9 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 
 当前一次 Review 2 execution 只负责一个 Hypothesis。模型判断完成后应立即调用
 `submit_assessments`。Harness 只在当前 Hypothesis 的 Assessment 通过解析和领域校验后接受完成；合法
-提交由 AgentGo 作为 terminal tool 结束 execution，不再额外调用 `task_done`。无效提交只返回修正提示，
-loop 继续运行。
+提交由 AgentGo 作为 terminal tool 结束 execution，不再额外调用 `task_done`。Assessment 被接受后立即
+进入确定性 Trial，不等待同 Lane 的后续 Hypothesis 或其它 Review 1。无效提交只返回修正提示，loop
+继续运行。
 
 若 execution 超时或失败：
 
@@ -155,10 +156,10 @@ Review 2 据此标记 `already_delivered`。跨 CI revision 的状态必须来�
 
 ### 3.4 可观测性必须覆盖中间阶段
 
-Session 在 Hypothesis 解析、Lane 分配、每次 Assessment 提交和 Trial 决策时追加 artifact。固定
+Session 在 Hypothesis 解析、Lane 分配、每次 Assessment 提交和随后的 Trial 决策时追加 artifact。固定
 Hypothesis 可独立重放 Review 2，不必每次重跑昂贵的 Unit Review。评测至少观察：
 
-- Hypothesis 数、Unit 完成率和未评估数；
+- Hypothesis 数、Unit 完成率、未评估数，以及首个 Hypothesis / Assessment / Trial decision 的耗时；
 - Lane 数、每个 Lane 的 Hypothesis 数、Review 2 轮次和耗时；
 - 四轴拦截分布及 receipt 缺失数；
 - 被拦截样本中的 missed，以及穿过 Trial 的 wrong / repeat。

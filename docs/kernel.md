@@ -14,12 +14,12 @@ CCR 的目标不是让一个大模型“读完整个 diff 然后自由发挥”�
 具体缺陷，如边界处理、错误路径和 API 使用问题；更隐含的业务问题依赖 spec、case、rule 等显式知识，
 不能靠无限扩大上下文解决。
 
-Kernel 由两个知识层、Unit 和 Harness 组成：
+Kernel 由两类 Knowledge、Unit 和 Harness 组成：
 
 | 能力中心 | 回答的问题 | 不负责 |
 |---|---|---|
-| **Project** | Repository 中有哪些 Component、文件扮演什么角色、有哪些项目事实 | 解析代码语义、决定是否成 Finding |
-| **Language** | 源码中有哪些 definition、reference、call edge 和稳定身份 | 决定如何审、是否成 Finding |
+| **Project** | Repository 中有哪些 Component、文件角色，以及 `spec / case / link / rule / doc` 声明了哪些业务契约和场景 | 解析代码语义、决定是否成 Finding |
+| **Language** | 源码中有哪些 outline、definition、reference、call edge、symbol/file proximity 和稳定身份，作者声明如何绑定到代码 | 决定声明含义、决定是否成 Finding |
 | **Unit** | 哪些改动应一起审，本次 run 已获得哪些事实快照和阶段结论 | 运行 agent loop、决定阶段策略 |
 | **Harness** | 一次 agent execution 如何有界运行、完成并被观测 | 理解 Unit、Hypothesis、Finding |
 
@@ -27,9 +27,14 @@ Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Un
 agent Review，再交给确定性的 Trial（Review 3）并聚合领域结果。领域行为通过 execution spec、tool、hook
 和 event 适配 Harness，而不是塞进执行内核。
 
-评审事实来自两个互补方向：Language 提供 symbol、definition、reference 和 call edge；Project 领域以
-Repository / Component 提供项目边界、可组合 FileRole（如 source + entrypoint / handler）和 manifest
-等项目知识，未来也可承接文档与规则。长期看，一个 Repository 还应提供开发与 review 共同消费的
+评审事实来自两个互补方向：Language 提供 symbol、outline、definition、reference、call edge、
+symbol/file proximity 及语法绑定机制；
+Project Knowledge 一部分是 Repository / Component、可组合 FileRole（如 source + entrypoint / handler）
+和 manifest 等结构知识，另一部分是 `spec / case / link / rule / doc` 等作者声明的 Biz Knowledge。后者
+通过 Language 的注释、装饰器、symbol-id / fqn 等机制绑定到代码：Language 拥有“如何绑定”，Project
+Knowledge 拥有“声明表达什么”。这套模型也是 case-code-review 最初的核心与名称来源。
+
+长期看，一个 Repository 还应提供开发与 review 共同消费的
 记忆文件，使项目约定、历史决策和业务背景不必分别维护两份；具体存储协议不属于当前 Kernel 契约。
 它们既参与 Unit 形成，也可按评审作用域投影为上下文：Review 1 将 Clue 汇入 Unit，Review 2
 可面向 Hypothesis 与 Lane 重新选择同一批事实，而不是复用 Review 1 的 prompt 形状。
@@ -79,6 +84,10 @@ Review 3 是 Trial 的流程别名，不引入第三个 agent loop 或新的领�
 Hypothesis Review 把关系紧密的 Hypothesis 投入同一 Lane，串行复用 conversation 与证据。归 Lane
 依据行为与证据关系，Project 目录距离只作加权，不把文件边界误当成问题边界；不相关 Lane 可以并行。
 
+这条链路没有全局阶段屏障。一个成熟 Hypothesis 一经接受，就可以立即进入 Review 2 和 Trial；此时
+其它 Unit 仍可能在 Review 1 中探索，后续 Hypothesis 甚至尚未产生。因此 Finding、Assessment 与
+Hypothesis 可以按真实完成顺序交错出现，最终输出顺序不等于执行顺序。
+
 ## 3. 关键设计
 
 ### 3.1 事实、作用域、执行和结论各有唯一 owner
@@ -115,14 +124,27 @@ CCR 相比 file-only review 的优势来自两部分：
 全预载会放大成本，只给 diff 又会诱发猜测。初始消息与工具必须形成分工，并由统一上下文生命周期
 控制重复读取、淘汰和压缩。
 
-### 3.4 发散与收敛使用不同完成契约
+### 3.4 逐条流动，并在预算边界保留已完成结果
 
-Unit Review 可以发散，但必须在预算内原子提交 Unit 的全部 Hypothesis；Hypothesis Review 只收敛，
-一次判断一个 Hypothesis；合法提交 Assessment 即完成当前 execution。空文本或 0 Finding 都不能单独
-证明完成。
+Unit Review 可以发散，但不应把成熟 Hypothesis 囤到最后一次性交卷。一条主张已有具体 trigger、
+impact、diff attribution 和源码锚点后，就应立即追加到 Unit 并送入 Review 2；Review 1 随后继续调查
+下一个 lead。仍缺的关键事实写入 uncertainty，由收敛阶段定向复核，而不是要求 Review 1 清零所有
+不确定性。临时怀疑仍是内部调查状态，不能为了尽早提交而降格为 Hypothesis。
+
+Hypothesis、Assessment 和 Trial Decision 都按各自完成时点持久化并向下游流动。Review 2 仍一次判断
+一个 Hypothesis，合法 Assessment 立即触发确定性 Trial，不等待其它 Unit 或 Lane。一次 run 只在退出
+时汇合仍在运行的 Review 1、Lane 与 Trial；并发造成的产出顺序由最终稳定排序吸收。
+
+接近预算或 deadline 时，Harness 像收卷一样关闭继续调查，只要求提交当前证据已经支持的结果；不再
+允许模型死磕尚未收敛的 lead。这样 review 具备 anytime 性质：运行越久覆盖越完整，但任何时点超时
+都能保留此前已经形成的 Hypothesis、Assessment 和 Finding，而不是一无所获。时间和 token 预算
+限制的是继续发现问题的范围，不应使已经完成的判断链路失效；这正是 CCR 在有限成本内持续交付
+Finding 的目标。高影响但补证较贵的主张应在最短证据链后带明确 uncertainty 提交；只有模糊可能性、
+始终没有现实 trigger 的调查才留在可舍弃的尾部。anytime 不等于必须运行到预算上限：简单 Unit
+一旦确认没有其它 material lead，就自然结束，整条 pipeline 也可以快速收口。
 
 partial/incomplete 是一等结果。任何未完成 Unit 或未评估 Hypothesis 都应出现在输出和 session 中，
-不能混进 “Looks good to me”。
+不能混进 “Looks good to me”；空文本或 0 Finding 也不能单独证明完成。
 
 ### 3.5 LLM 判断与确定性门禁分离
 
@@ -151,6 +173,21 @@ Viewer 不定义执行协议，JSONL 也不替代 Forge 上跨 revision 的持�
 
 Review 过程默认只读取源码、Git snapshot、规则和既有评论；产出 Finding 由外部调用方决定是否发布。
 这种边界让本地复盘已合并 commit、CI review 和离线 eval 可以复用同一内核，而不产生意外外部副作用。
+
+### 3.9 效果由流程、轨迹与知识共同演进
+
+CCR 的效果提升不是单纯换模型或扩大 prompt，而依靠三项能力互相校正：
+
+1. **成熟稳定的 Review Pipeline**：明确发现、复核、裁决的职责和完成语义，使阶段结果能增量流动、
+   超时可保留、简单问题可快速结束；
+2. **基于轨迹的 Review 优化**：从 Session JSONL 生成 Review 1 / Review 2 trajectory，定位空转、重复读取、
+   未完成和错误收敛，再据此新增、删除或调整 prompt、tool 与 tool schema；
+3. **持续增长的 Knowledge**：Language 通过 Outline、CodeGraph 和 proximity 等能力提供更可靠的源码结构、关系与绑定位置，
+   Project Knowledge 同时提供 Repository / Component / FileRole 等结构事实和
+   `spec / case / link / rule / doc` 等业务契约，让 Unit formation 和两个 Review 获得更相关的事实。
+
+Pipeline 提供稳定实验骨架，trajectory 说明问题发生在哪一步，Language / Project 决定还能补充哪些
+高价值事实。三者缺一时，效果变化都难以归因，也容易把成本增长误当成质量提升。
 
 ## 4. 如何判断一项优化是否“对味”
 

@@ -72,6 +72,32 @@ func TestRunDeduplicatesClaimFingerprintWithoutLosingUnitOccurrences(t *testing.
 	}
 }
 
+func TestGateDecidesFindingBeforeTheRunFinishes(t *testing.T) {
+	hypothesis := unitreview.Hypothesis{
+		OriginUnit: "u-1", Path: "a.go", Content: "real issue", ExistingCode: "x",
+		Trigger: "call", Impact: "failure", ChangeAttribution: "changed",
+	}
+	hypothesis.Fingerprint = unitreview.FingerprintFor(hypothesis)
+	hypothesis.ID = unitreview.IDFor(hypothesis)
+	reviewUnit := trialUnit("u-1", []unitreview.Hypothesis{hypothesis}, nil)
+	assessment := hypothesisreview.Assessment{
+		HypothesisID: hypothesis.ID, Support: hypothesisreview.Supported,
+		Attribution: hypothesisreview.Caused, Value: hypothesisreview.Actionable,
+		Novelty: hypothesisreview.Novel, Evidence: []string{"a.go:1"},
+		EvidenceReceipts: []hypothesisreview.EvidenceReceipt{{Kind: "diff", Ref: "a.go"}},
+	}
+
+	gate := NewGate()
+	delivered, decision, fresh := gate.Assess(reviewUnit, hypothesis, assessment)
+	if !fresh || !decision.Delivered || delivered.Content != hypothesis.Content {
+		t.Fatalf("delivered=%+v decision=%+v fresh=%v", delivered, decision, fresh)
+	}
+	findings, decisions := gate.Results()
+	if len(findings) != 1 || len(decisions) != 1 {
+		t.Fatalf("findings=%+v decisions=%+v", findings, decisions)
+	}
+}
+
 func trialUnit(id string, hypotheses []unitreview.Hypothesis, assessments []hypothesisreview.Assessment) unit.Unit {
 	reviewUnit := unit.Unit{ID: id}
 	reviewUnit.InitReviewState()

@@ -212,6 +212,68 @@ func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 	}
 }
 
+func TestExecutionAllowsConfiguredNaturalCompletion(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		textResponse("No material work remains."),
+	}}
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:         client,
+		Messages:          []msg.Msg{msg.Text("user", "review this unit")},
+		MaxTurns:          3,
+		NaturalCompletion: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	requests := client.Requests()
+	if len(requests) != 1 || len(requests[0].Tools) != 0 {
+		t.Fatalf("natural completion unexpectedly injected a terminal tool: %+v", requests)
+	}
+}
+
+func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
+		return "ok", nil
+	}))
+	registry.Freeze()
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "echo", `{}`, nil),
+		toolCallResponseID("call-2", "submit_result", `{"items":[]}`, nil),
+	}}
+	handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+		if request.Tool.Name() != "submit_result" {
+			return tool.TaskCheckpoint{}, false
+		}
+		return tool.CompleteWith("Result accepted."), true
+	})
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages:  []msg.Msg{msg.Text("user", "review")},
+		ToolDefs: []llm.ToolDef{
+			toolDef("echo"), toolDef("submit_result"),
+		},
+		Tools:              registry,
+		ToolHandler:        handler,
+		MaxTurns:           10,
+		WrapUpPrompt:       "submit ready results now",
+		WrapUpAfterTurns:   1,
+		WrapUpAllowedTools: []string{"submit_result"},
+		NaturalCompletion:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 2 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+}
+
 func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponseID("done-1", "task_done", `{}`, nil),

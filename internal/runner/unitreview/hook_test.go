@@ -39,7 +39,7 @@ func TestHypothesisHookAnchorsOutputToUnitScope(t *testing.T) {
 	}
 }
 
-func TestHypothesisHookCompletesWithNoHypotheses(t *testing.T) {
+func TestHypothesisHookAcceptsNoHypotheses(t *testing.T) {
 	hook := &HypothesisHook{}
 	checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
 		Scope: session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}},
@@ -47,6 +47,6 @@ func TestHypothesisHookCompletesWithNoHypotheses(t *testing.T) {
 		Args:  map[string]any{"hypotheses": []any{}},
 	})
 	if !handled || !checkpoint.Completed || checkpoint.Data != HypothesesSubmitted {
-		t.Fatalf("empty review did not complete: handled=%v checkpoint=%+v", handled, checkpoint)
+		t.Fatalf("empty submission was not accepted: handled=%v checkpoint=%+v", handled, checkpoint)
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
+	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/runner/trial"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
@@ -551,14 +552,22 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	var reviewLanes *lanePool
+	var deliveryGate *trial.Gate
 	if a.features.Enabled(feature.HypothesisReview) {
 		task := a.args.Template.HypothesisReviewTask
 		if task != nil && len(task.Messages) > 0 {
+			deliveryGate = trial.NewGate()
 			reviewLanes = newLanePool(lanePoolConfig{
 				Context: ctx, Units: units, Selections: a.fileSelections,
 				Concurrency:  laneReviewWorkers,
 				Review:       a.reviewHypothesis,
 				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
+				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
+					_, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
+					if fresh {
+						a.persistTrialDecisions([]unit.Unit{reviewUnit}, []unit.TrialDecision{decision})
+					}
+				},
 			})
 		}
 	}
@@ -653,12 +662,16 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	failed := atomic.LoadInt64(&a.unitFailed)
-	if failed > 0 && failed == dispatched {
+	// A Unit can time out after it has already emitted useful Hypotheses. Keep
+	// that partial pipeline alive so accepted Assessments/Findings are not
+	// discarded merely because every producer eventually ended incomplete.
+	if failed > 0 && failed == dispatched && len(hypotheses) == 0 {
 		return nil, fmt.Errorf("all %d unit review(s) failed — check your LLM configuration and API key", dispatched)
 	}
 
 	var comments []finding.Finding
 	var decisions []unit.TrialDecision
+	persistAllDecisions := true
 	if a.features.Enabled(feature.HypothesisReview) {
 		if reviewLanes == nil && len(hypotheses) > 0 {
 			a.recordWarning(
@@ -666,12 +679,21 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
 			)
 		}
-		comments, decisions = trial.Run(units)
+		if deliveryGate != nil {
+			_, finalDecisions := deliveryGate.Finalize(units)
+			a.persistTrialDecisions(units, finalDecisions)
+			comments, decisions = deliveryGate.Results()
+			persistAllDecisions = false
+		} else {
+			comments, decisions = trial.Run(units)
+		}
 	} else {
 		// Gate-off is the one-stage baseline used by eval ablations.
 		comments, decisions = trial.Bypass(units)
 	}
-	a.persistTrialDecisions(units, decisions)
+	if persistAllDecisions {
+		a.persistTrialDecisions(units, decisions)
+	}
 	for _, comment := range comments {
 		a.args.Findings.Add(comment)
 	}

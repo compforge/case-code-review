@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> Agentic code review organized around behavioral Units, two agent reviews plus deterministic Trial, and language/project knowledge. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
+> An evidence-backed agentic review pipeline built from behavioral Units, two agent reviews, deterministic Trial, and language/project knowledge. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
 
 ## Philosophy
 
@@ -9,8 +9,8 @@ Code review is not “send every changed file to a model.” File boundaries des
 ccr follows three principles:
 
 1. **Review behavior, not files.** A review should cover the smallest scope that explains a change and its effects. ccr calls that scope a **Unit**.
-2. **Separate discovery from verification.** Finding a plausible issue is open-ended; proving that it is real, caused by the current change, actionable, and new is narrower. Different jobs deserve different agent loops.
-3. **Bring relevant knowledge, not maximum context.** Language structure and project structure decide what belongs together and which nearby evidence is worth showing to the model.
+2. **Use a pipeline to separate discovery from verification.** Finding a plausible issue is open-ended; proving that it is real, caused by the current change, actionable, and new is narrower. Different jobs deserve different stages and agent loops.
+3. **Bring relevant knowledge, not maximum context.** Language knowledge explains code structure and binds authored declarations to code; Project Knowledge explains both project structure and the contracts and scenarios that the code must preserve.
 
 ccr does not try to enumerate every possible defect. It focuses bounded agent exploration on concrete mistakes that are easy to miss while implementing a requirement: broken caller assumptions, boundary handling, error paths, API misuse, and similar reviewable failures. Syntax remains lint's job; hidden business constraints still need explicit background or authored knowledge.
 
@@ -40,16 +40,18 @@ Making Unit—not file—the basic review boundary depends on practical caller/c
 
 The analogy explains separation of duties; these are code-review stages, not legal simulations. Review 1 is encouraged to discover. Review 2 is encouraged to disprove weak hypotheses. **Review 3** is an alias for deterministic Trial, not another agent loop, so incomplete or unsupported work cannot silently become a public comment. The three passes also echo the Chinese mnemonic “吾日三省吾身”: review the result repeatedly before delivering it.
 
+These stages form an incremental pipeline rather than three global batches. A mature Hypothesis can enter Review 2 and Trial while other Units are still being investigated, so accepted work survives later timeouts. Conversely, a simple change with no remaining material lead can finish immediately; a budget is a ceiling, not a target runtime.
+
 ### Language Knowledge and Project Knowledge
 
 Two knowledge foundations support Unit formation and both review stages:
 
 | knowledge | what it contributes |
 |---|---|
-| **Language Knowledge** | syntax-aware symbols, spans, definitions, references, calls, imports, documentation, and extraction/matching of authored contracts |
-| **Project Knowledge** | Repository and Component boundaries, file roles, entrypoints, handlers, manifests, locks, and other project conventions |
+| **Language Knowledge** | syntax-aware symbols, spans, outlines, definitions, references, calls, imports, symbol/file proximity, plus the syntax and identities used to bind authored declarations to code |
+| **Project Knowledge** | structural knowledge such as Repository, Component, FileRole and entrypoints; authored biz knowledge such as `spec`, `case`, `link`, `rule`, and `doc` |
 
-Some context types—such as spec, case, rule, link, and source documentation—depend on language parsing even though they are not “language knowledge” by themselves. [`spec-case`](https://github.com/qiankunli/spec-case) remains an optional way to author and distribute this contract context; ccr also works without it.
+Language owns how authored knowledge is extracted and attached; Project Knowledge owns what those declarations mean in the reviewed project. This `spec / case / link / rule / doc` model is the origin of the “case” in case-code-review. [`spec-case`](https://github.com/qiankunli/spec-case) remains an optional way to author and distribute it; ccr also works without it.
 
 Design details: [`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness and observability`](docs/harness.md)
 

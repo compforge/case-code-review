@@ -34,6 +34,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
 		unitToolResponse("call-2", "submit_hypotheses", `{"hypotheses":[]}`, "route-a", 3),
+		unitTextResponse("No material lead remains."),
 	}}
 	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
 	executor := NewExecutor(ExecutorConfig{
@@ -44,7 +45,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 			unitToolDef("echo"),
 		},
 		Session:   history,
-		MaxTurns:  2,
+		MaxTurns:  10,
 		MaxTokens: 1_000,
 	}, &HypothesisHook{}, nil)
 
@@ -66,17 +67,87 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	if got := executor.ModelsUsed(); got["route-a"] != 2 {
 		t.Fatalf("unexpected model counts: %v", got)
 	}
-	if records := history.Scopes["unit-1"].TaskRecords[session.MainTask]; len(records) != 2 {
-		t.Fatalf("main task records = %d, want 2", len(records))
+	if records := history.Scopes["unit-1"].TaskRecords[session.MainTask]; len(records) != 3 {
+		t.Fatalf("main task records = %d, want 3", len(records))
+	}
+}
+
+func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
+		return "next lead checked", nil
+	}))
+	registry.Freeze()
+	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+		unitToolResponse("submit-1", "submit_hypotheses", `{"hypotheses":[{"path":"a.go","content":"first issue","existing_code":"x","trigger":"first trigger","impact":"first failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}]}`, "route-a", 1),
+		unitToolResponse("check-2", "echo", `{}`, "route-a", 1),
+		unitToolResponse("submit-3", "submit_hypotheses", `{"hypotheses":[{"path":"a.go","content":"second issue","existing_code":"y","trigger":"second trigger","impact":"second failure","change_attribution":"changed here","evidence":["a.go:2"],"uncertainty":"","category":"bug","severity":"medium"}]}`, "route-a", 1),
+		unitTextResponse("No material lead remains."),
+	}}
+	var hypotheses []Hypothesis
+	hook := &HypothesisHook{OnResolved: func(h Hypothesis) { hypotheses = append(hypotheses, h) }}
+	executor := NewExecutor(ExecutorConfig{
+		LLMClient: client,
+		Tools:     registry,
+		ToolDefs:  []llm.ToolDef{unitToolDef("echo")},
+		MaxTurns:  10,
+		MaxTokens: 1_000,
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+	}, hook, nil)
+
+	outcome, err := executor.Run(context.Background(), []msg.Msg{
+		msg.Text("user", "review"),
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.State != "completed" || len(hypotheses) != 2 {
+		t.Fatalf("outcome=%+v hypotheses=%+v", outcome, hypotheses)
+	}
+	if hypotheses[0].Content != "first issue" || hypotheses[1].Content != "second issue" {
+		t.Fatalf("incremental hypotheses = %+v", hypotheses)
+	}
+}
+
+func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
+	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+		unitTextResponse("The supplied diff has no material defect mechanism."),
+	}}
+	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
+	executor := NewExecutor(ExecutorConfig{
+		LLMClient: client,
+		MaxTurns:  10,
+		MaxTokens: 1_000,
+		Session:   history,
+	}, &HypothesisHook{}, nil)
+
+	outcome, err := executor.Run(context.Background(), []msg.Msg{
+		msg.Text("user", "review"),
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := history.Scopes["unit-1"].TaskRecords[session.MainTask]
+	if outcome.State != "completed" || len(records) != 1 {
+		t.Fatalf("outcome=%+v records=%d", outcome, len(records))
 	}
 }
 
 func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
+		return "ok", nil
+	}))
+	registry.Freeze()
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
-		unitTextResponse("finished without submitting"),
+		unitToolResponse("call-1", "echo", `{}`, "", 0),
 	}}
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
+		Tools:     registry,
+		ToolDefs: []llm.ToolDef{
+			unitToolDef("echo"),
+		},
 		MaxTurns:  1,
 		MaxTokens: 1_000,
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},

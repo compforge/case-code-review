@@ -10,11 +10,11 @@ import (
 var SubmitHypotheses = tool.Named("submit_hypotheses")
 
 const (
-	HypothesesSubmitted       = "Unit review completed; hypotheses submitted for independent review."
+	HypothesesSubmitted       = "Hypotheses accepted for independent review. Continue with the next material lead, or finish naturally when none remains."
 	InvestigationWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. " +
-		"Submit every concrete remaining issue claim with submit_hypotheses, including its trigger, impact, " +
-		"change attribution, evidence, and uncertainty. Submit an empty array when no material claim remains. " +
-		"Do not call other tools."
+		"Submit every already-mature issue claim with submit_hypotheses, including its trigger, impact, " +
+		"change attribution, evidence, and uncertainty. Do not chase unresolved leads or call other tools. " +
+		"If no mature claim remains, finish now without a tool call."
 )
 
 func HypothesisToolDef() llm.ToolDef {
@@ -22,10 +22,11 @@ func HypothesisToolDef() llm.ToolDef {
 		Type: "function",
 		Function: llm.FunctionDef{
 			Name: SubmitHypotheses.Name(),
-			Description: "Complete this Unit Review by submitting every falsifiable issue hypothesis found during investigation. " +
-				"A separate reviewer will verify them before any comment is published. Report plausible, " +
+			Description: "Submit one or more mature, falsifiable issue hypotheses as soon as their shortest evidence chain is complete. " +
+				"This tool may be called multiple times and does not end normal investigation; after a successful call, continue with the next material lead or finish naturally. " +
+				"A separate reviewer will verify each hypothesis before any comment is published. Report plausible, " +
 				"diff-caused defects with a concrete trigger and impact; state uncertainty instead of hiding it. " +
-				"Use an empty hypotheses array when no material issue remains. A successful call ends the review.",
+				"Do not submit temporary leads. During wrap-up, put every already-mature remaining claim in one call.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

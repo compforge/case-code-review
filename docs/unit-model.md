@@ -74,6 +74,11 @@ Clue 用两个正交维度表达上下文：
 - **Relation**：事实与 Unit 的关系，如 `self`、`owner`、`caller`、`callee`、`used`、`project`。
 - **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`、`project`。
 
+其中 `spec / case / link / rule / doc` 是 Project Knowledge 中作者声明的 Biz Knowledge：它们表达项目
+希望代码守住的业务契约、具体场景、关系和说明。Language Knowledge 负责识别注释、装饰器、
+symbol-id / fqn 等语法与身份，把这些声明绑定到 definition / relation；Project Knowledge 负责声明
+内容本身。两者分开后，新增语言只需实现可靠绑定，不必复制业务契约模型。
+
 因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
 不决定 prompt 排版；Unit 保存完整的 Fragments 与 Clues，Runner 再按预算、优先级和消息形状投影为
 Review Messages。
