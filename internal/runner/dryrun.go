@@ -66,7 +66,7 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	for _, u := range units {
 		// Mirror reviewUnit's context assembly: clues + the path-glob rule.json.
 		specCases, specRules, seeAlso, prior := renderClues(u.Clues)
-		usageSites, _ := a.renderUsageSites(u)
+		usageSites, _, _ := a.renderUsageSites(u)
 		rule := a.resolveSystemRule(strings.ToLower(u.Path()))
 		if specRules != "" {
 			if rule != "" {

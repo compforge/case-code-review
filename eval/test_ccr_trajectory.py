@@ -8,7 +8,7 @@ from ccr_trajectory import (
     EmptySearchEvaluator,
     FileReadCoverageEvaluator,
     FileReadFragmentationEvaluator,
-    HypothesisCompletionEvaluator,
+    ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     REVIEW1,
     REVIEW2,
@@ -17,6 +17,8 @@ from ccr_trajectory import (
     code_search_stats,
     file_read_fragmentation,
     file_read_stats,
+    hypothesis_yield,
+    initial_context_stats,
     prompt_file_read_overlap,
     repeated_file_reads,
     review_stage,
@@ -33,7 +35,6 @@ class CCRTrajectoryTest(unittest.TestCase):
             "subagent_trajectories": [
                 {
                     "trajectory_id": "unit-1",
-                    "extra": {"file_path": "a.go", "scope_kind": "unit"},
                     "steps": [
                         {"step_id": 1, "source": "system", "message": "review"},
                         {
@@ -65,7 +66,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 {
                                     "tool_call_id": "c4",
                                     "function_name": "submit_hypotheses",
-                                    "arguments": {"hypotheses": []},
+                                    "arguments": {"hypotheses": [{"id": "h-1"}]},
                                 },
                             ],
                             "observation": {
@@ -85,12 +86,22 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     },
                                     {
                                         "source_call_id": "c4",
-                                        "content": "Unit review completed; hypotheses submitted for independent review.",
+                                        "content": "Hypotheses accepted for independent review. Continue with the next material lead, or finish naturally when none remains.",
                                     },
                                 ]
                             },
                         },
                     ],
+                    "extra": {
+                        "file_path": "a.go",
+                        "scope_kind": "unit",
+                        "execution_outcome": "completed",
+                        "initial_context": [
+                            {"kind": "file", "identity": "a.go", "representation": "source", "reason": "unit"},
+                            {"kind": "file", "identity": "b.go", "representation": "outline", "reason": "callee"},
+                            {"kind": "file", "identity": "a.go", "representation": "reference", "reason": "repository_reference"},
+                        ],
+                    },
                 }
             ],
         }
@@ -108,7 +119,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 FileReadFragmentationEvaluator(),
                 RoundEfficiencyEvaluator(),
                 DurationEfficiencyEvaluator(),
-                HypothesisCompletionEvaluator(),
+                ReviewCompletionEvaluator(),
             ],
         )
 
@@ -125,6 +136,18 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(report.evaluations[6].score, 1)
         self.assertEqual(report.evaluations[7].score, 1)
         self.assertEqual(report.evaluations[8].score, 1)
+        self.assertEqual(hypothesis_yield(self.trajectory), 1)
+        self.assertEqual(
+            initial_context_stats(self.trajectory),
+            {
+                "admitted": {"source": 1, "outline": 1},
+                "demand": {"source_request": {"source": 2}},
+                "by_reason": {
+                    "unit": {"admitted": 1, "source_request": 2},
+                    "callee": {"admitted": 1},
+                },
+            },
+        )
         self.assertEqual(repeated_file_reads(self.trajectory), {"a.go": 2})
         self.assertEqual(
             file_read_stats(self.trajectory),
@@ -165,7 +188,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "file_read_fragmentation",
                 "round_efficiency",
                 "duration_efficiency",
-                "hypothesis_submission",
+                "review_completion",
             ],
         )
 
@@ -206,7 +229,7 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         self.assertEqual(review_stage(trajectory), REVIEW2)
         self.assertEqual(AssessmentCompletionEvaluator().evaluate(trajectory).score, 1)
-        self.assertEqual(HypothesisCompletionEvaluator().evaluate(trajectory).score, 0)
+        self.assertEqual(ReviewCompletionEvaluator().evaluate(trajectory).label, "not_evaluated")
         self.assertEqual(
             [item["name"] for item in objective_signals(trajectory)["evaluations"]],
             [
@@ -218,6 +241,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "file_read_fragmentation",
                 "round_efficiency",
                 "duration_efficiency",
+                "review_completion",
                 "assessment_submission",
             ],
         )
@@ -483,8 +507,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     "function_name": "search_code",
                                     "arguments": {
                                         "searches": [
-                                            {"query": "Alpha"},
-                                            {"query": "Missing"},
+                                            {"query": "Alpha", "syntax": "literal"},
+                                            {"query": "Missing", "syntax": "literal"},
                                         ]
                                     },
                                 }

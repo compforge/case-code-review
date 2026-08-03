@@ -27,8 +27,13 @@ type CodeSearchRequest struct {
 	SearchText    string
 	FilePatterns  []string
 	CaseSensitive bool
-	UsePerlRegexp bool
+	Syntax        string
 }
+
+const (
+	CodeSearchLiteral = "literal"
+	CodeSearchRegexp  = "regexp"
+)
 
 // ParseCodeSearchRequests parses the provider's only contract: searches[].
 func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
@@ -45,11 +50,18 @@ func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 		if !ok {
 			return nil, fmt.Errorf("searches[%d] must be an object", i)
 		}
+		syntax := stringValue(item["syntax"])
+		if syntax == "" {
+			syntax = CodeSearchLiteral
+		}
+		if syntax != CodeSearchLiteral && syntax != CodeSearchRegexp {
+			return nil, fmt.Errorf("searches[%d].syntax must be literal or regexp", i)
+		}
 		requests[i] = CodeSearchRequest{
 			SearchText:    stringValue(item["query"]),
 			FilePatterns:  stringValues(item["file_patterns"]),
 			CaseSensitive: boolValue(item["case_sensitive"]),
-			UsePerlRegexp: boolValue(item["use_perl_regexp"]),
+			Syntax:        syntax,
 		}
 	}
 	return requests, nil
@@ -87,6 +99,31 @@ func DecodeCodeSearchResults(result string) ([]string, bool) {
 		items[i] = strings.TrimSpace(result[match[1]:end])
 	}
 	return items, true
+}
+
+// CodeSearchResultPaths returns the unique files named by one batch result.
+// Keeping this beside the output encoder gives session diagnostics and Runner
+// snapshots one stable parser for the tool's wire contract.
+func CodeSearchResultPaths(result string) []string {
+	parts, ok := DecodeCodeSearchResults(result)
+	if !ok {
+		parts = []string{result}
+	}
+	seen := make(map[string]bool)
+	var paths []string
+	for _, part := range parts {
+		for _, line := range strings.Split(part, "\n") {
+			if !strings.HasPrefix(line, "File: ") {
+				continue
+			}
+			filePath := strings.TrimSpace(strings.TrimPrefix(line, "File: "))
+			if filePath != "" && !seen[filePath] {
+				seen[filePath] = true
+				paths = append(paths, filePath)
+			}
+		}
+	}
+	return paths
 }
 
 // CodeSearchProvider performs text search across the repository using git grep.
@@ -147,7 +184,7 @@ func (p *CodeSearchProvider) executeOne(
 		ctx,
 		request.SearchText,
 		request.CaseSensitive,
-		request.UsePerlRegexp,
+		request.Syntax == CodeSearchRegexp,
 		request.FilePatterns,
 		maxCount,
 	)

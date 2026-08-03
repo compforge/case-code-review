@@ -184,7 +184,8 @@ type Runner struct {
 	// dispatchUnits, shared by every unit's prompt — like background/rule).
 	// It exists to stop the reviewer from guessing symbol names in searches:
 	// it lists names that actually exist, ranked by relevance to the diff.
-	repoMap string
+	repoMap   string
+	repoIndex *codegraph.Extraction
 	// typedGraph is the shared lazy handle to the typed Go call graph
 	// (nil when the typed_graph gate is off). See codegraph.TypedGraph.
 	typedGraph *codegraph.TypedGraph
@@ -999,7 +1000,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	specCases, specRules, seeAlso, priorFindings := renderClues(u.Clues)
 	projectContext := renderProjectContext(u.Clues)
 	// Pre-grep where else the repo references the changed symbols ({{usage_sites}}).
-	usageSites, usageCount := a.renderUsageSites(u)
+	usageSites, usageCount, usagePaths := a.renderUsageSites(u)
 	// Per-function @rule (from clues) augments the path-glob rule.json criteria;
 	// both flow into {{system_rule}} (plan + main).
 	rule := a.resolveSystemRule(strings.ToLower(newPath))
@@ -1099,9 +1100,10 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// Preloaded source is an optimization, never the reason a Unit is skipped:
 	// related files drop before the reviewed source when the prompt is too large.
 	ownFiles, relatedFiles, notes, outcomes := a.preloadReviewFiles(ctx, u)
+	initialFiles := a.initialFileContext(ctx, u, usagePaths, ownFiles, relatedFiles)
 	deb.SourcePreloads = outcomes
 	domain := a.assembleReviewMessages(
-		buildMessages, ownFiles, relatedFiles, notes, tokenLimit, &deb,
+		buildMessages, ownFiles, relatedFiles, initialFiles, notes, tokenLimit, &deb,
 	)
 
 	tokenCount := llm.CountMessagesTokens(msg.Lower(domain))

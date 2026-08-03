@@ -48,6 +48,7 @@ func (a *Runner) buildRepoMap(units []unit.Unit) string {
 
 	ex := codegraph.Scan(a.args.RepoDir)
 	codegraph.PairMethodIdents(ex)
+	a.repoIndex = ex
 	m := codegraph.BuildMap(ex, codegraph.MapRequest{
 		SeedFiles:  seedFiles,
 		SeedIdents: seedIdents,

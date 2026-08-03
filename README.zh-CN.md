@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> 由行为 Unit、两次 Agent Review、确定性 Trial 和 Language / Project Knowledge 组成的证据化 Agentic Review Pipeline。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
+> 一个由轨迹评测驱动、将代码变更转化为证据化 Finding 的 Agentic Code Review Pipeline。基于 [open-code-review](https://github.com/alibaba/open-code-review) 演进。｜ English: [README.md](./README.md)
 
 ## 理念
 

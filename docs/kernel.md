@@ -180,8 +180,13 @@ CCR 的效果提升不是单纯换模型或扩大 prompt，而依靠三项能力
 
 1. **成熟稳定的 Review Pipeline**：明确发现、复核、裁决的职责和完成语义，使阶段结果能增量流动、
    超时可保留、简单问题可快速结束；
-2. **基于轨迹的 Review 优化**：从 Session JSONL 生成 Review 1 / Review 2 trajectory，定位空转、重复读取、
-   未完成和错误收敛，再据此新增、删除或调整 prompt、tool 与 tool schema；
+2. **基于轨迹的 Review 优化**：Review 的基本可优化对象是 Agent Loop，而 Loop 由 Prompt、Tool surface
+   和执行机制组成。Session JSONL 生成的 Review 1 / Review 2 trajectory 用来判断问题发生在哪一部分：
+   Prompt 是否缺少或浪费 Initial Context，Tool 是否缺能力、schema 是否诱发空转，终止、压缩、复用和
+   预算机制是否让有效工作丢失。优化随后落回对应要素，并由下一批 trajectory 验证，而不是无边界地
+   增加 prompt 或执行轮次。**trajectory 驱动的 Initial Context 演进**是其中一个具体闭环：工具与判断
+   步骤暴露 Agent 后续主动获取的信息需求，跨 case 汇总后决定哪些材料应提前加入、提供 source、
+   Outline 还是 reference，从而用初始 token 换掉更多模型轮次和工具调用；
 3. **持续增长的 Knowledge**：Language 通过 Outline、CodeGraph 和 proximity 等能力提供更可靠的源码结构、关系与绑定位置，
    Project Knowledge 同时提供 Repository / Component / FileRole 等结构事实和
    `spec / case / link / rule / doc` 等业务契约，让 Unit formation 和两个 Review 获得更相关的事实。

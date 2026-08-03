@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/go-stdx/uuid"
@@ -187,6 +189,7 @@ type ToolResultRecord struct {
 	Result     string
 	OK         bool
 	Duration   time.Duration
+	Metadata   map[string]any
 }
 
 // SessionOptions holds optional metadata for a new session. The manifest
@@ -256,6 +259,19 @@ func (sh *SessionHistory) WriteArtifact(kind string, data map[string]any) {
 		return
 	}
 	p.WriteArtifact(kind, data)
+}
+
+// WriteContextProjected persists the identifiable context actually exposed to
+// one model call. Projection 1 is the Initial Context denominator; subsequent
+// projections reveal compaction and tool-result changes without interpretation.
+func (sh *SessionHistory) WriteContextProjected(scope Scope, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem) {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p == nil || executionID == "" || projectionNo < 1 {
+		return
+	}
+	p.WriteContextProjected(sh.GetOrCreateScope(scope), executionID, taskType, projectionNo, items)
 }
 
 // WriteExecutionEnd persists the authoritative terminal state for one
@@ -559,12 +575,12 @@ func (sh *SessionHistory) LLMFailures() int64 {
 // AddToolResult appends a tool call result to this task record and writes a
 // tool_call record to the JSONL stream.
 func (tr *TaskRecord) AddToolResult(toolName, arguments, result string) {
-	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0)
+	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0, nil)
 }
 
 // AddToolResultWithMetadata records the stable call identity and execution
 // outcome so concurrent calls to the same tool remain distinguishable.
-func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) {
+func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any) {
 	tr.ToolResults = append(tr.ToolResults, ToolResultRecord{
 		ToolCallID: toolCallID,
 		ToolName:   toolName,
@@ -572,11 +588,12 @@ func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments,
 		Result:     result,
 		OK:         ok,
 		Duration:   duration,
+		Metadata:   metadata,
 	})
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteToolCall(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, duration)
+			p.WriteToolCall(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, duration, metadata)
 		}
 	}
 }

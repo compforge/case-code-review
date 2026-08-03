@@ -10,6 +10,12 @@ import (
 )
 
 func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event) {
+	if event.Type == agentgo.EventContextProjected {
+		if recorder != nil {
+			recorder.recordContextProjected(event.ContextItems)
+		}
+		return
+	}
 	if event.Type == agentgo.EventContextCompacted && event.Compaction != nil {
 		compaction := &session.ContextCompaction{
 			Reason: string(event.Compaction.Reason), Committed: event.Compaction.Committed,

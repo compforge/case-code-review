@@ -10,11 +10,13 @@ import (
 func TestExportSessionATIF(t *testing.T) {
 	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z"}
 {"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"},"timestamp":"2026-07-02T10:00:00Z"}
+{"type":"context_projected","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","projection_no":1,"items":[{"kind":"file","identity":"a.go","representation":"source","reason":"unit","ref":"a.go::F"}],"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"llm_request","scope_id":"u1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z"}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"","tool_calls":[{"id":"c1","name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"duration_ms":5000,"timestamp":"2026-07-02T10:00:06Z"}
-{"type":"tool_call","scope_id":"u1","tool_name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"timestamp":"2026-07-02T10:00:06Z"}
+{"type":"tool_call","scope_id":"u1","tool_name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"metadata":{"cache_status":"hit"},"timestamp":"2026-07-02T10:00:06Z"}
 {"type":"llm_request","scope_id":"u1","request_no":2,"messages":[{"role":"system","content":"be a reviewer"}],"timestamp":"2026-07-02T10:00:07Z"}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"looks fine","usage":{"prompt_tokens":200,"completion_tokens":20},"duration_ms":3000,"timestamp":"2026-07-02T10:00:10Z"}
+{"type":"execution_end","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","taskType":"main_task","outcome":"completed","turns":2,"tool_calls":1,"duration_ms":8000,"timestamp":"2026-07-02T10:00:10Z"}
 `
 	f := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(f, []byte(lines), 0o644); err != nil {
@@ -45,6 +47,17 @@ func TestExportSessionATIF(t *testing.T) {
 	if sub.TrajectoryID != "u1" || sub.Extra["file_path"] != "a.go" {
 		t.Fatalf("sub header: %+v", sub)
 	}
+	initialItems, ok := sub.Extra["initial_context"].([]map[string]any)
+	if !ok || len(initialItems) != 1 || initialItems[0]["reason"] != "unit" || initialItems[0]["kind"] != "file" {
+		t.Fatalf("initial context missing: %v", sub.Extra["initial_context"])
+	}
+	projections, ok := sub.Extra["context_projections"].([]map[string]any)
+	if !ok || len(projections) != 1 || projections[0]["projection_no"] != 1 {
+		t.Fatalf("context projections missing: %v", sub.Extra["context_projections"])
+	}
+	if sub.Extra["execution_outcome"] != "completed" || sub.Extra["execution_id"] != "exec-1" || sub.Extra["execution_turns"] != 2 {
+		t.Fatalf("execution terminal fact missing: %v", sub.Extra)
+	}
 	// Steps: system + user (from request #1 only — request #2's replayed
 	// conversation must NOT duplicate them) + two agent responses.
 	if len(sub.Steps) != 4 {
@@ -64,6 +77,9 @@ func TestExportSessionATIF(t *testing.T) {
 	if st.Observation == nil || len(st.Observation.Results) != 1 ||
 		st.Observation.Results[0].SourceCallID != "c1" || !strings.Contains(st.Observation.Results[0].Content, "1|package a") {
 		t.Fatalf("observation pairing: %+v", st.Observation)
+	}
+	if st.Observation.Results[0].Extra["cache_status"] != "hit" {
+		t.Fatalf("tool metadata missing: %+v", st.Observation.Results[0].Extra)
 	}
 	if st.Metrics.PromptTokens != 100 || st.Metrics.CompletionTokens != 10 {
 		t.Fatalf("metrics: %+v", st.Metrics)

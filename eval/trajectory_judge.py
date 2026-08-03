@@ -47,7 +47,7 @@ from ccr_trajectory import (
     FileReadFragmentationEvaluator,
     REVIEW1,
     REVIEW2,
-    HypothesisCompletionEvaluator,
+    ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     RoundEfficiencyEvaluator,
     ToolFailureEvaluator,
@@ -55,6 +55,8 @@ from ccr_trajectory import (
     code_search_stats,
     file_read_fragmentation,
     file_read_stats,
+    hypothesis_yield,
+    initial_context_stats,
     prompt_file_read_overlap,
     repeated_file_reads,
     review_stage,
@@ -92,10 +94,11 @@ _COMMON_EVALUATORS = (
     FileReadFragmentationEvaluator(),
     RoundEfficiencyEvaluator(),
     DurationEfficiencyEvaluator(),
+    ReviewCompletionEvaluator(),
 )
 
 _STAGE_EVALUATORS = {
-    REVIEW1: (*_COMMON_EVALUATORS, HypothesisCompletionEvaluator()),
+    REVIEW1: _COMMON_EVALUATORS,
     REVIEW2: (*_COMMON_EVALUATORS, AssessmentCompletionEvaluator()),
     UNKNOWN_STAGE: _COMMON_EVALUATORS,
 }
@@ -123,9 +126,11 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "code_searches": code_search_stats(trajectory),
         "file_reads": file_read_stats(trajectory),
         "prompt_overlap": prompt_file_read_overlap(trajectory),
+        "initial_context": initial_context_stats(trajectory),
         "read_fragmentation": file_read_fragmentation(trajectory),
         "repeated_reads": repeated_file_reads(trajectory),
         "empty_searches": empty_searches,
+        "hypothesis_yield": hypothesis_yield(trajectory) if stage == REVIEW1 else 0,
         "tool_failures": tool_fails,
     }
 

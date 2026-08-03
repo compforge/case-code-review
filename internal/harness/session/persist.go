@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/go-stdx/uuid"
 )
@@ -20,9 +22,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v6 adds explicit context
-// compaction records owned by an Execution.
-const SchemaVersion = 6
+// protocol instead of guessing old record semantics. v7 adds projected
+// Context inventory and authoritative Execution terminal facts.
+const SchemaVersion = 7
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -291,7 +293,7 @@ func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskT
 }
 
 // WriteToolCall writes a tool call result entry.
-func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration) string {
+func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -312,8 +314,35 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskT
 	if toolCallID != "" {
 		rec["tool_call_id"] = toolCallID
 	}
+	if len(metadata) > 0 {
+		rec["metadata"] = metadata
+	}
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
+	jw.writeRecordLocked(rec)
+	jw.lastUUID = uuid
+	return uuid
+}
+
+// WriteContextProjected records the identifiable context exposed to one model
+// call. It is runtime exposure data, not a claim that every item was used.
+func (jw *jsonlWriter) WriteContextProjected(ss *ScopeSession, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem) string {
+	uuid := uuid.V4()
+
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	rec := map[string]any{
+		"uuid":          uuid,
+		"parentUuid":    jw.lastUUID,
+		"type":          "context_projected",
+		"sessionId":     jw.sessionID,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"execution_id":  executionID,
+		"taskType":      string(taskType),
+		"projection_no": projectionNo,
+		"items":         items,
+	}
+	addScopeFields(rec, ss)
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid
 	return uuid

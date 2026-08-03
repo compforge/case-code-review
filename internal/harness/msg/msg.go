@@ -22,7 +22,11 @@
 // the domain value keeps its raw form for later compaction decisions.
 package msg
 
-import "github.com/qiankunli/case-code-review/internal/llm"
+import (
+	"github.com/compforge/agentgo"
+
+	"github.com/qiankunli/case-code-review/internal/llm"
+)
 
 // CompactionLevel is selected only by Harness context projection. Callers
 // provide full-fidelity domain messages; they never choose or persist a level.
@@ -39,6 +43,13 @@ type Msg interface {
 	// ToLLM renders the message into its LLM wire form at the fidelity chosen
 	// by ContextManager (exactly one message — see the package invariant).
 	ToLLM(CompactionLevel) llm.Message
+}
+
+// ContextItemProvider lets a domain message expose structured admission facts
+// through AgentGo's shared protocol without changing its LLM rendering.
+type ContextItemProvider interface {
+	Msg
+	ContextItems(CompactionLevel) []agentgo.ContextItem
 }
 
 // Compactable lets a message declare how far ContextManager may compact it.
@@ -124,6 +135,8 @@ func CloneAll(msgs []Msg) []Msg {
 			cp := *value
 			out[i] = &cp
 		case *FileBatch:
+			out[i] = value.clone()
+		case *FileContext:
 			out[i] = value.clone()
 		case *SearchBatch:
 			out[i] = value.clone()

@@ -192,8 +192,9 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
 `trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索、
 `read_files` 行覆盖率和 Unit
-完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：前者以 `submit_hypotheses`，
-后者以 `submit_assessments` 作为各自的完成信号，分别汇总 score、轮次和耗时。文件读取额外报告
+完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
+`execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
+尚未提交的 Assessment，避免把“自然 clean”误判为未完成，也避免把“产出过结果”误判为完整执行。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
 小范围可合并出的理论最少读取数。重复读取、初始 Prompt 重叠和读取碎片会参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
@@ -201,6 +202,12 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 average/max batch；空搜索按 query 而不是按整次批量调用评分。确定性结果统一产生
 0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
 直接解析 ATIF 私有字段。
+
+ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
+提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率
+一起判断是否重复；`outline→read` 表示关系判断正确但结构信息不足；`reference→read` 表示路径有用但
+需要原文；`missing→read` 则提示 Language/Project Knowledge 尚未覆盖该关系。后续没有 demand 保持中性，
+是否过量注入需要固定 corpus 的 A/B 成本与效果共同判断。
 
 后验扫描 finding 指向的代码是否被后续提交修改：
 

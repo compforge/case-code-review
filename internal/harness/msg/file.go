@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -38,6 +40,10 @@ type File struct {
 	// Label describes why this file is present without leaking Unit or Clue
 	// objects into Harness, e.g. "code under review" or "related caller ...".
 	Label string
+	// ContextReason/ContextRef retain the structured admission provenance used
+	// by Initial Context evaluation. Label remains presentation-only.
+	ContextReason string
+	ContextRef    string
 	// CondensedContent is an optional producer-authored lower-cost rendering.
 	// Harness never parses source/JSON/TOML to invent this representation.
 	CondensedContent string
@@ -143,6 +149,27 @@ func (f *File) Lower() llm.Message { return f.ToLLM(CompactionNone) }
 func (f *File) MaxCompaction() CompactionLevel { return CompactionReference }
 func (f *File) Priority() int                  { return f.priority }
 
+func (f *File) ContextItems(level CompactionLevel) []agentgo.ContextItem {
+	reason := f.ContextReason
+	if reason == "" && f.IsToolResult() {
+		reason = "prior_read"
+	}
+	representation := ViewSource
+	if f.Stubbed() || level >= CompactionReference {
+		representation = ViewReference
+	} else if level == CompactionCondensed && f.CondensedContent != "" {
+		representation = ViewOutline
+	}
+	kind := "file"
+	if f.Snapshot == SnapshotBaseline {
+		kind = "baseline_file"
+	}
+	return []agentgo.ContextItem{{
+		ContextKey:     agentgo.ContextKey{Kind: kind, Identity: f.Path},
+		Representation: string(representation), Reason: reason, Ref: f.ContextRef,
+	}}
+}
+
 func (f *File) ToolName() string {
 	if f.Snapshot == SnapshotBaseline {
 		return FileReadBaseToolName
@@ -217,6 +244,14 @@ func NewFile(path string, start, end, total int, content string) *File {
 func (f *File) ConfigurePresentation(label, condensed string) *File {
 	f.Label = label
 	f.CondensedContent = condensed
+	return f
+}
+
+// ConfigureContext records why an initial source snapshot was admitted. Tool
+// results leave this empty because their provenance is the tool call itself.
+func (f *File) ConfigureContext(reason, ref string) *File {
+	f.ContextReason = reason
+	f.ContextRef = ref
 	return f
 }
 

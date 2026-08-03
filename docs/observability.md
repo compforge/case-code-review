@@ -25,6 +25,7 @@ Session
        ├─ Execution           # 一次真实 AgentGo loop
        │    ├─ llm_request / llm_response
        │    ├─ tool_call
+       │    ├─ context_projected
        │    ├─ context_compacted
        │    └─ execution_end  # 唯一终态事实
        └─ Artifact            # Hypothesis、Assessment、Trial decision
@@ -40,6 +41,7 @@ Viewer 不再从 `task_done`、最后一条 assistant 文本或 Scope debrief �
 - run/scope、review snapshot、工具版本、feature、模型和业务身份；
 - 每个 Execution 的任务类型，以及每轮实际发送的 prompt、模型 response/reasoning、stop reason 和 usage；
 - tool call 参数、结果、耗时、成功状态及其所属 Execution；
+- 每次模型调用前实际可见的 ContextItem；首次 `context_projected` 作为 Initial Context exposure；
 - 每次 context compaction 的原因、提交状态、前后 token/消息数与 summary checkpoint 状态；
 - `execution_end` 中的 outcome、reason、turn/tool 统计和总耗时；
 - Hypothesis、Lane、Assessment、Trial decision 等阶段 artifact。

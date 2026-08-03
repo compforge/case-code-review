@@ -532,7 +532,7 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 	assistant := wireToAgentMessage(llm.NewToolCallMessage("", []llm.ToolCall{{
 		ID: "search-1", Type: "function",
-		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"query":"NewExecution"}]}`},
+		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"query":"NewExecution","syntax":"literal"}]}`},
 	}}))
 	result := wireToAgentMessage(llm.NewToolResultMessage(
 		"search-1", tool.EncodeCodeSearchResults([]string{
@@ -568,6 +568,24 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 	manager.remember(nil, projection.Messages, projection.Usage, "test", false)
 	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
 		t.Fatal("baseline source must not suppress a current-snapshot read_files")
+	}
+}
+
+func TestFileContextAdmissionDoesNotSuppressSourceRead(t *testing.T) {
+	contextMessage := msg.NewFileContext([]msg.FileContextEntry{
+		{Path: "pkg/a.go", View: msg.ViewOutline, Reason: "callee", Ref: "pkg/a.go::A", Content: "File outline: pkg/a.go"},
+		{Path: "pkg/b.go", View: msg.ViewReference, Reason: "usage_site"},
+	})
+	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
+	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
+		t.Fatal("outline navigation must not suppress an exact source read")
+	}
+	items := agentgo.CollectContextItems(wrapDomainMessages([]msg.Msg{contextMessage}))
+	if len(items) != 2 || items[0].Identity != "pkg/a.go" || items[0].Representation != "outline" ||
+		items[0].Reason != "callee" || items[0].Ref != "pkg/a.go::A" ||
+		items[1].Identity != "pkg/b.go" || items[1].Representation != "reference" ||
+		items[1].Reason != "usage_site" {
+		t.Fatalf("projected items = %#v", items)
 	}
 }
 

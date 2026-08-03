@@ -77,9 +77,9 @@ func TestReviewHandlerReceiptsEachSuccessfulSearch(t *testing.T) {
 		Tool: tool.CodeSearch,
 		Call: llm.ToolCall{ID: "call-search"},
 		Args: map[string]any{"searches": []any{
-			map[string]any{"query": "package a"},
-			map[string]any{"query": ""},
-			map[string]any{"query": "missing"},
+			map[string]any{"query": "package a", "syntax": "literal"},
+			map[string]any{"query": "", "syntax": "literal"},
+			map[string]any{"query": "missing", "syntax": "literal"},
 		}},
 	})
 	if !handled || checkpoint.Data == "" {

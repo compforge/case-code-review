@@ -38,8 +38,8 @@ github.com/clipperhouse/displaywidth v0.11.0 h1:lBc6kY44VFw+TDx4I8opi/EtL9m20WSE
 github.com/clipperhouse/displaywidth v0.11.0/go.mod h1:bkrFNkf81G8HyVqmKGxsPufD3JhNl3dSqnGhOoSD/o0=
 github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJv2v7Vk=
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
-github.com/compforge/agentgo v0.0.0-20260803031912-63e072ebccc8 h1:fJS2DasXRrIZvYv4v2+jNGC7kszr0xFxlXtjBYchFi4=
-github.com/compforge/agentgo v0.0.0-20260803031912-63e072ebccc8/go.mod h1:5EkjADRpln5pwK2wd1cNwUwndq2VQDbeefybMVNMhpk=
+github.com/compforge/agentgo v0.0.1 h1:e3JiF7za1xN9NdGw4M8BFH9vdVwMJuD/K55eNSclK1I=
+github.com/compforge/agentgo v0.0.1/go.mod h1:5EkjADRpln5pwK2wd1cNwUwndq2VQDbeefybMVNMhpk=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.10.0 h1:+/GIL799phkJqYW+3YbOd8LCcbHzT0Pbo8zl70MHsq0=

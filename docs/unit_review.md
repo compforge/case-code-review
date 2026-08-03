@@ -228,6 +228,11 @@ Runner 先构造稳定的开场消息，文件不是嵌进一大段 user 文本�
 system: <Review 1 system prompt / rules>
 user:   <review task；Unit diff、Clue 摘要、源码 slot pointer>
 
+user: InitialFileContext
+  - [source] A.go — exact source follows
+  - [outline] B.go — Language FileOutline
+  - [reference] C.go — statically related path
+
 <file_messages>
   user: File(path=A, range=..., context="code under review")
   user: File(path=B, range=..., context="related caller/callee/project context")
@@ -267,6 +272,9 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
   trajectory eval 分别统计；
 - 只有前一个结果决定后一个读取或 query 时才串行调用。批量能力不是“看到 import 就全搜”，仍由
   当前 lead 决定哪些目标值得补证。
+
+`search_code.searches[]` 的 `syntax` 默认为 `literal`；只有正则查询显式声明 `regexp`。相比布尔开关，
+它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。
 
 每次调用模型前，Execution 通过 AgentGo `BeforeTurn` 在持久 conversation 上追加本轮控制消息，随后
 ContextManager 做统一投影：
@@ -317,6 +325,16 @@ compaction 与轨迹统计。
 Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/callee/project 等关系
 静态知道的路径。Viewer 将二者分别与 `read_files` 对比：前者判断预载是否命中，后者回答“静态分析
 本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
+
+Initial Context 进一步把静态关系投影成 `source / outline / reference` 三档：Unit 和已解析的直接调用
+邻居优先给源码，其余 Language Outline 与 RepositoryIndex 相关路径按预算降级；`outline/reference`
+只负责导航，绝不冒充源码覆盖或拦截读取。每项材料同时保留“为何进入 Initial Context”的结构化来源。
+
+后续 trajectory 中的工具调用、工具结果和判断产物都可以由 eval 算子解释为信息需求：`read_files` 与
+`search_code` 只是文件内容和仓库检索的两个例子，不是协议特例。需求命中 `outline/reference` 或完全
+缺席的材料，说明候选或档位值得在跨 case 统计后提升；已经投放但没有显式需求的材料保持中性，因为
+它也可能正是避免工具调用的原因，只通过策略 A/B 比较 token、轮次、完成率和 Finding 质量。这样
+trajectory 才能反向演进 Initial Context，用可控的初始 token 减少后续工具轮次、时间和总 token。
 
 ### 7. 试验特性：Review Team 跨 Unit 协作
 

@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"path"
+	"sort"
 	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
@@ -23,6 +25,9 @@ const (
 	unitSourcePointer    = "(provided as separate messages after this task — do NOT call read_files on those ranges again)"
 	relatedSourcePointer = "(provided as separate messages after this task)"
 	maxNeighborSources   = 6
+	maxInitialOutlines   = 6
+	maxInitialReferences = 24
+	initialOutlineBudget = 12 * 1024
 )
 
 // preloadReviewFiles reads the high-confidence source already implied by the
@@ -43,6 +48,9 @@ func (a *Runner) preloadReviewFiles(
 		files, note, outcome := a.preloadPath(
 			ctx, filePath, symbols[filePath], true, "code under review", &budget,
 		)
+		for _, file := range files {
+			file.ConfigureContext("unit", strings.Join(symbols[filePath], ", "))
+		}
 		own = append(own, files...)
 		if note != "" {
 			notes = append(notes, note)
@@ -58,6 +66,9 @@ func (a *Runner) preloadReviewFiles(
 		files, _, outcome := a.preloadPath(
 			ctx, filePath, []string{clue.Ref}, false, label, &budget,
 		)
+		for _, file := range files {
+			file.ConfigureContext(string(clue.Relation), clue.Ref)
+		}
 		related = append(related, files...)
 		if outcome != "" {
 			outcomes = append(outcomes, outcome)
@@ -190,6 +201,7 @@ func (a *Runner) preloadSpans(
 func (a *Runner) assembleReviewMessages(
 	build func(unitSlot, relatedSlot string) []llm.Message,
 	own, related []*msg.File,
+	initial []msg.FileContextEntry,
 	notes []string,
 	tokenLimit int,
 	deb *session.Debrief,
@@ -208,6 +220,10 @@ func (a *Runner) assembleReviewMessages(
 		}
 
 		out := msg.Wrap(build(unitSlot, relatedSlot))
+		catalog := initialFileCatalog(initial, own, related, withOwn, withRelated)
+		if len(catalog) > 0 {
+			out = append(out, msg.NewFileContext(catalog))
+		}
 		if withOwn {
 			for _, file := range own {
 				out = append(out, file)
@@ -236,6 +252,173 @@ func (a *Runner) assembleReviewMessages(
 	return domain
 }
 
+func initialFileCatalog(
+	initial []msg.FileContextEntry,
+	own, related []*msg.File,
+	withOwn, withRelated bool,
+) []msg.FileContextEntry {
+	byPath := make(map[string]msg.FileContextEntry)
+	add := func(entry msg.FileContextEntry) {
+		filePath := path.Clean(entry.Path)
+		if filePath == "." || filePath == "" {
+			return
+		}
+		entry.Path = filePath
+		current, exists := byPath[filePath]
+		if !exists || initialContextViewRank(entry.View) > initialContextViewRank(current.View) {
+			byPath[filePath] = entry
+		}
+	}
+	for _, entry := range initial {
+		add(entry)
+	}
+	addFiles := func(files []*msg.File, included bool) {
+		for _, file := range files {
+			view := msg.ViewSource
+			if !included {
+				view = msg.ViewReference
+			}
+			add(msg.FileContextEntry{
+				Path: file.Path, View: view, Reason: file.ContextReason, Ref: file.ContextRef,
+			})
+		}
+	}
+	addFiles(own, withOwn)
+	addFiles(related, withRelated)
+
+	out := make([]msg.FileContextEntry, 0, len(byPath))
+	for _, entry := range byPath {
+		out = append(out, entry)
+	}
+	return out
+}
+
+func initialContextViewRank(view msg.FileContextView) int {
+	switch view {
+	case msg.ViewSource:
+		return 3
+	case msg.ViewOutline:
+		return 2
+	case msg.ViewReference:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// initialFileContext turns statically known relationships into a bounded
+// navigation catalog. Unit source and resolved call-neighbor source remain
+// separate File messages; other related files receive an Outline when the language
+// boundary can provide one, otherwise a path-only reference.
+func (a *Runner) initialFileContext(
+	ctx context.Context,
+	u unit.Unit,
+	usagePaths []string,
+	own, related []*msg.File,
+) []msg.FileContextEntry {
+	if a.fileReader() == nil {
+		return nil
+	}
+	source := make(map[string]bool)
+	for _, file := range append(append([]*msg.File(nil), own...), related...) {
+		source[path.Clean(file.Path)] = true
+	}
+
+	type candidate struct{ path, reason, ref string }
+	seen := make(map[string]bool)
+	var candidates []candidate
+	add := func(filePath, reason, ref string) {
+		filePath = path.Clean(strings.TrimSpace(filePath))
+		if filePath == "." || filePath == "" || source[filePath] || seen[filePath] {
+			return
+		}
+		seen[filePath] = true
+		candidates = append(candidates, candidate{path: filePath, reason: reason, ref: ref})
+	}
+	for _, clue := range u.Clues {
+		filePath := ""
+		if clue.Relation == unit.RelProject {
+			filePath = clue.Ref
+		} else {
+			filePath, _, _ = language.SplitSymbolID(clue.Ref)
+		}
+		add(filePath, string(clue.Relation), clue.Ref)
+	}
+	for _, filePath := range usagePaths {
+		add(filePath, "usage_site", "")
+	}
+	for _, filePath := range a.repositoryReferencePaths(u, maxInitialReferences) {
+		add(filePath, "repository_reference", "")
+	}
+
+	entries := make([]msg.FileContextEntry, 0, min(len(candidates), maxInitialReferences))
+	outlineCount, outlineBytes := 0, 0
+	for _, candidate := range candidates {
+		if len(entries) >= maxInitialReferences {
+			break
+		}
+		entry := msg.FileContextEntry{
+			Path: candidate.path, View: msg.ViewReference,
+			Reason: candidate.reason, Ref: candidate.ref,
+		}
+		if outlineCount < maxInitialOutlines && candidate.reason != string(unit.RelProject) {
+			content, err := a.fileReader().Read(ctx, candidate.path)
+			if err == nil {
+				outline, outlineErr := a.sourceAnalyzer().FileOutline(ctx, language.Source{Path: candidate.path, Content: content})
+				rendered := outline.Render()
+				if outlineErr == nil && rendered != "" && outlineBytes+len(rendered) <= initialOutlineBudget {
+					entry.View = msg.ViewOutline
+					entry.Content = rendered
+					outlineCount++
+					outlineBytes += len(rendered)
+				}
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func (a *Runner) repositoryReferencePaths(u unit.Unit, limit int) []string {
+	if a.repoIndex == nil || limit <= 0 {
+		return nil
+	}
+	identifiers := make(map[string]bool)
+	for _, symbolID := range u.AllSymbols() {
+		if name := language.BareSymbolName(symbolID); name != "" {
+			identifiers[name] = true
+		}
+	}
+	type rankedPath struct {
+		path  string
+		score int
+	}
+	var ranked []rankedPath
+	for filePath, refs := range a.repoIndex.Refs {
+		score := 0
+		for name := range identifiers {
+			score += refs[name]
+		}
+		if score > 0 {
+			ranked = append(ranked, rankedPath{path: filePath, score: score})
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].path < ranked[j].path
+	})
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	out := make([]string, len(ranked))
+	for i := range ranked {
+		out[i] = ranked[i].path
+	}
+	return out
+}
+
 func (a *Runner) describePreloadedSources(u unit.Unit) []string {
 	symbols := symbolsByPath(u)
 	var out []string
@@ -258,13 +441,13 @@ func (a *Runner) describePreloadedSources(u unit.Unit) []string {
 // caller/callee walk, so it honors the same costly-context budget gate
 // (a.costlyContext) on top of its own feature gate. Returns "" when gated off
 // or nothing was found.
-func (a *Runner) renderUsageSites(u unit.Unit) (string, int) {
+func (a *Runner) renderUsageSites(u unit.Unit) (string, int, []string) {
 	if !a.features.Enabled(feature.UsageSites) || !a.costlyContext {
-		return "", 0
+		return "", 0, nil
 	}
 	symbols := u.AllSymbols()
 	if len(symbols) == 0 {
-		return "", 0
+		return "", 0, nil
 	}
 	exclude := map[string]bool{}
 	for _, p := range u.Paths() {
@@ -272,16 +455,22 @@ func (a *Runner) renderUsageSites(u unit.Unit) (string, int) {
 	}
 	usages := codegraph.FindUsages(a.args.RepoDir, a.args.GitRunner, symbols, exclude)
 	if len(usages) == 0 {
-		return "", 0
+		return "", 0, nil
 	}
 	var b strings.Builder
 	last := ""
+	seenPaths := make(map[string]bool)
+	var paths []string
 	for _, us := range usages {
 		if us.Symbol != last {
 			fmt.Fprintf(&b, "`%s`:\n", us.Symbol)
 			last = us.Symbol
 		}
 		fmt.Fprintf(&b, "  %s:%d: %s\n", us.File, us.Line, us.Text)
+		if !seenPaths[us.File] {
+			seenPaths[us.File] = true
+			paths = append(paths, us.File)
+		}
 	}
-	return strings.TrimRight(b.String(), "\n"), len(usages)
+	return strings.TrimRight(b.String(), "\n"), len(usages), paths
 }

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/go-stdx/uuid"
 )
@@ -198,7 +200,11 @@ func TestSetErrorWritesJSONL(t *testing.T) {
 func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 	repoDir := t.TempDir()
 	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
-	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "unit", Type: "file", Paths: []string{"foo.go"}})
+	scope := Scope{ID: "foo.go", Kind: "unit", Type: "file", Paths: []string{"foo.go"}}
+	fs := sh.GetOrCreateScope(scope)
+	sh.WriteContextProjected(scope, "exec-1", MainTask, 1, []agentgo.ContextItem{
+		{ContextKey: agentgo.ContextKey{Kind: "file", Identity: "foo.go"}, Representation: "source", Reason: "unit", Ref: "foo.go::F"},
+	})
 	rec := fs.AppendTaskRecord(MainTask, nil)
 	content := "I will inspect both files."
 	rec.SetResponse(&llm.ChatResponse{
@@ -215,24 +221,42 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 			FinishReason: "tool_calls",
 		}},
 	}, 120*time.Millisecond)
-	rec.AddToolResultWithMetadata("call-1", "read_files", `{"reads":[{"file_path":"foo.go"}]}`, "File: foo.go", true, 8*time.Millisecond)
+	rec.AddToolResultWithMetadata(
+		"call-1", "read_files", `{"reads":[{"file_path":"foo.go"}]}`, "File: foo.go", true, 8*time.Millisecond,
+		map[string]any{"cache_status": "hit"},
+	)
 	sh.Finalize()
 
 	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
-	var response, toolCall map[string]any
+	var initial, response, toolCall map[string]any
 	for _, record := range records {
 		switch record["type"] {
+		case "context_projected":
+			initial = record
 		case "llm_response":
 			response = record
 		case "tool_call":
 			toolCall = record
 		}
 	}
+	if initial == nil || initial["execution_id"] != "exec-1" || initial["projection_no"] != float64(1) {
+		t.Fatalf("context projection record = %+v", initial)
+	}
+	items := initial["items"].([]any)
+	item := items[0].(map[string]any)
+	if item["kind"] != "file" || item["identity"] != "foo.go" ||
+		item["representation"] != "source" || item["reason"] != "unit" || item["ref"] != "foo.go::F" {
+		t.Fatalf("context projection items = %+v", items)
+	}
 	if response == nil || response["reasoning"] != "The paths are independent." || response["stop_reason"] != "tool_calls" {
 		t.Fatalf("response metadata = %+v", response)
 	}
 	if toolCall == nil || toolCall["tool_call_id"] != "call-1" || toolCall["duration_ms"] != float64(8) {
 		t.Fatalf("tool metadata = %+v", toolCall)
+	}
+	metadata, ok := toolCall["metadata"].(map[string]any)
+	if !ok || metadata["cache_status"] != "hit" {
+		t.Fatalf("tool context metadata = %+v", toolCall)
 	}
 }
 

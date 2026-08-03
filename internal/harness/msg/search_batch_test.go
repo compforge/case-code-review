@@ -16,9 +16,9 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	message := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
 		Arguments: map[string]any{"searches": []any{
-			map[string]any{"query": "Alpha"},
-			map[string]any{"query": "Missing"},
-			map[string]any{"query": "(bad", "use_perl_regexp": true},
+			map[string]any{"query": "Alpha", "syntax": "literal"},
+			map[string]any{"query": "Missing", "syntax": "literal"},
+			map[string]any{"query": "(bad", "syntax": "regexp"},
 		}},
 		Content: content,
 	})
@@ -41,7 +41,7 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 func TestCloneAllCopiesSearchBatch(t *testing.T) {
 	message := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha"}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha", "syntax": "literal"}}},
 		Content: tool.EncodeCodeSearchResults([]string{
 			"File: a.go\nMatch lines: 1\n10|func Alpha()\n",
 		}),

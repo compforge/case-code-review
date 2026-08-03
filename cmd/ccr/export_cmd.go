@@ -104,10 +104,17 @@ type exportEvent struct {
 	Kind         string           `json:"kind"`
 	Paths        []string         `json:"paths"`
 	TaskType     string           `json:"taskType"`
+	ExecutionID  string           `json:"execution_id"`
+	Outcome      string           `json:"outcome"`
+	Reason       string           `json:"reason"`
+	Turns        int              `json:"turns"`
+	ProjectionNo int              `json:"projection_no"`
+	Metadata     map[string]any   `json:"metadata"`
+	Items        []map[string]any `json:"items"`
 	RequestNo    int              `json:"request_no"`
 	Messages     []exportMessage  `json:"messages"`
 	Content      string           `json:"content"`
-	ToolCalls    []map[string]any `json:"tool_calls"`
+	ToolCalls    json.RawMessage  `json:"tool_calls"`
 	DurationMS   float64          `json:"duration_ms"`
 	Usage        struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -194,13 +201,14 @@ func exportSession(path string) (*atifTrajectory, error) {
 	var reviewArtifacts []map[string]any
 	// Scope chains in first-seen order; each becomes a subagent trajectory.
 	type chain struct {
-		steps    []*atifStep
-		last     *atifStep // last agent step — tool results attach here
-		pending  []string  // tool_call ids of `last`, consumed positionally
-		extra    map[string]any
-		total    atifFinal
-		stepID   int
-		sawFirst bool
+		steps         []*atifStep
+		last          *atifStep // last agent step — tool results attach here
+		pending       []string  // tool_call ids of `last`, consumed positionally
+		extra         map[string]any
+		total         atifFinal
+		stepID        int
+		sawFirst      bool
+		sawProjection bool
 	}
 	chains := map[string]*chain{}
 	var order []string
@@ -270,6 +278,17 @@ func exportSession(path string) (*atifTrajectory, error) {
 				"kind": e.ArtifactKind,
 				"data": e.Data,
 			})
+		case "context_projected":
+			c := get(e)
+			projections, _ := c.extra["context_projections"].([]map[string]any)
+			c.extra["context_projections"] = append(projections, map[string]any{
+				"projection_no": e.ProjectionNo,
+				"items":         e.Items,
+			})
+			if !c.sawProjection {
+				c.sawProjection = true
+				c.extra["initial_context"] = e.Items
+			}
 		case "llm_request":
 			c := get(e)
 			// Only the chain's FIRST request seeds steps: later requests replay the
@@ -300,7 +319,9 @@ func exportSession(path string) (*atifTrajectory, error) {
 				Extra: map[string]any{"task_type": e.TaskType},
 			}
 			c.pending = nil
-			for _, tc := range e.ToolCalls {
+			var toolCalls []map[string]any
+			_ = json.Unmarshal(e.ToolCalls, &toolCalls)
+			for _, tc := range toolCalls {
 				id, name, argsObj := parseRawToolCall(tc)
 				st.ToolCalls = append(st.ToolCalls, atifToolCall{
 					ToolCallID: id, FunctionName: name, Arguments: argsObj,
@@ -324,6 +345,9 @@ func exportSession(path string) (*atifTrajectory, error) {
 			if e.OK != nil {
 				res.Extra["ok"] = *e.OK
 			}
+			for key, value := range e.Metadata {
+				res.Extra[key] = value
+			}
 			// Results arrive in call order; pair them with the ids positionally.
 			used := 0
 			if c.last.Observation != nil {
@@ -343,6 +367,18 @@ func exportSession(path string) (*atifTrajectory, error) {
 				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent", Message: "",
 				Extra: map[string]any{"llm_error": e.Error, "duration_ms": e.DurationMS},
 			})
+		case "execution_end":
+			c := get(e)
+			c.extra["execution_outcome"] = e.Outcome
+			if e.ExecutionID != "" {
+				c.extra["execution_id"] = e.ExecutionID
+			}
+			if e.Reason != "" {
+				c.extra["execution_reason"] = e.Reason
+			}
+			if e.Turns > 0 {
+				c.extra["execution_turns"] = e.Turns
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
