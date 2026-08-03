@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -18,6 +20,23 @@ type Analyzer struct {
 	repoDir string
 	mu      sync.Mutex
 	cache   map[analysisKey]Analysis
+}
+
+// FileOutline returns a language/file-format-aware structural projection.
+// Source analyzers reuse their cached facts; data and document formats keep
+// their own lightweight shape without pretending to be code definitions.
+func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline, error) {
+	switch strings.ToLower(filepath.Ext(source.Path)) {
+	case ".json":
+		return jsonFileOutline(source)
+	case ".md", ".markdown":
+		return markdownFileOutline(source), nil
+	}
+	analysis, err := a.Analyze(ctx, source)
+	if err != nil {
+		return FileOutline{}, err
+	}
+	return analysis.Outline(source.Path), nil
 }
 
 type analysisKey struct {

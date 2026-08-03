@@ -141,6 +141,10 @@ type Analysis struct {
 	Calls       []Call
 	Decorators  []string
 	References  map[string]int
+	// outlineMembers are type-owned data declarations used only by FileOutline.
+	// They stay out of Definitions so repository ranking, call graphs, and Unit
+	// formation do not accidentally treat fields/properties as code symbols.
+	outlineMembers []outlineMember
 }
 
 // DefinitionAt returns the innermost callable definition containing line.

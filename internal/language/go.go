@@ -62,6 +62,8 @@ func analyzeGo(source Source) (Analysis, error) {
 					Span:      Span{Start: fset.Position(ts.Pos()).Line, End: fset.Position(ts.End()).Line},
 					Signature: "type " + ts.Name.Name + goTypeShape(ts),
 				})
+				analysis.outlineMembers = append(analysis.outlineMembers,
+					goTypeMembers([]byte(source.Content), fset, ts)...)
 			}
 		}
 	}
@@ -79,6 +81,67 @@ func analyzeGo(source Source) (Analysis, error) {
 		return true
 	})
 	return analysis, nil
+}
+
+func goTypeMembers(src []byte, fset *token.FileSet, spec *ast.TypeSpec) []outlineMember {
+	var fields *ast.FieldList
+	label := "field"
+	switch typ := spec.Type.(type) {
+	case *ast.StructType:
+		fields = typ.Fields
+	case *ast.InterfaceType:
+		fields = typ.Methods
+		label = "method"
+	default:
+		return nil
+	}
+	if fields == nil {
+		return nil
+	}
+	var out []outlineMember
+	for _, field := range fields.List {
+		name := goFieldNames(field)
+		if name == "" {
+			continue
+		}
+		memberLabel := label
+		if label == "method" {
+			if _, ok := field.Type.(*ast.FuncType); !ok {
+				memberLabel = "type"
+			}
+		}
+		out = append(out, outlineMember{
+			Name: name, Owner: spec.Name.Name, Label: memberLabel,
+			Signature: goSignature(src, fset, field.Pos(), field.Type.End()),
+			Span:      Span{Start: fset.Position(field.Pos()).Line, End: fset.Position(field.End()).Line},
+		})
+	}
+	return out
+}
+
+func goFieldNames(field *ast.Field) string {
+	if len(field.Names) > 0 {
+		names := make([]string, len(field.Names))
+		for i, name := range field.Names {
+			names[i] = name.Name
+		}
+		return strings.Join(names, ", ")
+	}
+	// Embedded fields have no explicit name; their type is the useful outline.
+	switch typ := field.Type.(type) {
+	case *ast.Ident:
+		return typ.Name
+	case *ast.SelectorExpr:
+		return typ.Sel.Name
+	case *ast.StarExpr:
+		return goFieldNames(&ast.Field{Type: typ.X})
+	case *ast.IndexExpr:
+		return goFieldNames(&ast.Field{Type: typ.X})
+	case *ast.IndexListExpr:
+		return goFieldNames(&ast.Field{Type: typ.X})
+	default:
+		return ""
+	}
 }
 
 func symbolName(owner, name string) string {

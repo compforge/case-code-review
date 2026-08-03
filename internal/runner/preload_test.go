@@ -45,6 +45,10 @@ func TestPreloadReviewFilesWholeSource(t *testing.T) {
 		!strings.Contains(own[0].Content, "1|package a") || !strings.Contains(own[0].Content, "3|func F() {}") {
 		t.Fatalf("own source off: %+v", own[0])
 	}
+	if !strings.Contains(own[0].CondensedContent, "File outline: pkg/a.go (go)") ||
+		!strings.Contains(own[0].CondensedContent, "func F()") {
+		t.Fatalf("own outline off:\n%s", own[0].CondensedContent)
+	}
 	if len(outcomes) != 1 || outcomes[0] != "whole pkg/a.go" {
 		t.Fatalf("outcomes = %v", outcomes)
 	}

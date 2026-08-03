@@ -119,6 +119,7 @@ func (a *Runner) preloadPath(
 		return nil, "", "unreadable " + filePath
 	}
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
+	outline, _ := a.sourceAnalyzer().FileOutline(ctx, language.Source{Path: filePath, Content: content})
 
 	if whole && len(content) <= *budget {
 		*budget -= len(content)
@@ -129,12 +130,12 @@ func (a *Runner) preloadPath(
 		}
 		return []*msg.File{
 			msg.NewFile(filePath, 1, len(lines), len(lines), strings.TrimRight(b.String(), "\n")).
-				ConfigurePresentation(label, ""),
+				ConfigurePresentation(label, outline.Render()),
 		}, "", "whole " + filePath
 	}
 
 	if len(symbols) > 0 && (!whole || a.features.Enabled(feature.RangedPreload)) {
-		files = a.preloadSpans(ctx, filePath, symbols, label, content, lines, budget)
+		files = a.preloadSpans(ctx, filePath, symbols, label, content, lines, outline, budget)
 		if len(files) > 0 {
 			return files, "", "ranged " + filePath
 		}
@@ -155,6 +156,7 @@ func (a *Runner) preloadSpans(
 	symbols []string,
 	label, content string,
 	lines []string,
+	outline language.FileOutline,
 	budget *int,
 ) []*msg.File {
 	var out []*msg.File
@@ -177,7 +179,7 @@ func (a *Runner) preloadSpans(
 		*budget -= b.Len()
 		out = append(out, msg.NewFile(
 			filePath, start, end, len(lines), strings.TrimRight(b.String(), "\n"),
-		).ConfigurePresentation(label, ""))
+		).ConfigurePresentation(label, outline.RenderRange(start, end)))
 	}
 	return out
 }

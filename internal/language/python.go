@@ -16,7 +16,7 @@ try:
 except SyntaxError:
     sys.exit(2)
 lines = source.splitlines()
-definitions, calls, decorators, references = [], [], [], {}
+definitions, members, calls, decorators, references = [], [], [], [], {}
 def dotted_name(node):
     if isinstance(node, ast.Call):
         return dotted_name(node.func)
@@ -31,12 +31,31 @@ def start(n):
 def signature(n):
     i = n.lineno - 1
     return " ".join(lines[i].split()) if 0 <= i < len(lines) else ""
+def annotation_text(node):
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return ""
+def add_class_members(node, owner):
+    for child in node.body:
+        names, annotation = [], ""
+        if isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            names = [child.target.id]
+            annotation = annotation_text(child.annotation)
+        elif isinstance(child, ast.Assign):
+            names = [target.id for target in child.targets if isinstance(target, ast.Name)]
+        for name in names:
+            declared = f"{name}: {annotation}" if annotation else name
+            members.append({"name": f"{owner}.{name}", "owner": owner, "label": "attribute",
+                            "start": child.lineno, "end": getattr(child, "end_lineno", child.lineno),
+                            "signature": declared})
 def visit_scope(node, owners):
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.ClassDef):
             name = ".".join(owners + [child.name])
             definitions.append({"name": name, "owner": ".".join(owners), "kind": "class",
                                 "start": start(child), "end": child.end_lineno, "signature": signature(child)})
+            add_class_members(child, name)
             visit_scope(child, owners + [child.name])
         elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
             name = ".".join(owners + [child.name])
@@ -64,7 +83,7 @@ for node in ast.walk(tree):
         name = node.attr
     if name:
         references[name] = references.get(name, 0) + 1
-json.dump({"definitions": definitions, "calls": calls, "decorators": decorators, "references": references}, sys.stdout)
+json.dump({"definitions": definitions, "members": members, "calls": calls, "decorators": decorators, "references": references}, sys.stdout)
 `
 
 func analyzePython(parent context.Context, source Source) (Analysis, error) {
@@ -85,6 +104,14 @@ func analyzePython(parent context.Context, source Source) (Analysis, error) {
 			End       int    `json:"end"`
 			Signature string `json:"signature"`
 		} `json:"definitions"`
+		Members []struct {
+			Name      string `json:"name"`
+			Owner     string `json:"owner"`
+			Label     string `json:"label"`
+			Start     int    `json:"start"`
+			End       int    `json:"end"`
+			Signature string `json:"signature"`
+		} `json:"members"`
 		Calls []struct {
 			Caller string `json:"caller"`
 			Name   string `json:"name"`
@@ -103,6 +130,12 @@ func analyzePython(parent context.Context, source Source) (Analysis, error) {
 		analysis.Definitions = append(analysis.Definitions, Definition{
 			SymbolID: SymbolID(source.Path, "", d.Name), Name: d.Name, Owner: d.Owner,
 			Kind: d.Kind, Span: Span{Start: d.Start, End: d.End}, Signature: d.Signature,
+		})
+	}
+	for _, member := range payload.Members {
+		analysis.outlineMembers = append(analysis.outlineMembers, outlineMember{
+			Name: member.Name, Owner: member.Owner, Label: member.Label,
+			Span: Span{Start: member.Start, End: member.End}, Signature: member.Signature,
 		})
 	}
 	for _, call := range payload.Calls {

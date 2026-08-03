@@ -412,7 +412,7 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 				files = typed.Files()
 			}
 			for _, file := range files {
-				if file.Stubbed() || value.compaction >= msg.CompactionReference {
+				if !file.FullContentVisible(value.compaction) {
 					continue
 				}
 				source := fileFromPreload
