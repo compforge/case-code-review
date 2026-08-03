@@ -124,6 +124,27 @@ func TestLoadDefault_PlaceholdersPresent(t *testing.T) {
 	}
 }
 
+func TestLoadDefault_HypothesisReviewVerificationContract(t *testing.T) {
+	tpl, err := LoadDefault()
+	if err != nil {
+		t.Fatalf("LoadDefault() error: %v", err)
+	}
+
+	system := tpl.HypothesisReviewTask.Messages[0].Content
+	for _, required := range []string{
+		"## Verification protocol",
+		"Verify reachability before consequence",
+		"every item in `uncertainty`",
+		"authoritative contract evidence",
+		"do not prove that the material entails the conclusion",
+		"use `insufficient` rather than guessing",
+	} {
+		if !strings.Contains(system, required) {
+			t.Errorf("Hypothesis Review system prompt is missing %q", required)
+		}
+	}
+}
+
 func TestValidate_PassesOnDefault(t *testing.T) {
 	tpl, err := LoadDefault()
 	if err != nil {
