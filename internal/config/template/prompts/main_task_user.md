@@ -1,5 +1,5 @@
 <review_task>
-Investigate the changed behavior in <current_file_diff>. Use the attached file messages and knowledge before fetching more context. Finish with exactly one `submit_hypotheses` call containing all concrete issues worth independent review, or an empty array when none remain.
+Investigate the changed behavior in <current_file_diff>. Use the attached file messages and knowledge before fetching more context. Submit each mature Hypothesis as soon as it is ready so independent review can begin, then continue with the next material lead. Finish naturally when no lead remains.
 </review_task>
 
 // The following is the list of other files changed in this update.

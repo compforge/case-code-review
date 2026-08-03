@@ -26,6 +26,7 @@ type lanePoolConfig struct {
 	Review       func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult
 	OnHypothesis func(unitreview.Hypothesis)
 	OnAssigned   func(hypothesisreview.ReviewInput, string)
+	OnAssessment func(unit.Unit, unitreview.Hypothesis, hypothesisreview.Assessment)
 }
 
 // lanePool is Review 2's only scheduler. Related Hypotheses share one serial
@@ -197,6 +198,9 @@ func (p *lanePool) runLane(lane *reviewLane) {
 		lane.priorResults = append(lane.priorResults, result.Assessments...)
 		for _, assessment := range result.Assessments {
 			input.Unit.AddAssessment(assessment)
+			if p.config.OnAssessment != nil && assessment.HypothesisID == input.Hypothesis.ID {
+				p.config.OnAssessment(input.Unit, input.Hypothesis, assessment)
+			}
 		}
 		// The ledger is cumulative. A panicking or failed reviewer may return no
 		// result, but must not erase receipts already earned by this Lane.

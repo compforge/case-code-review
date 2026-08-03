@@ -9,14 +9,20 @@ Language 是 CCR 唯一的源码语言边界。它把 Go、Python、TypeScript �
 source files
   └─ language backend
        ├─ symbol / definition / span
+       ├─ outline / containment
        ├─ reference / call edge
-       ├─ doc / import / dependency root
+       ├─ symbol / file proximity
+       ├─ doc binding / import / dependency root
        └─ stable identity
             └─ Unit / Clue / tools
 ```
 
 这层的核心约束是：**有证据的事实才向上输出，解析失败保持 unknown**。上层可以选择降级策略，
 但不能把语言层的猜测当成确定关系。
+
+Language 对 `spec / case / link / rule / doc` 只拥有语法抽取、代码身份和 relation 绑定；这些声明表达的
+契约与业务场景属于 Project Knowledge 中作者声明的 Biz Knowledge。也就是说，Language 回答“这条
+声明绑定到哪段代码”，Project Knowledge 回答“这条声明要求代码守住什么”。
 
 ## 2. 流程
 
@@ -25,6 +31,7 @@ source files
 Analyzer 面向一份明确的源码快照，提供：
 
 - 可定位的定义及其 span；
+- 文件结构的 Outline 与 containment；
 - 文件内可识别的符号、文档和依赖；
 - 从 diff hunk 到所属定义的归属；
 - 在给定语言能力内可证明的引用关系。
@@ -35,7 +42,8 @@ Analyzer 面向一份明确的源码快照，提供：
 ### 2.2 仓库级索引
 
 RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition lookup、reference lookup、repo map
-和调用关系。索引是可重建的事实视图，不持有 review 业务状态。
+和调用关系，并从可证明的结构边推导 symbol/file proximity。索引是可重建的事实视图，不持有 review
+业务状态。
 
 不同查询对置信度要求不同：
 
@@ -112,10 +120,10 @@ Unit
 └─ related tests
 ```
 
-symbol 或 file 的 `proximity` 用于衡量图结构上的接近程度，可以综合 graph distance、边类型和置信度；
+symbol 或 file 的 `proximity`（关系接近度）用于衡量图结构上的接近程度，可以综合 graph distance、边类型和置信度；
 Unit Review 再结合当前 diff、Unit 和 token 预算判断 context relevance。图上接近不等于评审相关，
-因此 Language 只提供关系、proximity、来源与置信度，不决定最终预载内容；Lane 等聚类场景则可以在
-这些事实之上计算 affinity。
+因此 Language 只提供关系、proximity、来源与置信度，不决定最终预载内容；Lane 等聚类场景再结合
+Component、目录与实际证据重合计算 review affinity。
 
 Review 不直接接收完整仓库图，而只接收有界的相关材料。强关系优先提供 symbol span 或 Outline，
 小文件可按需提供全文，弱关系只暴露路径和关系说明；`read_files` 留给静态图无法预测的证据。效果可

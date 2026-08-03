@@ -38,7 +38,7 @@ func TestParseHypothesesRequiresFalsifiableShape(t *testing.T) {
 func TestParseHypothesesAcceptsExplicitEmptySubmission(t *testing.T) {
 	hypotheses, errMsg := ParseHypotheses(map[string]any{"hypotheses": []any{}})
 	if errMsg != "" || len(hypotheses) != 0 {
-		t.Fatalf("empty terminal submission = %+v, %q", hypotheses, errMsg)
+		t.Fatalf("empty hypothesis batch = %+v, %q", hypotheses, errMsg)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestParseHypothesesRejectsWholeInvalidBatch(t *testing.T) {
 		map[string]any{"path": "b.go", "content": "incomplete item"},
 	}})
 	if errMsg == "" {
-		t.Fatal("an invalid item must reject the atomic submission")
+		t.Fatal("an invalid item must reject the entire batch")
 	}
 }
 

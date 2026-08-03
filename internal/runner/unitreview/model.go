@@ -32,8 +32,8 @@ func IDFor(h Hypothesis) string { return unit.HypothesisIDFor(h) }
 
 func FingerprintFor(h Hypothesis) string { return unit.HypothesisFingerprintFor(h) }
 
-// ParseHypotheses parses the atomic Unit Review submission without storing it.
-// An explicitly empty array is a valid completed review with no hypotheses.
+// ParseHypotheses validates one incremental Unit Review batch without storing
+// it. An explicitly empty batch is valid but does not itself complete a review.
 func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
 	raw, present := args["hypotheses"]
 	if !present {

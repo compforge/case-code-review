@@ -226,6 +226,35 @@ func TestLanePoolRunsIndependentLanesConcurrently(t *testing.T) {
 	}
 }
 
+func TestLanePoolPublishesAssessmentBeforeFinish(t *testing.T) {
+	reviewUnit := testReviewUnit("u-1", "a.go", "a.go::A")
+	assessed := make(chan hypothesisreview.Assessment, 1)
+	pool := newLanePool(lanePoolConfig{
+		Context: context.Background(), Units: []unit.Unit{reviewUnit},
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+			return hypothesisreview.ReviewResult{
+				Assessments: []hypothesisreview.Assessment{{
+					HypothesisID: input.Hypothesis.ID, LaneID: input.LaneID,
+				}},
+				Execution: harness.ExecutionResult{State: harness.OutcomeCompleted},
+			}
+		},
+		OnAssessment: func(_ unit.Unit, _ unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
+			assessed <- assessment
+		},
+	})
+	pool.Submit(testHypothesis("h-1", "u-1", "a.go", "a.go:1"))
+	select {
+	case assessment := <-assessed:
+		if assessment.HypothesisID != "h-1" {
+			t.Fatalf("assessment = %+v", assessment)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Assessment was held until lanePool.Finish")
+	}
+	pool.Finish()
+}
+
 func testReviewUnit(id, file, symbol string) unit.Unit {
 	return unit.Unit{ID: id, Scope: unit.ScopeFunc, Fragments: []unit.Fragment{{Path: file, Symbols: []string{symbol}}}}
 }

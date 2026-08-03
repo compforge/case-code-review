@@ -57,10 +57,16 @@ type ExecutionSpec struct {
 	// execution unchanged for callers that only need a textual reminder.
 	WrapUpAllowedTools []string
 	// CompletionTool is the domain-selected terminal tool. Empty defaults to
-	// task_done. A non-default tool completes only when its ToolHandler returns
-	// a completed checkpoint, so invalid submissions remain recoverable.
+	// task_done unless NaturalCompletion is enabled. A non-default tool completes
+	// only when its ToolHandler returns a completed checkpoint, so invalid
+	// submissions remain recoverable.
 	CompletionTool   string
 	CompletionPrompt string
+	// NaturalCompletion lets a final assistant turn complete the execution
+	// without a terminal tool. Result tools remain non-terminal during normal
+	// work; once wrap-up closes investigation, a successfully accepted allowed
+	// result also ends the run without spending another model turn.
+	NaturalCompletion bool
 	// ContinueFrom resumes with the exact committed context of an earlier
 	// ExecutionResult. The context remains opaque outside Harness.
 	ContinueFrom *ExecutionResult
@@ -94,14 +100,16 @@ type Execution struct {
 	id   string
 	spec ExecutionSpec
 
-	recorder         *executionRecorder
-	contextManager   *contextManager
-	model            *chatModel
-	tools            []agentgo.Tool
-	turns            *turnController
-	completionTool   string
-	completionPrompt string
-	wrapUpAllowed    map[string]bool
+	recorder             *executionRecorder
+	contextManager       *contextManager
+	model                *chatModel
+	tools                []agentgo.Tool
+	turns                *turnController
+	completionTool       string
+	completionPrompt     string
+	naturalCompletion    bool
+	wrapUpAllowed        map[string]bool
+	wrapUpResultAccepted atomic.Bool
 	// wrapUpFinalTurnGranted bounds a model that ignores the hard close: after
 	// one corrective completion turn, another non-terminal response stops as
 	// truncated instead of spending the remaining provider turn budget.
@@ -131,15 +139,16 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	// change a run that has already been assembled.
 	spec.Messages = msg.CloneAll(spec.Messages)
 	e := &Execution{
-		id:               uuid.V4(),
-		spec:             spec,
-		completionTool:   spec.CompletionTool,
-		completionPrompt: spec.CompletionPrompt,
+		id:                uuid.V4(),
+		spec:              spec,
+		completionTool:    spec.CompletionTool,
+		completionPrompt:  spec.CompletionPrompt,
+		naturalCompletion: spec.NaturalCompletion,
 	}
-	if e.completionTool == "" {
+	if e.completionTool == "" && !e.naturalCompletion {
 		e.completionTool = tool.TaskDone.Name()
 	}
-	if e.completionPrompt == "" {
+	if e.completionPrompt == "" && !e.naturalCompletion {
 		if e.completionTool == tool.TaskDone.Name() {
 			e.completionPrompt = defaultCompletionPrompt
 		} else {
@@ -148,7 +157,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 			)
 		}
 	}
-	if e.completionTool != tool.TaskDone.Name() && !hasToolDef(spec.ToolDefs, e.completionTool) {
+	if e.completionTool != "" && e.completionTool != tool.TaskDone.Name() && !hasToolDef(spec.ToolDefs, e.completionTool) {
 		return nil, fmt.Errorf("harness: completion tool %q is not defined", e.completionTool)
 	}
 	e.recorder = newExecutionRecorder(spec, e.id)
@@ -179,7 +188,9 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		for _, name := range spec.WrapUpAllowedTools {
 			e.wrapUpAllowed[name] = true
 		}
-		e.wrapUpAllowed[e.completionTool] = true
+		if e.completionTool != "" {
+			e.wrapUpAllowed[e.completionTool] = true
+		}
 	}
 	return e, nil
 }
@@ -245,14 +256,22 @@ func (e *Execution) shouldStopAfterTool(name string) bool {
 	if !e.turns.WrapUpIssued() {
 		return false
 	}
+	if e.naturalCompletion && e.wrapUpAllowed[name] {
+		return true
+	}
 	// A blocked investigation call, or an invalid completion call during
 	// wrap-up, should immediately enter the single corrective final turn.
 	return name == e.completionTool || (len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[name])
 }
 
-func (e *Execution) stopGuard(_ context.Context, _ agentgo.StopInfo) agentgo.StopDecision {
+func (e *Execution) stopGuard(_ context.Context, stop agentgo.StopInfo) agentgo.StopDecision {
 	if e.completed.Load() {
 		return agentgo.StopDecision{Allow: true}
+	}
+	if e.naturalCompletion {
+		if stop.Trigger == agentgo.StopTriggerEndTurn || e.wrapUpResultAccepted.Load() {
+			return agentgo.StopDecision{Allow: true}
+		}
 	}
 	if !e.turns.WrapUpIssued() {
 		return agentgo.StopDecision{InjectMessage: e.completionPrompt}
@@ -355,6 +374,9 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 				if call.Name == e.completionTool {
 					e.completed.Store(true)
 				}
+				if e.naturalCompletion && e.turns.WrapUpIssued() && e.wrapUpAllowed[call.Name] {
+					e.wrapUpResultAccepted.Store(true)
+				}
 				if checkpoint.Data != "" {
 					return json.RawMessage(checkpoint.Data), nil
 				}
@@ -416,6 +438,10 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 	if e.wrapUpForcedStop.Load() {
 		result.State = OutcomeTruncated
 		result.Reason = "wrap-up completion not submitted"
+		return result, nil
+	}
+	if e.naturalCompletion && e.summary != nil && e.summary.EndReason == agentgo.EndReasonStop {
+		result.State = OutcomeCompleted
 		return result, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {

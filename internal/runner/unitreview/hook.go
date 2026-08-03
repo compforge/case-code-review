@@ -16,7 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-// HypothesisHook turns the terminal submit_hypotheses call into Runner-owned
+// HypothesisHook turns each incremental submit_hypotheses call into Runner-owned
 // investigative results. Finding conversion remains deferred until Trial.
 type HypothesisHook struct {
 	WorkerPool   *harness.WorkerPool

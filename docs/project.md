@@ -2,17 +2,20 @@
 
 ## 1. 理念 / 概念
 
-Project Knowledge 解释一份代码在当前项目里扮演什么角色。它不解析函数调用，也不判断 Finding；
-它提供 Repository、Component 和 FileRole 这些稳定项目事实，让 Unit formation 与三个 Review 阶段
-不必把所有文件都当成同一种输入。
+Project Knowledge 解释一份代码在当前项目里扮演什么角色，以及项目希望它守住什么契约。它不解析
+函数调用，也不判断 Finding；它包含两类知识：Repository / Component / FileRole 等结构知识，以及
+`spec / case / link / rule / doc` 等作者声明的 Biz Knowledge。前者决定代码如何组织，后者说明代码
+为什么这样工作。
 
 ```text
 Repository
-  └─ Component（manifest 定义的项目边界）
-       └─ File ─▶ FileRole[]
-                    ├─ source / test
-                    ├─ entrypoint / handler
-                    └─ manifest / lock / version
+  ├─ Component（manifest 定义的项目边界）
+  │    └─ File ─▶ FileRole[]
+  │                 ├─ source / test
+  │                 ├─ entrypoint / handler
+  │                 └─ manifest / lock / version
+  └─ Authored Biz Knowledge
+       └─ spec / case / link / rule / doc
 ```
 
 | 对象 | 语义 |
@@ -20,6 +23,7 @@ Repository
 | `Repository` | 本次被评审的 Git snapshot，也是解析 Component 的入口 |
 | `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
 | `FileRole` | 文件在所属 Component 中可组合的稳定职责 |
+| Authored Biz Knowledge | 作者声明的业务契约、场景、关系和说明，通过 Language 绑定到代码身份 |
 | Project Clue | Project 事实面向一个 Unit 的上下文投影，不是独立事实源 |
 
 Component 是静态项目边界，Unit 是当前 diff 动态形成的行为评审边界。一个 Component 可以产生多个
@@ -69,12 +73,17 @@ Change ─▶ Component / FileRole
 这层分离使 FileRole 可以被 Review 1、Review 2 或未来其它 Reviewer 复用，而不把当前 admission
 策略固化进项目知识。
 
-### 2.3 用 Language 事实丰富项目语义
+### 2.3 用 Language 事实绑定和丰富项目语义
 
 Project 与 Language 各自拥有不同事实：Language 提取 decorator、call、symbol 和 span，Project
 解释这些事实在特定生态里的含义。例如 Python 文件只有出现 FastAPI route decorator 才增加
 `handler` 角色；`routers/`、`routes.py`、`handlers/` 等路径名本身不是充分证据。`main.py` 只有实际
 创建 `FastAPI` 时才增加 entrypoint 角色。
+
+同样，Language 识别注释、装饰器、symbol-id / fqn 和 relation，负责把 `spec / case / link / rule / doc`
+绑定到具体代码；Project Knowledge 负责这些声明表达的契约和业务场景。知识分类不要求把现有实现
+强行搬进 `internal/project`：结构分类仍由该包负责，作者契约仍可由 `spec-case`、配置与 Unit Clue
+各自承载，最终在 Project Knowledge 视角下统一投影给 Review。
 
 Project Clue 在 Unit scope 最终确定后挂载：source 自身的 entrypoint / handler 角色形成 `self/project`
 Clue；同 Component 中变化的 manifest / lock 形成 `project/project` Clue。这样 Project 负责稳定事实，

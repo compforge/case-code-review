@@ -136,8 +136,10 @@ Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo
 动作和收敛语义。例如 Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个
 输入都有 Assessment。
 
-Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用方给出的 completion contract。超时或
-轮次耗尽时返回 partial/incomplete，不把空输出包装成成功。
+Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用方给出的 completion contract。需要
+完整结构化结果的流程可以要求 terminal tool；允许“检查完即结束”的流程可以选择 natural completion，
+因此简单 Review 1 不必为了形式上的交卷继续等待或耗尽预算。超时或轮次耗尽时返回
+partial/incomplete，不把空输出包装成成功；此前已被领域层接受的增量结果不随 Execution 的失败回滚。
 
 ### 3.4 Tool 与 Hook 是执行能力，不是领域所有权
 

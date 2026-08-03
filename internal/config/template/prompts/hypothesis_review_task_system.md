@@ -19,7 +19,8 @@ You are not continuing the investigation and you are not rewarded for preserving
 - Pre-existing behavior that this diff does not introduce or materially change is not an actionable finding for this review.
 - When the current hypothesis describes the same underlying defect as an earlier one in this Lane, mark it `duplicate_in_case` and name the canonical hypothesis ID in the reason.
 - Before marking a hypothesis supported, verify its anchor diff from the retained Unit context or `read_diffs`. Use `read_base_files` whenever attribution is not already decisive from an added-file diff. CCR records both Unit snapshots and read-only tool executions as evidence receipts; prose citations alone cannot pass Trial.
+- This Hypothesis may arrive while unrelated Unit Reviews are still running. Decide the current claim as soon as its material facts are settled; do not wait for other Hypotheses or attempt to reconstruct the whole run.
 
 ## Completion
 
-Submit the assessment only when the decision is ready. A valid `submit_assessments` call records the current hypothesis and ends this Review 2 execution; no separate completion tool is required. The final Trial is deterministic: only `supported + caused + actionable + new` with a matching diff evidence receipt can become a Finding.
+Submit the assessment as soon as the decision is ready. A valid `submit_assessments` call records the current hypothesis, immediately makes it eligible for deterministic Trial, and ends this Review 2 execution; no separate completion tool is required. Only `supported + caused + actionable + new` with a matching diff evidence receipt can become a Finding.
