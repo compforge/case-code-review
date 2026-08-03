@@ -269,6 +269,10 @@ func canonicalizeSearchArguments(args map[string]any) {
 }
 
 func canonicalizeSearchItem(item map[string]any) {
+	if pattern, ok := item["file_patterns"].(string); ok && strings.TrimSpace(pattern) != "" {
+		item["file_patterns"] = []any{pattern}
+	}
+
 	if _, exists := item["syntax"]; !exists {
 		if useRegexp, ok := item["use_perl_regexp"].(bool); ok {
 			if useRegexp {
