@@ -337,7 +337,7 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		}()
 		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
 			return json.RawMessage(
-				"Investigation is closed. Submit the results already supported by the current context, then finish the task.",
+				"Investigation is closed. Do not repeat results already accepted. Submit only supported results that have not yet been accepted; if none remain, finish without another tool call.",
 			), nil
 		}
 		if call.Name == e.completionTool && e.spec.CompletionCheck != nil {

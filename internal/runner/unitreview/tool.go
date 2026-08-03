@@ -10,11 +10,12 @@ import (
 var SubmitHypotheses = tool.Named("submit_hypotheses")
 
 const (
-	HypothesesSubmitted       = "Hypotheses accepted for independent review. Continue with the next material lead, or finish naturally when none remains."
+	HypothesesSubmitted       = "Hypotheses accepted for independent review. Do not resubmit them. Continue with the next material lead, or finish naturally when none remains."
 	InvestigationWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. " +
-		"Submit every already-mature issue claim with submit_hypotheses, including its trigger, impact, " +
-		"change attribution, evidence, and uncertainty. Do not chase unresolved leads or call other tools. " +
-		"If no mature claim remains, finish now without a tool call."
+		"Submit only mature issue claims that have not already been successfully accepted by submit_hypotheses, " +
+		"including each claim's trigger, impact, change attribution, evidence, and uncertainty. " +
+		"Do not resubmit accepted Hypotheses, chase unresolved leads, or call other tools. " +
+		"If no mature unsubmitted claim remains, finish now without a tool call."
 )
 
 func HypothesisToolDef() llm.ToolDef {

@@ -37,16 +37,17 @@ type atifAgent struct {
 }
 
 type atifStep struct {
-	StepID       int            `json:"step_id"`
-	Timestamp    string         `json:"timestamp,omitempty"`
-	Source       string         `json:"source"` // system | user | agent
-	Message      any            `json:"message"`
-	ModelName    string         `json:"model_name,omitempty"`
-	ToolCalls    []atifToolCall `json:"tool_calls,omitempty"`
-	Observation  *atifObs       `json:"observation,omitempty"`
-	Metrics      *atifMetrics   `json:"metrics,omitempty"`
-	LLMCallCount int            `json:"llm_call_count,omitempty"`
-	Extra        map[string]any `json:"extra,omitempty"`
+	StepID           int            `json:"step_id"`
+	Timestamp        string         `json:"timestamp,omitempty"`
+	Source           string         `json:"source"` // system | user | agent
+	Message          any            `json:"message"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	ModelName        string         `json:"model_name,omitempty"`
+	ToolCalls        []atifToolCall `json:"tool_calls,omitempty"`
+	Observation      *atifObs       `json:"observation,omitempty"`
+	Metrics          *atifMetrics   `json:"metrics,omitempty"`
+	LLMCallCount     int            `json:"llm_call_count,omitempty"`
+	Extra            map[string]any `json:"extra,omitempty"`
 }
 
 type atifToolCall struct {
@@ -114,6 +115,7 @@ type exportEvent struct {
 	RequestNo    int              `json:"request_no"`
 	Messages     []exportMessage  `json:"messages"`
 	Content      string           `json:"content"`
+	Reasoning    string           `json:"reasoning"`
 	ToolCalls    json.RawMessage  `json:"tool_calls"`
 	DurationMS   float64          `json:"duration_ms"`
 	Usage        struct {
@@ -309,7 +311,8 @@ func exportSession(path string) (*atifTrajectory, error) {
 			c.stepID++
 			st := &atifStep{
 				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent",
-				Message: e.Content, ModelName: e.Model, LLMCallCount: 1,
+				Message: e.Content, ReasoningContent: e.Reasoning,
+				ModelName: e.Model, LLMCallCount: 1,
 				Metrics: &atifMetrics{
 					PromptTokens:     e.Usage.PromptTokens,
 					CompletionTokens: e.Usage.CompletionTokens,
