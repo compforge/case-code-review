@@ -52,6 +52,16 @@ Lane 前案后，分别判断：
 这些轴不能压成一个总分。真实但 pre-existing、真实但低价值、或已经交付的问题，都不应再次形成
 Finding。
 
+Review 2 不平均地“多查一些材料”，而是先把主张还原为
+`trigger / reachability -> execution path -> impact`，将 Hypothesis 的 `uncertainty` 视为待核实清单，
+优先寻找能直接支持或推翻关键前提的最短证据链。若触发条件已被反驳，就不再调查后续影响；合理的
+定向检查后仍有关键前提未知，则判 `insufficient`，不能用一个条件成立时自洽的故事替代可达性证明。
+
+依赖 SDK、框架、Forge API、数据库或协议行为的主张，需要依赖源码/类型、provider contract、真实
+fixture/test 或实际构造该状态的 adapter 路径作为权威证据。本地代码只展示“收到某状态后会怎样”，
+不能单独证明外部系统会产生该状态。Review 2 的第一轮直接提交已有证据足够的 Assessment，或批量读取
+已经明确的独立缺口；不额外增加一次 Plan Task。
+
 ### 2.3 只读证据与 receipt
 
 Review 2 先检查 Unit 已保留的 diff、baseline、源码和搜索结果，只在缺少决定性事实时继续调用只读
@@ -60,7 +70,8 @@ Review 2 先检查 Unit 已保留的 diff、baseline、源码和搜索结果，�
 “已经核实”。
 
 receipt 是完整性机制，不是主流程中的领域对象。它随 Assessment 持久化，供 Trial、Viewer 和 eval
-核对。
+核对。receipt 证明材料确实对模型可见，不证明材料必然支持结论；Assessment 仍须把每个关键前提与
+对应的证据或反证连起来。
 
 ### 2.4 增量提交与完成契约
 

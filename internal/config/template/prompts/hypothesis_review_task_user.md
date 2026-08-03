@@ -46,4 +46,4 @@ These are completed assessments from earlier, strongly related hypotheses in thi
 {{hypothesis}}
 ```
 
-Gather only the missing evidence needed to decide this hypothesis. When the decision is ready, submit its assessment once; a valid submission ends this Review 2 execution.
+Use `trigger` and `uncertainty` to identify the decisive premises before investigating consequences. Gather only the missing evidence needed to decide those premises. If independent missing facts are already known, batch them in the same tool call. When the decision is ready, submit its assessment once; a valid submission ends this Review 2 execution.
