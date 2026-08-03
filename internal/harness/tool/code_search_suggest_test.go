@@ -125,18 +125,14 @@ func TestNoMatch_NoSuggestionsForRegexOrPhrases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "No matches found" {
-		t.Errorf("regex search: expected plain message, got: %s", result)
-	}
+	assertSearchOutcome(t, result, CodeSearchNoMatches, CodeSearchRegexp, 1)
 
 	// Phrases (spaces) are not identifier-like.
 	result, err = p.gitGrep(context.Background(), "no such phrase here", false, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "No matches found" {
-		t.Errorf("phrase search: expected plain message, got: %s", result)
-	}
+	assertSearchOutcome(t, result, CodeSearchNoMatches, CodeSearchLiteral, 1)
 }
 
 func TestNoMatch_RefModeSuggestions(t *testing.T) {

@@ -3,6 +3,7 @@ package tool
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -34,6 +35,37 @@ const (
 	CodeSearchLiteral = "literal"
 	CodeSearchRegexp  = "regexp"
 )
+
+const codeSearchOutcomePrefix = "Search outcome: "
+
+const (
+	CodeSearchNoMatches    = "no_matches"
+	CodeSearchScopeEmpty   = "scope_empty"
+	CodeSearchScopeUnknown = "scope_unknown"
+)
+
+// CodeSearchOutcome makes an empty result actionable. In particular, callers
+// must not interpret a query as negative evidence when its path scope matched
+// no files at all.
+type CodeSearchOutcome struct {
+	Status        string `json:"status"`
+	QueryMode     string `json:"query_mode"`
+	SearchedFiles *int   `json:"searched_files,omitempty"`
+}
+
+// ParseCodeSearchOutcome decodes the stable metadata line prepended to empty
+// search results. Successful searches keep their existing File-oriented wire.
+func ParseCodeSearchOutcome(result string) (CodeSearchOutcome, bool) {
+	line, _, _ := strings.Cut(result, "\n")
+	if !strings.HasPrefix(line, codeSearchOutcomePrefix) {
+		return CodeSearchOutcome{}, false
+	}
+	var outcome CodeSearchOutcome
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(line, codeSearchOutcomePrefix)), &outcome); err != nil {
+		return CodeSearchOutcome{}, false
+	}
+	return outcome, outcome.Status != ""
+}
 
 // ParseCodeSearchRequests parses the provider's only contract: searches[].
 func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
@@ -130,6 +162,7 @@ func CodeSearchResultPaths(result string) []string {
 type CodeSearchProvider struct {
 	FileReader       *FileReader
 	definitionSource CodeSearchDefinitionSource
+	scopeFileCounts  sync.Map
 }
 
 func NewCodeSearch(fr *FileReader) *CodeSearchProvider { return &CodeSearchProvider{FileReader: fr} }
@@ -271,6 +304,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 	cmdArgs := p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, false, pathspec, maxCount)
 
 	outStr, errStr, err := p.runGitGrep(ctx, cmdArgs)
+	noIndex := false
 
 	// Non-git directory (`ccr scan` supports plain dirs): retry in --no-index
 	// mode, which searches the working tree directly while honoring .gitignore.
@@ -278,6 +312,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 	// (exit 128 + stderr substrings are locale-dependent and over-match). Skip on
 	// ctx cancellation/timeout, and never retry ref-based search (needs a repo).
 	if err != nil && p.FileReader.Ref == "" && ctx.Err() == nil && !p.insideGitWorkTree(ctx) {
+		noIndex = true
 		cmdArgs = p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, true, pathspec, maxCount)
 		outStr, errStr, err = p.runGitGrep(ctx, cmdArgs)
 	}
@@ -291,7 +326,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 		}
 		if outStr == "" {
 			if errStr == "" {
-				return p.noMatchesWithSuggestions(ctx, searchText, usePerlRegexp, pathspec), nil
+				return p.emptySearchResult(ctx, searchText, usePerlRegexp, pathspec, noIndex), nil
 			}
 			return fmt.Sprintf("Error: %s", strings.TrimSpace(errStr)), nil
 		}
@@ -361,6 +396,79 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 	}
 
 	return sb.String(), nil
+}
+
+func (p *CodeSearchProvider) emptySearchResult(
+	ctx context.Context,
+	searchText string,
+	usePerlRegexp bool,
+	pathspec []string,
+	noIndex bool,
+) string {
+	mode := CodeSearchLiteral
+	if usePerlRegexp {
+		mode = CodeSearchRegexp
+	}
+	outcome := CodeSearchOutcome{Status: CodeSearchScopeUnknown, QueryMode: mode}
+	body := "No matches found; the search scope could not be measured. Do not treat this as conclusive negative evidence."
+	if !noIndex {
+		if count, ok := p.searchScopeFileCount(ctx, pathspec); ok {
+			outcome.SearchedFiles = &count
+			if count == 0 {
+				outcome.Status = CodeSearchScopeEmpty
+				body = "No files matched file_patterns; correct the search scope before drawing a conclusion."
+			} else {
+				outcome.Status = CodeSearchNoMatches
+				body = p.noMatchesWithSuggestions(ctx, searchText, usePerlRegexp, pathspec)
+			}
+		}
+	}
+	encoded, _ := json.Marshal(outcome)
+	return codeSearchOutcomePrefix + string(encoded) + "\n" + body
+}
+
+// searchScopeFileCount runs only after a zero-hit grep. Keeping scope
+// measurement off the success path avoids adding a subprocess to normal
+// searches while still separating a valid negative result from a bad pathspec.
+func (p *CodeSearchProvider) searchScopeFileCount(parentCtx context.Context, pathspec []string) (int, bool) {
+	cacheKey := strings.Join(pathspec, "\x00")
+	if cached, ok := p.scopeFileCounts.Load(cacheKey); ok {
+		return cached.(int), true
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, gitGrepTimeout)
+	defer cancel()
+
+	var args []string
+	if p.FileReader.Ref != "" {
+		args = []string{"ls-tree", "-r", "-z", "--name-only", "--full-tree", "--end-of-options", p.FileReader.Ref}
+	} else {
+		args = []string{"ls-files", "-z", "--cached", "--others", "--exclude-standard"}
+	}
+	if len(pathspec) > 0 {
+		args = append(args, "--")
+		args = append(args, pathspec...)
+	}
+
+	var out string
+	var err error
+	if p.FileReader.Runner != nil {
+		out, _, err = p.FileReader.Runner.RunSplit(ctx, p.FileReader.RepoDir, args...)
+	} else {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = p.FileReader.RepoDir
+		var data []byte
+		data, err = cmd.Output()
+		out = string(data)
+	}
+	if err != nil || ctx.Err() != nil {
+		return 0, false
+	}
+	count := strings.Count(out, "\x00")
+	// One provider is bound to one repository/ref, and review tools are
+	// read-only, so a path scope stays stable for the execution. Caching avoids
+	// relisting a large repository for every zero-hit query.
+	p.scopeFileCounts.Store(cacheKey, count)
+	return count, true
 }
 
 // insideGitWorkTree reports whether RepoDir sits inside a git work tree. Lets git

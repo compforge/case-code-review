@@ -32,11 +32,13 @@ func (r LLMToolResult) failed() bool {
 // SearchResult is one content-search member or one file-discovery result. Its
 // raw hits can be re-derived, so compact forms retain the query and locations.
 type SearchResult struct {
-	Tool       string
-	Query      string
-	Content    string
-	ToolCallID string
-	NoMatches  bool
+	Tool          string
+	Query         string
+	Content       string
+	ToolCallID    string
+	NoMatches     bool
+	SearchStatus  string
+	SearchedFiles *int
 }
 
 func (r *SearchResult) FromLLM(result LLMToolResult) bool {
@@ -62,6 +64,12 @@ func (r SearchResult) ToLLM(level CompactionLevel) llm.Message {
 func (r SearchResult) render(level CompactionLevel) string {
 	text := r.Content
 	if r.NoMatches && level >= CompactionReference {
+		if r.SearchStatus == "scope_empty" {
+			return fmt.Sprintf("%s %q searched no files because its path scope was empty; correct the scope before drawing a conclusion.", r.Tool, r.Query)
+		}
+		if r.SearchStatus == "no_matches" && r.SearchedFiles != nil {
+			return fmt.Sprintf("%s %q returned no matches across %d scoped files; this negative result is retained after compaction.", r.Tool, r.Query, *r.SearchedFiles)
+		}
 		return fmt.Sprintf("%s %q returned no matches; this negative result is retained after compaction.", r.Tool, r.Query)
 	}
 	switch level {

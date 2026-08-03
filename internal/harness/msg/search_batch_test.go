@@ -10,7 +10,7 @@ import (
 func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	content := tool.EncodeCodeSearchResults([]string{
 		"File: a.go\nMatch lines: 1\n10|func Alpha()\n",
-		"No matches found",
+		"Search outcome: {\"status\":\"no_matches\",\"query_mode\":\"literal\",\"searched_files\":3}\nNo matches found",
 		"Error: invalid regular expression",
 	})
 	message := FromLLM(LLMToolResult{
@@ -32,7 +32,7 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	wire := batch.ToLLM(CompactionReference)
 	text := wire.ExtractText()
 	if wire.ToolCallID != "search-1" ||
-		!strings.Contains(text, `search_code "Missing" returned no matches`) ||
+		!strings.Contains(text, `search_code "Missing" returned no matches across 3 scoped files`) ||
 		!strings.Contains(text, "invalid regular expression") {
 		t.Fatalf("batch lowering lost pairing/result: %+v", wire)
 	}
@@ -49,5 +49,22 @@ func TestCloneAllCopiesSearchBatch(t *testing.T) {
 	cloned := CloneAll([]Msg{message})[0].(*SearchBatch)
 	if cloned == message || cloned.Results()[0] == message.Results()[0] {
 		t.Fatal("CloneAll shared SearchBatch state")
+	}
+}
+
+func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
+	message := FromLLM(LLMToolResult{
+		Tool: CodeSearchToolName, ToolCallID: "search-1",
+		Arguments: map[string]any{"searches": []any{map[string]any{
+			"query": "Alpha", "syntax": "literal", "file_patterns": []any{"missing/**"},
+		}}},
+		Content: tool.EncodeCodeSearchResults([]string{
+			"Search outcome: {\"status\":\"scope_empty\",\"query_mode\":\"literal\",\"searched_files\":0}\nNo files matched file_patterns",
+		}),
+	}).(*SearchBatch)
+
+	wire := message.ToLLM(CompactionReference)
+	if text := wire.ExtractText(); !strings.Contains(text, "searched no files because its path scope was empty") {
+		t.Fatalf("compacted result lost scope warning: %s", text)
 	}
 }

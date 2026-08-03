@@ -5,7 +5,6 @@ from ccr_trajectory import (
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     DurationEfficiencyEvaluator,
-    EmptySearchEvaluator,
     FileReadCoverageEvaluator,
     FileReadFragmentationEvaluator,
     ReviewCompletionEvaluator,
@@ -13,6 +12,7 @@ from ccr_trajectory import (
     REVIEW1,
     REVIEW2,
     RoundEfficiencyEvaluator,
+    SearchScopeEvaluator,
     ToolFailureEvaluator,
     code_search_stats,
     file_read_fragmentation,
@@ -114,7 +114,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             [
                 RepeatedToolCallEvaluator(),
                 ToolFailureEvaluator(),
-                EmptySearchEvaluator(),
+                SearchScopeEvaluator(),
                 FileReadCoverageEvaluator(),
                 PromptFileCoverageEvaluator(),
                 FileReadFragmentationEvaluator(),
@@ -190,7 +190,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             [
                 "repeated_tool_call",
                 "tool_success",
-                "non_empty_search",
+                "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
                 "file_read_fragmentation",
@@ -243,7 +243,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             [
                 "repeated_tool_call",
                 "tool_success",
-                "non_empty_search",
+                "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
                 "file_read_fragmentation",
@@ -492,11 +492,18 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(file_read_fragmentation(trajectory)["calls"], 2)
         self.assertEqual(prompt_file_read_overlap(trajectory)["new_context"], 2)
 
-    def test_batch_code_search_counts_queries_and_empty_members(self):
+    def test_batch_code_search_distinguishes_valid_empty_from_scope_miss(self):
         result = (
-            "===== CODE_SEARCH RESULT 1/2 =====\n"
+            "===== CODE_SEARCH RESULT 1/4 =====\n"
             "File: a.go\nMatch lines: 1\n10|func Alpha()\n"
-            "===== CODE_SEARCH RESULT 2/2 =====\n"
+            "===== CODE_SEARCH RESULT 2/4 =====\n"
+            'Search outcome: {"status":"no_matches","query_mode":"literal","searched_files":4}\n'
+            "No matches found\n"
+            "===== CODE_SEARCH RESULT 3/4 =====\n"
+            'Search outcome: {"status":"scope_empty","query_mode":"literal","searched_files":0}\n'
+            "No files matched file_patterns\n"
+            "===== CODE_SEARCH RESULT 4/4 =====\n"
+            'Search outcome: {"status":"no_matches","query_mode":"literal","searched_files":4}\n'
             "No matches found\n"
         )
         root = {
@@ -516,6 +523,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     "arguments": {
                                         "searches": [
                                             {"query": "Alpha", "syntax": "literal"},
+                                            {"query": "Missing", "syntax": "literal"},
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                                "file_patterns": ["missing/**"],
+                                            },
                                             {"query": "Missing", "syntax": "literal"},
                                         ]
                                     },
@@ -537,16 +550,22 @@ class CCRTrajectoryTest(unittest.TestCase):
             code_search_stats(trajectory),
             {
                 "calls": 1,
-                "requests": 2,
+                "requests": 4,
                 "rounds": 1,
-                "average_batch": 2.0,
-                "max_batch": 2,
+                "average_batch": 4.0,
+                "max_batch": 4,
                 "calls_per_round": 1.0,
+                "hits": 1,
+                "valid_empty": 2,
+                "scope_miss": 1,
+                "scope_unknown": 0,
+                "tool_failure": 0,
+                "repeated_empty": 1,
             },
         )
-        evaluation = EmptySearchEvaluator().evaluate(trajectory)
-        self.assertEqual(evaluation.score, 0.5)
-        self.assertEqual(evaluation.step_ids, ("1:tool:1:2",))
+        evaluation = SearchScopeEvaluator().evaluate(trajectory)
+        self.assertEqual(evaluation.score, 0.75)
+        self.assertEqual(evaluation.step_ids, ("1:tool:1:3",))
 
 
 if __name__ == "__main__":
