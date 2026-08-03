@@ -213,9 +213,7 @@ func TestGitGrep_WorkspaceMode_NoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "No matches found" {
-		t.Errorf("expected 'No matches found', got: %s", result)
-	}
+	assertSearchOutcome(t, result, CodeSearchNoMatches, CodeSearchLiteral, 2)
 }
 
 func TestGitGrep_CommitMode_Found(t *testing.T) {
@@ -242,9 +240,7 @@ func TestGitGrep_CommitMode_NoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "No matches found" {
-		t.Errorf("expected 'No matches found', got: %s", result)
-	}
+	assertSearchOutcome(t, result, CodeSearchNoMatches, CodeSearchLiteral, 2)
 }
 
 func TestGitGrep_CommitMode_WithPathspec(t *testing.T) {
@@ -264,9 +260,7 @@ func TestGitGrep_CommitMode_WithPathspec(t *testing.T) {
 	if err2 != nil {
 		t.Fatal(err2)
 	}
-	if result2 != "No matches found" {
-		t.Errorf("expected 'No matches found' when pathspec excludes match, got: %s", result2)
-	}
+	assertSearchOutcome(t, result2, CodeSearchNoMatches, CodeSearchLiteral, 1)
 }
 
 func TestGitGrep_OptionLikeRefDoesNotLaunchPager(t *testing.T) {
@@ -301,9 +295,7 @@ func TestGitGrep_CommitMode_WithBadPathspec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result != "No matches found" {
-		t.Errorf("expected 'No matches found' with bad pathspec, got: %s", result)
-	}
+	assertSearchOutcome(t, result, CodeSearchScopeEmpty, CodeSearchLiteral, 0)
 }
 
 func TestGitGrep_LiteralWithRegexMetaChars(t *testing.T) {
@@ -429,8 +421,19 @@ func TestGitGrep_NonGitDirectoryNoMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if out != "No matches found" {
-		t.Errorf("expected 'No matches found', got: %q", out)
+	outcome, ok := ParseCodeSearchOutcome(out)
+	if !ok || outcome.Status != CodeSearchScopeUnknown || outcome.SearchedFiles != nil {
+		t.Fatalf("plain-directory outcome = %+v, parsed=%t; result=%q", outcome, ok, out)
+	}
+}
+
+func assertSearchOutcome(t *testing.T, result, status, queryMode string, searchedFiles int) {
+	t.Helper()
+	outcome, ok := ParseCodeSearchOutcome(result)
+	if !ok || outcome.Status != status || outcome.QueryMode != queryMode ||
+		outcome.SearchedFiles == nil || *outcome.SearchedFiles != searchedFiles {
+		t.Fatalf("search outcome = %+v, parsed=%t; want status=%s mode=%s files=%d; result=%q",
+			outcome, ok, status, queryMode, searchedFiles, result)
 	}
 }
 

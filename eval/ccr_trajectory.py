@@ -183,39 +183,36 @@ class ToolFailureEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class EmptySearchEvaluator:
-    name: str = "non_empty_search"
+class SearchScopeEvaluator:
+    """Reject failed searches and empty scopes without penalizing valid absence."""
+
+    name: str = "search_scope_validity"
     weight: float = 1.0
-    minimum_result_chars: int = 32
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
     ) -> Evaluation:
         del reference
-        searches = [step for step in _tool_steps(trajectory) if step.name == "search_code"]
-        if not searches:
+        observations = _code_search_observations(trajectory)
+        if not observations:
             return _not_evaluated(self.name, "Trajectory contains no search_code calls.")
-        total = 0
-        empty = []
-        for step in searches:
-            requests = _code_search_requests(step) or [{}]
-            results = _code_search_result_parts(step)
-            for index in range(len(requests)):
-                total += 1
-                result = results[index] if index < len(results) else ""
-                text = result.strip()
-                if (
-                    len(text) < self.minimum_result_chars
-                    or text.startswith("Error:")
-                    or text.startswith("search_code timed out")
-                ):
-                    empty.append(f"{step.step_id}:{index + 1}")
+        evaluated = [item for item in observations if item["outcome"] != "scope_unknown"]
+        if not evaluated:
+            return _not_evaluated(
+                self.name,
+                "Searches returned legacy or unmeasured empty scopes.",
+            )
+        failed = [
+            item["step_id"]
+            for item in evaluated
+            if item["outcome"] in {"scope_miss", "tool_failure"}
+        ]
         return _ratio_evaluation(
             self.name,
-            total - len(empty),
-            total,
-            empty,
-            "searches returned a non-empty result",
+            len(evaluated) - len(failed),
+            len(evaluated),
+            failed,
+            "searches executed against a non-empty scope",
         )
 
 
@@ -661,10 +658,26 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
             "average_batch": 0.0,
             "max_batch": 0,
             "calls_per_round": 0.0,
+            "hits": 0,
+            "valid_empty": 0,
+            "scope_miss": 0,
+            "scope_unknown": 0,
+            "tool_failure": 0,
+            "repeated_empty": 0,
         }
     batches = [max(len(_code_search_requests(step)), 1) for step in calls]
     rounds = len({step.parent_step_id for step in calls})
     requests = sum(batches)
+    observations = _code_search_observations(trajectory)
+    outcomes = Counter(item["outcome"] for item in observations)
+    repeated_empty = 0
+    seen_empty: Counter[str] = Counter()
+    for item in observations:
+        if item["outcome"] not in {"valid_empty", "scope_miss", "scope_unknown"}:
+            continue
+        seen_empty[item["request_key"]] += 1
+        if seen_empty[item["request_key"]] > 1:
+            repeated_empty += 1
     return {
         "calls": len(calls),
         "requests": requests,
@@ -672,6 +685,12 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
         "average_batch": round(requests / len(calls), 2),
         "max_batch": max(batches),
         "calls_per_round": round(len(calls) / rounds, 2),
+        "hits": outcomes["hit"],
+        "valid_empty": outcomes["valid_empty"],
+        "scope_miss": outcomes["scope_miss"],
+        "scope_unknown": outcomes["scope_unknown"],
+        "tool_failure": outcomes["tool_failure"],
+        "repeated_empty": repeated_empty,
     }
 
 
@@ -846,6 +865,66 @@ def _code_search_result_parts(step: Step) -> list[str]:
         response[marker.end() : markers[index + 1].start() if index + 1 < len(markers) else len(response)].strip()
         for index, marker in enumerate(markers)
     ]
+
+
+def _code_search_observations(trajectory: Trajectory) -> list[dict[str, str]]:
+    """Classify mechanically knowable search outcomes without guessing intent.
+
+    A valid zero-hit search is not automatically useful, but it is also not a
+    failure. Distinguishing useful negative evidence from a weak query remains
+    a trajectory/judge concern; this layer only proves whether the scope ran.
+    """
+
+    observations = []
+    for step in _tool_steps(trajectory):
+        if step.name != "search_code":
+            continue
+        requests = _code_search_requests(step) or [{}]
+        results = _code_search_result_parts(step)
+        for index, request in enumerate(requests):
+            text = results[index].strip() if index < len(results) else ""
+            outcome = "hit"
+            if step.status == "error" or not text or text.startswith(
+                ("Error:", "search_code timed out")
+            ):
+                outcome = "tool_failure"
+            else:
+                first_line = text.splitlines()[0]
+                prefix = "Search outcome: "
+                metadata = None
+                has_metadata = first_line.startswith(prefix)
+                if has_metadata:
+                    try:
+                        metadata = json.loads(first_line.removeprefix(prefix))
+                    except json.JSONDecodeError:
+                        outcome = "tool_failure"
+                if metadata is not None:
+                    outcome = {
+                        "no_matches": "valid_empty",
+                        "scope_empty": "scope_miss",
+                        "scope_unknown": "scope_unknown",
+                    }.get(str(metadata.get("status")), "tool_failure")
+                elif not has_metadata and "no matches found" in text.lower():
+                    outcome = "scope_unknown"
+
+            request_key = json.dumps(
+                {
+                    "query": request.get("query"),
+                    "syntax": request.get("syntax") or "literal",
+                    "case_sensitive": bool(request.get("case_sensitive")),
+                    "file_patterns": request.get("file_patterns") or [],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            observations.append(
+                {
+                    "step_id": f"{step.step_id}:{index + 1}",
+                    "outcome": outcome,
+                    "request_key": request_key,
+                }
+            )
+    return observations
 
 
 def _file_read_result_parts(step: Step) -> list[str]:

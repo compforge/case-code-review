@@ -199,7 +199,8 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 小范围可合并出的理论最少读取数。重复读取、初始 Prompt 重叠和读取碎片会参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
-average/max batch；空搜索按 query 而不是按整次批量调用评分。确定性结果统一产生
+average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内
+未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。确定性结果统一产生
 0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
 直接解析 ATIF 私有字段。
 

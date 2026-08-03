@@ -276,6 +276,11 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
 `search_code.searches[]` 的 `syntax` 默认为 `literal`；只有正则查询显式声明 `regexp`。相比布尔开关，
 它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。
 
+空搜索不是单一失败：有效文件范围内无命中可以成为反证，而 `file_patterns` 没匹配到任何文件只说明
+检索范围错误。Provider 因此在零命中时显式返回 scope 状态；模型只有确认搜索确实覆盖了文件后，才能
+把“未找到”用于判断。Trajectory eval 分开统计有效空结果、空 scope、执行失败与重复空搜，避免为了
+提高非空率而鼓励无意义的宽泛查询。
+
 每次调用模型前，Execution 通过 AgentGo `BeforeTurn` 在持久 conversation 上追加本轮控制消息，随后
 ContextManager 做统一投影：
 

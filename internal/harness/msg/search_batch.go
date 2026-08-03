@@ -45,6 +45,11 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 			Content:   part,
 			NoMatches: searchHadNoMatches(part),
 		}
+		if outcome, ok := tool.ParseCodeSearchOutcome(part); ok {
+			items[i].result.NoMatches = true
+			items[i].result.SearchStatus = outcome.Status
+			items[i].result.SearchedFiles = outcome.SearchedFiles
+		}
 	}
 	*b = SearchBatch{items: items, toolCallID: result.ToolCallID}
 	return true
@@ -84,6 +89,10 @@ func (b *SearchBatch) clone() *SearchBatch {
 		copyBatch.items[i].raw = item.raw
 		if item.result != nil {
 			result := *item.result
+			if item.result.SearchedFiles != nil {
+				count := *item.result.SearchedFiles
+				result.SearchedFiles = &count
+			}
 			copyBatch.items[i].result = &result
 		}
 	}

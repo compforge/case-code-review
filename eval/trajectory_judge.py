@@ -13,7 +13,7 @@ Units separately from Review 2 Lanes against a fixed failure taxonomy:
   ok                    链路高效，无明显问题
 
 Two passes:
-  1. objective  — 纯本地统计（重复读、空搜索、工具失败、轮数），零成本、确定性；
+  1. objective  — 纯本地统计（重复读、搜索 scope、工具失败、轮数），零成本、确定性；
   2. judge      — 每条链喂给 LLM（复用 ~/.casecodereview/config.json 的 provider），
                   按分类法给出 categories + evidence + suggestion 的 JSON 结论。
 
@@ -42,7 +42,6 @@ from ccr_trajectory import (
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     DurationEfficiencyEvaluator,
-    EmptySearchEvaluator,
     FileReadCoverageEvaluator,
     FileReadFragmentationEvaluator,
     REVIEW1,
@@ -50,6 +49,7 @@ from ccr_trajectory import (
     ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     RoundEfficiencyEvaluator,
+    SearchScopeEvaluator,
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
     code_search_stats,
@@ -88,7 +88,7 @@ def load_trajectories(path: str | None) -> list[Trajectory]:
 _COMMON_EVALUATORS = (
     RepeatedToolCallEvaluator(),
     ToolFailureEvaluator(),
-    EmptySearchEvaluator(),
+    SearchScopeEvaluator(),
     FileReadCoverageEvaluator(),
     PromptFileCoverageEvaluator(),
     FileReadFragmentationEvaluator(),
@@ -115,7 +115,6 @@ def objective_signals(trajectory: Trajectory) -> dict:
         for step in trajectory.steps
         if step.operation == "execute_tool" and step.status == "error"
     ]
-    empty_searches = len(evaluations["non_empty_search"].step_ids)
     return {
         "stage": stage,
         "score": report.score,
@@ -129,7 +128,6 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "initial_context": initial_context_stats(trajectory),
         "read_fragmentation": file_read_fragmentation(trajectory),
         "repeated_reads": repeated_file_reads(trajectory),
-        "empty_searches": empty_searches,
         "hypothesis_yield": hypothesis_yield(trajectory) if stage == REVIEW1 else 0,
         "tool_failures": tool_fails,
     }
@@ -318,9 +316,12 @@ def main() -> int:
                 sig = objective_signals(trajectory)
                 stage_signals.append(sig)
                 print(f"\n### {trajectory.trajectory_id}")
+                searches = sig["code_searches"]
                 print(f"   score={sig['score']} rounds={sig['rounds']} "
                       f"duration={sig['duration_sec']}s tools={sig['tool_freq']} "
-                      f"empty_searches={sig['empty_searches']}")
+                      f"search_outcomes=hit:{searches['hits']}/valid_empty:{searches['valid_empty']}"
+                      f"/scope_miss:{searches['scope_miss']}/scope_unknown:{searches['scope_unknown']}"
+                      f"/failure:{searches['tool_failure']}/repeated_empty:{searches['repeated_empty']}")
                 if sig["file_reads"]["calls"]:
                     reads = sig["file_reads"]
                     print(f"   read_files calls={reads['calls']} requests={reads['requests']} "
