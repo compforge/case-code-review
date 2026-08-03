@@ -10,6 +10,43 @@ import (
 	"testing"
 )
 
+func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
+	requests, err := ParseCodeSearchRequests(map[string]any{
+		"searches": []any{map[string]any{"query": "Hello"}},
+	})
+	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral {
+		t.Fatalf("default syntax = %#v, err=%v", requests, err)
+	}
+
+	requests, err = ParseCodeSearchRequests(map[string]any{
+		"searches": []any{
+			map[string]any{"query": "Hello", "syntax": "literal"},
+			map[string]any{"query": "Hello.*", "syntax": "regexp"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests[0].Syntax != CodeSearchLiteral || requests[1].Syntax != CodeSearchRegexp {
+		t.Fatalf("parsed syntax = %#v", requests)
+	}
+	if _, err := ParseCodeSearchRequests(map[string]any{
+		"searches": []any{map[string]any{"query": "Hello", "syntax": "glob"}},
+	}); err == nil || !strings.Contains(err.Error(), "syntax must be literal or regexp") {
+		t.Fatalf("invalid syntax error = %v", err)
+	}
+}
+
+func TestCodeSearchResultPathsSupportsBatch(t *testing.T) {
+	result := EncodeCodeSearchResults([]string{
+		"File: a.go\nMatch lines: 1\n1|A\n\nFile: b.go\nMatch lines: 1\n2|B\n",
+		"File: a.go\nMatch lines: 1\n3|A\n",
+	})
+	if got := CodeSearchResultPaths(result); !slices.Equal(got, []string{"a.go", "b.go"}) {
+		t.Fatalf("paths = %v", got)
+	}
+}
+
 func TestBuildGrepArgs_WorkspaceMode(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: "/tmp", Ref: ""})
 	args := p.buildGrepArgs("myFunc", false, false, false, nil)
@@ -402,6 +439,7 @@ func TestCodeSearch_RejectsTraversalPathspecs(t *testing.T) {
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{
 			"query":         "secret",
+			"syntax":        "literal",
 			"file_patterns": []any{"../outside/*.go"},
 		}},
 	})
@@ -418,9 +456,9 @@ func TestCodeSearchBatchPreservesOrderAndItemErrors(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{
-			map[string]any{"query": "Util"},
-			map[string]any{"query": ""},
-			map[string]any{"query": "Hello"},
+			map[string]any{"query": "Util", "syntax": "literal"},
+			map[string]any{"query": "", "syntax": "literal"},
+			map[string]any{"query": "Hello", "syntax": "literal"},
 		},
 	})
 	if err != nil {
@@ -446,9 +484,9 @@ func TestCodeSearchBatchSharesAggregateMatchBudget(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{
-			map[string]any{"query": "alpha"},
-			map[string]any{"query": "beta"},
-			map[string]any{"query": "gamma"},
+			map[string]any{"query": "alpha", "syntax": "literal"},
+			map[string]any{"query": "beta", "syntax": "literal"},
+			map[string]any{"query": "gamma", "syntax": "literal"},
 		},
 	})
 	if err != nil {

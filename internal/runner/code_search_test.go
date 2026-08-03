@@ -40,7 +40,7 @@ func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
 	}
 	provider := tool.NewCodeSearch(reader).WithDefinitionSource(CodeSearchDefinitions(reader))
 	result, err := provider.Execute(context.Background(), map[string]any{
-		"searches": []any{map[string]any{"query": "HandleName"}},
+		"searches": []any{map[string]any{"query": "HandleName", "syntax": "literal"}},
 	})
 	if err != nil {
 		t.Fatal(err)

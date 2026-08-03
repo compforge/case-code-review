@@ -2,9 +2,9 @@ package unitreview
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/go-stdx/slicesx"
 )
@@ -90,12 +90,5 @@ func diffSnapshot(diff *msg.Diff) unit.DiffSnapshot {
 }
 
 func pathsFromSearch(content string) []string {
-	var paths []string
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "File: ") {
-			paths = append(paths, strings.TrimSpace(strings.TrimPrefix(line, "File: ")))
-		}
-	}
-	return slicesx.Uniq(paths)
+	return tool.CodeSearchResultPaths(content)
 }

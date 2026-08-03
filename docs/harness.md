@@ -84,6 +84,8 @@ msg.Msg / msg.File
 
 CCR 消息仍通过 `ToLLM(CompactionLevel)` 定义 full、condensed、reference 等领域投影，Harness adapter
 把它映射为 AgentGo 的 `Raw / Compact / ToMessage`；只有 AgentGo 发起模型调用时才执行 `ToMessage`。
+可识别消息同时按当前 compaction level 暴露 AgentGo `ContextItem`，所以轨迹看到的是模型实际收到的
+`source / outline / reference`，而不是消息未经压缩时的原始档位。
 Harness 外只提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
 ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
@@ -96,6 +98,7 @@ ContextManager 才能判断两个范围是否
   参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
 - `read_diffs` → `Diff`，压缩时保留 path 与 hunk anchor；
 - `search_code` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
+- `FileContext` → 初始 `source / outline / reference` 文件目录；只有 source 对应独立 `File` 消息并参与覆盖判断；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
 无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
@@ -168,12 +171,15 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 `Session → Scope(Unit/Lane) → Execution` 组织：Scope 表示领域工作范围，Execution 表示一次真实
 AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
-每个 Execution 的 `llm_request`、`llm_response`、`tool_call`、`context_compacted` 和
+每个 Execution 的 `llm_request`、`llm_response`、`tool_call`、`context_projected`、`context_compacted` 和
 `execution_end` 共享稳定身份。`context_compacted` 记录一次完整上下文改写的原因、提交状态、
 前后 token/消息数以及是否产生 summary checkpoint，不泄漏内部 Compactor 步骤。
 `execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
 assistant 文本或 Unit debrief 反推 loop 是否完成。领域层仍把 Hypothesis、Lane assignment、Assessment
-和 Trial decision 作为 artifact 追加到相应 Scope。
+和 Trial decision 作为 artifact 追加到相应 Scope。AgentGo 在每次模型调用前发出
+`context_projected`，记录实际可见 ContextItem；首次投影是 Initial Context 的 exposure denominator，
+后续投影则反映压缩和工具结果带来的变化。Eval 再从工具轨迹提取 ContextDemand，与首次投影连接，
+而不是把 CCR 专属诊断塞进工具结果。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化发生在
 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。

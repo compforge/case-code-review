@@ -10,7 +10,7 @@ import (
 func TestFromLLMToolResultFamilies(t *testing.T) {
 	search := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{"query": "NewExecution"}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "NewExecution", "syntax": "literal"}}},
 		Content: tool.EncodeCodeSearchResults([]string{
 			"File: internal/harness/execution.go\nMatch lines: 2\n10|func NewExecution\n20|NewExecution(spec)\n",
 		}),
@@ -89,7 +89,7 @@ func TestFromLLMToolErrorStaysReceipt(t *testing.T) {
 func TestFromLLMBareCodeSearchResultStaysReceipt(t *testing.T) {
 	decoded := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{"query": "x"}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "x", "syntax": "literal"}}},
 		Content:   "File: a.go\nMatch lines: 1\n1|x\n",
 	})
 	if _, ok := decoded.(*ToolReceipt); !ok {

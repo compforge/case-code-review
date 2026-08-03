@@ -94,6 +94,9 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	if f.FullContentVisible(CompactionCondensed) {
 		t.Fatal("producer-authored condensed content must not claim full source coverage")
 	}
+	if items := f.ContextItems(CompactionCondensed); len(items) != 1 || items[0].Representation != "outline" {
+		t.Fatalf("condensed context items = %#v", items)
+	}
 	plain := mkFile(t, "pkg/plain.go", 10, 1, 10)
 	if !plain.FullContentVisible(CompactionCondensed) {
 		t.Fatal("condensed level without an alternate projection still contains full source")
@@ -104,6 +107,9 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	}
 	if _, _, _, _, ok := VisibleFileRange(reference.ExtractText()); ok {
 		t.Fatal("reference-only file must not count as visible content")
+	}
+	if items := f.ContextItems(CompactionReference); len(items) != 1 || items[0].Representation != "reference" {
+		t.Fatalf("reference context items = %#v", items)
 	}
 }
 

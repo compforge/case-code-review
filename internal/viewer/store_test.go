@@ -20,14 +20,14 @@ func writeViewerSession(t *testing.T, root, repo, sessionID string, records ...s
 }
 
 func sessionStart(id string) string {
-	return `{"type":"session_start","sessionId":"` + id + `","schema_version":6,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`
+	return `{"type":"session_start","sessionId":"` + id + `","schema_version":7,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`
 }
 
 func TestDiscoverReposOnlyIncludesCurrentSchema(t *testing.T) {
 	root := t.TempDir()
 	repo := "example-repo"
 	writeViewerSession(t, root, repo, "old", `{"type":"session_start","schema_version":5,"biz_id":"pr:old"}`)
-	writeViewerSession(t, root, repo, "new", `{"type":"session_start","schema_version":6,"biz_id":"pr:new"}`)
+	writeViewerSession(t, root, repo, "new", `{"type":"session_start","schema_version":7,"biz_id":"pr:new"}`)
 	now := time.Now()
 	oldPath := filepath.Join(root, repo, "old.jsonl")
 	newPath := filepath.Join(root, repo, "new.jsonl")
@@ -50,7 +50,7 @@ func TestDiscoverReposOnlyIncludesCurrentSchema(t *testing.T) {
 func TestLoadSessionProjectsScopeExecutionsAndDecisionTrail(t *testing.T) {
 	root, repo, sessionID := t.TempDir(), "example-repo", "session-1"
 	writeViewerSession(t, root, repo, sessionID,
-		`{"type":"session_start","sessionId":"session-1","schema_version":6,"model":"test-model","biz_id":"github:org/repo#148"}`,
+		`{"type":"session_start","sessionId":"session-1","schema_version":7,"model":"test-model","biz_id":"github:org/repo#148"}`,
 		`{"type":"context_compacted","execution_id":"exec-unit","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","reason":"threshold","committed":true,"tokens_before":160,"tokens_after":100,"messages_before":3,"messages_after":2,"summarized":false}`,
 		`{"type":"llm_request","execution_id":"exec-unit","scope_id":"unit-1","kind":"unit","scope":"file","paths":["a.go"],"filePath":"a.go","taskType":"main_task","request_no":1,"messages":[{"role":"system","content":"investigate"},{"role":"user","content":"review a.go"}]}`,
 		`{"type":"llm_response","execution_id":"exec-unit","scope_id":"unit-1","kind":"unit","scope":"file","taskType":"main_task","content":"done","usage":{"prompt_tokens":100,"completion_tokens":10}}`,
@@ -69,7 +69,7 @@ func TestLoadSessionProjectsScopeExecutionsAndDecisionTrail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Summary.SchemaVersion != 6 || got.Summary.BizID != "github:org/repo#148" {
+	if got.Summary.SchemaVersion != 7 || got.Summary.BizID != "github:org/repo#148" {
 		t.Fatalf("summary = %+v", got.Summary)
 	}
 	if len(got.Reviews) != 2 || len(got.Reviews[0].Executions) != 1 || len(got.Reviews[1].Executions) != 1 {
@@ -190,7 +190,7 @@ func TestLoadSessionRejectsOldSchema(t *testing.T) {
 func TestPeekSessionLoadsCurrentSchemaSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"session_start","schema_version":6,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`,
+		`{"type":"session_start","schema_version":7,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`,
 		`{"type":"session_end","duration_seconds":2,"files_reviewed":["a.go","b.go"],"diff_files":5,"diff_insertions":30,"diff_deletions":6}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
@@ -200,7 +200,7 @@ func TestPeekSessionLoadsCurrentSchemaSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != 6 || !got.HasDiffStats || got.DiffFileCount != 5 || got.FileCount != 2 {
+	if got.SchemaVersion != 7 || !got.HasDiffStats || got.DiffFileCount != 5 || got.FileCount != 2 {
 		t.Fatalf("summary = %+v", got)
 	}
 }

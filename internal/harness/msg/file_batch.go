@@ -1,6 +1,8 @@
 package msg
 
 import (
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -56,6 +58,14 @@ func (b *FileBatch) ToLLM(level CompactionLevel) llm.Message {
 func (b *FileBatch) ToolName() string { return b.tool }
 
 func (b *FileBatch) MaxCompaction() CompactionLevel { return CompactionReference }
+
+func (b *FileBatch) ContextItems(level CompactionLevel) []agentgo.ContextItem {
+	var out []agentgo.ContextItem
+	for _, file := range b.Files() {
+		out = append(out, file.ContextItems(level)...)
+	}
+	return out
+}
 
 func (b *FileBatch) Reclaim() {
 	for _, file := range b.Files() {

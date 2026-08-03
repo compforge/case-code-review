@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1800" height="800" viewBox="0 0 1800 800">
-  <title>CCR agentic review pipeline from Diff to Finding</title>
+  <title>CCR evidence-backed agentic review pipeline</title>
   <desc>
     CCR forms behavioral Units from a diff. Unit Review discovers falsifiable
     Hypotheses, Hypothesis Review independently verifies them, and deterministic
@@ -39,9 +39,9 @@
   </defs>
 
   <rect width="1800" height="800" fill="#ffffff"/>
-  <text x="900" y="48" text-anchor="middle" class="title">CCR · Agentic review from Diff to Finding</text>
+  <text x="900" y="48" text-anchor="middle" class="title">CCR · Evidence-backed agentic review pipeline</text>
   <text x="900" y="80" text-anchor="middle" class="subtitle">
-    Organize by behavior, separate discovery from verification, deliver only evidence-backed findings
+    Behavioral Units discover hypotheses · independent review verifies · deterministic Trial delivers findings
   </text>
 
   <!-- Both review stages emit observable facts and are improved through evaluation. -->
@@ -66,12 +66,13 @@
   <line x1="1145" y1="161" x2="1200" y2="161" class="flow"/>
 
   <rect x="1215" y="120" width="350" height="82" rx="16" fill="#e7f7ee" class="soft-box"/>
-  <text x="1390" y="153" text-anchor="middle" class="label">Improve both reviews</text>
-  <text x="1390" y="180" text-anchor="middle" class="small">prompt · context · tools · completion</text>
+  <text x="1390" y="153" text-anchor="middle" class="label">Improve the pipeline</text>
+  <text x="1390" y="180" text-anchor="middle" class="small">prompt · tools · schema · knowledge</text>
 
   <path d="M1390 202 V242 H375 V205" class="feedback-flow"/>
 
   <g transform="translate(0 180)">
+  <text x="900" y="125" text-anchor="middle" class="tiny">Incremental · mature results flow immediately · budget is a ceiling</text>
   <rect x="35" y="185" width="120" height="125" rx="18" fill="#e7edf8" class="box"/>
   <text x="95" y="240" text-anchor="middle" class="label">Diff</text>
   <text x="95" y="269" text-anchor="middle" class="small">changed code</text>
@@ -119,8 +120,9 @@
   <line x1="1425" y1="247" x2="1460" y2="247" class="flow"/>
 
   <circle cx="1525" cy="247" r="60" fill="#e7f7ee" class="box"/>
-  <text x="1525" y="240" text-anchor="middle" class="label">Trial</text>
-  <text x="1525" y="268" text-anchor="middle" class="tiny">Review 3 · court gate</text>
+  <text x="1525" y="232" text-anchor="middle" class="label">Trial</text>
+  <text x="1525" y="258" text-anchor="middle" class="tiny">Review 3</text>
+  <text x="1525" y="275" text-anchor="middle" class="tiny">court gate</text>
 
   <line x1="1585" y1="247" x2="1615" y2="247" class="flow"/>
 

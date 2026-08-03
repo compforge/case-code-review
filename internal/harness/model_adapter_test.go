@@ -49,7 +49,7 @@ func TestToAgentGoResponseCanonicalizesSingletonBatchTools(t *testing.T) {
 }
 
 func TestToAgentGoResponseLeavesMalformedArgumentsObservable(t *testing.T) {
-	raw := `{"searches":[{"query":"Target"}]` // missing closing brace
+	raw := `{"searches":[{"query":"Target","syntax":"literal"}]` // missing closing brace
 	message, err := toAgentGoResponse(toolResponse("search_code", raw))
 	if err != nil {
 		t.Fatal(err)

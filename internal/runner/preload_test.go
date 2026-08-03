@@ -13,6 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
 )
 
 func newPreloadRunner(t *testing.T, files map[string]string) *Runner {
@@ -152,9 +153,9 @@ func TestAssembleReviewMessages(t *testing.T) {
 	a := &Runner{}
 
 	deb := session.Debrief{}
-	domain := a.assembleReviewMessages(build, own, related, notes, 1<<20, &deb)
-	if len(domain) != 4 {
-		t.Fatalf("messages = %d, want 4", len(domain))
+	domain := a.assembleReviewMessages(build, own, related, nil, notes, 1<<20, &deb)
+	if len(domain) != 5 {
+		t.Fatalf("messages = %d, want 5", len(domain))
 	}
 	taskWire := domain[1].ToLLM(msg.CompactionNone)
 	taskText := taskWire.ExtractText()
@@ -168,8 +169,8 @@ func TestAssembleReviewMessages(t *testing.T) {
 
 	fullTokens := llm.CountMessagesTokens(msg.Lower(domain))
 	deb = session.Debrief{}
-	domain = a.assembleReviewMessages(build, own, related, notes, fullTokens-1, &deb)
-	if len(domain) != 3 || len(deb.Degradations) != 1 || deb.Degradations[0] != "related_source_dropped" {
+	domain = a.assembleReviewMessages(build, own, related, nil, notes, fullTokens-1, &deb)
+	if len(domain) != 4 || len(deb.Degradations) != 1 || deb.Degradations[0] != "related_source_dropped" {
 		t.Fatalf("related-drop stage off: n=%d deg=%v", len(domain), deb.Degradations)
 	}
 	taskWire = domain[1].ToLLM(msg.CompactionNone)
@@ -178,11 +179,46 @@ func TestAssembleReviewMessages(t *testing.T) {
 	}
 
 	deb = session.Debrief{}
-	domain = a.assembleReviewMessages(build, own, related, notes, 10, &deb)
+	domain = a.assembleReviewMessages(build, own, related, nil, notes, 10, &deb)
 	taskWire = domain[1].ToLLM(msg.CompactionNone)
-	if len(domain) != 2 || !strings.Contains(taskWire.ExtractText(), sourceNotPreloaded) ||
+	if len(domain) != 3 || !strings.Contains(taskWire.ExtractText(), sourceNotPreloaded) ||
 		len(deb.Degradations) != 2 {
 		t.Fatalf("own-drop stage off: n=%d deg=%v", len(domain), deb.Degradations)
+	}
+}
+
+func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
+	a := newPreloadRunner(t, map[string]string{
+		"a.go":           "package p\n\nfunc F() {}\n",
+		"owner.go":       "package p\n\ntype Owner struct{}\n",
+		"repository.go":  "package p\n\nfunc RepositoryUser() { F() }\n",
+		"pyproject.toml": "[project]\nname = 'p'\n",
+	})
+	a.repoIndex = &codegraph.Extraction{Refs: map[string]map[string]int{
+		"repository.go": {"F": 2},
+	}}
+	u := unit.UnitOf(unit.Fragment{Path: "a.go", Symbols: []string{"a.go::F"}})
+	u.Clues = []unit.Clue{
+		{Relation: unit.RelOwner, Ref: "owner.go::Owner"},
+		{Relation: unit.RelProject, Ref: "pyproject.toml"},
+	}
+	own, related, _, _ := a.preloadReviewFiles(context.Background(), u)
+	entries := a.initialFileContext(context.Background(), u, nil, own, related)
+	byPath := make(map[string]msg.FileContextEntry)
+	for _, entry := range entries {
+		byPath[entry.Path] = entry
+	}
+	if byPath["owner.go"].View != msg.ViewOutline || !strings.Contains(byPath["owner.go"].Content, "type Owner") {
+		t.Fatalf("owner context = %+v", byPath["owner.go"])
+	}
+	if byPath["pyproject.toml"].View != msg.ViewReference {
+		t.Fatalf("project context = %+v", byPath["pyproject.toml"])
+	}
+	if byPath["owner.go"].Reason != "owner" || byPath["owner.go"].Ref != "owner.go::Owner" {
+		t.Fatalf("owner admission = %+v", byPath["owner.go"])
+	}
+	if byPath["repository.go"].Reason != "repository_reference" {
+		t.Fatalf("repository context = %+v", byPath["repository.go"])
 	}
 }
 

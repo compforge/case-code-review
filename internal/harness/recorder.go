@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -31,10 +33,11 @@ type executionRecorder struct {
 	session     *session.SessionHistory
 	scope       session.Scope
 
-	mu     sync.Mutex
-	calls  map[string][]recordedCall
-	models []recordedModel
-	usage  llm.UsageInfo
+	mu           sync.Mutex
+	calls        map[string][]recordedCall
+	models       []recordedModel
+	usage        llm.UsageInfo
+	projectionNo int
 }
 
 func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionRecorder {
@@ -56,6 +59,17 @@ func (r *executionRecorder) recordCompaction(compaction session.ContextCompactio
 		return
 	}
 	r.session.WriteContextCompaction(r.scope, r.executionID, r.taskType, compaction)
+}
+
+func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem) {
+	if r.session == nil {
+		return
+	}
+	r.mu.Lock()
+	r.projectionNo++
+	projectionNo := r.projectionNo
+	r.mu.Unlock()
+	r.session.WriteContextProjected(r.scope, r.executionID, r.taskType, projectionNo, items)
 }
 
 func (r *executionRecorder) beginModel(
@@ -180,7 +194,7 @@ func (r *executionRecorder) finishTool(id, name string, result []byte, isError b
 	if call.record == nil {
 		return
 	}
-	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration)
+	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration, nil)
 }
 
 func toolResultText(raw []byte) string {

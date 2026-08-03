@@ -79,6 +79,13 @@ func (m domainMessage) ToMessage() (agentgo.Message, bool) {
 	}
 	return lowered, true
 }
+func (m domainMessage) ContextItems() []agentgo.ContextItem {
+	provider, ok := m.value.(msg.ContextItemProvider)
+	if !ok {
+		return nil
+	}
+	return provider.ContextItems(m.compaction)
+}
 
 // contextManager keeps CCR's typed messages alive until the provider boundary.
 // Projection is deterministic: deduplicate covered file reads, then shed

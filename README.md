@@ -1,6 +1,6 @@
 # case-code-review (`ccr`)
 
-> An evidence-backed agentic review pipeline built from behavioral Units, two agent reviews, deterministic Trial, and language/project knowledge. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
+> A trajectory-evaluation-driven agentic code review pipeline that turns code changes into evidence-backed Findings. Built on [open-code-review](https://github.com/alibaba/open-code-review). ｜ 中文见 [README.zh-CN.md](./README.zh-CN.md)
 
 ## Philosophy
 

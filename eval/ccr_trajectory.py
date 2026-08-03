@@ -12,13 +12,38 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from trajectory_harness import Evaluation, Step, Trajectory
 
 REVIEW1 = "review1"
 REVIEW2 = "review2"
 UNKNOWN_STAGE = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextDemand:
+    """One information need inferred from a trajectory step by an eval operator."""
+
+    kind: str
+    identity: str
+    signal: str
+
+
+ContextDemandExtractor = Callable[[Step], list[ContextDemand]]
+_CONTEXT_DEMAND_EXTRACTORS: dict[str, ContextDemandExtractor] = {}
+
+
+def register_context_demand_extractor(
+    tool_name: str,
+) -> Callable[[ContextDemandExtractor], ContextDemandExtractor]:
+    """Register one tool-specific projection without teaching Harness the tool."""
+
+    def register(extractor: ContextDemandExtractor) -> ContextDemandExtractor:
+        _CONTEXT_DEMAND_EXTRACTORS[tool_name] = extractor
+        return extractor
+
+    return register
 
 
 class ATIFTrajectoryLoader:
@@ -114,7 +139,7 @@ class ATIFTrajectoryLoader:
                         output_messages=(
                             _tool_result_message(call_id, result.get("content")),
                         ),
-                        attributes={"ok": extra.get("ok", True)},
+                        attributes={**extra, "ok": extra.get("ok", True)},
                     )
                 )
 
@@ -297,31 +322,32 @@ class FileReadFragmentationEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class HypothesisCompletionEvaluator:
-    """A Review 1 Unit completes by successfully submitting Hypotheses."""
+class ReviewCompletionEvaluator:
+    """Score the authoritative Execution outcome, independent of result yield."""
 
-    name: str = "hypothesis_submission"
+    name: str = "review_completion"
     weight: float = 1.0
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
     ) -> Evaluation:
         del reference
-        calls = _tool_steps(trajectory)
-        if not calls and not any(step.operation == "inference" for step in trajectory.steps):
-            return _not_evaluated(self.name, "Trajectory contains no model execution.")
-        submissions = [step for step in calls if step.name == "submit_hypotheses"]
-        completed = [step.step_id for step in submissions if _hypotheses_completed(step)]
+        outcome = str(trajectory.metadata.get("execution_outcome") or "")
+        if not outcome:
+            return _not_evaluated(
+                self.name, "Trajectory does not carry an authoritative Execution outcome."
+            )
+        completed = outcome == "completed"
+        reason = str(trajectory.metadata.get("execution_reason") or "")
         return Evaluation(
             name=self.name,
             score=1.0 if completed else 0.0,
             label="pass" if completed else "fail",
             explanation=(
-                "Review 1 submitted its Hypotheses."
+                "Review execution completed."
                 if completed
-                else "Review 1 ended without a valid Hypothesis submission."
+                else f"Review execution ended as {outcome}{': ' + reason if reason else ''}."
             ),
-            step_ids=tuple(completed),
         )
 
 
@@ -473,6 +499,125 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
             for request in _file_read_requests(step)
         )
     return {path: count for path, count in reads.items() if count > 1}
+
+
+def hypothesis_yield(trajectory: Trajectory) -> int:
+    """Count accepted Review 1 outputs without treating a clean zero as failure."""
+
+    accepted = 0
+    for step in _tool_steps(trajectory):
+        if step.name != "submit_hypotheses" or step.status == "error":
+            continue
+        if not _hypotheses_accepted(step):
+            continue
+        values = _tool_arguments(step).get("hypotheses") or []
+        if isinstance(values, list):
+            accepted += len(values)
+    return accepted
+
+
+@register_context_demand_extractor("read_files")
+def _current_file_demands(step: Step) -> list[ContextDemand]:
+    return [
+        ContextDemand("file", str(request.get("file_path") or "?"), "source_request")
+        for request in _file_read_requests(step)
+    ]
+
+
+@register_context_demand_extractor("read_base_files")
+def _baseline_file_demands(step: Step) -> list[ContextDemand]:
+    return [
+        ContextDemand("baseline_file", str(request.get("file_path") or "?"), "baseline_request")
+        for request in _file_read_requests(step)
+    ]
+
+
+@register_context_demand_extractor("read_diffs")
+def _diff_demands(step: Step) -> list[ContextDemand]:
+    paths = _tool_arguments(step).get("paths") or []
+    return [ContextDemand("diff", str(path), "diff_request") for path in paths]
+
+
+@register_context_demand_extractor("search_code")
+def _search_result_demands(step: Step) -> list[ContextDemand]:
+    paths = re.findall(r"(?m)^File: (.+)$", _tool_response(step))
+    return [ContextDemand("file", path.strip(), "search_hit") for path in paths]
+
+
+@register_context_demand_extractor("file_find")
+def _file_discovery_demands(step: Step) -> list[ContextDemand]:
+    paths = []
+    for line in _tool_response(step).splitlines():
+        value = line.strip()
+        if value and not value.lower().startswith(("error:", "no matching", "file was not found")):
+            paths.append(ContextDemand("file", value, "file_discovery"))
+    return paths
+
+
+def context_demands(trajectory: Trajectory) -> list[ContextDemand]:
+    """Project raw tool steps into generic information demand signals."""
+
+    demands = []
+    for step in _tool_steps(trajectory):
+        extractor = _CONTEXT_DEMAND_EXTRACTORS.get(step.name)
+        if extractor is not None:
+            demands.extend(extractor(step))
+    return demands
+
+
+def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
+    """Join policy exposure with demand inferred by registered step operators.
+
+    An admitted item with no later demand is intentionally neutral: the
+    initial context may have prevented the call. Strategy cost/benefit belongs
+    in corpus A/B, not in a per-trajectory "unused" penalty.
+    """
+
+    inventory: dict[tuple[str, str], dict[str, Any]] = {}
+    view_rank = {"source": 3, "outline": 2, "reference": 1}
+
+    for item in trajectory.metadata.get("initial_context") or []:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "unknown")
+        identity = str(item.get("identity") or "")
+        if not identity:
+            continue
+        key = (kind, identity)
+        current = inventory.get(key)
+        if current is None or view_rank.get(str(item.get("representation")), 0) > view_rank.get(
+            str(current.get("representation")), 0
+        ):
+            inventory[key] = item
+
+    admitted: Counter[str] = Counter()
+    demand: dict[str, Counter[str]] = {}
+    by_reason: dict[str, Counter[str]] = {}
+
+    def reason_counts(reason: str) -> Counter[str]:
+        return by_reason.setdefault(reason, Counter())
+
+    for item in inventory.values():
+        representation = str(item.get("representation") or "unknown")
+        reason = str(item.get("reason") or "unknown")
+        admitted[representation] += 1
+        reason_counts(reason)["admitted"] += 1
+
+    for item in context_demands(trajectory):
+        admitted_item = inventory.get((item.kind, item.identity))
+        representation = "missing"
+        reason = "missing"
+        if admitted_item is not None:
+            representation = str(admitted_item.get("representation") or "unknown")
+            reason = str(admitted_item.get("reason") or "unknown")
+        demand.setdefault(item.signal, Counter())[representation] += 1
+        reason_counts(reason)[item.signal] += 1
+
+    return {
+        "admitted": dict(admitted),
+        "demand": {signal: dict(values) for signal, values in demand.items()},
+        "by_reason": {reason: dict(values) for reason, values in by_reason.items()},
+    }
 
 
 def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
@@ -804,8 +949,9 @@ def _assessment_completed(step: Step) -> bool:
     return bool(result.get("accepted")) and not result.get("remaining")
 
 
-def _hypotheses_completed(step: Step) -> bool:
-    return _tool_response(step).startswith("Unit review completed;")
+def _hypotheses_accepted(step: Step) -> bool:
+    response = _tool_response(step)
+    return response.startswith("Hypotheses accepted for independent review.")
 
 
 def _not_evaluated(name: str, explanation: str) -> Evaluation:
