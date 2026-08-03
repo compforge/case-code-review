@@ -368,7 +368,7 @@ class AssessmentCompletionEvaluator:
         calls = _tool_steps(trajectory)
         if not calls and not any(step.operation == "inference" for step in trajectory.steps):
             return _not_evaluated(self.name, "Trajectory contains no model execution.")
-        submissions = [step for step in calls if step.name == "submit_assessments"]
+        submissions = [step for step in calls if step.name == "submit_assessment"]
         if not submissions:
             return Evaluation(
                 name=self.name,
@@ -476,7 +476,7 @@ def _review_work_items(trajectory: Trajectory) -> int:
     accepted = set()
     completed_submissions = 0
     for step in _tool_steps(trajectory):
-        if step.name != "submit_assessments" or step.status == "error":
+        if step.name != "submit_assessment" or step.status == "error":
             continue
         try:
             result = json.loads(_tool_response(step))
@@ -485,6 +485,8 @@ def _review_work_items(trajectory: Trajectory) -> int:
         values = result.get("accepted") or []
         if isinstance(values, list):
             accepted.update(str(value) for value in values)
+        elif values:
+            accepted.add(str(values))
         if _assessment_completed(step):
             completed_submissions += 1
     return max(len(accepted), completed_submissions, 1)
@@ -509,13 +511,11 @@ def hypothesis_yield(trajectory: Trajectory) -> int:
 
     accepted = 0
     for step in _tool_steps(trajectory):
-        if step.name != "submit_hypotheses" or step.status == "error":
+        if step.name != "submit_hypothesis" or step.status == "error":
             continue
         if not _hypotheses_accepted(step):
             continue
-        values = _tool_arguments(step).get("hypotheses") or []
-        if isinstance(values, list):
-            accepted += len(values)
+        accepted += 1
     return accepted
 
 
@@ -954,7 +954,7 @@ def _assessment_completed(step: Step) -> bool:
 
 def _hypotheses_accepted(step: Step) -> bool:
     response = _tool_response(step)
-    return response.startswith("Hypotheses accepted for independent review.")
+    return response.startswith("Hypothesis accepted for independent review.")
 
 
 def _not_evaluated(name: str, explanation: str) -> Evaluation:

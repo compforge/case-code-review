@@ -1,8 +1,6 @@
 package unitreview
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
@@ -32,57 +30,31 @@ func IDFor(h Hypothesis) string { return unit.HypothesisIDFor(h) }
 
 func FingerprintFor(h Hypothesis) string { return unit.HypothesisFingerprintFor(h) }
 
-// ParseHypotheses validates one incremental Unit Review batch without storing
-// it. An explicitly empty batch is valid but does not itself complete a review.
-func ParseHypotheses(args map[string]any) ([]Hypothesis, string) {
-	raw, present := args["hypotheses"]
-	if !present {
-		return nil, "Error: 'hypotheses' array is required"
+// ParseHypothesis validates one incremental Unit Review result without storing
+// it. One tool call represents one mature claim so it can enter Review 2
+// immediately instead of waiting for a batch.
+func ParseHypothesis(args map[string]any) (Hypothesis, string) {
+	h := Hypothesis{
+		Path:              stringValue(args, "path"),
+		Content:           stringValue(args, "content"),
+		SuggestionCode:    stringValue(args, "suggestion_code"),
+		ExistingCode:      stringValue(args, "existing_code"),
+		Trigger:           stringValue(args, "trigger"),
+		Impact:            stringValue(args, "impact"),
+		ChangeAttribution: stringValue(args, "change_attribution"),
+		Uncertainty:       stringValue(args, "uncertainty"),
+		Thinking:          stringValue(args, "thinking"),
+		Category:          normalizeEnum(stringValue(args, "category"), validCategories),
+		Severity:          normalizeEnum(stringValue(args, "severity"), validSeverities),
+		Evidence:          stringSlice(args["evidence"]),
 	}
-	var rawItems []any
-	switch raw := raw.(type) {
-	case []any:
-		rawItems = raw
-	case string:
-		if err := json.Unmarshal([]byte(raw), &rawItems); err != nil {
-			return nil, fmt.Sprintf("Error: failed to parse 'hypotheses' JSON string: %v", err)
-		}
-	default:
-		return nil, "Error: 'hypotheses' must be an array"
+	if h.Path == "" || h.Content == "" || h.ExistingCode == "" ||
+		h.Trigger == "" || h.Impact == "" || h.ChangeAttribution == "" ||
+		len(h.Evidence) == 0 || h.Category == "" || h.Severity == "" {
+		return Hypothesis{}, "Error: hypothesis is incomplete or has an invalid category/severity"
 	}
-	if len(rawItems) == 0 {
-		return nil, ""
-	}
-
-	out := make([]Hypothesis, 0, len(rawItems))
-	for i, raw := range rawItems {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			return nil, fmt.Sprintf("Error: hypothesis %d must be an object", i+1)
-		}
-		h := Hypothesis{
-			Path:              stringValue(item, "path"),
-			Content:           stringValue(item, "content"),
-			SuggestionCode:    stringValue(item, "suggestion_code"),
-			ExistingCode:      stringValue(item, "existing_code"),
-			Trigger:           stringValue(item, "trigger"),
-			Impact:            stringValue(item, "impact"),
-			ChangeAttribution: stringValue(item, "change_attribution"),
-			Uncertainty:       stringValue(item, "uncertainty"),
-			Thinking:          stringValue(item, "thinking"),
-			Category:          normalizeEnum(stringValue(item, "category"), validCategories),
-			Severity:          normalizeEnum(stringValue(item, "severity"), validSeverities),
-			Evidence:          stringSlice(item["evidence"]),
-		}
-		if h.Path == "" || h.Content == "" || h.ExistingCode == "" ||
-			h.Trigger == "" || h.Impact == "" || h.ChangeAttribution == "" ||
-			len(h.Evidence) == 0 || h.Category == "" || h.Severity == "" {
-			return nil, fmt.Sprintf("Error: hypothesis %d is incomplete or has an invalid category/severity", i+1)
-		}
-		h.Fingerprint = FingerprintFor(h)
-		out = append(out, h)
-	}
-	return out, ""
+	h.Fingerprint = FingerprintFor(h)
+	return h, ""
 }
 
 func stringValue(item map[string]any, key string) string {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
@@ -19,15 +20,14 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	hypothesis := unitreview.Hypothesis{Path: "a.go", Content: "issue", ExistingCode: "x"}
 	hypothesis.ID = unitreview.IDFor(hypothesis)
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewToolResponse("call-1", SubmitAssessments.Name(), `{"assessments":[{
-			"hypothesis_id":"`+hypothesis.ID+`",
+		reviewToolResponse("call-1", SubmitAssessment.Name(), `{
 			"support":"supported",
 			"attribution":"caused",
 			"value":"actionable",
 			"novelty":"new",
 			"reason":"the checked caller reaches this path",
 			"evidence":["caller.go:12"]
-		}]}`),
+		}`),
 	}}
 	collector := NewAssessmentCollector(hypothesis.ID)
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
@@ -35,7 +35,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		Messages:       []msg.Msg{msg.Text("user", "review the case")},
 		ToolDefs:       []llm.ToolDef{AssessmentToolDef()},
 		ToolHandler:    &AssessmentHook{Collector: collector},
-		CompletionTool: SubmitAssessments.Name(),
+		CompletionTool: SubmitAssessment.Name(),
 		Session:        &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 		Scope:          session.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
 		MaxTurns:       2,
@@ -57,11 +57,10 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	}
 }
 
-func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
+func TestReviewBindsAssessmentToCurrentHypothesis(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewAssessmentResponse("call-1", "not-the-current-hypothesis"),
-		reviewAssessmentResponse("call-2", hypothesis.ID),
+		reviewAssessmentResponse("call-1"),
 	}}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
@@ -70,14 +69,14 @@ func TestReviewRequiresCurrentHypothesisAssessment(t *testing.T) {
 		}},
 		LLMClient: client,
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		MaxTurns:  2,
+		MaxTurns:  1,
 		MaxTokens: 2_000,
 	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
 	if len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != hypothesis.ID {
 		t.Fatalf("assessments = %+v, want current hypothesis", result.Assessments)
 	}
 	if len(client.responses) != 0 {
-		t.Fatalf("Review stopped before the current hypothesis was accepted")
+		t.Fatalf("Review did not stop after accepting the bound assessment")
 	}
 }
 
@@ -89,11 +88,11 @@ func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.
 		Content: "File: a.go (Total lines: 1)\n1|fixed",
 	})
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewToolResponse("call-1", SubmitAssessments.Name(), `{"assessments":[{
-			"hypothesis_id":"h-1","support":"supported","attribution":"caused",
+		reviewToolResponse("call-1", SubmitAssessment.Name(), `{
+			"support":"supported","attribution":"caused",
 			"value":"actionable","novelty":"new","reason":"Unit evidence proves it",
 			"evidence":["a.go:1"]
-		}]}`),
+		}`),
 	}}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
@@ -132,7 +131,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 	registry.Register(provider)
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
 		reviewToolResponse("read-1", tool.FileRead.Name(), `{"reads":[{"file_path":"a.go"}]}`),
-		reviewAssessmentResponse("submit-1", hypothesis.ID),
+		reviewAssessmentResponse("submit-1"),
 	}}
 	result := Review(context.Background(), Config{
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
@@ -158,6 +157,52 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 	}
 	if !covered {
 		t.Fatalf("covered read did not explain retained Unit/Lane context: %+v", client.requests)
+	}
+}
+
+func TestReviewTimeoutPersistsSystemInsufficientAssessment(t *testing.T) {
+	hypothesis := completeHypothesis("h-1", "a.go")
+	var submissions []AssessmentSubmission
+	var warnings []string
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	result := Review(ctx, Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"},
+			{Role: "user", Content: "{{hypothesis}}"},
+		}},
+		LLMClient: &blockingAssessmentClient{},
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  2,
+		MaxTokens: 2_000,
+		OnAssessment: func(submission AssessmentSubmission) {
+			submissions = append(submissions, submission)
+		},
+		RecordWarning: func(warningType, _ string, _ string) {
+			warnings = append(warnings, warningType)
+		},
+	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
+
+	if result.Execution.State != harness.OutcomeTimeout {
+		t.Fatalf("execution = %+v, want timeout", result.Execution)
+	}
+	if len(result.Assessments) != 1 {
+		t.Fatalf("assessments = %+v, want one system fallback", result.Assessments)
+	}
+	assessment := result.Assessments[0]
+	if assessment.HypothesisID != hypothesis.ID || assessment.Support != Insufficient ||
+		assessment.Attribution != AttributionUnknown || assessment.Value != ValueUnknown ||
+		assessment.Novelty != Novel || assessment.ReviewerAlias != "system" {
+		t.Fatalf("fallback assessment = %+v", assessment)
+	}
+	if len(submissions) != 1 || submissions[0].Assessment.HypothesisID != hypothesis.ID {
+		t.Fatalf("persisted submissions = %+v", submissions)
+	}
+	for _, warning := range warnings {
+		if warning == "hypothesis_unassessed" {
+			t.Fatalf("timeout fallback was still reported unassessed: %v", warnings)
+		}
 	}
 }
 
@@ -190,16 +235,26 @@ func completeHypothesis(id, path string) unitreview.Hypothesis {
 	}
 }
 
-func reviewAssessmentResponse(callID, hypothesisID string) *llm.ChatResponse {
-	return reviewToolResponse(callID, SubmitAssessments.Name(), `{"assessments":[{
-		"hypothesis_id":"`+hypothesisID+`","support":"insufficient","attribution":"unknown",
+func reviewAssessmentResponse(callID string) *llm.ChatResponse {
+	return reviewToolResponse(callID, SubmitAssessment.Name(), `{
+		"support":"insufficient","attribution":"unknown",
 		"value":"unknown","novelty":"new","reason":"missing decisive evidence","evidence":[]
-	}]}`)
+	}`)
 }
 
 type assessmentScriptedClient struct {
 	responses []*llm.ChatResponse
 	requests  []llm.ChatRequest
+}
+
+type blockingAssessmentClient struct{}
+
+func (*blockingAssessmentClient) CompletionsWithCtx(
+	ctx context.Context,
+	_ llm.ChatRequest,
+) (*llm.ChatResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (c *assessmentScriptedClient) CompletionsWithCtx(

@@ -150,7 +150,7 @@ func (e *Executor) Run(
 		FileEvictEnabled:        e.fileEvict,
 		WrapUpPrompt:            e.wrapUpPrompt,
 		WrapUpAfterTurns:        maxInvestigationTurns,
-		WrapUpAllowedTools:      []string{SubmitHypotheses.Name()},
+		WrapUpAllowedTools:      []string{SubmitHypothesis.Name()},
 		NaturalCompletion:       true,
 		CompressionSystemPrompt: e.compressionSystemPrompt,
 		CompressionPrompt:       e.compressionPrompt,
@@ -279,7 +279,7 @@ func (e *Executor) countableTool(name string) bool {
 	if name == tool.TaskDone.Name() {
 		return false
 	}
-	if name == SubmitHypotheses.Name() {
+	if name == SubmitHypothesis.Name() {
 		return true
 	}
 	if name == tool.PostBulletin.Name() {
@@ -374,7 +374,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 
 func (r *unitExecution) observesGenericTool(name string) bool {
 	return r.executor.countableTool(name) &&
-		name != SubmitHypotheses.Name() &&
+		name != SubmitHypothesis.Name() &&
 		name != tool.PostBulletin.Name()
 }
 

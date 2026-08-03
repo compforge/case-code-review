@@ -57,10 +57,11 @@ Review 2 不平均地“多查一些材料”，而是先把主张还原为
 优先寻找能直接支持或推翻关键前提的最短证据链。若触发条件已被反驳，就不再调查后续影响；合理的
 定向检查后仍有关键前提未知，则判 `insufficient`，不能用一个条件成立时自洽的故事替代可达性证明。
 
-依赖 SDK、框架、Forge API、数据库或协议行为的主张，需要依赖源码/类型、provider contract、真实
-fixture/test 或实际构造该状态的 adapter 路径作为权威证据。本地代码只展示“收到某状态后会怎样”，
-不能单独证明外部系统会产生该状态。Review 2 的第一轮直接提交已有证据足够的 Assessment，或批量读取
-已经明确的独立缺口；不额外增加一次 Plan Task。
+CCR 不负责调查外部 provider、SDK 或 API 的真实行为。若决定性前提没有被已有 Repository 上下文
+（例如依赖源码/类型、真实 fixture/test 或实际构造该状态的 adapter）直接证明，Review 2 应停止外查并将
+`support` 判为 `insufficient`；本地代码只展示“收到某状态后会怎样”，不能单独证明外部系统会产生该状态。
+Review 2 的第一轮直接提交已有证据足够的 Assessment，或读取已经明确的 Repository 内部缺口；不额外增加
+一次 Plan Task。
 
 ### 2.3 只读证据与 receipt
 
@@ -76,7 +77,7 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 ### 2.4 增量提交与完成契约
 
 当前一次 Review 2 execution 只负责一个 Hypothesis。模型判断完成后应立即调用
-`submit_assessments`。Harness 只在当前 Hypothesis 的 Assessment 通过解析和领域校验后接受完成；合法
+`submit_assessment`。Harness 只在当前 Hypothesis 的 Assessment 通过解析和领域校验后接受完成；合法
 提交由 AgentGo 作为 terminal tool 结束 execution，不再额外调用 `task_done`。Assessment 被接受后立即
 进入确定性 Trial，不等待同 Lane 的后续 Hypothesis 或其它 Review 1。无效提交只返回修正提示，loop
 继续运行。
@@ -84,7 +85,8 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 若 execution 超时或失败：
 
 - 已提交 Assessment 仍然保留；
-- 未评估 Hypothesis 产生明确 warning；
+- 超时且尚未提交时，由 Runner 持久化一条 system-authored `insufficient` Assessment，保留可解释的收敛结果；
+- 其它失败中未评估的 Hypothesis 产生明确 warning；
 - 未评估项不能通过 Trial，也不能把 0 Finding 解释为 clean。
 
 ### 2.5 Prompt 上下文形状
@@ -104,7 +106,7 @@ user: Hypothesis A(
 assistant: <decide from retained Unit context, or read only a missing fact>
 assistant: tool_call(read_diffs / read_base_files / read_files / search_code)  # optional
 tool: <typed evidence result>
-assistant: tool_call(submit_assessments)
+assistant: tool_call(submit_assessment)
 tool: <accepted; execution completes>
 
 user: Hypothesis B(...)  # 同一 Lane，只追加新快照/结果，复用前面的 conversation

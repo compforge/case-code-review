@@ -146,7 +146,7 @@ func fileReadReceipts(
 
 // ReviewHandler owns the convergent Review's complete tool boundary. Read-only
 // providers are executed here so their successful use can be receipted before
-// submit_assessments is accepted; no shell or write provider can enter through
+// submit_assessment is accepted; no shell or write provider can enter through
 // this handler.
 type ReviewHandler struct {
 	Assessments *AssessmentHook
@@ -159,7 +159,7 @@ func (h *ReviewHandler) HandleTool(
 	ctx context.Context,
 	request harness.ToolRequest,
 ) (tool.TaskCheckpoint, bool) {
-	if request.Tool == SubmitAssessments {
+	if request.Tool == SubmitAssessment {
 		return h.Assessments.HandleTool(ctx, request)
 	}
 	if !isEvidenceTool(request.Tool) {

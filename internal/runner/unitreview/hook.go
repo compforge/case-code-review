@@ -16,8 +16,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-// HypothesisHook turns each incremental submit_hypotheses call into Runner-owned
-// investigative results. Finding conversion remains deferred until Trial.
+// HypothesisHook turns each incremental submit_hypothesis call into one
+// Runner-owned investigative result. Finding conversion remains deferred until Trial.
 type HypothesisHook struct {
 	WorkerPool   *harness.WorkerPool
 	Session      *session.SessionHistory
@@ -38,45 +38,40 @@ func (h *HypothesisHook) HandleTool(
 	ctx context.Context,
 	call harness.ToolRequest,
 ) (tool.TaskCheckpoint, bool) {
-	if call.Tool != SubmitHypotheses {
+	if call.Tool != SubmitHypothesis {
 		return tool.TaskCheckpoint{}, false
 	}
 
 	started := time.Now()
 	telemetry.PrintToolCallStarted(call.Tool.Name(), call.Args)
-	hypotheses, errMsg := ParseHypotheses(call.Args)
+	hypothesis, errMsg := ParseHypothesis(call.Args)
 	if errMsg != "" {
 		telemetry.RecordToolCall(ctx, call.Tool.Name(), time.Since(started), false)
 		return tool.Of(errMsg), true
 	}
-	for i := range hypotheses {
-		if !slices.Contains(call.Scope.Paths, hypotheses[i].Path) {
-			hypotheses[i].Path = call.Scope.Path()
-		}
-		hypotheses[i].Alias = call.Alias
-		hypotheses[i].OriginUnit = call.Scope.ID
+	if !slices.Contains(call.Scope.Paths, hypothesis.Path) {
+		hypothesis.Path = call.Scope.Path()
 	}
+	hypothesis.Alias = call.Alias
+	hypothesis.OriginUnit = call.Scope.ID
 
 	resolveAndCollect := func(workCtx context.Context) {
-		for i := range hypotheses {
-			hypothesis := &hypotheses[i]
-			draft := FindingFor(*hypothesis)
-			var ch *change.Change
-			if h.ChangeLookup != nil {
-				ch = h.ChangeLookup(hypothesis.Path)
-			}
-			if ch != nil && !finding.ResolveComment(&draft, ch) &&
-				h.Relocation && h.Template.ReLocationTask != nil {
-				h.relocate(workCtx, call.Scope, &draft, ch)
-			}
-			hypothesis.StartLine = draft.StartLine
-			hypothesis.EndLine = draft.EndLine
-			hypothesis.ExistingCode = draft.ExistingCode
-			hypothesis.Fingerprint = FingerprintFor(*hypothesis)
-			hypothesis.ID = IDFor(*hypothesis)
-			if h.OnResolved != nil {
-				h.OnResolved(*hypothesis)
-			}
+		draft := FindingFor(hypothesis)
+		var ch *change.Change
+		if h.ChangeLookup != nil {
+			ch = h.ChangeLookup(hypothesis.Path)
+		}
+		if ch != nil && !finding.ResolveComment(&draft, ch) &&
+			h.Relocation && h.Template.ReLocationTask != nil {
+			h.relocate(workCtx, call.Scope, &draft, ch)
+		}
+		hypothesis.StartLine = draft.StartLine
+		hypothesis.EndLine = draft.EndLine
+		hypothesis.ExistingCode = draft.ExistingCode
+		hypothesis.Fingerprint = FingerprintFor(hypothesis)
+		hypothesis.ID = IDFor(hypothesis)
+		if h.OnResolved != nil {
+			h.OnResolved(hypothesis)
 		}
 	}
 
@@ -96,14 +91,14 @@ func (h *HypothesisHook) HandleTool(
 			return nil
 		})
 		telemetry.RecordToolCall(asyncCtx, call.Tool.Name(), time.Since(started), true)
-		return tool.CompleteWith(HypothesesSubmitted), true
+		return tool.CompleteWith(HypothesisSubmitted), true
 	}
 
 	resolveAndCollect(ctx)
 	duration := time.Since(started)
 	telemetry.RecordToolCall(ctx, call.Tool.Name(), duration, true)
 	telemetry.PrintToolCallFinished(call.Tool.Name(), duration)
-	return tool.CompleteWith(HypothesesSubmitted), true
+	return tool.CompleteWith(HypothesisSubmitted), true
 }
 
 func (h *HypothesisHook) relocate(

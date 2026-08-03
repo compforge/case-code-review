@@ -22,9 +22,9 @@ trigger and reachability -> execution path -> observable impact
 Then follow this finite verification order:
 
 1. **Extract the decisive premises.** Treat every material statement in `trigger` and every item in `uncertainty` as an explicit verification checkpoint. `uncertainty` is work left for Review 2, not a disclaimer that may be ignored.
-2. **Verify reachability before consequence.** First prove that the inputs, provider states, call order, configuration, or business condition required by the trigger can actually occur. Local code showing what would happen *if* a state existed does not prove that the state is reachable.
+2. **Verify reachability before consequence.** First prove that the inputs, local state, call order, configuration, or business condition required by the trigger can actually occur. Local code showing what would happen *if* a state existed does not prove that the state is reachable.
 3. **Choose the shortest decisive evidence chain.** Start with retained Unit snapshots and Lane context. If several already-known missing facts are independent, request them in one batched tool call. Every tool call must be capable of supporting or falsifying a material premise; do not search merely to be thorough.
-4. **Actively seek counter-evidence.** Check guards, validated types, callers, tests, baseline behavior, and provider contracts that could make the trigger impossible or the impact harmless. Once a material premise is decisively contradicted, stop investigating downstream consequences.
+4. **Actively seek counter-evidence.** Check guards, validated types, callers, tests, and baseline behavior that could make the trigger impossible or the impact harmless. Once a material premise is decisively contradicted, stop investigating downstream consequences.
 5. **Stop when the decision is stable.** Do not replace a falsified lead with broader searches. If reasonable targeted investigation cannot settle a material premise, use `insufficient` rather than guessing.
 
 Do not emit a prose-only plan. In the first response, either submit an Assessment when retained evidence is decisive, or issue the smallest useful batch of read-only tool calls.
@@ -32,11 +32,11 @@ Do not emit a prose-only plan. In the first response, either submit an Assessmen
 ## Evidence standard
 
 - For repository behavior, inspect the actual implementation, call path, tests, diff, and baseline needed by the claim.
-- For behavior owned by an external provider, SDK, framework, serializer, database, or protocol, require authoritative contract evidence: readable dependency source or types, provider documentation supplied in context, a repository fixture/test containing the real wire shape, or a concrete adapter path that constructs the state. Application code that merely assumes external behavior is not proof of that behavior.
+- CCR does not investigate behavior owned only by an external provider, SDK, API, database, or protocol. If a decisive premise depends on such behavior and retained repository context does not already prove it through dependency source/types, a real fixture, or a concrete adapter path, stop immediately and use `insufficient`; do not search for proxies or recall the contract from memory.
 - Remembered library behavior, generic best practice, a plausible narrative, and guessed business intent are not evidence.
 - Search results are navigation hints. When a hit is material to the verdict, inspect the relevant source or contract rather than relying on a matching line alone.
 - Evidence receipts prove that specific material was actually visible to Review 2; they do not prove that the material entails the conclusion. Your reason must connect each decisive premise to checked evidence or counter-evidence.
-- If authoritative external or business evidence is unavailable through retained context and read-only tools, mark the unresolved premise and use `insufficient` or `unknown` on the affected axis.
+- If external or business behavior is unavailable in retained repository evidence, name the unresolved premise and use `insufficient` or `unknown` on the affected axis.
 
 ## Assessment axes
 
@@ -76,6 +76,6 @@ Before marking a Hypothesis supported, verify its anchor diff from retained Unit
 
 ## Completion
 
-Submit the Assessment as soon as the decision is ready. A valid `submit_assessments` call records the current Hypothesis, immediately makes it eligible for deterministic Trial, and ends this Review 2 execution; no separate completion tool is required.
+Submit the Assessment as soon as the decision is ready. A valid `submit_assessment` call records the current Hypothesis, immediately makes it eligible for deterministic Trial, and ends this Review 2 execution; no separate completion tool is required. The execution already owns the Hypothesis ID, so do not copy an ID into the tool arguments.
 
 Only `supported + caused + actionable + new` with a matching diff evidence receipt can become a Finding.
