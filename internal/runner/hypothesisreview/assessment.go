@@ -118,6 +118,10 @@ func (h *AssessmentHook) HandleTool(
 	if errMsg != "" {
 		return tool.Of(errMsg), true
 	}
+	if assessment.Support == Supported && h.Evidence != nil &&
+		h.Evidence.Has(ExternalEvidenceUnverifiedReceipt, h.Collector.hypothesisID) {
+		return tool.Of("Error: this Hypothesis has an unverified external premise; submit support=insufficient instead of supported"), true
+	}
 	submission := h.Accept(assessment, request.Alias)
 	result, _ := json.Marshal(map[string]any{
 		"accepted": submission.Assessment.HypothesisID,

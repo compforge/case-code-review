@@ -32,6 +32,23 @@ func (l *EvidenceLedger) Record(request harness.ToolRequest, result string) {
 	l.mu.Unlock()
 }
 
+func (l *EvidenceLedger) RecordReceipt(receipt EvidenceReceipt) {
+	l.mu.Lock()
+	l.receipts = append(l.receipts, receipt)
+	l.mu.Unlock()
+}
+
+func (l *EvidenceLedger) Has(kind, ref string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, receipt := range l.receipts {
+		if receipt.Kind == kind && receipt.Ref == ref {
+			return true
+		}
+	}
+	return false
+}
+
 func (l *EvidenceLedger) Receipts() []EvidenceReceipt {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -153,6 +170,7 @@ type ReviewHandler struct {
 	Evidence    *EvidenceLedger
 	Tools       *tool.Registry
 	Unit        *unit.Unit
+	Hypothesis  unit.Hypothesis
 }
 
 func (h *ReviewHandler) HandleTool(
@@ -161,6 +179,13 @@ func (h *ReviewHandler) HandleTool(
 ) (tool.TaskCheckpoint, bool) {
 	if request.Tool == SubmitAssessment {
 		return h.Assessments.HandleTool(ctx, request)
+	}
+	if request.Tool == CheckExternalEvidence {
+		result, receipt := externalEvidenceResult(request.Call.ID, h.Hypothesis, request.Args)
+		if h.Evidence != nil {
+			h.Evidence.RecordReceipt(receipt)
+		}
+		return tool.Of(result), true
 	}
 	if !isEvidenceTool(request.Tool) {
 		return tool.TaskCheckpoint{}, false

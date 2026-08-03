@@ -60,6 +60,10 @@ Review 2 不平均地“多查一些材料”，而是先把主张还原为
 CCR 不负责调查外部 provider、SDK 或 API 的真实行为。若决定性前提没有被已有 Repository 上下文
 （例如依赖源码/类型、真实 fixture/test 或实际构造该状态的 adapter）直接证明，Review 2 应停止外查并将
 `support` 判为 `insufficient`；本地代码只展示“收到某状态后会怎样”，不能单独证明外部系统会产生该状态。
+`check_external_evidence` 把这个边界显式化：它不联网，而是成功返回 `unverified` 并签发当前 Hypothesis
+专属 receipt。该结果不是可重试的工具错误；Review 2 只能据此提交 `insufficient`，Assessment Hook 与 Trial
+都会拒绝同一 Hypothesis 后续的 `supported` 结论。未来即使接入获准的权威 contract corpus，也可以沿用
+同一工具契约返回已验证证据，而不改变 Review Pipeline。
 Review 2 的第一轮直接提交已有证据足够的 Assessment，或读取已经明确的 Repository 内部缺口；不额外增加
 一次 Plan Task。
 
