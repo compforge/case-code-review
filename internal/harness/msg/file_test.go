@@ -91,6 +91,13 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	if !strings.Contains(condensed.ExtractText(), "10|condensed") || condensed.ToolCallID != "c1" {
 		t.Fatalf("condensed projection off: %+v", condensed)
 	}
+	if f.FullContentVisible(CompactionCondensed) {
+		t.Fatal("producer-authored condensed content must not claim full source coverage")
+	}
+	plain := mkFile(t, "pkg/plain.go", 10, 1, 10)
+	if !plain.FullContentVisible(CompactionCondensed) {
+		t.Fatal("condensed level without an alternate projection still contains full source")
+	}
 	reference := f.ToLLM(CompactionReference)
 	if reference.ToolCallID != "c1" || !strings.Contains(reference.ExtractText(), "compacted to a reference") {
 		t.Fatalf("reference projection off: %+v", reference)

@@ -162,6 +162,16 @@ func (f *File) Stub(reason StubReason) {
 // Stubbed reports whether the content has been elided.
 func (f *File) Stubbed() bool { return f.stubbed != "" }
 
+// FullContentVisible reports whether this projection still contains the exact
+// source range. A producer-authored condensed form such as FileOutline is
+// useful context, but must not suppress a later read_files request for source.
+func (f *File) FullContentVisible(level CompactionLevel) bool {
+	if f.Stubbed() || level >= CompactionReference {
+		return false
+	}
+	return level != CompactionCondensed || f.CondensedContent == ""
+}
+
 // Reclaim / Reclaimed implement msg.Reclaimable: eviction under token pressure
 // is the evicted-reason stub. (Dedup uses Stub(StubSuperseded) directly.)
 func (f *File) Reclaim()        { f.Stub(StubEvicted) }

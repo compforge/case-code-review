@@ -65,17 +65,20 @@ func analyzeTreeSitter(ctx context.Context, language Language, source Source) (A
 	definitions := treeSitterDefinitions(source, tree, tags)
 	references := treeSitterReferences(tags)
 	quality := QualityPartial
+	members := treeSitterDataMembers(source, tree)
 	if isTypeScriptFamily(language) {
 		definitions = treeSitterTypeScriptDefinitions(source, tree)
+		members = treeSitterTypeScriptMembers(source, tree)
 		references = treeSitterTypeScriptReferences(tree)
 		quality = QualitySyntax
 	}
 	return Analysis{
-		Language:    language,
-		Quality:     quality,
-		Definitions: flattenTreeSitterDefinitions(definitions),
-		Calls:       treeSitterCalls(tree, tags, definitions),
-		References:  references,
+		Language:       language,
+		Quality:        quality,
+		Definitions:    flattenTreeSitterDefinitions(definitions),
+		Calls:          treeSitterCalls(tree, tags, definitions),
+		References:     references,
+		outlineMembers: members,
 	}, nil
 }
 

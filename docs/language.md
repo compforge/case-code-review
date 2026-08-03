@@ -32,6 +32,10 @@ Analyzer 面向一份明确的源码快照，提供：
 这些事实支持 Fragment 切分、范围预载、评论定位和局部搜索。后端不能可靠识别时，应退化到文件
 级范围，不能制造虚假的函数边界。
 
+同一批事实也可以投影成 `FileOutline`：代码保留 type/callable 及语言原生的数据成员层级，JSON
+保留 key 结构，Markdown 保留标题层级。Outline 是源码消息在上下文收紧时的导航摘要，不是新的
+事实来源，也不能替代读取源码验证行为。
+
 ### 2.2 仓库级索引
 
 RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition lookup、reference lookup、repo map
@@ -58,6 +62,10 @@ RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition l
 语言专属 parser、type checker、tree-sitter grammar 和 fallback 都封装在 backend 内。上层依赖统一
 接口，而不是散落 `if language == ...`。新增语言时，优先补齐事实能力表；缺失能力明确返回 unknown，
 而不是复制另一门语言的近似语义。
+
+数据成员同样由 backend 映射：Go/Java 可称为 field，TypeScript 称为 property，Python 称为
+attribute。FileOutline 统一消费它们的结构角色，但展示语言自身的术语；不支持该能力的 backend
+只输出已有 type/callable，不影响分析主链路。
 
 ### 3.2 图是事实投影，不是第二套语言模型
 

@@ -278,11 +278,15 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 余量而继续扩散；清单完成或有限调查窗口结束后进入 wrap-up。wrap-up 之后工具 schema 仍不变，执行层只允许终态提交工具，
 避免继续调查空转。
 
+预载 File 的 condensed 形态是 Language 生成的 `FileOutline`：代码保留声明与数据成员，JSON 保留
+key/容器结构并压短长 value，Markdown 保留标题层级。它位于“完整源码 → 文件引用”之间，只帮助模型
+导航；一旦源码降成 Outline，该范围不再算作完整覆盖，模型需要行为细节时仍可重新读取。
+
 具体保留策略：
 
 - 永久保留 Unit diff、当前 lead ledger、已确认事实和证据引用；
 - 原始 search 列表在完成下一步定位后可淘汰；
-- 完整 `read_files` 结果降为使用过的范围、path/line 和摘要；
+- 预载源码优先降为 FileOutline，再降为 path/line 引用；动态 `read_files` 结果仍按可重建内容处理；
 - `search_code` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
   不在后续多轮携带完整相似词建议；
 - 试验性的 Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
