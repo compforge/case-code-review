@@ -36,6 +36,7 @@ import re
 import subprocess
 import sys
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
 from ccr_trajectory import (
@@ -53,6 +54,7 @@ from ccr_trajectory import (
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
     code_search_stats,
+    empty_tool_argument_stats,
     file_read_fragmentation,
     file_read_stats,
     hypothesis_yield,
@@ -122,6 +124,7 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
         "tool_freq": tool_frequencies(trajectory),
+        "empty_args": empty_tool_argument_stats(trajectory),
         "code_searches": code_search_stats(trajectory),
         "file_reads": file_read_stats(trajectory),
         "prompt_overlap": prompt_file_read_overlap(trajectory),
@@ -322,6 +325,13 @@ def main() -> int:
                       f"search_outcomes=hit:{searches['hits']}/valid_empty:{searches['valid_empty']}"
                       f"/scope_miss:{searches['scope_miss']}/scope_unknown:{searches['scope_unknown']}"
                       f"/failure:{searches['tool_failure']}/repeated_empty:{searches['repeated_empty']}")
+                if sig["empty_args"]["count"]:
+                    empty_args = sig["empty_args"]
+                    print(
+                        f"   empty_args={empty_args['count']} "
+                        f"by_tool={empty_args['by_tool']} "
+                        f"by_model={empty_args['by_model']}"
+                    )
                 if sig["file_reads"]["calls"]:
                     reads = sig["file_reads"]
                     print(f"   read_files calls={reads['calls']} requests={reads['requests']} "
@@ -384,6 +394,17 @@ def main() -> int:
             print(f"\n   {title} summary: score={average} "
                   f"rounds={sum(item['rounds'] for item in stage_signals)} "
                   f"duration={sum(item['duration_sec'] for item in stage_signals)}s")
+            empty_by_tool: Counter[str] = Counter()
+            empty_by_model: Counter[str] = Counter()
+            for item in stage_signals:
+                empty_by_tool.update(item["empty_args"]["by_tool"])
+                empty_by_model.update(item["empty_args"]["by_model"])
+            if empty_by_tool:
+                print(
+                    f"   empty_args summary: total={sum(empty_by_tool.values())} "
+                    f"by_tool={dict(empty_by_tool)} "
+                    f"by_model={dict(empty_by_model)}"
+                )
             deductions = main_deductions(stage_signals)
             if deductions:
                 detail = ", ".join(

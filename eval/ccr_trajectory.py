@@ -808,17 +808,46 @@ def tool_frequencies(trajectory: Trajectory) -> dict[str, int]:
     return dict(Counter(step.name for step in _tool_steps(trajectory)))
 
 
+def empty_tool_argument_stats(trajectory: Trajectory) -> dict[str, Any]:
+    """Count empty payload failures and attribute them to tool and model."""
+
+    inference_models = {
+        step.step_id: step.name
+        for step in trajectory.steps
+        if step.operation == "inference"
+    }
+    empty = [
+        step
+        for step in _tool_steps(trajectory)
+        if step.status == "error" and _tool_argument_value(step) == {}
+    ]
+    return {
+        "count": len(empty),
+        "by_tool": dict(Counter(step.name for step in empty)),
+        "by_model": dict(
+            Counter(
+                inference_models.get(step.parent_step_id, "unknown") for step in empty
+            )
+        ),
+        "step_ids": [step.step_id for step in empty],
+    }
+
+
 def _tool_steps(trajectory: Trajectory) -> list[Step]:
     return [step for step in trajectory.steps if step.operation == "execute_tool"]
 
 
-def _tool_arguments(step: Step) -> dict[str, Any]:
+def _tool_argument_value(step: Step) -> Any:
     for message in step.input_messages:
         for part in message.get("parts") or []:
             if part.get("type") == "tool_call":
-                value = part.get("arguments")
-                return value if isinstance(value, dict) else {}
-    return {}
+                return part.get("arguments")
+    return None
+
+
+def _tool_arguments(step: Step) -> dict[str, Any]:
+    value = _tool_argument_value(step)
+    return value if isinstance(value, dict) else {}
 
 
 def _tool_response(step: Step) -> str:
