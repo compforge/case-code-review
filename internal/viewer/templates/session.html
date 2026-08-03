@@ -108,6 +108,10 @@
         <div class="overview-value">{{toolCallCount .Session.ToolUsage}}</div>
         <div class="overview-label">Tool Calls</div>
     </div>
+    <div class="overview-card">
+        <div class="overview-value">{{formatInt .Session.Compaction.Count}}</div>
+        <div class="overview-label">Context Compactions{{if .Session.Compaction.Summarized}} · {{.Session.Compaction.Summarized}} summarized{{end}}</div>
+    </div>
     {{if .Session.Summary.LLMFailures}}
     <div class="overview-card error-card">
         <div class="overview-value">{{.Session.Summary.LLMFailures}}</div>

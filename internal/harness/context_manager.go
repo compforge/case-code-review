@@ -174,6 +174,7 @@ func (m *contextManager) Project(
 		}
 		projection.Messages = engineProjection.Messages
 		projection.Usage = engineProjection.Usage
+		projection.Compaction = engineProjection.Compaction
 		if engineProjection.ShouldCommit {
 			projection.CommitMessages = engineProjection.CommitMessages
 			projection.ShouldCommit = true
@@ -195,11 +196,11 @@ func (m *contextManager) Project(
 func (m *contextManager) Compact(
 	ctx context.Context,
 	messages []agentgo.AgentMessage,
-	_ agentgo.CompactReason,
+	reason agentgo.CompactReason,
 ) (agentgo.ContextCommitResult, error) {
 	view, usage, changed := m.rewrite(messages, true)
 	if m.engine != nil {
-		result, err := m.engine.Compact(ctx, view, agentgo.CompactReasonManual)
+		result, err := m.engine.Compact(ctx, view, reason)
 		if err != nil {
 			return agentgo.ContextCommitResult{}, err
 		}

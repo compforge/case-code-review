@@ -20,9 +20,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v5 makes Execution the
-// lifecycle owner for model/tool records and persists its terminal result.
-const SchemaVersion = 5
+// protocol instead of guessing old record semantics. v6 adds explicit context
+// compaction records owned by an Execution.
+const SchemaVersion = 6
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -314,6 +314,35 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskT
 	}
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
+	jw.writeRecordLocked(rec)
+	jw.lastUUID = uuid
+	return uuid
+}
+
+// WriteContextCompaction records one completed aggregate rewrite before the
+// compacted prompt is sent to the model.
+func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID string, taskType TaskType, compaction ContextCompaction) string {
+	uuid := uuid.V4()
+
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	rec := map[string]any{
+		"uuid":            uuid,
+		"parentUuid":      jw.lastUUID,
+		"type":            "context_compacted",
+		"sessionId":       jw.sessionID,
+		"timestamp":       time.Now().UTC().Format(time.RFC3339),
+		"execution_id":    executionID,
+		"taskType":        string(taskType),
+		"reason":          compaction.Reason,
+		"committed":       compaction.Committed,
+		"tokens_before":   compaction.TokensBefore,
+		"tokens_after":    compaction.TokensAfter,
+		"messages_before": compaction.MessagesBefore,
+		"messages_after":  compaction.MessagesAfter,
+		"summarized":      compaction.Summarized,
+	}
+	addScopeFields(rec, ss)
 	jw.writeRecordLocked(rec)
 	jw.lastUUID = uuid
 	return uuid

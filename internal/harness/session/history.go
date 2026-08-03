@@ -146,6 +146,19 @@ type ExecutionEnd struct {
 	Duration   time.Duration
 }
 
+// ContextCompaction is one aggregate ContextManager rewrite. It deliberately
+// omits individual compactor stages: observers care that the model-visible
+// context changed, by how much, and whether a summary checkpoint was involved.
+type ContextCompaction struct {
+	Reason         string
+	Committed      bool
+	TokensBefore   int
+	TokensAfter    int
+	MessagesBefore int
+	MessagesAfter  int
+	Summarized     bool
+}
+
 // TokenUsage holds token usage for a single LLM request/response cycle.
 // Uses actual token counts from the API response when available,
 // falling back to local estimation via tiktoken.
@@ -255,6 +268,17 @@ func (sh *SessionHistory) WriteExecutionEnd(scope Scope, end ExecutionEnd) {
 		return
 	}
 	p.WriteExecutionEnd(sh.GetOrCreateScope(scope), end)
+}
+
+// WriteContextCompaction persists one context rewrite in execution order.
+func (sh *SessionHistory) WriteContextCompaction(scope Scope, executionID string, taskType TaskType, compaction ContextCompaction) {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p == nil || executionID == "" {
+		return
+	}
+	p.WriteContextCompaction(sh.GetOrCreateScope(scope), executionID, taskType, compaction)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,

@@ -166,7 +166,9 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 `Session → Scope(Unit/Lane) → Execution` 组织：Scope 表示领域工作范围，Execution 表示一次真实
 AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
-每个 Execution 的 `llm_request`、`llm_response`、`tool_call` 和 `execution_end` 共享稳定身份。
+每个 Execution 的 `llm_request`、`llm_response`、`tool_call`、`context_compacted` 和
+`execution_end` 共享稳定身份。`context_compacted` 记录一次完整上下文改写的原因、提交状态、
+前后 token/消息数以及是否产生 summary checkpoint，不泄漏内部 Compactor 步骤。
 `execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
 assistant 文本或 Unit debrief 反推 loop 是否完成。领域层仍把 Hypothesis、Lane assignment、Assessment
 和 Trial decision 作为 artifact 追加到相应 Scope。
@@ -186,8 +188,9 @@ Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不�
    放回同一条漏斗，并显式标出不完整 Execution、未评估 Hypothesis 和被 Trial 拦截的判断。这样
    “0 Finding” 只有在各阶段完整时才可理解，partial run 不会伪装成 clean；
 2. **Scope / Execution**：Scope 页面展示 Unit/Lane 聚合数据与本地 Decision Trail；每个 Execution
-   独立展示实际 `llm_request` 形成的 Prompt Snapshot、assistant response/reasoning 和 tool 参数/结果。
-   Snapshot 不从相邻事件重建，因此 compaction、context 注入和缓存前缀变化都可直接检查。Provider
+   独立展示实际 `llm_request` 形成的 Prompt Snapshot、assistant response/reasoning、tool 参数/结果和
+   显式 compaction 节点。Snapshot 不从相邻事件重建；compaction 次数与比例也不再由 prompt delta 猜测。
+   Provider
    实际返回 reasoning 时单独展示，不把普通 assistant 文本冒充为隐藏思维过程。
 
 Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用

@@ -36,11 +36,17 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		Calls:       []*TaskCard{turn},
 		Executions: []*ReviewExecution{{
 			ID: "execution-1", TaskType: MainTask, Calls: []*TaskCard{turn}, Turns: []*TaskCard{turn},
+			Compactions: []ContextCompaction{{
+				Reason: "threshold", Committed: true,
+				TokensBefore: 200, TokensAfter: 120,
+				MessagesBefore: 4, MessagesAfter: 3, Summarized: true,
+			}},
 			Conversation: []ConversationNode{
-				{ID: "execution-1-1", Kind: "prompt", Label: "Prompt Snapshot · Turn 1", Preview: "2 messages", Messages: turn.Request, TurnNo: 1, PromptTokens: 120},
-				{ID: "execution-1-2", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
+				{ID: "execution-1-1", Kind: "compaction", Label: "Context Compacted", Preview: "threshold · 200 → 120 tokens", Compaction: &ContextCompaction{Reason: "threshold", Committed: true, TokensBefore: 200, TokensAfter: 120, MessagesBefore: 4, MessagesAfter: 3, Summarized: true}},
+				{ID: "execution-1-2", Kind: "prompt", Label: "Prompt Snapshot · Turn 1", Preview: "2 messages", Messages: turn.Request, TurnNo: 1, PromptTokens: 120},
+				{ID: "execution-1-3", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
 			},
-			Metrics: ReviewMetrics{LLMCalls: 1, TurnCount: 1, PromptTokens: 120},
+			Metrics: ReviewMetrics{LLMCalls: 1, TurnCount: 1, PromptTokens: 120, Compactions: 1, Summaries: 1},
 			Status:  "completed", Outcome: "completed", DurationMs: 100,
 		}},
 		Metrics: ReviewMetrics{
@@ -48,6 +54,8 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			TurnCount:       1,
 			PromptTokens:    120,
 			MaxPromptTokens: 120,
+			Compactions:     1,
+			Summaries:       1,
 		},
 		HasSourcePreloads: true,
 		HasContextPaths:   true,
@@ -68,6 +76,9 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			Alerts: []DiagnosticAlert{{Level: "warning", Title: "1 Hypothesis lacks Assessment", Detail: "inspect Review 2"}},
 		},
 		Reviews: []*ReviewScope{review},
+		Compaction: CompactionSummary{
+			Count: 1, Summarized: 1,
+		},
 		SystemPrompts: []SystemPrompt{
 			{TaskTypes: []TaskType{MainTask}, Text: "investigate"},
 		},
@@ -112,11 +123,17 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			if tt.name == "session.html" && !strings.Contains(out.String(), "Review 2 Lanes") {
 				t.Fatal("session template does not list Review 2 by Lane")
 			}
+			if tt.name == "session.html" && (!strings.Contains(out.String(), "Context Compactions") || !strings.Contains(out.String(), "1 summarized")) {
+				t.Fatal("session template does not summarize context compaction")
+			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Already covered") || !strings.Contains(out.String(), "Same-path repeats")) {
 				t.Fatal("review page does not separate covered and repeated file reads")
 			}
 			if tt.name == "review.html" && (!strings.Contains(out.String(), "Executions") || !strings.Contains(out.String(), `data-conversation-node="execution-1-1"`) || !strings.Contains(out.String(), "Prompt Snapshot") || !strings.Contains(out.String(), "Reasoning")) {
 				t.Fatal("review page does not render execution prompt snapshots")
+			}
+			if tt.name == "review.html" && (!strings.Contains(out.String(), "Context Compacted") || !strings.Contains(out.String(), "40.0%") || !strings.Contains(out.String(), "checkpoint produced")) {
+				t.Fatal("review page does not render context compaction details")
 			}
 			if tt.name == "review.html" && strings.Contains(out.String(), `data-review-view="turns"`) {
 				t.Fatal("review page still renders the removed Turns view")

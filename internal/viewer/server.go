@@ -106,6 +106,12 @@ func parseTemplate(name string) (*template.Template, error) {
 			}
 			return fmt.Sprintf("%d/%d (%d%%)", value, total, value*100/total)
 		},
+		"formatReduction": func(before, after int) string {
+			if before <= 0 {
+				return "-"
+			}
+			return fmt.Sprintf("%.1f%%", float64(before-after)/float64(before)*100)
+		},
 		"formatSigned": func(n int) string {
 			if n > 0 {
 				return "+" + formatInt(n)

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -101,5 +103,64 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 		if seen[recordType] == 0 {
 			t.Fatalf("missing %s record: %+v", recordType, seen)
 		}
+	}
+}
+
+func TestContextCompactionEventPersistsWithExecutionIdentity(t *testing.T) {
+	session.UseTestSessions()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	history := session.New(filepath.Join(home, "repo"), "main", "review-model", session.SessionOptions{})
+	scope := session.Scope{ID: "unit-compact", Kind: "unit", Type: "func", Paths: []string{"a.go"}}
+	recorder := newExecutionRecorder(ExecutionSpec{Session: history, Scope: scope, TaskType: session.MainTask}, "exec-compact")
+	var emitted ExecutionEvent
+	emitExecutionEvent(EventSinkFunc(func(event ExecutionEvent) { emitted = event }), recorder, agentgo.Event{
+		Type: agentgo.EventContextCompacted,
+		Compaction: &agentgo.CompactionInfo{
+			Reason: agentgo.CompactReasonThreshold, Committed: true,
+			TokensBefore: 1000, TokensAfter: 600,
+			MessagesBefore: 8, MessagesAfter: 5, Summarized: true,
+		},
+	})
+	history.Finalize()
+
+	if emitted.Type != EventContextCompacted || emitted.Compaction == nil || emitted.Compaction.TokensAfter != 600 {
+		t.Fatalf("unexpected Harness event: %+v", emitted)
+	}
+	paths, err := filepath.Glob(filepath.Join(home, ".casecodereview", "test-sessions", "*", history.SessionID+".jsonl"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("session files = %v err=%v", paths, err)
+	}
+	file, err := os.Open(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	found := false
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var record map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["type"] != "context_compacted" {
+			continue
+		}
+		found = true
+		if record["execution_id"] != "exec-compact" || record["taskType"] != string(session.MainTask) ||
+			record["reason"] != "threshold" || record["committed"] != true ||
+			record["tokens_before"].(float64) != 1000 || record["tokens_after"].(float64) != 600 ||
+			record["messages_before"].(float64) != 8 || record["messages_after"].(float64) != 5 ||
+			record["summarized"] != true {
+			t.Fatalf("unexpected context_compacted record: %+v", record)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("context_compacted record was not persisted")
 	}
 }

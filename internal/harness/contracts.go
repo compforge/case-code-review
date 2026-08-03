@@ -38,11 +38,12 @@ type TurnContextProvider interface {
 type ExecutionEventType string
 
 const (
-	EventModelResponse  ExecutionEventType = "model_response"
-	EventToolStart      ExecutionEventType = "tool_start"
-	EventToolEnd        ExecutionEventType = "tool_end"
-	EventExecutionEnd   ExecutionEventType = "execution_end"
-	EventExecutionError ExecutionEventType = "execution_error"
+	EventModelResponse    ExecutionEventType = "model_response"
+	EventToolStart        ExecutionEventType = "tool_start"
+	EventToolEnd          ExecutionEventType = "tool_end"
+	EventContextCompacted ExecutionEventType = "context_compacted"
+	EventExecutionEnd     ExecutionEventType = "execution_end"
+	EventExecutionError   ExecutionEventType = "execution_error"
 )
 
 // ExecutionEvent is the agentgo-free event stream exposed by Harness.
@@ -61,6 +62,7 @@ type ExecutionEvent struct {
 	Model      string
 	Duration   time.Duration
 	EndReason  string
+	Compaction *session.ContextCompaction
 	Err        error
 }
 
