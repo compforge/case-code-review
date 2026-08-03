@@ -88,14 +88,67 @@ func mergeCallChains(
 	adjacency map[string][]string,
 	merger unit.Merger,
 ) []unit.Unit {
-	chains, residual := clusterByCallChain(files, adjacency)
+	chains, _ := clusterByCallChain(files, adjacency)
 	if len(chains) == 0 {
 		return merger.Merge(files)
 	}
-	units := append([]unit.Unit(nil), chains...)
+
+	// Keep semantic chains independently: one chain that duplicates both of its
+	// files must not force an unrelated, useful chain back to file scope.
+	selected := make([]unit.Unit, 0, len(chains))
+	for _, chain := range chains {
+		candidate := append(append([]unit.Unit(nil), selected...), chain)
+		if len(candidate)+len(residualAfterChains(files, candidate)) <= len(files) {
+			selected = candidate
+		}
+	}
+	if len(selected) == 0 {
+		return coalesceFiles(files)
+	}
+
+	units := append([]unit.Unit(nil), selected...)
+	residual := residualAfterChains(files, selected)
 	for _, file := range residual {
 		if len(file.Fragments) > 0 {
 			units = append(units, unit.CoalesceFragments(file.Fragments))
+		}
+	}
+	return units
+}
+
+func residualAfterChains(files []unit.FileFragments, chains []unit.Unit) []unit.FileFragments {
+	selected := make(map[string]struct{})
+	for _, chain := range chains {
+		for _, fragment := range chain.Fragments {
+			if len(fragment.Symbols) == 1 {
+				selected[fragment.Symbols[0]] = struct{}{}
+			}
+		}
+	}
+
+	residual := make([]unit.FileFragments, 0, len(files))
+	for _, file := range files {
+		fragments := make([]unit.Fragment, 0, len(file.Fragments))
+		for _, fragment := range file.Fragments {
+			if len(fragment.Symbols) == 1 {
+				if _, ok := selected[fragment.Symbols[0]]; ok {
+					continue
+				}
+			}
+			fragments = append(fragments, fragment)
+		}
+		if len(fragments) > 0 {
+			residual = append(residual, unit.FileFragments{Diff: file.Diff, Fragments: fragments})
+		}
+	}
+	return residual
+}
+
+func coalesceFiles(files []unit.FileFragments) []unit.Unit {
+	units := make([]unit.Unit, 0, len(files))
+	for _, file := range files {
+		if len(file.Fragments) > 0 {
+			units = append(units, unit.CoalesceFile(file.Diff, file.Fragments))
 		}
 	}
 	return units

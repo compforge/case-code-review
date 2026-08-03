@@ -15,7 +15,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-case-harness = { git = "https://github.com/qiankunli/case-harness", subdirectory = "python" }
+case-harness = { git = "https://github.com/compforge/case-harness", subdirectory = "python" }
 spec-case = { git = "https://github.com/qiankunli/spec-case", subdirectory = "python" }
 
 [build-system]
