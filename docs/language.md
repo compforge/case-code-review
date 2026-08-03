@@ -83,8 +83,66 @@ Language 解决“代码事实是什么”，不解决：
 这些分别属于 Unit、Unit Review、Harness 和 Hypothesis Review。保持该边界，才能让语言能力增长
 而不把评审策略固化进 parser。
 
+## 4. 演进方向：从 File Outline 到 Code Graph
+
+File Outline 可以把一个文件压缩为 type、function、field 等结构事实；汇总整个项目的 Outline 后，
+首先得到的是 `SymbolIndex`，而不是完整的 Call Graph。后者还需要识别调用点，并通过作用域、import、
+类型和继承关系把调用点绑定到具体定义。无法可靠绑定的关系应继续保持候选或 unknown。
+
+长期可以把这些事实统一投影为 `CodeGraph`：
+
+```text
+File Outline ─▶ SymbolIndex ─▶ reference resolution ─▶ CodeGraph
+                                                        ├─ containment
+                                                        ├─ import / dependency
+                                                        ├─ definition / reference
+                                                        ├─ call
+                                                        └─ inheritance / implementation
+```
+
+`CallGraph` 只是其中 callable-to-callable 的一个投影。构建 CodeGraph 的目标不是追求一张尽可能
+完整的仓库图，而是让它对 Unit 的 prompt context 有稳定贡献。Review 不直接接收完整仓库图，而是
+围绕当前 Unit 裁剪出有界的 `GraphSlice`：
+
+```text
+Unit
+├─ changed symbols
+├─ containing type / file / component
+├─ callers
+├─ callees
+├─ implementations / inheritance
+├─ related entrypoints / handlers
+└─ related tests
+```
+
+这份切片用于解释“改了什么、处于哪里、谁依赖它、它依赖谁、哪些入口和测试受影响”。每条边保留
+来源与置信度，避免用低置信语法猜测扩大 Unit 或制造无关上下文；是否注入以及注入到何种细节，仍由
+Unit Review 的上下文策略决定。
+
+CodeGraph 的另一个作用是计算 symbol 或 file 之间的 `proximity`：根据图距离、边类型和置信度衡量
+两个节点在代码结构上有多近。这里使用 proximity，而不是笼统的“亲密度”；`graph distance` 表示原始
+路径距离，`affinity` 更适合 Lane 等聚类场景，`relevance` 则表示某份材料对当前 Unit 是否值得注入。
+图上接近不等于评审相关，因此 CodeGraph 提供 proximity，Unit Review 再结合 diff 和预算判断
+context relevance。
+
+GraphSlice 也为上下文预载提供依据：图距离、关系类型和置信度越高，文件与当前 diff 的相关性通常
+越强。Unit Review 可以据此提前注入模型大概率会读取的材料，把多轮 `read_files` 探索变成一次已知
+上下文；优先注入相关 symbol span 或 File Outline，小文件再按需注入全文，弱关系只保留路径和关系
+说明。`read_files` 仍用于补充静态图无法预测的证据，而不是重复获取已经确定的近邻材料。
+
+Language 只输出关系事实及其来源，不决定预载排序；Unit Review 结合 Unit、token 预算和消息压缩
+能力选择实际材料。效果可通过“预载文件与后续实际读取文件的重合率”及“无效预载比例”持续验证，
+避免为了减少工具调用而无界扩大初始 prompt。
+
+可参考的演进路径：SCIP 的跨语言符号与引用协议、Stack Graphs 的跨文件名称解析、
+tree-sitter-graph 的语法树到图投影，以及 Joern / Code Property Graph 对多类程序关系的统一表达。
+CCR 优先渐进扩展现有 Analyzer / RepositoryIndex，不以引入重量级图数据库作为前提。
+
 ## References
 
 - [`kernel.md`](kernel.md) — Language 在 CCR Kernel 中的位置
 - [`unit-model.md`](unit-model.md) — 源码事实如何形成 Unit 与 Clue
 - [`harness.md`](harness.md) — `read_files` / `search_code` 等只读工具的执行边界
+- [SCIP](https://github.com/scip-code/scip) · [Stack Graphs](https://github.github.com/stack-graph-docs/) ·
+  [tree-sitter-graph](https://github.com/tree-sitter/tree-sitter-graph) ·
+  [Joern](https://github.com/joernio/joern) — Code Graph 的协议、解析与完整模型参考
