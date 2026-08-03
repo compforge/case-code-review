@@ -98,3 +98,22 @@ func TestEvidenceLedgerDeduplicatesRetainedReceipts(t *testing.T) {
 		t.Fatalf("deduplicated receipts = %+v, want %+v", got, receipt)
 	}
 }
+
+func TestReviewHandlerRecordsExternalEvidenceBoundaryWithoutFailure(t *testing.T) {
+	ledger := &EvidenceLedger{}
+	hypothesis := unit.Hypothesis{ID: "h-external", Trigger: "provider emits state x"}
+	handler := &ReviewHandler{Evidence: ledger, Hypothesis: hypothesis}
+	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
+		Tool: CheckExternalEvidence,
+		Call: llm.ToolCall{ID: "call-external"},
+		Args: map[string]any{"claim": "provider emits state x"},
+	})
+	if !handled || checkpoint.Data == "" || checkpoint.Data[:1] != "{" {
+		t.Fatalf("external boundary was not a successful structured result: handled=%v result=%q", handled, checkpoint.Data)
+	}
+	receipts := ledger.Receipts()
+	if len(receipts) != 1 || receipts[0].Kind != ExternalEvidenceUnverifiedReceipt ||
+		receipts[0].Ref != hypothesis.ID || receipts[0].ToolCallID != "call-external" {
+		t.Fatalf("unexpected external boundary receipt: %+v", receipts)
+	}
+}

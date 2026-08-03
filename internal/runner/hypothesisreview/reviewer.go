@@ -97,6 +97,7 @@ func Review(
 			Evidence:    evidence,
 			Tools:       config.Tools,
 			Unit:        &input.Unit,
+			Hypothesis:  input.Hypothesis,
 		},
 		Session: config.Session,
 		Scope: session.Scope{

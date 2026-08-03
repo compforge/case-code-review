@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -41,6 +42,7 @@ func Passes(hypothesis unit.Hypothesis, assessment unit.Assessment) bool {
 		assessment.Value == unit.Actionable &&
 		assessment.Novelty == unit.Novel &&
 		len(assessment.Evidence) > 0 &&
+		!hasReceipt(assessment.EvidenceReceipts, hypothesisreview.ExternalEvidenceUnverifiedReceipt, hypothesis.ID) &&
 		hasDiffReceipt(assessment.EvidenceReceipts, hypothesis.Path)
 }
 
@@ -183,8 +185,12 @@ func trialEntries(units []unit.Unit) []trialEntry {
 }
 
 func hasDiffReceipt(receipts []unit.EvidenceReceipt, path string) bool {
+	return hasReceipt(receipts, "diff", path)
+}
+
+func hasReceipt(receipts []unit.EvidenceReceipt, kind, ref string) bool {
 	for _, receipt := range receipts {
-		if receipt.Kind == "diff" && receipt.Ref == path {
+		if receipt.Kind == kind && receipt.Ref == ref {
 			return true
 		}
 	}

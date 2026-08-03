@@ -46,4 +46,4 @@ These are completed assessments from earlier, strongly related hypotheses in thi
 {{hypothesis}}
 ```
 
-Use `trigger` and `uncertainty` to identify the decisive premises before investigating consequences. Gather only repository evidence needed to decide those premises. If a decisive premise belongs only to an external provider, SDK, or API and is not already proven here, submit `insufficient` rather than investigating it. If independent local facts are already known, batch them in the same tool call. When the decision is ready, call `submit_assessment` once; a valid submission ends this Review 2 execution.
+Use `trigger` and `uncertainty` to identify the decisive premises before investigating consequences. Gather only repository evidence needed to decide those premises. If a decisive premise belongs only to an external provider, SDK, or API and is not already proven here, call `check_external_evidence` once and then submit `insufficient` rather than investigating it. If independent local facts are already known, batch them in the same tool call. When the decision is ready, call `submit_assessment` once; a valid submission ends this Review 2 execution.

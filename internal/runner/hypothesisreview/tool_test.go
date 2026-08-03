@@ -27,10 +27,43 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	if got["task_done"] {
 		t.Fatalf("Review 2 exposed redundant completion tool: %v", got)
 	}
-	for _, required := range []string{"read_files", "read_base_files", "search_code", SubmitAssessment.Name()} {
+	for _, required := range []string{
+		"read_files", "read_base_files", "search_code",
+		CheckExternalEvidence.Name(), SubmitAssessment.Name(),
+	} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
 		}
+	}
+}
+
+func TestUnverifiedExternalEvidenceRejectsSupportedAssessment(t *testing.T) {
+	collector := NewAssessmentCollector("h-1")
+	ledger := &EvidenceLedger{receipts: []EvidenceReceipt{{
+		ToolCallID: "external-1", Kind: ExternalEvidenceUnverifiedReceipt, Ref: "h-1",
+	}}}
+	hook := &AssessmentHook{Collector: collector, Evidence: ledger}
+	checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
+		Tool: SubmitAssessment,
+		Args: map[string]any{
+			"support": "supported", "attribution": "caused", "value": "actionable",
+			"novelty": "new", "reason": "external behavior would trigger the issue",
+			"evidence": []any{"a.go:10"},
+		},
+	})
+	if !handled || collector.Complete() || checkpoint.Data == "" {
+		t.Fatalf("supported assessment crossed external boundary: handled=%v complete=%v result=%q", handled, collector.Complete(), checkpoint.Data)
+	}
+
+	checkpoint, handled = hook.HandleTool(context.Background(), harness.ToolRequest{
+		Tool: SubmitAssessment,
+		Args: map[string]any{
+			"support": "insufficient", "attribution": "unknown", "value": "unknown",
+			"novelty": "new", "reason": "external behavior is unverified", "evidence": []any{},
+		},
+	})
+	if !handled || !collector.Complete() || checkpoint.Data == "" {
+		t.Fatalf("insufficient assessment was not accepted: handled=%v complete=%v result=%q", handled, collector.Complete(), checkpoint.Data)
 	}
 }
 

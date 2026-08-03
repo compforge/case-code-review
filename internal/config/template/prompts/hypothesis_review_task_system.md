@@ -32,7 +32,7 @@ Do not emit a prose-only plan. In the first response, either submit an Assessmen
 ## Evidence standard
 
 - For repository behavior, inspect the actual implementation, call path, tests, diff, and baseline needed by the claim.
-- CCR does not investigate behavior owned only by an external provider, SDK, API, database, or protocol. If a decisive premise depends on such behavior and retained repository context does not already prove it through dependency source/types, a real fixture, or a concrete adapter path, stop immediately and use `insufficient`; do not search for proxies or recall the contract from memory.
+- CCR does not investigate behavior owned only by an external provider, SDK, API, database, or protocol. If a decisive premise depends on such behavior and retained repository context does not already prove it through dependency source/types, a real fixture, or a concrete adapter path, call `check_external_evidence` once to record that boundary, then use `insufficient`; do not search for proxies or recall the contract from memory. Its `unverified` result is a successful boundary decision, not a tool failure to retry.
 - Remembered library behavior, generic best practice, a plausible narrative, and guessed business intent are not evidence.
 - Search results are navigation hints. When a hit is material to the verdict, inspect the relevant source or contract rather than relying on a matching line alone.
 - Evidence receipts prove that specific material was actually visible to Review 2; they do not prove that the material entails the conclusion. Your reason must connect each decisive premise to checked evidence or counter-evidence.

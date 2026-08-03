@@ -111,7 +111,7 @@ func trialUnit(id string, hypotheses []unitreview.Hypothesis, assessments []hypo
 }
 
 func TestPassesRejectsModelEvidenceWithoutReceipt(t *testing.T) {
-	hypothesis := unitreview.Hypothesis{Path: "a.go"}
+	hypothesis := unitreview.Hypothesis{ID: "h-1", Path: "a.go"}
 	assessment := hypothesisreview.Assessment{
 		Support: hypothesisreview.Supported, Attribution: hypothesisreview.Caused,
 		Value: hypothesisreview.Actionable, Novelty: hypothesisreview.Novel,
@@ -123,5 +123,11 @@ func TestPassesRejectsModelEvidenceWithoutReceipt(t *testing.T) {
 	assessment.EvidenceReceipts = []hypothesisreview.EvidenceReceipt{{Kind: "diff", Ref: "a.go"}}
 	if !Passes(hypothesis, assessment) {
 		t.Fatal("complete assessment with a matching diff receipt should pass")
+	}
+	assessment.EvidenceReceipts = append(assessment.EvidenceReceipts, hypothesisreview.EvidenceReceipt{
+		Kind: hypothesisreview.ExternalEvidenceUnverifiedReceipt, Ref: hypothesis.ID,
+	})
+	if Passes(hypothesis, assessment) {
+		t.Fatal("unverified external premise must not pass Trial")
 	}
 }

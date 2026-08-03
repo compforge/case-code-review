@@ -160,6 +160,40 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 	}
 }
 
+func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
+	hypothesis := completeHypothesis("h-external", "adapter.go")
+	hypothesis.Trigger = "external provider emits state x"
+	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+		reviewToolResponse("external-1", CheckExternalEvidence.Name(), `{}`),
+		reviewToolResponse("submit-supported", SubmitAssessment.Name(), `{
+			"support":"supported","attribution":"caused","value":"actionable",
+			"novelty":"new","reason":"the external state triggers the issue",
+			"evidence":["adapter.go:10"]
+		}`),
+		reviewAssessmentResponse("submit-insufficient"),
+	}}
+	result := Review(context.Background(), Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "verify"},
+			{Role: "user", Content: "{{hypothesis}}"},
+		}},
+		LLMClient: client,
+		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		MaxTurns:  3,
+		MaxTokens: 2_000,
+	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
+
+	if len(result.Assessments) != 1 || result.Assessments[0].Support != Insufficient {
+		t.Fatalf("assessments = %+v, want one insufficient decision", result.Assessments)
+	}
+	if !hasReceipt(result.Assessments[0].EvidenceReceipts, ExternalEvidenceUnverifiedReceipt, hypothesis.ID) {
+		t.Fatalf("external boundary receipt missing: %+v", result.Assessments[0].EvidenceReceipts)
+	}
+	if len(client.responses) != 0 {
+		t.Fatalf("Review did not continue through the rejected supported submission")
+	}
+}
+
 func TestReviewTimeoutPersistsSystemInsufficientAssessment(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
 	var submissions []AssessmentSubmission
@@ -288,4 +322,13 @@ func (p *countingReviewReadProvider) Tool() tool.Tool { return tool.FileRead }
 func (p *countingReviewReadProvider) Execute(context.Context, map[string]any) (string, error) {
 	p.calls++
 	return "unexpected provider read", nil
+}
+
+func hasReceipt(receipts []EvidenceReceipt, kind, ref string) bool {
+	for _, receipt := range receipts {
+		if receipt.Kind == kind && receipt.Ref == ref {
+			return true
+		}
+	}
+	return false
 }
