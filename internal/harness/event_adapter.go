@@ -5,10 +5,26 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event) {
+	if event.Type == agentgo.EventContextCompacted && event.Compaction != nil {
+		compaction := &session.ContextCompaction{
+			Reason: string(event.Compaction.Reason), Committed: event.Compaction.Committed,
+			TokensBefore: event.Compaction.TokensBefore, TokensAfter: event.Compaction.TokensAfter,
+			MessagesBefore: event.Compaction.MessagesBefore, MessagesAfter: event.Compaction.MessagesAfter,
+			Summarized: event.Compaction.Summarized,
+		}
+		if recorder != nil {
+			recorder.recordCompaction(*compaction)
+		}
+		if sink != nil {
+			sink.OnExecutionEvent(ExecutionEvent{Type: EventContextCompacted, Compaction: compaction})
+		}
+		return
+	}
 	if sink == nil {
 		return
 	}

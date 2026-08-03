@@ -70,6 +70,7 @@ type ReviewExecution struct {
 	Calls        []*TaskCard
 	Turns        []*TaskCard
 	Conversation []ConversationNode
+	Compactions  []ContextCompaction
 	Metrics      ReviewMetrics
 	Tools        []ToolUsage
 	Status       string // completed | incomplete
@@ -95,6 +96,8 @@ type ReviewMetrics struct {
 	ToolCalls        int
 	ToolFailures     int
 	MaxPromptTokens  int
+	Compactions      int
+	Summaries        int
 }
 
 // ToolUsage aggregates calls to one tool at either Execution, Scope, or
@@ -134,6 +137,7 @@ type ConversationNode struct {
 	MessageDelta     int
 	OK               bool
 	HasResult        bool
+	Compaction       *ContextCompaction
 }
 
 func finalizeReview(scope *ReviewScope) {
@@ -197,7 +201,13 @@ func finalizeExecution(execution *ReviewExecution) {
 		}
 	}
 	execution.Metrics.TurnCount = len(execution.Turns)
-	execution.Conversation = buildConversation(execution.ID, execution.Turns)
+	execution.Metrics.Compactions = len(execution.Compactions)
+	for _, compaction := range execution.Compactions {
+		if compaction.Summarized {
+			execution.Metrics.Summaries++
+		}
+	}
+	execution.Conversation = buildConversation(execution.ID, execution.Turns, execution.Compactions)
 	execution.Tools = sortedTools(toolIdx)
 	for _, tool := range execution.Tools {
 		execution.Metrics.ToolCalls += tool.Calls
@@ -233,22 +243,36 @@ func addMetrics(total *ReviewMetrics, value ReviewMetrics) {
 	total.TurnCount += value.TurnCount
 	total.ToolCalls += value.ToolCalls
 	total.ToolFailures += value.ToolFailures
+	total.Compactions += value.Compactions
+	total.Summaries += value.Summaries
 	if value.MaxPromptTokens > total.MaxPromptTokens {
 		total.MaxPromptTokens = value.MaxPromptTokens
 	}
 }
 
-func buildConversation(executionID string, turns []*TaskCard) []ConversationNode {
-	var nodes []ConversationNode
-	nextID := 1
-	appendNode := func(node ConversationNode) {
-		node.ID = fmt.Sprintf("execution-%s-%d", executionID, nextID)
-		nextID++
-		nodes = append(nodes, node)
+func buildConversation(executionID string, turns []*TaskCard, compactions []ContextCompaction) []ConversationNode {
+	type group struct {
+		sequence int
+		nodes    []ConversationNode
+	}
+	groups := make([]group, 0, len(turns)+len(compactions))
+	for i := range compactions {
+		compaction := &compactions[i]
+		reduction := 0.0
+		if compaction.TokensBefore > 0 {
+			reduction = float64(compaction.TokensBefore-compaction.TokensAfter) / float64(compaction.TokensBefore) * 100
+		}
+		groups = append(groups, group{sequence: compaction.Sequence, nodes: []ConversationNode{{
+			Kind: "compaction", Label: "Context Compacted",
+			Preview:    fmt.Sprintf("%s · %d → %d tokens · %.1f%% reduced", compaction.Reason, compaction.TokensBefore, compaction.TokensAfter, reduction),
+			Compaction: compaction,
+		}}})
 	}
 
 	for _, turn := range turns {
-		appendNode(ConversationNode{
+		var turnNodes []ConversationNode
+		appendTurnNode := func(node ConversationNode) { turnNodes = append(turnNodes, node) }
+		appendTurnNode(ConversationNode{
 			Kind: "prompt", Label: fmt.Sprintf("Prompt Snapshot · Turn %d", turn.TurnNo),
 			Preview: fmt.Sprintf("%d messages", len(turn.Request)), Messages: turn.Request,
 			TurnNo: turn.TurnNo, PromptTokens: turn.PromptTokens,
@@ -263,7 +287,7 @@ func buildConversation(executionID string, turns []*TaskCard) []ConversationNode
 		if preview == "" && len(turn.ToolCalls) > 0 {
 			preview = fmt.Sprintf("requested %d tool call(s)", len(turn.ToolCalls))
 		}
-		appendNode(ConversationNode{
+		appendTurnNode(ConversationNode{
 			Kind: "assistant", Label: fmt.Sprintf("Assistant · Turn %d", turn.TurnNo), Preview: preview,
 			Text: turn.ResponseContent, Reasoning: turn.Reasoning, Model: turn.Model,
 			StopReason: turn.StopReason, Error: turn.Error, TurnNo: turn.TurnNo,
@@ -272,12 +296,24 @@ func buildConversation(executionID string, turns []*TaskCard) []ConversationNode
 		})
 
 		for _, call := range turn.ToolCalls {
-			appendNode(ConversationNode{
+			appendTurnNode(ConversationNode{
 				Kind: "tool", Label: call.Name, Preview: toolTarget(call.Arguments),
 				Arguments: call.Arguments, Result: call.Result, ToolCallID: call.ID,
 				TurnNo: turn.TurnNo, Depth: 1, DurationMs: call.DurationMs,
 				OK: call.Ok, HasResult: call.HasResult,
 			})
+		}
+		groups = append(groups, group{sequence: turn.Sequence, nodes: turnNodes})
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool { return groups[i].sequence < groups[j].sequence })
+	var nodes []ConversationNode
+	nextID := 1
+	for _, group := range groups {
+		for _, node := range group.nodes {
+			node.ID = fmt.Sprintf("execution-%s-%d", executionID, nextID)
+			nextID++
+			nodes = append(nodes, node)
 		}
 	}
 	return nodes

@@ -27,6 +27,7 @@ type recordedModel struct {
 // record of the assistant message that requested them.
 type executionRecorder struct {
 	executionID string
+	taskType    session.TaskType
 	session     *session.SessionHistory
 	scope       session.Scope
 
@@ -37,12 +38,24 @@ type executionRecorder struct {
 }
 
 func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionRecorder {
+	taskType := spec.TaskType
+	if taskType == "" {
+		taskType = session.MainTask
+	}
 	return &executionRecorder{
 		executionID: executionID,
+		taskType:    taskType,
 		session:     spec.Session,
 		scope:       spec.Scope,
 		calls:       make(map[string][]recordedCall),
 	}
+}
+
+func (r *executionRecorder) recordCompaction(compaction session.ContextCompaction) {
+	if r.session == nil {
+		return
+	}
+	r.session.WriteContextCompaction(r.scope, r.executionID, r.taskType, compaction)
 }
 
 func (r *executionRecorder) beginModel(

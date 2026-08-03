@@ -31,6 +31,7 @@
     <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.CompletionTokens}}</div><div class="overview-label">Completion</div></div>
     <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.CacheReadTokens}}</div><div class="overview-label">Cache Read</div></div>
     <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.ToolCalls}}</div><div class="overview-label">Tool Calls</div></div>
+    <div class="overview-card"><div class="overview-value">{{formatInt .Review.Metrics.Compactions}}</div><div class="overview-label">Context Compactions{{if .Review.Metrics.Summaries}} · {{.Review.Metrics.Summaries}} summarized{{end}}</div></div>
 </div>
 
 {{if and (eq .Review.Stage "review1") (gt .Review.FileReads.Calls 0)}}
@@ -79,6 +80,7 @@
             <span class="badge badge-scope">{{$execution.TaskType}}</span>
             <span class="badge badge-duration">{{formatMillis $execution.DurationMs}}</span>
             <span class="badge badge-tokens">{{$execution.Metrics.TurnCount}} turns · {{$execution.Metrics.ToolCalls}} tools</span>
+            {{if $execution.Metrics.Compactions}}<span class="badge badge-compaction">{{$execution.Metrics.Compactions}} compaction(s)</span>{{end}}
         </div>
     </div>
     {{if $execution.Reason}}<div class="execution-reason">{{$execution.Reason}}</div>{{end}}
@@ -118,6 +120,16 @@
                 {{if $node.ToolCallID}}<div class="conversation-call-id">{{$node.ToolCallID}}</div>{{end}}
                 {{if $node.Text}}<div class="conversation-section"><div class="conversation-section-label">Response</div><div class="response-text">{{$node.Text}}</div></div>{{end}}
                 {{if $node.Reasoning}}<div class="conversation-section"><div class="conversation-section-label">Reasoning</div><pre>{{$node.Reasoning}}</pre></div>{{end}}
+                {{if eq $node.Kind "compaction"}}
+                <div class="compaction-detail">
+                    <div><span>Reason</span><strong>{{$node.Compaction.Reason}}</strong></div>
+                    <div><span>Tokens</span><strong>{{formatInt $node.Compaction.TokensBefore}} → {{formatInt $node.Compaction.TokensAfter}}</strong></div>
+                    <div><span>Reduction</span><strong>{{formatReduction $node.Compaction.TokensBefore $node.Compaction.TokensAfter}}</strong></div>
+                    <div><span>Messages</span><strong>{{$node.Compaction.MessagesBefore}} → {{$node.Compaction.MessagesAfter}}</strong></div>
+                    <div><span>Baseline</span><strong>{{if $node.Compaction.Committed}}committed{{else}}projection only{{end}}</strong></div>
+                    <div><span>Summary</span><strong>{{if $node.Compaction.Summarized}}checkpoint produced{{else}}not used{{end}}</strong></div>
+                </div>
+                {{end}}
                 {{if eq $node.Kind "tool"}}
                 <div class="conversation-section"><div class="conversation-section-label">Arguments</div><pre>{{$node.Arguments}}</pre></div>
                 {{if $node.HasResult}}<div class="conversation-section"><div class="conversation-section-label">Output</div><pre>{{$node.Result}}</pre></div>{{end}}

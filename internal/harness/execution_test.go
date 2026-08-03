@@ -616,6 +616,9 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	if !projection.ShouldCommit || len(committed) != len(messages) {
 		t.Fatalf("projection did not commit compaction: %+v", projection)
 	}
+	if projection.Compaction == nil || projection.Compaction.Reason != agentgo.CompactReasonThreshold || !projection.Compaction.Committed {
+		t.Fatalf("projection lost AgentGo compaction details: %+v", projection.Compaction)
+	}
 	for i := 2; i < 4; i++ {
 		if got := committed[i].(domainMessage).compaction; got != msg.CompactionNone {
 			t.Fatalf("message %d compacted before tail: %v", i, got)

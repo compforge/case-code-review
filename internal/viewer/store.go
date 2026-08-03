@@ -239,10 +239,18 @@ type ViewSession struct {
 	Summary       SessionSummary
 	Diagnostics   SessionDiagnostics
 	TokenUsage    TokenUsageSummary
+	Compaction    CompactionSummary
 	ToolUsage     []ToolUsage
 	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
 	Artifacts     []ReviewArtifact
 	Reviews       []*ReviewScope
+}
+
+// CompactionSummary aggregates explicit ContextManager rewrites. Counting
+// events avoids inferring compaction from prompt-size deltas.
+type CompactionSummary struct {
+	Count      int
+	Summarized int
 }
 
 // ReviewArtifact is a domain-owned intermediate decision rendered without
@@ -305,6 +313,7 @@ const (
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
 	ExecutionID string
+	Sequence    int
 	// Request holds the complete recorded message list sent in this call.
 	Request          []DisplayMessage
 	TaskType         TaskType
@@ -324,6 +333,19 @@ type TaskCard struct {
 	CompletionTokens int
 	CacheReadTokens  int
 	CacheWriteTokens int
+}
+
+// ContextCompaction is one persisted rewrite positioned in the execution
+// conversation by its JSONL sequence.
+type ContextCompaction struct {
+	Sequence       int
+	Reason         string
+	Committed      bool
+	TokensBefore   int
+	TokensAfter    int
+	MessagesBefore int
+	MessagesAfter  int
+	Summarized     bool
 }
 
 // ToolCallInfo summarizes a single tool call.
@@ -406,7 +428,9 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	latestAssessment := make(map[string]int)
 	signals := newSessionSignals()
 	hasCurrentSchema := false
+	sequence := 0
 	for scanner.Scan() {
+		sequence++
 		var rec map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
 			return nil, fmt.Errorf("decode session record: %w", err)
@@ -448,7 +472,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 			card := &TaskCard{
 				ExecutionID: stringValue(rec["execution_id"]), Request: request,
-				TaskType: taskType, RequestNo: intValue(rec["request_no"]),
+				TaskType: taskType, RequestNo: intValue(rec["request_no"]), Sequence: sequence,
 			}
 			scope.Tasks[taskType] = append(scope.Tasks[taskType], card)
 			scope.Calls = append(scope.Calls, card)
@@ -531,6 +555,24 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				card.ToolCalls[match].Ok = boolValue(rec["ok"], true)
 				card.ToolCalls[match].HasResult = true
 				card.ToolCalls[match].DurationMs = int64(intValue(rec["duration_ms"]))
+			}
+
+		case "context_compacted":
+			_, execution := executionFor(rec)
+			if execution == nil {
+				return nil, fmt.Errorf("context_compacted missing scope or execution_id")
+			}
+			compaction := ContextCompaction{
+				Sequence: sequence, Reason: stringValue(rec["reason"]),
+				Committed:    boolValue(rec["committed"], false),
+				TokensBefore: intValue(rec["tokens_before"]), TokensAfter: intValue(rec["tokens_after"]),
+				MessagesBefore: intValue(rec["messages_before"]), MessagesAfter: intValue(rec["messages_after"]),
+				Summarized: boolValue(rec["summarized"], false),
+			}
+			execution.Compactions = append(execution.Compactions, compaction)
+			vs.Compaction.Count++
+			if compaction.Summarized {
+				vs.Compaction.Summarized++
 			}
 
 		case "execution_end":

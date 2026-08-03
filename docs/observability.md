@@ -25,6 +25,7 @@ Session
        ├─ Execution           # 一次真实 AgentGo loop
        │    ├─ llm_request / llm_response
        │    ├─ tool_call
+       │    ├─ context_compacted
        │    └─ execution_end  # 唯一终态事实
        └─ Artifact            # Hypothesis、Assessment、Trial decision
 ```
@@ -39,6 +40,7 @@ Viewer 不再从 `task_done`、最后一条 assistant 文本或 Scope debrief �
 - run/scope、review snapshot、工具版本、feature、模型和业务身份；
 - 每个 Execution 的任务类型，以及每轮实际发送的 prompt、模型 response/reasoning、stop reason 和 usage；
 - tool call 参数、结果、耗时、成功状态及其所属 Execution；
+- 每次 context compaction 的原因、提交状态、前后 token/消息数与 summary checkpoint 状态；
 - `execution_end` 中的 outcome、reason、turn/tool 统计和总耗时；
 - Hypothesis、Lane、Assessment、Trial decision 等阶段 artifact。
 
@@ -61,8 +63,8 @@ Viewer 保留两个互补层级：
    Execution 独立展开为 prompt、response/reasoning 与 tool 参数/结果时间线。
 
 每次 `llm_request` 直接投影为一个 **Prompt Snapshot**，展示那一轮实际发送给 provider 的完整消息，
-而不是由上一轮 response 和 tool result 反推 conversation。这样 compaction、context 注入、缓存前缀变化
-和消息删除都可直接观察；相邻 snapshot 的 token/message delta 只是帮助定位变化的诊断值。
+而不是由上一轮 response 和 tool result 反推 conversation。`context_compacted` 则按发生顺序插入同一条
+Conversation，直接展示次数、原因和前后比例；相邻 snapshot 的 token/message delta 只保留为辅助诊断值。
 
 Viewer 可以增加简单、确定、便于人发现问题的数据统计，例如重复读取、context 与 `read_files` 路径重合、
 空搜索和未完成 Execution 数。这些数据是诊断线索，不是效果分数。Viewer 不负责实验编排，不回写
