@@ -215,7 +215,7 @@ func runScan(args []string) error {
 		telemetry.SetAttr(span, "error", err.Error())
 		// Same stdout contract as review: json mode always emits one JSON object.
 		if opts.outputFormat == "json" {
-			_ = outputJSONFatal(err, ag.Warnings())
+			_ = outputJSONFatal(err, ag.Warnings(), ag.Session())
 		}
 		return fmt.Errorf("scan failed: %w", err)
 	}

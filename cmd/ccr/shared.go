@@ -13,6 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
@@ -266,6 +267,7 @@ type ResultProvider interface {
 	// ModelsUsed maps each routing alias that served a response to its count
 	// (deduped). The review's model identity; empty for a single-model run.
 	ModelsUsed() map[string]int
+	Session() *session.SessionHistory
 }
 
 // emitRunResult is the post-LLM-run finalization shared by `ocr review` and
@@ -292,7 +294,7 @@ func emitRunResult(
 	}
 
 	if outputFormat == "json" && len(comments) == 0 && ag.FilesReviewed() == 0 {
-		return outputJSONNoFiles()
+		return outputJSONNoFiles(ag.Session())
 	}
 
 	// Agent-text audiences need stdout back before PrintTraceSummary so the
@@ -311,7 +313,7 @@ func emitRunResult(
 		return outputJSONWithWarnings(comments, ag.Warnings(), ag.FilesReviewed(),
 			ag.TotalInputTokens(), ag.TotalOutputTokens(), ag.TotalTokensUsed(),
 			ag.TotalCacheReadTokens(), ag.TotalCacheWriteTokens(), duration,
-			ag.ProjectSummary(), ag.ToolCalls(), ag.ModelsUsed())
+			ag.ProjectSummary(), ag.ToolCalls(), ag.ModelsUsed(), ag.Session())
 	}
 	outputTextWithWarnings(comments, ag.Warnings())
 	if summary := ag.ProjectSummary(); summary != "" {

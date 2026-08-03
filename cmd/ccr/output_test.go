@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner"
 )
 
@@ -52,6 +54,7 @@ func TestOutputJSONFatal_EmitsParseableFailedJSON(t *testing.T) {
 	emitErr := outputJSONFatal(
 		errors.New("all 3 unit review(s) failed"),
 		[]runner.Warning{{Type: "unit_error", File: "a.go", Message: "context deadline exceeded"}},
+		nil,
 	)
 	w.Close()
 	os.Stdout = old
@@ -78,5 +81,20 @@ func TestOutputJSONFatal_EmitsParseableFailedJSON(t *testing.T) {
 	}
 	if out.Comments == nil {
 		t.Error("comments must be [] not null")
+	}
+}
+
+func TestAttachSession(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sh := &session.SessionHistory{SessionID: "session-1", RepoDir: "/repo"}
+	out := jsonOutput{}
+
+	attachSession(&out, sh)
+
+	if out.SessionID != "session-1" {
+		t.Fatalf("session_id = %q", out.SessionID)
+	}
+	if !strings.HasSuffix(out.SessionPath, "session-1.jsonl") {
+		t.Fatalf("session_path = %q", out.SessionPath)
 	}
 }

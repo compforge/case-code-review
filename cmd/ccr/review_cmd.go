@@ -126,7 +126,7 @@ func runReview(args []string) error {
 		// Fatal or not, json mode must put one JSON object on stdout — the
 		// exit code still signals failure for CLI callers.
 		if opts.outputFormat == "json" {
-			_ = outputJSONFatal(err, ag.Warnings())
+			_ = outputJSONFatal(err, ag.Warnings(), ag.Session())
 		}
 		return fmt.Errorf("review failed: %w", err)
 	}
