@@ -91,6 +91,14 @@ class ATIFTrajectoryLoader:
                 continue
 
             calls = raw.get("tool_calls") or []
+            attributes = {
+                **dict(raw.get("extra") or {}),
+                "prompt_tokens": metrics.get("prompt_tokens", 0),
+                "completion_tokens": metrics.get("completion_tokens", 0),
+                "cached_tokens": metrics.get("cached_tokens", 0),
+            }
+            if reasoning := raw.get("reasoning_content"):
+                attributes["reasoning_content"] = reasoning
             steps.append(
                 Step(
                     step_id=step_id,
@@ -101,12 +109,7 @@ class ATIFTrajectoryLoader:
                     duration_ms=duration_ms,
                     status="error" if (raw.get("extra") or {}).get("llm_error") else "",
                     output_messages=(_assistant_message(raw.get("message"), calls),),
-                    attributes={
-                        **dict(raw.get("extra") or {}),
-                        "prompt_tokens": metrics.get("prompt_tokens", 0),
-                        "completion_tokens": metrics.get("completion_tokens", 0),
-                        "cached_tokens": metrics.get("cached_tokens", 0),
-                    },
+                    attributes=attributes,
                 )
             )
             results = (raw.get("observation") or {}).get("results") or []

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -145,7 +146,7 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 	}
 	for _, call := range choice.Message.ToolCalls {
 		rawArgs := json.RawMessage(call.Function.Arguments)
-		args := canonicalBatchArguments(call.Function.Name, rawArgs)
+		args := canonicalToolArguments(call.Function.Name, rawArgs)
 		toolCall := agentgo.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
@@ -180,36 +181,127 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 	return message, nil
 }
 
-// canonicalBatchArguments keeps the public schema batch-only while tolerating
-// a model that emits one valid item directly. This is not a second provider
-// contract: every downstream layer still sees reads[] or searches[].
-func canonicalBatchArguments(name string, raw json.RawMessage) json.RawMessage {
-	var item map[string]any
-	if json.Unmarshal(raw, &item) != nil {
+// canonicalToolArguments repairs only lossless, CCR-owned schema drift before
+// AgentGo validates the call. Empty, malformed, or semantically incomplete
+// arguments remain errors for the model to correct on its next turn.
+func canonicalToolArguments(name string, raw json.RawMessage) json.RawMessage {
+	var args map[string]any
+	if json.Unmarshal(raw, &args) != nil {
 		return raw
 	}
 
-	var batchKey, memberKey string
 	switch name {
 	case tool.FileRead.Name(), tool.FileReadBase.Name():
-		batchKey, memberKey = "reads", "file_path"
+		canonicalizeReadArguments(args)
 	case tool.CodeSearch.Name():
-		batchKey, memberKey = "searches", "query"
+		canonicalizeSearchArguments(args)
 	default:
 		return raw
 	}
-	if _, batched := item[batchKey]; batched {
-		return raw
-	}
-	if _, singleton := item[memberKey]; !singleton {
-		return raw
-	}
 
-	canonical, err := json.Marshal(map[string]any{batchKey: []any{item}})
+	canonical, err := json.Marshal(args)
 	if err != nil {
 		return raw
 	}
 	return canonical
+}
+
+func canonicalizeReadArguments(args map[string]any) {
+	if reads, ok := args["reads"]; ok {
+		switch reads := reads.(type) {
+		case map[string]any:
+			args["reads"] = []any{reads}
+		}
+		return
+	}
+	if _, ok := args["file_path"]; ok {
+		item := maps.Clone(args)
+		clear(args)
+		args["reads"] = []any{item}
+	}
+}
+func canonicalizeSearchArguments(args map[string]any) {
+	if searches, ok := args["searches"]; ok {
+		switch searches := searches.(type) {
+		case map[string]any:
+			canonicalizeSearchItem(searches)
+			args["searches"] = []any{searches}
+		case []any:
+			for _, value := range searches {
+				if item, ok := value.(map[string]any); ok {
+					canonicalizeSearchItem(item)
+				}
+			}
+		}
+		return
+	}
+
+	if queries, ok := args["queries"].([]any); ok && len(queries) > 0 {
+		shared := searchSharedArguments(args)
+		searches := make([]any, 0, len(queries))
+		for _, value := range queries {
+			switch value := value.(type) {
+			case string:
+				item := maps.Clone(shared)
+				item["query"] = value
+				canonicalizeSearchItem(item)
+				searches = append(searches, item)
+			case map[string]any:
+				item := maps.Clone(shared)
+				maps.Copy(item, value)
+				canonicalizeSearchItem(item)
+				searches = append(searches, item)
+			default:
+				return
+			}
+		}
+		clear(args)
+		args["searches"] = searches
+		return
+	}
+
+	canonicalizeSearchItem(args)
+	if _, ok := args["query"]; ok {
+		item := maps.Clone(args)
+		clear(args)
+		args["searches"] = []any{item}
+	}
+}
+
+func canonicalizeSearchItem(item map[string]any) {
+	if _, exists := item["query"]; !exists {
+		if pattern, ok := item["pattern"].(string); ok && safePatternAlias(pattern, item["syntax"]) {
+			item["query"] = pattern
+			delete(item, "pattern")
+		}
+	}
+	if syntax, ok := item["syntax"].(string); ok {
+		switch strings.ToLower(strings.TrimSpace(syntax)) {
+		case "regex", "regexp", "perl":
+			item["use_perl_regexp"] = true
+			delete(item, "syntax")
+		case "literal":
+			item["use_perl_regexp"] = false
+			delete(item, "syntax")
+		}
+	}
+	delete(item, "contextAround")
+	delete(item, "outputMode")
+}
+
+func safePatternAlias(pattern string, syntax any) bool {
+	value, _ := syntax.(string)
+	return !strings.EqualFold(strings.TrimSpace(value), "literal") || !strings.Contains(pattern, `\`)
+}
+
+func searchSharedArguments(args map[string]any) map[string]any {
+	shared := make(map[string]any, 3)
+	for _, key := range []string{"file_patterns", "case_sensitive", "use_perl_regexp", "syntax"} {
+		if value, ok := args[key]; ok {
+			shared[key] = value
+		}
+	}
+	return shared
 }
 
 func toStopReason(finishReason string, hasToolCalls bool) agentgo.StopReason {

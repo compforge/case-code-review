@@ -46,6 +46,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "step_id": 3,
                             "source": "agent",
                             "timestamp": "2026-08-02T10:00:00Z",
+                            "reasoning_content": "The changed path needs more evidence.",
                             "metrics": {"extra": {"duration_ms": 1200}},
                             "tool_calls": [
                                 {
@@ -126,6 +127,13 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(self.trajectory.metadata["session_id"], "s1")
         self.assertEqual(self.trajectory.metadata["file_path"], "a.go")
         self.assertEqual(review_stage(self.trajectory), REVIEW1)
+        inference = next(
+            step for step in self.trajectory.steps if step.operation == "inference"
+        )
+        self.assertEqual(
+            inference.attributes["reasoning_content"],
+            "The changed path needs more evidence.",
+        )
         self.assertEqual([step.operation for step in self.trajectory.steps].count("execute_tool"), 4)
         self.assertEqual(report.evaluations[0].label, "fail")
         self.assertEqual(report.evaluations[1].score, 0.75)

@@ -754,7 +754,8 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 			t.Fatalf("tool schema order changed: %#v vs %#v", requests[0].Tools, requests[1].Tools)
 		}
 	}
-	if !strings.Contains(requestText(requests[1]), "Investigation is closed") {
+	if !strings.Contains(requestText(requests[1]), "Investigation is closed") ||
+		!strings.Contains(requestText(requests[1]), "not yet been accepted") {
 		t.Fatalf("blocked tool result missing from next turn: %q", requestText(requests[1]))
 	}
 }
