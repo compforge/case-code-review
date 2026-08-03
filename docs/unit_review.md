@@ -10,7 +10,7 @@ Unit Review（Review 1）的职责是从一个代码行为作用域中发现**�
 
 ```text
 Clue / Unit == Unit Review ==> Hypothesis ==> Lane / Hypothesis Review
-                                             ==> Assessment == Trial ==> Finding
+                                             ==> Assessment == Trial (Review 3) ==> Finding
 ```
 
 Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 Review 1 应优化为**有界的线索筛查**：

@@ -154,7 +154,7 @@
 
   <!-- Review 2 and Trial -->
   <rect x="1115" y="130" width="650" height="810" rx="16" fill="#f9fbff" class="box"/>
-  <text x="1145" y="172" class="section-title">Review 2 + Trial · 收敛</text>
+  <text x="1145" y="172" class="section-title">Review 2 + Trial（Review 3）· 收敛</text>
   <text x="1735" y="172" text-anchor="end" class="tiny">检察复核 → 法院裁决</text>
 
   <path d="M1040 705 H1095 V285 H1145" class="review-flow"/>
@@ -209,7 +209,7 @@
 
   <circle cx="1615" cy="770" r="65" fill="#e7f7ee" class="box"/>
   <text x="1615" y="760" text-anchor="middle" class="label">Trial</text>
-  <text x="1615" y="786" text-anchor="middle" class="small">deterministic</text>
+  <text x="1615" y="786" text-anchor="middle" class="small">Review 3 · deterministic</text>
   <text x="1615" y="808" text-anchor="middle" class="tiny">不再启动 LLM</text>
   <line x1="1615" y1="835" x2="1615" y2="842" class="flow"/>
 

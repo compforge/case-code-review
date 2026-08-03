@@ -51,7 +51,7 @@ Two knowledge foundations support Unit formation and both review stages:
 
 Some context types—such as spec, case, rule, link, and source documentation—depend on language parsing even though they are not “language knowledge” by themselves. [`spec-case`](https://github.com/qiankunli/spec-case) remains an optional way to author and distribute this contract context; ccr also works without it.
 
-Design details: [`Kernel`](docs/kernel.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Language`](docs/language.md) · [`Harness and observability`](docs/harness.md)
+Design details: [`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness and observability`](docs/harness.md)
 
 ## How to use
 

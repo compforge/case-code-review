@@ -18,10 +18,9 @@ CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文
 [`gotreesitter`](https://github.com/odvcencio/gotreesitter) 的跨语言解析、符号定位和调用分析能力成熟，
 Formation 才能把分散在不同文件、但共同完成一个行为变化的 Fragment 实用地归入同一 Unit。
 
-一个 Git Repository 可以包含多个 manifest 定义的 **Component**，例如 `backend/pyproject.toml`
-定义 Python Component、仓根 `go.mod` 定义 Go Component、`cli/package.json` 定义 TypeScript
-Component。Component 是静态项目边界，Unit 是一次 diff 动态形成的评审边界；一个 Component
-可以产生多个 Unit，Repository 级文件也可以不属于任何 Component。
+Project Knowledge 先用 Repository / Component / FileRole 解释文件的稳定项目职责，再把 source 交给
+Unit formation，把 manifest / lock 等项目事实投影为 Clue。Component 是静态项目边界，Unit 是一次
+diff 动态形成的行为边界；具体分类与 snapshot 约束见 [`project.md`](project.md)。
 
 ```text
 Git Change ─▶ Component / FileRole
@@ -34,50 +33,23 @@ Git Change ─▶ Component / FileRole
 | 对象 | 语义 |
 |---|---|
 | `Change` | Git 层的一份文件变更 |
-| `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
-| `FileRole` | 文件在所属 Component 中可组合的稳定职责，如 source、test、entrypoint、handler、manifest、lock、version |
 | `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
 | `Unit` | 一次 run 的评审聚合根：稳定行为范围，以及逐阶段追加的事实快照、Hypothesis、Assessment 和 Trial decision |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
 
-FileRole、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
-事实。角色不是互斥分类：`main.go` 可以同时是 `source + entrypoint`；Python 文件中存在
-`@router.get/post/...` 或 `@app.get/post/...` 等路由装饰器时，可以同时是 `source + handler`。
-FileRole 也不等于证据强度；同一个 lockfile 对依赖问题可能
-关键，对业务状态流转则只是背景。
-Component/FileRole 是可复用的项目事实，不专属于 Review 1；当前把它投影为 Unit target 或 Unit
-Clue，未来 Review 2 可以按 Hypothesis 与 Lane 再选择相关项目事实，而不是继承 Unit prompt 的偶然布局。
-
-`test` 与 `source` 可组合：Go 的 `*_test.go`、Python 的常见测试模块和 TypeScript 的
-`*.test.*` / `*.spec.*` 仍是可执行源码，同时带有测试职责。FileRole 只记录这个事实，不在分类阶段
-直接决定跳过 review；是否独立形成 Unit、并入源码 Unit 或采用更轻量的测试视角由后续 formation 决定。
+Project、Unit 和上下文回答三个不同问题：文件在项目中是什么、哪些目标改动一起审、审它时带哪些
+事实。Project 事实可被不同 Review 阶段复用；Unit 只保存与当前行为范围有关的投影。
 
 ## 2. 流程
 
 ### 2.1 先区分 Unit target 与项目上下文
 
-每个 Change 先按最近的 Component 与 FileRole 分类。Component 身份来自项目 manifest，而不是任意
-构建文件：Python 使用 `pyproject.toml` / `setup.py`，Go 使用 `go.mod`，TypeScript 使用
-`package.json`（同一 Component 内的 JavaScript / JSX 也属于 source）。历史 range / commit review
-必须在被评审的目标 tree 上判断，不能借用当前工作区状态。monorepo 中嵌套的 `package.json` 会形成
-更近的 Component；多语言 Repository 也按各自最近的 manifest 归属，不把项目上下文跨 Component
-传播。
+每个 Change 先由 Project Knowledge 解析所属 Component 与可组合 FileRole。当前策略把 source 作为
+target，把同 Component 中变化的 manifest / lock 作为 project Clue；entrypoint / handler 等角色作为
+Unit 自身的项目先验。用户显式 include 仍可提升文件，未被 Component 认领的文件继续走全局规则。
 
-当前只启用 Unit Review，因此 source 是 target；同 Component 中发生变化的 manifest / lock 形成
-`project/project` Clue，只向该 Component 的 Unit 提供路径、角色和按需 diff 指针。若只变化
-`pyproject.toml`、`go.mod` 或 `package.json`，CCR 明确报告没有 Unit Review target，不启动一个无意义
-的 agent loop。TypeScript 的 `tsconfig*.json` 与常见 package-manager lockfile 同样只作为 Component
-上下文。Go / TypeScript Component 根目录的 `VERSION` 是发布版本元数据：保留 `version` 角色用于
-观测，但既不是 target，也不作为业务代码的上下文；仅修改它时不会启动 agent loop。
-用户显式 include 仍可把文件强制提升为 target；未被 Component 规则认领的文件继续走全局路径与
-扩展名规则，保持已有行为。
-
-`entrypoint` / `handler` 不替代 `source`，而是作为 `self/project` Clue 随 Unit 进入 Review 1，并在
-需要时投影到对应 Hypothesis 的 Review 2 输入。入口文件提示评审初始化、配置装配和生命周期；handler 提示评审输入契约、
-鉴权、校验、service 调用和响应语义。Language 只提取 decorator / call 等源码事实，Project 再把
-`@router.get/post/...`、`@app.get/post/...` 解释为 FastAPI handler；`routers/`、`routes.py`、
-`handlers/`、`views/` 等路径名本身不构成 handler 证据。角色是项目先验，不直接证明某条 Finding；
-无法可靠识别时保持普通 source，不能靠猜测扩大影响。
+Project 分类完成后才进入 formation；Clue 在 Unit scope 最终确定后挂载，避免静态 Component 边界
+替代动态行为边界。Project 只提供事实，是否形成 Unit 仍由 formation 决定。
 
 ### 2.2 从 Fragment 形成 Unit
 
@@ -184,6 +156,7 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 ## References
 
 - [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
+- [`project.md`](project.md) — Repository、Component、FileRole 与项目事实投影
 - [`language.md`](language.md) — symbol、definition、reference 与图事实的生产边界
 - [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与效果优化
 - [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 在 Lane 中的复核与 Trial

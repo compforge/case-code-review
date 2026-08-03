@@ -51,7 +51,7 @@ Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提
 
 spec、case、rule、link、源码文档等上下文不全是“语言知识”，但它们的抽取和定位强依赖语言语法分析。[`spec-case`](https://github.com/qiankunli/spec-case) 仍是可选的契约编写与分发方式，而不再是 ccr 的产品前提；没有采用它的仓库也能使用 ccr。
 
-设计展开：[`Kernel`](docs/kernel.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Language`](docs/language.md) · [`Harness 与可观测性`](docs/harness.md)
+设计展开：[`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness 与可观测性`](docs/harness.md)
 
 ## 使用
 

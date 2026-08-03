@@ -120,7 +120,7 @@
 
   <circle cx="1525" cy="247" r="60" fill="#e7f7ee" class="box"/>
   <text x="1525" y="240" text-anchor="middle" class="label">Trial</text>
-  <text x="1525" y="268" text-anchor="middle" class="tiny">court gate</text>
+  <text x="1525" y="268" text-anchor="middle" class="tiny">Review 3 · court gate</text>
 
   <line x1="1585" y1="247" x2="1615" y2="247" class="flow"/>
 
