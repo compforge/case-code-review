@@ -190,7 +190,7 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 ```
 
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
-`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、空搜索、
+`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、失败空参数、空搜索、
 `read_files` 行覆盖率和 Unit
 完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
 `execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和

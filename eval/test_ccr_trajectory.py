@@ -15,6 +15,7 @@ from ccr_trajectory import (
     SearchScopeEvaluator,
     ToolFailureEvaluator,
     code_search_stats,
+    empty_tool_argument_stats,
     file_read_fragmentation,
     file_read_stats,
     hypothesis_yield,
@@ -252,6 +253,72 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "review_completion",
                 "assessment_submission",
             ],
+        )
+
+    def test_failed_empty_arguments_are_grouped_by_tool_and_model(self):
+        root = {
+            "session_id": "empty-args",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-empty-args",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "model_name": "model-a",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read-1",
+                                    "function_name": "read_files",
+                                    "arguments": {},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read-1",
+                                        "content": "required parameter reads is missing",
+                                        "extra": {"ok": False},
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "model_name": "model-b",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "done-1",
+                                    "function_name": "task_done",
+                                    "arguments": {},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "done-1",
+                                        "content": "done",
+                                        "extra": {"ok": True},
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            empty_tool_argument_stats(trajectory),
+            {
+                "count": 1,
+                "by_tool": {"read_files": 1},
+                "by_model": {"model-a": 1},
+                "step_ids": ["1:tool:1"],
+            },
         )
 
     def test_lane_efficiency_is_normalized_by_accepted_assessments(self):
