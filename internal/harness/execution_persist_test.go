@@ -48,6 +48,9 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 	if result.State != OutcomeCompleted {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if result.ID == "" || result.Duration <= 0 {
+		t.Fatalf("execution identity/timing missing: %+v", result)
+	}
 	history.Finalize()
 
 	paths, err := filepath.Glob(filepath.Join(home, ".casecodereview", "test-sessions", "*", history.SessionID+".jsonl"))
@@ -64,6 +67,7 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 	defer file.Close()
 
 	var executionID string
+	var executionStarts int
 	var executionEnds int
 	seen := map[string]int{}
 	scanner := bufio.NewScanner(file)
@@ -73,8 +77,11 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 			t.Fatal(err)
 		}
 		recordType, _ := record["type"].(string)
-		if recordType != "llm_request" && recordType != "llm_response" && recordType != "tool_call" && recordType != "execution_end" {
+		if recordType != "execution_start" && recordType != "llm_request" && recordType != "llm_response" && recordType != "tool_call" && recordType != "execution_end" {
 			continue
+		}
+		if _, ok := record["elapsed_ms"].(float64); !ok {
+			t.Fatalf("%s record has no elapsed_ms: %+v", recordType, record)
 		}
 		id, _ := record["execution_id"].(string)
 		if id == "" {
@@ -86,6 +93,12 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 			t.Fatalf("execution_id = %q, want %q for %s", id, executionID, recordType)
 		}
 		seen[recordType]++
+		if recordType == "execution_start" {
+			executionStarts++
+			if seen["llm_request"] != 0 {
+				t.Fatalf("execution_start appeared after llm_request: %+v", seen)
+			}
+		}
 		if recordType == "execution_end" {
 			executionEnds++
 			if record["outcome"] != string(OutcomeCompleted) || record["taskType"] != string(session.MainTask) {
@@ -98,6 +111,9 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 	}
 	if executionEnds != 1 {
 		t.Fatalf("execution_end records = %d, want 1", executionEnds)
+	}
+	if executionStarts != 1 {
+		t.Fatalf("execution_start records = %d, want 1", executionStarts)
 	}
 	for _, recordType := range []string{"llm_request", "llm_response", "tool_call"} {
 		if seen[recordType] == 0 {

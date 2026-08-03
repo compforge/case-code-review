@@ -148,6 +148,14 @@ type ExecutionEnd struct {
 	Duration   time.Duration
 }
 
+// ExecutionStart identifies the point at which one Harness Execution begins.
+// Together with ExecutionEnd it makes queueing and overlap observable without
+// inferring start time from the first model request.
+type ExecutionStart struct {
+	ID       string
+	TaskType TaskType
+}
+
 // ContextCompaction is one aggregate ContextManager rewrite. It deliberately
 // omits individual compactor stages: observers care that the model-visible
 // context changed, by how much, and whether a summary checkpoint was involved.
@@ -224,6 +232,8 @@ type SessionOptions struct {
 // records are pre-Trial and don't reflect what the review delivered.
 type Finding struct {
 	HypothesisID string
+	OriginUnit   string
+	LaneID       string
 	Path         string
 	StartLine    int
 	EndLine      int
@@ -284,6 +294,17 @@ func (sh *SessionHistory) WriteExecutionEnd(scope Scope, end ExecutionEnd) {
 		return
 	}
 	p.WriteExecutionEnd(sh.GetOrCreateScope(scope), end)
+}
+
+// WriteExecutionStart persists the authoritative start of one Execution.
+func (sh *SessionHistory) WriteExecutionStart(scope Scope, start ExecutionStart) {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p == nil || start.ID == "" {
+		return
+	}
+	p.WriteExecutionStart(sh.GetOrCreateScope(scope), start)
 }
 
 // WriteContextCompaction persists one context rewrite in execution order.

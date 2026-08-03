@@ -171,10 +171,11 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 `Session → Scope(Unit/Lane) → Execution` 组织：Scope 表示领域工作范围，Execution 表示一次真实
 AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
-每个 Execution 的 `llm_request`、`llm_response`、`tool_call`、`context_projected`、`context_compacted` 和
-`execution_end` 共享稳定身份。`context_compacted` 记录一次完整上下文改写的原因、提交状态、
+每个 Execution 的 `execution_start`、`llm_request`、`llm_response`、`tool_call`、`context_projected`、
+`context_compacted` 和 `execution_end` 共享稳定身份。每条记录的 `elapsed_ms` 以 Session 启动为零点，
+用于并发排序与阶段时延计算；`context_compacted` 记录一次完整上下文改写的原因、提交状态、
 前后 token/消息数以及是否产生 summary checkpoint，不泄漏内部 Compactor 步骤。
-`execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
+`execution_start` 是真实启动点；`execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
 assistant 文本或 Unit debrief 反推 loop 是否完成。领域层仍把 Hypothesis、Lane assignment、Assessment
 和 Trial decision 作为 artifact 追加到相应 Scope。AgentGo 在每次模型调用前发出
 `context_projected`，记录实际可见 ContextItem；首次投影是 Initial Context 的 exposure denominator，

@@ -14,6 +14,18 @@ Session JSONL                 # 基础：实际发生了什么
       └──────────▶ eval       # 验证：改动是否稳定提升效果
 ```
 
+可观测性从三条互补的轴理解同一次 review：
+
+| 观察轴 | 主链路 | 回答的问题 |
+|---|---|---|
+| **成本轴** | `Run → Unit → Execution` | 整轮、一个行为范围和一次 agent loop 分别消耗了多少时间、token 与工具调用 |
+| **决策轴** | `Unit → Hypothesis → Assessment → Finding` | 一个问题主张如何产生、被复核并最终通过交付门禁 |
+| **时间轴** | `Formation → Review 1 → Queue → Review 2 → Review 3` | 一条评审路径何时形成、执行和等待，最终多久变成可交付建议 |
+
+三条轴共享 Unit、Hypothesis 和 Execution 等稳定身份，但不能互相替代。并发 Unit 的 Execution
+duration 不能直接相加成 Run 的 wall-clock time；Lane 排队也不是模型执行成本，却是 Finding 交付时延的一部分。
+因此 Session 先保存可 join 的原始事实，Viewer、eval 和外部 comment 再按各自问题生成投影。
+
 ## 1. Session JSONL：共同事实源
 
 Session JSONL 是可观测性的基础。Harness recorder 在执行过程中追加事件，记录实际发生的行为，而不是
@@ -23,18 +35,24 @@ Session JSONL 是可观测性的基础。Harness recorder 在执行过程中追�
 Session
   └─ Scope                    # Unit、Review 2 Lane 或 scan file
        ├─ Execution           # 一次真实 AgentGo loop
+       │    ├─ execution_start
        │    ├─ llm_request / llm_response
        │    ├─ tool_call
        │    ├─ context_projected
        │    ├─ context_compacted
        │    └─ execution_end  # 唯一终态事实
-       └─ Artifact            # Hypothesis、Assessment、Trial decision
+       └─ Artifact            # Unit、Hypothesis、Lane、Assessment、Trial decision
 ```
 
 Scope 是领域工作范围，不等于一次模型循环：一个 Unit 目前通常只有一个 Execution，一个 Lane 可以随
 Hypothesis 到达而连续拥有多个 Execution。每个 Execution 有稳定 `execution_id`；它的模型、工具和终态
-记录共享该身份。只有 `execution_end` 决定该 Execution 是 completed、truncated、timed out 还是 failed，
-Viewer 不再从 `task_done`、最后一条 assistant 文本或 Scope debrief 猜测完成状态。
+记录共享该身份。`execution_start` 给出真实启动点，只有 `execution_end` 决定该 Execution 是 completed、
+truncated、timed out 还是 failed；Viewer 不再从第一条 model request、`task_done`、最后一条 assistant
+文本或 Scope debrief 猜测起止状态。
+
+每条记录还带有从 `session_start` 单调递增的 `elapsed_ms`。RFC3339 `timestamp` 方便人阅读，
+`elapsed_ms` 才用于并发事件排序和阶段时延计算，避免秒级时间戳丢失短阶段，也避免把多个并发
+Execution 的 duration 直接相加。
 
 稳定事实包括：
 
@@ -43,8 +61,11 @@ Viewer 不再从 `task_done`、最后一条 assistant 文本或 Scope debrief �
 - tool call 参数、结果、耗时、成功状态及其所属 Execution；
 - 每次模型调用前实际可见的 ContextItem；首次 `context_projected` 作为 Initial Context exposure；
 - 每次 context compaction 的原因、提交状态、前后 token/消息数与 summary checkpoint 状态；
-- `execution_end` 中的 outcome、reason、turn/tool 统计和总耗时；
-- Hypothesis、Lane、Assessment、Trial decision 等阶段 artifact。
+- `execution_start` / `execution_end` 中的起点、outcome、reason、turn/tool 统计和总耗时；
+- `unit_formation` 的共享 Formation 成本、`review_unit` 的形成结果与 diff 规模，以及
+  `unit_review_start` 到 Unit debrief 的 Review 1 边界；
+- Hypothesis、Lane assignment、Review 2 start/Execution、Assessment、Trial decision 与 Finding 之间可 join
+  的 `unit_id`、`hypothesis_id`、`lane_id`、`execution_id`。
 
 追加式记录使异常退出或预算耗尽的运行仍可分析；Assessment 等中间结论也不会因为后续步骤未完成而
 整体丢失。Viewer 和 eval 都应从这份事实投影，不各自解释 AgentGo 内部对象或维护另一套执行记录。

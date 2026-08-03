@@ -27,6 +27,7 @@ func (a *Runner) reviewHypothesis(
 	if task == nil || len(task.Messages) == 0 || input.Hypothesis.ID == "" {
 		return hypothesisreview.ReviewResult{}
 	}
+	a.persistHypothesisReviewStart(input)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s in %s: %v\n%s\n", input.Hypothesis.ID, input.LaneID, recovered, debug.Stack())
@@ -35,7 +36,7 @@ func (a *Runner) reviewHypothesis(
 			result = hypothesisreview.ReviewResult{}
 		}
 	}()
-	return hypothesisreview.Review(ctx, hypothesisreview.Config{
+	result = hypothesisreview.Review(ctx, hypothesisreview.Config{
 		Task:                    *task,
 		LLMClient:               a.args.LLMClient,
 		Model:                   a.args.Model,
@@ -52,9 +53,21 @@ func (a *Runner) reviewHypothesis(
 		ResolveRule:             a.resolveSystemRule,
 		RecordUsage:             a.executor.RecordUsage,
 		RecordWarning:           a.recordWarning,
-		OnAssessment:            a.persistAssessmentSubmission,
-		Events:                  a.hypothesisReviewEvents(ctx),
+		OnAssessment: func(submission hypothesisreview.AssessmentSubmission) {
+			a.persistAssessmentSubmission(input, submission)
+		},
+		Events: a.hypothesisReviewEvents(ctx),
 	}, input, continueFrom)
+	a.persistHypothesisReviewExecution(input, result.Execution)
+	return result
+}
+
+func (a *Runner) persistHypothesisReviewStart(input hypothesisreview.ReviewInput) {
+	a.session.WriteArtifact("hypothesis_review_start", map[string]any{
+		"hypothesis_id": input.Hypothesis.ID,
+		"origin_unit":   input.Hypothesis.OriginUnit,
+		"lane_id":       input.LaneID,
+	})
 }
 
 func collectReviewClues(units []unit.Unit) []unit.Clue {
@@ -78,14 +91,19 @@ func collectReviewClues(units []unit.Unit) []unit.Clue {
 func (a *Runner) persistLaneAssignment(input hypothesisreview.ReviewInput, reason string) {
 	a.session.WriteArtifact("review_lane_assignment", map[string]any{
 		"lane_id": input.LaneID, "hypothesis_id": input.Hypothesis.ID,
-		"paths": input.Paths(), "assigned_by": reason,
+		"origin_unit": input.Hypothesis.OriginUnit,
+		"paths":       input.Paths(), "assigned_by": reason,
 	})
 }
 
-func (a *Runner) persistAssessmentSubmission(submission hypothesisreview.AssessmentSubmission) {
+func (a *Runner) persistAssessmentSubmission(
+	input hypothesisreview.ReviewInput,
+	submission hypothesisreview.AssessmentSubmission,
+) {
 	assessment := submission.Assessment
 	a.session.WriteArtifact("review_assessment", map[string]any{
 		"lane_id":          assessment.LaneID,
+		"origin_unit":      input.Hypothesis.OriginUnit,
 		"submission_index": assessment.SubmissionIndex,
 		"replaced":         submission.Replaced,
 		"hypothesis_id":    assessment.HypothesisID,
@@ -94,6 +112,27 @@ func (a *Runner) persistAssessmentSubmission(submission hypothesisreview.Assessm
 		"reason": assessment.Reason, "evidence": assessment.Evidence,
 		"evidence_receipts": assessment.EvidenceReceipts,
 		"reviewer_alias":    assessment.ReviewerAlias,
+	})
+}
+
+// persistHypothesisReviewExecution bridges the domain claim to the generic
+// Harness Execution. Execution records stay domain-free; this artifact lets
+// observers join Lane queueing, Assessment production, and model-loop cost.
+func (a *Runner) persistHypothesisReviewExecution(
+	input hypothesisreview.ReviewInput,
+	execution harness.ExecutionResult,
+) {
+	if execution.ID == "" {
+		return
+	}
+	a.session.WriteArtifact("hypothesis_review_execution", map[string]any{
+		"execution_id":  execution.ID,
+		"hypothesis_id": input.Hypothesis.ID,
+		"origin_unit":   input.Hypothesis.OriginUnit,
+		"lane_id":       input.LaneID,
+		"outcome":       execution.State,
+		"reason":        execution.Reason,
+		"duration_ms":   execution.Duration.Milliseconds(),
 	})
 }
 

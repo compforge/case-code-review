@@ -528,10 +528,12 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	// Split each surviving (non-deleted) file diff into review Units (function-
 	// level for Go, file-level otherwise / when coarsened by the cost governor).
 	// The fan-out machinery below is granularity-agnostic.
+	formationStarted := time.Now()
 	units, err := a.splitUnits()
 	if err != nil {
 		return nil, err
 	}
+	a.persistFormedUnits(units, time.Since(formationStarted))
 	unitByID := make(map[string]unit.Unit, len(units))
 	changeStatus := make(map[string]string, len(a.changes))
 	for _, changed := range a.changes {
@@ -700,7 +702,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 	a.tagSymbolIDs(comments)
 	tagFingerprints(comments)
-	a.persistFindings(comments)
+	a.persistFindings(comments, units)
 	a.persistBoardPosts()
 	return comments, nil
 }
@@ -739,11 +741,28 @@ func tagFingerprints(comments []finding.Finding) {
 // persistFindings writes the run's delivered post-Trial findings into the
 // session transcript, so eval never mistakes investigative tool calls for
 // public results.
-func (a *Runner) persistFindings(comments []finding.Finding) {
+func (a *Runner) persistFindings(comments []finding.Finding, units []unit.Unit) {
+	originByHypothesis := make(map[string]string)
+	laneByHypothesis := make(map[string]string)
+	for _, reviewUnit := range units {
+		snapshot := reviewUnit.Review()
+		for _, hypothesis := range snapshot.Hypotheses {
+			origin := hypothesis.OriginUnit
+			if origin == "" {
+				origin = reviewUnit.ID
+			}
+			originByHypothesis[hypothesis.ID] = origin
+		}
+		for _, assessment := range snapshot.Assessments {
+			laneByHypothesis[assessment.HypothesisID] = assessment.LaneID
+		}
+	}
 	findings := make([]session.Finding, 0, len(comments))
 	for _, c := range comments {
 		findings = append(findings, session.Finding{
 			HypothesisID: c.HypothesisID,
+			OriginUnit:   originByHypothesis[c.HypothesisID],
+			LaneID:       laneByHypothesis[c.HypothesisID],
 			Path:         c.Path,
 			StartLine:    c.StartLine,
 			EndLine:      c.EndLine,
@@ -756,6 +775,34 @@ func (a *Runner) persistFindings(comments []finding.Finding) {
 		})
 	}
 	a.session.WriteFindings(findings)
+}
+
+// persistFormedUnits records the shared Formation cost once, then the Unit roots
+// before any Review 1 goroutine is dispatched. Each review_unit record's
+// elapsed_ms is its ready point; the batch duration is never copied onto Units
+// where a consumer might incorrectly sum it as per-Unit cost.
+func (a *Runner) persistFormedUnits(units []unit.Unit, formationDuration time.Duration) {
+	a.session.WriteArtifact("unit_formation", map[string]any{
+		"duration_ms": formationDuration.Milliseconds(),
+		"unit_count":  len(units),
+	})
+	for _, reviewUnit := range units {
+		a.session.WriteArtifact("review_unit", map[string]any{
+			"unit_id":    reviewUnit.ID,
+			"scope":      reviewUnit.Scope,
+			"formed":     reviewUnit.Formed,
+			"paths":      reviewUnit.Paths(),
+			"fragments":  len(reviewUnit.Fragments),
+			"insertions": reviewUnit.Insertions(),
+			"deletions":  reviewUnit.Deletions(),
+		})
+	}
+}
+
+func (a *Runner) persistUnitReviewStart(reviewUnit unit.Unit) {
+	a.session.WriteArtifact("unit_review_start", map[string]any{
+		"unit_id": reviewUnit.ID, "scope": reviewUnit.Scope, "paths": reviewUnit.Paths(),
+	})
 }
 
 func (a *Runner) persistHypotheses(hypotheses []unitreview.Hypothesis) {
@@ -790,7 +837,15 @@ func (a *Runner) persistTrialDecisions(
 	decisions []unit.TrialDecision,
 ) {
 	assessmentByID := make(map[string]unit.Assessment)
+	originByID := make(map[string]string)
 	for _, reviewUnit := range units {
+		for _, hypothesis := range reviewUnit.Review().Hypotheses {
+			origin := hypothesis.OriginUnit
+			if origin == "" {
+				origin = reviewUnit.ID
+			}
+			originByID[hypothesis.ID] = origin
+		}
 		for _, assessment := range reviewUnit.Review().Assessments {
 			assessmentByID[assessment.HypothesisID] = assessment
 		}
@@ -798,6 +853,7 @@ func (a *Runner) persistTrialDecisions(
 	for _, decision := range decisions {
 		artifact := map[string]any{
 			"hypothesis_id": decision.HypothesisID,
+			"origin_unit":   originByID[decision.HypothesisID],
 			"passed_trial":  decision.Passed,
 			"delivered":     decision.Delivered,
 		}
@@ -991,6 +1047,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// under one scope keyed by Unit.ID, so the viewer groups them together and
 	// a cross-file Unit stays whole.
 	sc := session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
+	a.persistUnitReviewStart(u)
 
 	// Build change-files list excluding this Unit's own file(s) — all member paths
 	// for a cross-file call-chain Unit, the single path otherwise.
