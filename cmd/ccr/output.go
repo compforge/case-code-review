@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/suggestdiff"
@@ -207,6 +208,8 @@ type jsonOutput struct {
 	// Version is the reviewing ccr's own version (main.Version) — the review's
 	// tool identity, present on every JSON shape including skipped/no-files.
 	Version        string            `json:"version,omitempty"`
+	SessionID      string            `json:"session_id,omitempty"`
+	SessionPath    string            `json:"session_path,omitempty"`
 	Message        string            `json:"message,omitempty"`
 	Summary        *jsonSummary      `json:"summary,omitempty"`
 	ToolCalls      *jsonToolCalls    `json:"tool_calls"`
@@ -231,7 +234,8 @@ func outputJSON(comments []finding.Finding) error {
 
 func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
 	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
-	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int) error {
+	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int,
+	sh *session.SessionHistory) error {
 	out := jsonOutput{
 		Status:   "success",
 		Version:  Version,
@@ -249,6 +253,7 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 		},
 		ProjectSummary: projectSummary,
 	}
+	attachSession(&out, sh)
 	var total int64
 	for _, v := range toolCalls {
 		total += v
@@ -286,7 +291,7 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 // leave stdout empty, or downstream parsers report their own parse failure
 // instead of the actual error. Warnings ride along — on an all-units-failed
 // run they carry the per-unit error reasons.
-func outputJSONFatal(runErr error, warnings []runner.Warning) error {
+func outputJSONFatal(runErr error, warnings []runner.Warning, sh *session.SessionHistory) error {
 	out := jsonOutput{
 		Status:   "failed",
 		Version:  Version,
@@ -296,6 +301,7 @@ func outputJSONFatal(runErr error, warnings []runner.Warning) error {
 			ByTool: map[string]int64{},
 		},
 	}
+	attachSession(&out, sh)
 	if len(warnings) > 0 {
 		out.Warnings = warnings
 	}
@@ -304,7 +310,7 @@ func outputJSONFatal(runErr error, warnings []runner.Warning) error {
 	return enc.Encode(out)
 }
 
-func outputJSONNoFiles() error {
+func outputJSONNoFiles(sh *session.SessionHistory) error {
 	out := jsonOutput{
 		Status:   "skipped",
 		Version:  Version,
@@ -314,9 +320,20 @@ func outputJSONNoFiles() error {
 			ByTool: map[string]int64{},
 		},
 	}
+	attachSession(&out, sh)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
+}
+
+func attachSession(out *jsonOutput, sh *session.SessionHistory) {
+	if out == nil || sh == nil {
+		return
+	}
+	out.SessionID = sh.SessionID
+	if path, err := sh.TranscriptPath(); err == nil {
+		out.SessionPath = path
+	}
 }
 
 // outputDryRunText prints each review unit's assembled context — what the LLM

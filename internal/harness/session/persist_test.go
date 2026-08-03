@@ -353,3 +353,16 @@ func TestLogPath(t *testing.T) {
 		t.Errorf("session dir should be created: %v", err)
 	}
 }
+
+func TestTranscriptPath(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	s := New("/some/repo", "main", "model", SessionOptions{})
+
+	p, err := s.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(p, s.SessionID+".jsonl") {
+		t.Errorf("transcript path should end with <session-id>.jsonl, got %q", p)
+	}
+}

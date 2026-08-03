@@ -97,10 +97,7 @@ func encodeRepoPath(p string) string {
 	return result
 }
 
-// LogPath returns this session's stderr-log path, co-located with its JSONL
-// transcript (<sessions>/<encoded-repo>/<session-id>.log), creating the
-// directory. Lets a run mirror its warnings/errors next to the model-call trace.
-func (s *SessionHistory) LogPath() (string, error) {
+func (s *SessionHistory) artifactPath(ext string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
@@ -109,7 +106,21 @@ func (s *SessionHistory) LogPath() (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create session dir: %w", err)
 	}
-	return filepath.Join(dir, s.SessionID+".log"), nil
+	return filepath.Join(dir, s.SessionID+ext), nil
+}
+
+// TranscriptPath returns the JSONL transcript produced by this session. It is
+// exposed so local callers can join public Findings with pipeline timing facts
+// without guessing CCR's storage layout.
+func (s *SessionHistory) TranscriptPath() (string, error) {
+	return s.artifactPath(".jsonl")
+}
+
+// LogPath returns this session's stderr-log path, co-located with its JSONL
+// transcript (<sessions>/<encoded-repo>/<session-id>.log), creating the
+// directory. Lets a run mirror its warnings/errors next to the model-call trace.
+func (s *SessionHistory) LogPath() (string, error) {
+	return s.artifactPath(".log")
 }
 
 func (jw *jsonlWriter) open() error {
