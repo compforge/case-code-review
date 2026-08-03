@@ -3,10 +3,10 @@
 ## 1. 理念 / 概念
 
 Unit Review 负责发散：在一个行为范围内提出可证伪的 Hypothesis。Hypothesis Review 负责收敛：
-对已有主张补证、反驳、判断变化归因和交付价值，再交给确定性的 Trial 门禁。
+对已有主张补证、反驳、判断变化归因和交付价值，再交给确定性的 Trial（Review 3）门禁。
 
 ```text
-Hypothesis ── assign Lane ──▶ Hypothesis Review ──▶ Assessment ── Trial gate ──▶ Finding
+Hypothesis ── assign Lane ──▶ Hypothesis Review ──▶ Assessment ── Trial (Review 3) gate ──▶ Finding
 ```
 
 生成问题通常比验证一个明确问题更难，两次 Review 因而采用不同的 system prompt、工具和完成契约：
@@ -112,7 +112,7 @@ Assessment 或 receipt。文件快照仍投影为独立 typed message，而不�
 Supporting Change / Clue 可以在预算压力下降级，但当前 Hypothesis 不能被删除或只剩 ID。稳定前缀和
 尾部追加有利于 provider cache，也避免每次复核重新读取相同上下文。
 
-### 2.6 Trial 是确定性门禁
+### 2.6 Trial（Review 3）是确定性门禁
 
 Trial 不发起模型推理。只有 Assessment 同时满足以下条件才产出 Finding：
 
@@ -173,7 +173,7 @@ Hypothesis 可独立重放 Review 2，不必每次重跑昂贵的 Unit Review。
 
 ## References
 
-- [`kernel.md`](kernel.md) — 两阶段 Review 与 Trial 的总体位置
+- [`kernel.md`](kernel.md) — Review 1、Review 2 与 Trial（Review 3）的总体位置
 - [`unit_review.md`](unit_review.md) — Hypothesis 如何从 Unit Review 产生
 - [`harness.md`](harness.md) — Execution continuation、typed message、Session 与 Viewer
 - [`../eval/README.md`](../eval/README.md) — 标签、重放和阶段评测

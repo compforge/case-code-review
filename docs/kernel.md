@@ -168,7 +168,8 @@ Review 过程默认只读取源码、Git snapshot、规则和既有评论；产�
 
 | 文档 | 唯一 owner |
 |---|---|
-| [`unit-model.md`](unit-model.md) | Component / FileRole、Fragment / Unit、Clue、上下文与图消费 |
+| [`project.md`](project.md) | Repository / Component / FileRole 与项目事实投影 |
+| [`unit-model.md`](unit-model.md) | Fragment / Unit、Clue、上下文与图消费 |
 | [`unit_review.md`](unit_review.md) | Review 1 的探索、收敛、跨 Unit 协作和效果优化 |
 | [`hypothesis_review.md`](hypothesis_review.md) | Lane、Hypothesis Review、Assessment、receipt 与 Trial |
 | [`harness.md`](harness.md) | Execution、上下文生命周期、工具、Session JSONL 与 Viewer |
