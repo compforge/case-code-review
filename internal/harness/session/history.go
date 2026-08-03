@@ -258,6 +258,18 @@ func (sh *SessionHistory) WriteFindings(findings []Finding) {
 	}
 }
 
+// Flush makes records written so far visible to live local observers. Normal
+// runs need no manual flush; streaming Finding delivery uses it so timing joins
+// never race the buffered transcript.
+func (sh *SessionHistory) Flush() {
+	sh.mu.Lock()
+	p := sh.persist
+	sh.mu.Unlock()
+	if p != nil {
+		p.Flush()
+	}
+}
+
 // WriteArtifact persists a domain-owned structured artifact without teaching
 // Harness session storage its schema. Runner uses this for intermediate review
 // results so eval can inspect or replay stages independently.

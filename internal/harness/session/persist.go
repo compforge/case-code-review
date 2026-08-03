@@ -155,6 +155,14 @@ func (jw *jsonlWriter) writeRecordLocked(rec map[string]any) {
 	jw.writer.WriteByte('\n')
 }
 
+func (jw *jsonlWriter) Flush() {
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	if err := jw.writer.Flush(); err != nil {
+		fmt.Fprintf(console.Err(), "[ccr session] failed to flush transcript: %v\n", err)
+	}
+}
+
 func (jw *jsonlWriter) elapsedMilliseconds() int64 {
 	if jw.startTime.IsZero() {
 		return 0

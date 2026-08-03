@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseReviewFlagsModelOverride(t *testing.T) {
 	opts, err := parseReviewFlags([]string{"--model", "claude-opus-4-6", "--biz-id", "github:org/repo#148"})
@@ -19,5 +22,29 @@ func TestParseReviewFlagsModelOverride(t *testing.T) {
 	}
 	if opts.bizID != "github:org/repo#148" {
 		t.Errorf("bizID = %q", opts.bizID)
+	}
+}
+
+func TestParseReviewFlagsJSONL(t *testing.T) {
+	opts, err := parseReviewFlags([]string{"--format", "jsonl"})
+	if err != nil {
+		t.Fatalf("parseReviewFlags: %v", err)
+	}
+	if opts.outputFormat != "jsonl" {
+		t.Fatalf("outputFormat = %q, want jsonl", opts.outputFormat)
+	}
+}
+
+func TestParseReviewFlagsRejectsUnknownFormat(t *testing.T) {
+	_, err := parseReviewFlags([]string{"--format", "xml"})
+	if err == nil || !strings.Contains(err.Error(), "invalid --format") {
+		t.Fatalf("error = %v, want invalid --format", err)
+	}
+}
+
+func TestParseReviewFlagsRejectsJSONLPreview(t *testing.T) {
+	_, err := parseReviewFlags([]string{"--format", "jsonl", "--preview"})
+	if err == nil || !strings.Contains(err.Error(), "only supported for an executing review") {
+		t.Fatalf("error = %v", err)
 	}
 }

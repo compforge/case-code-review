@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner"
+	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
 
 func TestSanitizeTerminal(t *testing.T) {
@@ -41,6 +43,37 @@ func TestSanitizeTerminal(t *testing.T) {
 				t.Errorf("sanitizeTerminal(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJSONLEmitterWritesOrderedEvents(t *testing.T) {
+	var output bytes.Buffer
+	emitter := newJSONLEmitter(&output)
+	emitter.start(&session.SessionHistory{SessionID: "session-1", RepoDir: "/repo"})
+	emitter.finding(finding.Finding{Path: "a.go", Content: "bug", Fingerprint: "abc123"})
+	emitter.finish(jsonOutput{
+		Status: "completed_with_warnings", Version: Version,
+		Comments:  []finding.Finding{},
+		ToolCalls: &jsonToolCalls{ByTool: map[string]int64{}},
+		Warnings:  []runner.Warning{{Type: "unit_incomplete", File: "a.go", Message: "partial"}},
+	})
+	if err := emitter.Error(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("event lines = %d, want 4\n%s", len(lines), output.String())
+	}
+	wantTypes := []string{"run_started", "finding", "warning", "run_finished"}
+	for i, line := range lines {
+		var event jsonlEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("line %d is not JSON: %v", i, err)
+		}
+		if event.Type != wantTypes[i] || event.Sequence != int64(i+1) {
+			t.Errorf("event %d = type %q sequence %d", i, event.Type, event.Sequence)
+		}
 	}
 }
 

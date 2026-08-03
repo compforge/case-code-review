@@ -236,6 +236,17 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
 	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int,
 	sh *session.SessionHistory) error {
+	out := buildJSONWithWarnings(comments, warnings, filesReviewed, inputTokens, outputTokens,
+		totalTokens, cacheReadTokens, cacheWriteTokens, duration, projectSummary, toolCalls, models, sh)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func buildJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
+	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
+	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int,
+	sh *session.SessionHistory) jsonOutput {
 	out := jsonOutput{
 		Status:   "success",
 		Version:  Version,
@@ -281,9 +292,7 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 			out.Status = "completed_with_warnings"
 		}
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return out
 }
 
 // outputJSONFatal emits the failed-run JSON shape. In --format json the stdout
@@ -292,6 +301,13 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 // instead of the actual error. Warnings ride along — on an all-units-failed
 // run they carry the per-unit error reasons.
 func outputJSONFatal(runErr error, warnings []runner.Warning, sh *session.SessionHistory) error {
+	out := buildJSONFatal(runErr, warnings, sh)
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
+}
+
+func buildJSONFatal(runErr error, warnings []runner.Warning, sh *session.SessionHistory) jsonOutput {
 	out := jsonOutput{
 		Status:   "failed",
 		Version:  Version,
@@ -305,12 +321,17 @@ func outputJSONFatal(runErr error, warnings []runner.Warning, sh *session.Sessio
 	if len(warnings) > 0 {
 		out.Warnings = warnings
 	}
+	return out
+}
+
+func outputJSONNoFiles(sh *session.SessionHistory) error {
+	out := buildJSONNoFiles(sh)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func outputJSONNoFiles(sh *session.SessionHistory) error {
+func buildJSONNoFiles(sh *session.SessionHistory) jsonOutput {
 	out := jsonOutput{
 		Status:   "skipped",
 		Version:  Version,
@@ -321,9 +342,7 @@ func outputJSONNoFiles(sh *session.SessionHistory) error {
 		},
 	}
 	attachSession(&out, sh)
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	return out
 }
 
 func attachSession(out *jsonOutput, sh *session.SessionHistory) {

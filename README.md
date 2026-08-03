@@ -83,6 +83,7 @@ ccr review --from main --to my-branch  # branch against merge base
 ccr review --commit abc123              # one commit against its first parent
 ccr review --background "requirement"   # add business or requirement context
 ccr review --format json                # machine-readable output for CI/bots
+ccr review --format jsonl               # stream accepted Findings before the run finishes
 ```
 
 For continuous PR/MR review, pass earlier delivered findings with `--history prior.json`. The forge comments are the durable source; the caller fetches them for each revision so ccr can distinguish new findings from repeat delivery.

@@ -145,6 +145,11 @@ type Args struct {
 	// Version is the ccr build identity ("v1.7.1 (dc030bd)"), stamped into the
 	// session manifest so transcripts self-describe which build produced them.
 	Version string
+
+	// OnFinding observes a Finding only after Trial, line relocation, identity
+	// tagging, and session persistence. Callbacks may run concurrently because
+	// Review 2 lanes finish independently.
+	OnFinding func(finding.Finding)
 }
 
 // Runner orchestrates the AI-powered code review. Harness owns one Unit's
@@ -566,9 +571,12 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				Review:       a.reviewHypothesis,
 				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
-					_, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
+					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
 						a.persistTrialDecisions([]unit.Unit{reviewUnit}, []unit.TrialDecision{decision})
+						if decision.Delivered {
+							a.deliverFinding(delivered, []unit.Unit{reviewUnit})
+						}
 					}
 				},
 			})
@@ -683,8 +691,11 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 			)
 		}
 		if deliveryGate != nil {
-			_, finalDecisions := deliveryGate.Finalize(units)
+			finalFindings, finalDecisions := deliveryGate.Finalize(units)
 			a.persistTrialDecisions(units, finalDecisions)
+			for _, comment := range finalFindings {
+				a.deliverFinding(comment, units)
+			}
 			comments, decisions = deliveryGate.Results()
 			persistAllDecisions = false
 		} else {
@@ -697,14 +708,39 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	if persistAllDecisions {
 		a.persistTrialDecisions(units, decisions)
 	}
-	for _, comment := range comments {
-		a.args.Findings.Add(comment)
+	if deliveryGate != nil {
+		// Incremental delivery already performed the externally visible side
+		// effects. Rebuild enriched copies only for the deterministic final list.
+		comments = a.prepareFindings(comments)
+	} else {
+		for i := range comments {
+			comments[i] = a.deliverFinding(comments[i], units)
+		}
 	}
-	a.tagSymbolIDs(comments)
-	tagFingerprints(comments)
-	a.persistFindings(comments, units)
 	a.persistBoardPosts()
 	return comments, nil
+}
+
+func (a *Runner) prepareFindings(comments []finding.Finding) []finding.Finding {
+	comments = finding.ResolveLineNumbers(comments, a.changes)
+	a.tagSymbolIDs(comments)
+	tagFingerprints(comments)
+	return comments
+}
+
+// deliverFinding establishes the public Finding boundary once. Keeping these
+// steps together prevents a streaming consumer from seeing a less complete
+// identity than the final JSON/session transcript.
+func (a *Runner) deliverFinding(comment finding.Finding, units []unit.Unit) finding.Finding {
+	prepared := a.prepareFindings([]finding.Finding{comment})[0]
+	a.args.Findings.Add(prepared)
+	a.persistFindings([]finding.Finding{prepared}, units)
+	if a.args.OnFinding != nil {
+		// The callback may immediately join this Finding to Session timing.
+		a.session.Flush()
+		a.args.OnFinding(prepared)
+	}
+	return prepared
 }
 
 // persistBoardPosts drains the run's board bulletins into the transcript
