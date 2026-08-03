@@ -7,7 +7,7 @@ import (
 
 const WrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop gathering evidence now. " +
 	"Submit the current hypothesis assessment using only the evidence already gathered. " +
-	"A valid submit_assessments call ends this review. Use insufficient/unknown when a decisive fact is still missing; do not " +
+	"A valid submit_assessment call ends this review. Use insufficient/unknown when a decisive fact is still missing; do not " +
 	"claim support without the required diff evidence receipt."
 
 // ToolDefs is a structural allowlist: Hypothesis Review can inspect code and

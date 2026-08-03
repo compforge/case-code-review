@@ -111,9 +111,9 @@ func Review(
 		FileDedupEnabled:        config.FileDedup,
 		FileEvictEnabled:        config.FileEvict,
 		WrapUpPrompt:            WrapUpPrompt,
-		WrapUpAllowedTools:      []string{SubmitAssessments.Name()},
-		CompletionTool:          SubmitAssessments.Name(),
-		CompletionPrompt:        "The review is not complete until the current hypothesis has a valid assessment. Submit it with submit_assessments, using insufficient/unknown where evidence is incomplete.",
+		WrapUpAllowedTools:      []string{SubmitAssessment.Name()},
+		CompletionTool:          SubmitAssessment.Name(),
+		CompletionPrompt:        "The review is not complete until the current hypothesis has a valid assessment. Submit it with submit_assessment, using insufficient/unknown where evidence is incomplete.",
 		CompressionSystemPrompt: config.CompressionSystemPrompt,
 		CompressionPrompt:       config.CompressionPrompt,
 		CompressionUpdatePrompt: config.CompressionPrompt,
@@ -135,6 +135,15 @@ func Review(
 	}
 	if result.State != harness.OutcomeCompleted {
 		warn(config, "hypothesis_review_incomplete", fmt.Sprintf("hypothesis %s in lane %s ended incomplete (%s)", input.Hypothesis.ID, input.LaneID, result.Reason))
+	}
+	if result.State == harness.OutcomeTimeout && !collector.Complete() {
+		// Novelty has no unknown value. Novel is safe here because insufficient
+		// support deterministically blocks Trial while preserving all four axes.
+		assessmentHook.Accept(Assessment{
+			Support: Insufficient, Attribution: AttributionUnknown,
+			Value: ValueUnknown, Novelty: Novel,
+			Reason: "System fallback: Review 2 timed out before a valid assessment was submitted.",
+		}, "system")
 	}
 
 	assessments := collector.Assessments()

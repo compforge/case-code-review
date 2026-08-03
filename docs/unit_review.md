@@ -75,7 +75,7 @@ wrap-up 只在接近上限时以文本提示注入，工具仍然可用；模型
 
 ### 3. 成熟结果被囤到最后提交
 
-终态 `submit_hypotheses` 解决了“提交后还缺一次 task_done”的问题，却让模型倾向于先查完所有 lead、
+此前终态批量提交解决了“提交后还缺一次 task_done”的问题，却让模型倾向于先查完所有 lead、
 最后一次性交卷。一个 Unit 中已经成熟的问题因此无法提前进入 Review 2；若最难的 lead 耗尽 deadline，
 此前已经做出的 Hypothesis 也会一起丢失。
 
@@ -106,7 +106,7 @@ Unit + Review Messages
     ├── 按预期影响 / 补证成本处理 lead
     │      ├── falsified / low value ──▶ 丢弃，继续下一条
     │      └── plausible + falsifiable
-    │              └── submit_hypotheses([...])
+    │              └── submit_hypothesis(mature_claim)
     │                    └── append Unit ─▶ Review 2 / Trial（Review 1 继续）
     │
     └── 无 material lead ──▶ natural completion
@@ -139,15 +139,15 @@ Review 1 的 prompt 应明确：
 
 ### 2. 成熟 Hypothesis 增量提交
 
-`submit_hypotheses` 保留显式批量形状，但可以在一次 Review 1 中调用多次：
+`submit_hypothesis` 每次只提交一个成熟主张，并可在一次 Review 1 中调用多次：
 
 ```text
-submit_hypotheses(hypotheses: [mature_claim, ...])
+submit_hypothesis(mature_claim)
 ```
 
 - 每次提交当前已经具备 trigger、impact、diff attribution、源码锚点和最短证据链的主张；
 - 接受后立即追加到 Unit、持久化并进入 Lane，Review 1 继续下一个 lead；
-- 同时成熟的独立主张仍放在一个批量调用中；
+- 单数契约减少组装批次和复制身份的负担，也更明确地推动模型“完成一个就交一个”；
 - payload 解析或领域接收失败时不接受，模型可以修正；
 - 没有剩余主张时自然结束，不需要空数组或 `task_done`。
 
@@ -159,8 +159,8 @@ Execution 内，不能为了提前流水而降低准入标准。
 
 ```text
 running
-  ├─ submit_hypotheses 校验失败 ─▶ running（返回错误，允许修正）
-  ├─ submit_hypotheses 校验成功 ─▶ accepted ─▶ Review 2；Review 1 继续
+  ├─ submit_hypothesis 校验失败 ─▶ running（返回错误，允许修正）
+  ├─ submit_hypothesis 校验成功 ─▶ accepted ─▶ Review 2；Review 1 继续
   ├─ assistant 自然结束 ────────▶ completed
   ├─ wrap-up + 有成熟结果 ──────▶ final submit 后 Harness 收卷
   ├─ wrap-up + 无成熟结果 ──────▶ natural completion
@@ -168,7 +168,7 @@ running
 ```
 
 AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、StopGuard 和停止状态；Runner
-的 `HypothesisHook` 只负责每批结果的校验与接收。三层都不互相偷走职责。
+的 `HypothesisHook` 只负责单个结果的校验与接收。三层都不互相偷走职责。
 
 ### 3. 探索预算结束后硬关闭调查工具
 
@@ -177,7 +177,7 @@ middleware 将执行能力收敛为：
 
 ```text
 reject execution: search_code / file_find / read_files / read_diffs / read_base_files
-allow execution:  submit_hypotheses（最终 flush）
+allow execution:  submit_hypothesis（最终 flush）
 ```
 
 这由 Harness tool middleware 在本地执行边界强制，而不是只追加 wrap-up 文本。保留 schema 和稳定
@@ -368,7 +368,7 @@ ChangeSet 合成一个巨型 Unit，否则只是把重复探索换成超大 prom
 ## 落地顺序
 
 1. **无代码基线**：固定 corpus 对比 `plan=on/off`，记录 Review 1 分阶段成本。
-2. **增量协议验证**：对比 terminal / incremental `submit_hypotheses` 的首次产出时间、完成率和召回。
+2. **增量协议验证**：观察单数 `submit_hypothesis` 的首次产出时间、完成率和召回。
 3. **有界探索调参**：基于硬 ToolGate 和终态预留逐步下调 turn budget。
 4. **上下文收窄**：只展示 directly-related changed files 和 Unit-scoped repo map。
 5. **历史淘汰**：按 lead/evidence 生命周期压缩旧工具结果。

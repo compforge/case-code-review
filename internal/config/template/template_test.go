@@ -135,7 +135,7 @@ func TestLoadDefault_HypothesisReviewVerificationContract(t *testing.T) {
 		"## Verification protocol",
 		"Verify reachability before consequence",
 		"every item in `uncertainty`",
-		"authoritative contract evidence",
+		"CCR does not investigate behavior owned only by an external provider",
 		"do not prove that the material entails the conclusion",
 		"use `insufficient` rather than guessing",
 	} {

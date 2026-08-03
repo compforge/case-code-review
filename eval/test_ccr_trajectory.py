@@ -66,8 +66,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 },
                                 {
                                     "tool_call_id": "c4",
-                                    "function_name": "submit_hypotheses",
-                                    "arguments": {"hypotheses": [{"id": "h-1"}]},
+                                    "function_name": "submit_hypothesis",
+                                    "arguments": {"path": "a.go"},
                                 },
                             ],
                             "observation": {
@@ -87,7 +87,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     },
                                     {
                                         "source_call_id": "c4",
-                                        "content": "Hypotheses accepted for independent review. Continue with the next material lead, or finish naturally when none remains.",
+                                        "content": "Hypothesis accepted for independent review. Do not resubmit it. Continue with the next material lead, or finish naturally when none remains.",
                                     },
                                 ]
                             },
@@ -214,8 +214,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "tool_calls": [
                                 {
                                     "tool_call_id": "a1",
-                                    "function_name": "submit_assessments",
-                                    "arguments": {"assessments": []},
+                                    "function_name": "submit_assessment",
+                                    "arguments": {"support": "insufficient"},
                                 }
                             ],
                             "observation": {
@@ -223,7 +223,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     {
                                         "source_call_id": "a1",
                                         "content": json.dumps(
-                                            {"accepted": ["h-1"], "remaining": []}
+                                            {"accepted": "h-1", "replaced": False}
                                         ),
                                     }
                                 ]
@@ -267,8 +267,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                 raw["tool_calls"] = [
                     {
                         "tool_call_id": call_id,
-                        "function_name": "submit_assessments",
-                        "arguments": {"assessments": []},
+                        "function_name": "submit_assessment",
+                        "arguments": {"support": "insufficient"},
                     }
                 ]
                 raw["observation"] = {
@@ -276,7 +276,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                         {
                             "source_call_id": call_id,
                             "content": json.dumps(
-                                {"accepted": [f"h-{index}"], "remaining": []}
+                                {"accepted": f"h-{index}", "replaced": False}
                             ),
                         }
                     ]

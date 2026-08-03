@@ -33,7 +33,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	registry.Freeze()
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
-		unitToolResponse("call-2", "submit_hypotheses", `{"hypotheses":[]}`, "route-a", 3),
+		unitToolResponse("call-2", "submit_hypothesis", `{"path":"a.go","content":"issue","existing_code":"x","trigger":"input","impact":"failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}`, "route-a", 3),
 		unitTextResponse("No material lead remains."),
 	}}
 	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
@@ -61,7 +61,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	if executor.TotalTokensUsed() != 10 {
 		t.Fatalf("total tokens = %d, want 10", executor.TotalTokensUsed())
 	}
-	if got := executor.ToolCalls(); got["echo"] != 1 || got["submit_hypotheses"] != 1 {
+	if got := executor.ToolCalls(); got["echo"] != 1 || got["submit_hypothesis"] != 1 {
 		t.Fatalf("unexpected tool counts: %v", got)
 	}
 	if got := executor.ModelsUsed(); got["route-a"] != 2 {
@@ -79,9 +79,9 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 	}))
 	registry.Freeze()
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
-		unitToolResponse("submit-1", "submit_hypotheses", `{"hypotheses":[{"path":"a.go","content":"first issue","existing_code":"x","trigger":"first trigger","impact":"first failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}]}`, "route-a", 1),
+		unitToolResponse("submit-1", "submit_hypothesis", `{"path":"a.go","content":"first issue","existing_code":"x","trigger":"first trigger","impact":"first failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}`, "route-a", 1),
 		unitToolResponse("check-2", "echo", `{}`, "route-a", 1),
-		unitToolResponse("submit-3", "submit_hypotheses", `{"hypotheses":[{"path":"a.go","content":"second issue","existing_code":"y","trigger":"second trigger","impact":"second failure","change_attribution":"changed here","evidence":["a.go:2"],"uncertainty":"","category":"bug","severity":"medium"}]}`, "route-a", 1),
+		unitToolResponse("submit-3", "submit_hypothesis", `{"path":"a.go","content":"second issue","existing_code":"y","trigger":"second trigger","impact":"second failure","change_attribution":"changed here","evidence":["a.go:2"],"uncertainty":"","category":"bug","severity":"medium"}`, "route-a", 1),
 		unitTextResponse("No material lead remains."),
 	}}
 	var hypotheses []Hypothesis
@@ -177,7 +177,7 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 	})
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitToolResponse("call-1", "post_bulletin", `{"text":"check the callee","paths":["a.go"]}`, "", 0),
-		unitToolResponse("call-2", "submit_hypotheses", `{"hypotheses":[]}`, "", 0),
+		unitTextResponse("No material lead remains."),
 	}}
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
@@ -218,7 +218,7 @@ func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 		scope:    session.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
 		turn:     2,
 	}
-	run.publishToolFact(SubmitHypotheses.Name(), []byte(`{"hypotheses":[]}`))
+	run.publishToolFact(SubmitHypothesis.Name(), []byte(`{}`))
 	if posts := sharedBoard.Posted(); len(posts) != 0 {
 		t.Fatalf("an unassessed hypothesis must not become a confirmed board fact: %+v", posts)
 	}

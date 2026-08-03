@@ -21,36 +21,36 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	for _, def := range defs {
 		got[def.Function.Name] = true
 	}
-	if got["code_comment"] || got["post_bulletin"] || got[unitreview.SubmitHypotheses.Name()] {
+	if got["code_comment"] || got["post_bulletin"] || got[unitreview.SubmitHypothesis.Name()] {
 		t.Fatalf("convergent review exposed divergent tools: %v", got)
 	}
 	if got["task_done"] {
 		t.Fatalf("Review 2 exposed redundant completion tool: %v", got)
 	}
-	for _, required := range []string{"read_files", "read_base_files", "search_code", SubmitAssessments.Name()} {
+	for _, required := range []string{"read_files", "read_base_files", "search_code", SubmitAssessment.Name()} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
 		}
 	}
 }
 
-func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
-	collector := NewAssessmentCollector("h-1", "h-2")
+func TestAssessmentHookBindsCurrentHypothesisAndLastValidWins(t *testing.T) {
+	collector := NewAssessmentCollector("h-1")
 	var submissions []AssessmentSubmission
 	hook := &AssessmentHook{
 		Collector: collector, LaneID: "l-1",
 		OnAccepted: func(submission AssessmentSubmission) { submissions = append(submissions, submission) },
 	}
-	call := func(id, value string) map[string]any {
+	call := func(value string) map[string]any {
 		checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
-			Tool: SubmitAssessments,
-			Args: map[string]any{"assessments": []any{map[string]any{
-				"hypothesis_id": id, "support": "insufficient", "attribution": "unknown",
+			Tool: SubmitAssessment,
+			Args: map[string]any{
+				"support": "insufficient", "attribution": "unknown",
 				"value": value, "novelty": "new", "reason": "evidence is incomplete", "evidence": []any{},
-			}}},
+			},
 		})
 		if !handled {
-			t.Fatal("submit_assessments was not handled")
+			t.Fatal("submit_assessment was not handled")
 		}
 		var result map[string]any
 		if err := json.Unmarshal([]byte(checkpoint.Data), &result); err != nil {
@@ -59,20 +59,18 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 		return result
 	}
 
-	first := call("h-1", "unknown")
-	if remaining := first["remaining"].([]any); len(remaining) != 1 || remaining[0] != "h-2" {
-		t.Fatalf("remaining after partial submit = %+v", remaining)
+	first := call("unknown")
+	if first["accepted"] != "h-1" || first["replaced"] != false {
+		t.Fatalf("first submission = %+v", first)
 	}
-	call("h-1", "low_value")
-	rejected := call("not-in-review", "unknown")
-	if got := rejected["rejected_unknown"].([]any); len(got) != 1 || got[0] != "not-in-review" {
-		t.Fatalf("unknown IDs = %+v", got)
+	second := call("low_value")
+	if second["accepted"] != "h-1" || second["replaced"] != true {
+		t.Fatalf("replacement submission = %+v", second)
 	}
-	call("h-2", "unknown")
 
 	assessments := collector.Assessments()
-	if len(assessments) != 2 || !collector.Complete() {
-		t.Fatalf("collector = %+v, missing = %v", assessments, collector.Missing())
+	if len(assessments) != 1 || !collector.Complete() {
+		t.Fatalf("collector = %+v", assessments)
 	}
 	if assessments[0].HypothesisID != "h-1" || assessments[0].Value != LowValue || assessments[0].SubmissionIndex != 2 {
 		t.Fatalf("last valid assessment did not win: %+v", assessments[0])
@@ -80,7 +78,17 @@ func TestAssessmentHookAcceptsPartialBatchesAndLastValidWins(t *testing.T) {
 	if assessments[0].LaneID != "l-1" {
 		t.Fatalf("assessment lane = %q, want l-1", assessments[0].LaneID)
 	}
-	if len(submissions) != 3 || !submissions[1].Replaced {
+	if len(submissions) != 2 || !submissions[1].Replaced {
 		t.Fatalf("submission trail = %+v", submissions)
+	}
+}
+
+func TestAssessmentToolSchemaDoesNotExposeHypothesisIdentityOrBatch(t *testing.T) {
+	properties := AssessmentToolDef().Function.Parameters["properties"].(map[string]any)
+	if _, ok := properties["hypothesis_id"]; ok {
+		t.Fatal("hypothesis identity must be bound by the current Review 2 execution")
+	}
+	if _, ok := properties["assessments"]; ok {
+		t.Fatal("submit_assessment must not expose a batch wrapper")
 	}
 }
