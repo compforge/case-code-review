@@ -148,7 +148,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVar(&opts.to, "to", "", "target ref to end diff at (e.g., 'feature-branch')")
 	a.StringVarP(&opts.commit, "commit", "c", "", "single commit hash or tag to review (vs its parent)")
 	a.StringVar(&opts.excludes, "exclude", "", "comma-separated gitignore-style patterns to exclude; merged with rule.json excludes")
-	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text or json")
+	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text, json, or jsonl")
 	a.StringSliceVar(&opts.features, "feature", "toggle a feature gate: name=on|off (repeatable); run 'ccr review --help' for the list")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
@@ -195,6 +195,14 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	default:
 		return opts, fmt.Errorf("invalid --audience value %q: must be 'human' or 'agent'", opts.audience)
 	}
+	switch opts.outputFormat {
+	case "text", "json", "jsonl":
+	default:
+		return opts, fmt.Errorf("invalid --format value %q: must be 'text', 'json', or 'jsonl'", opts.outputFormat)
+	}
+	if opts.outputFormat == "jsonl" && (opts.preview || opts.dryRun) {
+		return opts, fmt.Errorf("--format jsonl is only supported for an executing review")
+	}
 
 	const minMaxTools = 10
 	if opts.maxTools < 0 {
@@ -234,6 +242,9 @@ Examples:
   ccr review --format json
   ccr review -f json
 
+  # Stream accepted findings as JSON Lines while the review is running
+  ccr review --format jsonl
+
   # Agent mode (summary only, no progress lines)
   ccr review --audience agent
 
@@ -253,7 +264,7 @@ Flags:
   -b, --background string optional requirement/business context for the review
   --biz-id string         opaque caller-owned business identity persisted with the session
   -c, --commit string     single commit hash or tag to review (vs its parent)
-  -f, --format string     output format: text or json (default "text")
+  -f, --format string     output format: text, json, or jsonl (default "text")
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)

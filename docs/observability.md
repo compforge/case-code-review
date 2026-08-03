@@ -73,6 +73,13 @@ Execution 的 duration 直接相加。
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
 
+### 流式交付不是 Session tail
+
+Session JSONL 是本地执行事实源，不是对外发布协议。需要在长时间 review 中尽早消费成熟 Finding 的调用方，
+使用 `ccr review --format jsonl` 读取 stdout 事件：`run_started` 建立运行身份，`finding` 只在 Trial、
+行号定位、身份标记和 Session 持久化完成后出现，`run_finished` 携带与普通 JSON 模式相同的最终结果。
+调用方不应 tail Session 文件推断交付，因为其中还包含未通过 Trial 的中间事实和可能变化的内部记录。
+
 ## 2. Viewer：单次运行的人工诊断
 
 Viewer 读取 Session JSONL，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,5 +114,45 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 	}
 	if delivered["origin_unit"] != reviewUnit.ID || delivered["lane_id"] != "l-1" || delivered["hypothesis_id"] != "h-1" {
 		t.Fatalf("finding = %+v", delivered)
+	}
+}
+
+func TestDeliverFindingPublishesPreparedFindingOnce(t *testing.T) {
+	session.UseTestSessions()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	history := session.New(filepath.Join(home, "repo"), "main", "model", session.SessionOptions{})
+
+	var observed []finding.Finding
+	var transcriptAtCallback string
+	runner := &Runner{
+		args: Args{
+			RepoDir: filepath.Join(home, "repo"), Findings: finding.NewCollector(),
+			OnFinding: func(comment finding.Finding) {
+				observed = append(observed, comment)
+				path, _ := history.TranscriptPath()
+				data, _ := os.ReadFile(path)
+				transcriptAtCallback = string(data)
+			},
+		},
+		session: history,
+	}
+	reviewUnit := unit.UnitOf(unit.Fragment{Path: "a.go", Symbols: []string{"a.go::F"}})
+	hypothesis := unitreview.Hypothesis{ID: "h-1", OriginUnit: reviewUnit.ID, Path: "a.go", Content: "bug"}
+	reviewUnit.AddHypothesis(hypothesis)
+	reviewUnit.AddAssessment(hypothesisreview.Assessment{HypothesisID: "h-1", LaneID: "lane-1"})
+
+	got := runner.deliverFinding(finding.Finding{HypothesisID: "h-1", Path: "a.go", Content: "bug"}, []unit.Unit{reviewUnit})
+	if got.Fingerprint == "" {
+		t.Fatal("delivered finding lacks fingerprint")
+	}
+	if len(observed) != 1 || observed[0] != got {
+		t.Fatalf("observed = %+v, got %+v", observed, got)
+	}
+	if comments := runner.args.Findings.Comments(); len(comments) != 1 || comments[0] != got {
+		t.Fatalf("collector = %+v", comments)
+	}
+	if !strings.Contains(transcriptAtCallback, `"type":"finding"`) {
+		t.Fatalf("finding was not visible in transcript before callback: %q", transcriptAtCallback)
 	}
 }

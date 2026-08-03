@@ -84,6 +84,10 @@ func runReview(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
 	}
+	var stream *jsonlEmitter
+	if opts.outputFormat == "jsonl" {
+		stream = newJSONLEmitter(os.Stdout)
+	}
 
 	ag := runner.New(runner.Args{
 		RepoDir:               cc.RepoDir,
@@ -109,12 +113,20 @@ func runReview(args []string) error {
 		GitRunner:             cc.GitRunner,
 		Features:              features,
 		Version:               versionString(),
+		OnFinding: func(comment finding.Finding) {
+			if stream != nil {
+				stream.finding(comment)
+			}
+		},
 	})
 
 	// Silence progress output during execution; restored before the trace
 	// summary in agent-text mode (and on function exit otherwise).
 	q := newQuietHandle(opts.outputFormat, opts.audience)
 	defer q.Restore()
+	if stream != nil {
+		stream.start(ag.Session())
+	}
 
 	ctx, span := telemetry.StartSpan(context.Background(), "review.run")
 	defer span.End()
@@ -127,8 +139,13 @@ func runReview(args []string) error {
 		// exit code still signals failure for CLI callers.
 		if opts.outputFormat == "json" {
 			_ = outputJSONFatal(err, ag.Warnings(), ag.Session())
+		} else if stream != nil {
+			stream.finish(buildJSONFatal(err, ag.Warnings(), ag.Session()))
 		}
 		return fmt.Errorf("review failed: %w", err)
+	}
+	if stream != nil {
+		return emitJSONLRunResult(ctx, ag, comments, startTime, stream)
 	}
 
 	return emitRunResult(ctx, ag, comments, startTime, opts.outputFormat, opts.audience, q)

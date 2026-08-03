@@ -228,11 +228,11 @@ type quietHandle struct {
 	fn func()
 }
 
-// newQuietHandle silences stdout when outputFormat=="json" or
+// newQuietHandle silences progress output for machine-readable formats or
 // audience=="agent"; otherwise the returned handle is a no-op restorer.
 func newQuietHandle(outputFormat, audience string) *quietHandle {
 	h := &quietHandle{}
-	if outputFormat == "json" || audience == "agent" {
+	if outputFormat == "json" || outputFormat == "jsonl" || audience == "agent" {
 		h.fn = console.Quiet()
 	}
 	return h
