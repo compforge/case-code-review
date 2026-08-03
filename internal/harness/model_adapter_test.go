@@ -105,6 +105,27 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 		}
 	})
 
+	t.Run("singleton file pattern", func(t *testing.T) {
+		args := canonicalResponseArgs(t, "search_code", `{
+			"searches":[{"query":"resolve_thread","file_patterns":"devloop/lib/forge/github.py"}]
+		}`)
+		item := args["searches"].([]any)[0].(map[string]any)
+		patterns := item["file_patterns"].([]any)
+		if len(patterns) != 1 || patterns[0] != "devloop/lib/forge/github.py" {
+			t.Fatalf("canonical search = %#v", item)
+		}
+	})
+
+	t.Run("empty file pattern remains invalid", func(t *testing.T) {
+		args := canonicalResponseArgs(t, "search_code", `{
+			"searches":[{"query":"Target","file_patterns":""}]
+		}`)
+		item := args["searches"].([]any)[0].(map[string]any)
+		if item["file_patterns"] != "" {
+			t.Fatalf("empty file pattern was guessed: %#v", item)
+		}
+	})
+
 	t.Run("ambiguous escaped literal remains invalid", func(t *testing.T) {
 		args := canonicalResponseArgs(t, "search_code", `{
 			"searches":[{"pattern":"\\.inspect\\(","syntax":"literal"}]
