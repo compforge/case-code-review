@@ -263,6 +263,46 @@ func TestGitGrep_CommitMode_WithPathspec(t *testing.T) {
 	assertSearchOutcome(t, result2, CodeSearchNoMatches, CodeSearchLiteral, 1)
 }
 
+func TestGitGrep_CommitMode_GlobScopeUsesGrepPathspecSemantics(t *testing.T) {
+	dir := setupTestRepo(t)
+	commit := getHeadCommit(t, dir)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Ref: commit, Mode: ModeCommit})
+
+	result, err := p.gitGrep(context.Background(), "nonexistentXYZ", false, false, []string{"**/*.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := ParseCodeSearchOutcome(result)
+	if !ok || outcome.Status != CodeSearchNoMatches || outcome.SearchedFiles == nil || *outcome.SearchedFiles == 0 {
+		t.Fatalf("glob scope outcome = %+v, parsed=%t; result=%q", outcome, ok, result)
+	}
+}
+
+func TestCodeSearchExecuteHonorsRegexpSyntax(t *testing.T) {
+	dir := setupTestRepo(t)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{
+			map[string]any{"query": "Hello.*", "syntax": "literal"},
+			map[string]any{"query": "Hello.*", "syntax": "regexp"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != 2 {
+		t.Fatalf("batch result = %q, parsed=%d ok=%t", out, len(results), ok)
+	}
+	literal, ok := ParseCodeSearchOutcome(results[0])
+	if !ok || literal.Status != CodeSearchNoMatches || literal.QueryMode != CodeSearchLiteral {
+		t.Fatalf("literal result = %+v, parsed=%t; result=%q", literal, ok, results[0])
+	}
+	if !strings.Contains(results[1], "hello.go") {
+		t.Fatalf("regexp query did not match: %q", results[1])
+	}
+}
+
 func TestGitGrep_OptionLikeRefDoesNotLaunchPager(t *testing.T) {
 	dir := setupTestRepo(t)
 	proofPath := filepath.Join(dir, "PROOF")

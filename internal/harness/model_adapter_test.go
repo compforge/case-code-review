@@ -70,8 +70,11 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 		}
 		for _, value := range searches {
 			item := value.(map[string]any)
-			if item["use_perl_regexp"] != false || item["file_patterns"] == nil {
+			if item["syntax"] != "literal" || item["file_patterns"] == nil {
 				t.Fatalf("canonical search = %#v", item)
+			}
+			if _, exists := item["use_perl_regexp"]; exists {
+				t.Fatalf("legacy regexp flag was retained: %#v", item)
 			}
 		}
 	})
@@ -81,7 +84,7 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 			"searches":[{"pattern":"SessionMessage","syntax":"literal","contextAround":3,"outputMode":"content"}]
 		}`)
 		item := args["searches"].([]any)[0].(map[string]any)
-		if item["query"] != "SessionMessage" || item["use_perl_regexp"] != false {
+		if item["query"] != "SessionMessage" || item["syntax"] != "literal" {
 			t.Fatalf("canonical search = %#v", item)
 		}
 		if _, ok := item["pattern"]; ok {
@@ -89,6 +92,16 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 		}
 		if _, ok := item["contextAround"]; ok {
 			t.Fatalf("foreign presentation option was retained: %#v", item)
+		}
+	})
+
+	t.Run("regexp aliases normalize to current contract", func(t *testing.T) {
+		args := canonicalResponseArgs(t, "search_code", `{
+			"searches":[{"query":"export.*Comment","syntax":"regex"}]
+		}`)
+		item := args["searches"].([]any)[0].(map[string]any)
+		if item["syntax"] != "regexp" {
+			t.Fatalf("canonical search = %#v", item)
 		}
 	})
 
