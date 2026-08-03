@@ -269,20 +269,29 @@ func canonicalizeSearchArguments(args map[string]any) {
 }
 
 func canonicalizeSearchItem(item map[string]any) {
-	if _, exists := item["query"]; !exists {
-		if pattern, ok := item["pattern"].(string); ok && safePatternAlias(pattern, item["syntax"]) {
-			item["query"] = pattern
-			delete(item, "pattern")
+	if _, exists := item["syntax"]; !exists {
+		if useRegexp, ok := item["use_perl_regexp"].(bool); ok {
+			if useRegexp {
+				item["syntax"] = "regexp"
+			} else {
+				item["syntax"] = "literal"
+			}
 		}
 	}
 	if syntax, ok := item["syntax"].(string); ok {
 		switch strings.ToLower(strings.TrimSpace(syntax)) {
 		case "regex", "regexp", "perl":
-			item["use_perl_regexp"] = true
-			delete(item, "syntax")
+			item["syntax"] = "regexp"
 		case "literal":
-			item["use_perl_regexp"] = false
-			delete(item, "syntax")
+			item["syntax"] = "literal"
+		}
+	}
+	delete(item, "use_perl_regexp")
+
+	if _, exists := item["query"]; !exists {
+		if pattern, ok := item["pattern"].(string); ok && safePatternAlias(pattern, item["syntax"]) {
+			item["query"] = pattern
+			delete(item, "pattern")
 		}
 	}
 	delete(item, "contextAround")

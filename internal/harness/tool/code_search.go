@@ -435,33 +435,30 @@ func (p *CodeSearchProvider) searchScopeFileCount(parentCtx context.Context, pat
 	if cached, ok := p.scopeFileCounts.Load(cacheKey); ok {
 		return cached.(int), true
 	}
-	ctx, cancel := context.WithTimeout(parentCtx, gitGrepTimeout)
-	defer cancel()
-
-	var args []string
+	// Probe with git grep itself so scope measurement uses exactly the same
+	// pathspec semantics as the real query. ls-tree/ls-files do not expand
+	// patterns such as **/*.ts the same way and can mislabel valid scopes empty.
+	args := []string{"--no-pager", "grep"}
+	if p.FileReader.Ref == "" {
+		args = append(args, "--untracked")
+	}
+	args = append(args, "-l", "-z", "-E", "-e", "^")
 	if p.FileReader.Ref != "" {
-		args = []string{"ls-tree", "-r", "-z", "--name-only", "--full-tree", "--end-of-options", p.FileReader.Ref}
-	} else {
-		args = []string{"ls-files", "-z", "--cached", "--others", "--exclude-standard"}
+		args = append(args, "--end-of-options", p.FileReader.Ref)
 	}
-	if len(pathspec) > 0 {
-		args = append(args, "--")
-		args = append(args, pathspec...)
-	}
+	args = append(args, "--")
+	args = append(args, pathspec...)
 
-	var out string
-	var err error
-	if p.FileReader.Runner != nil {
-		out, _, err = p.FileReader.Runner.RunSplit(ctx, p.FileReader.RepoDir, args...)
-	} else {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = p.FileReader.RepoDir
-		var data []byte
-		data, err = cmd.Output()
-		out = string(data)
-	}
-	if err != nil || ctx.Err() != nil {
+	out, stderr, err := p.runGitGrep(parentCtx, args)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || stderr != "" {
 		return 0, false
+	}
+	// git grep uses exit 1 for a valid scope with no searchable files.
+	if err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return 0, false
+		}
 	}
 	count := strings.Count(out, "\x00")
 	// One provider is bound to one repository/ref, and review tools are
