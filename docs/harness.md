@@ -130,8 +130,9 @@ ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
 增量上下文与“接近边界”的 wrap-up。进入 wrap-up 时
 工具 schema 保持不变，只在消息尾部追加稳定的收敛指令；若调用方配置硬门，middleware 拒绝继续
-执行调查工具，但结果/完成工具仍可用。这样既不能靠忽略 prompt 继续空转，也不因中途换工具集破坏
-provider cache。调用方定义终态
+执行调查工具，但结果/完成工具仍可用。模型忽略硬门时只再获得一次明确的 completion 修正轮；仍不
+提交终态则以 truncated 结束，而不是用相同拒绝结果耗尽剩余轮次。这样既不能靠忽略 prompt 继续
+空转，也不因中途换工具集破坏 provider cache。调用方定义终态
 动作和收敛语义。例如 Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个
 输入都有 Assessment。
 

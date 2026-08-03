@@ -175,7 +175,8 @@ allow execution:  submit_hypotheses
 ```
 
 这由 Harness tool middleware 在本地执行边界强制，而不是只追加 wrap-up 文本。保留 schema 和稳定
-prompt 前缀是为了复用 provider cache；最终阈值通过 replay 调整。
+prompt 前缀是为了复用 provider cache。若模型仍调用被拒绝的调查工具，只再提供一次最终提交轮；
+再次忽略 completion contract 就标记 incomplete，避免同一句拒绝提示反复触发模型调用。最终阈值通过 replay 调整。
 
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。

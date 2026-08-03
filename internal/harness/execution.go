@@ -102,6 +102,11 @@ type Execution struct {
 	completionTool   string
 	completionPrompt string
 	wrapUpAllowed    map[string]bool
+	// wrapUpFinalTurnGranted bounds a model that ignores the hard close: after
+	// one corrective completion turn, another non-terminal response stops as
+	// truncated instead of spending the remaining provider turn budget.
+	wrapUpFinalTurnGranted atomic.Bool
+	wrapUpForcedStop       atomic.Bool
 
 	started   atomic.Bool
 	completed atomic.Bool
@@ -195,16 +200,9 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		CommitContext:            e.replaceContext,
 		CommitMessage:            e.appendContext,
 		BeforeTurn:               e.turns.BeforeTurn,
-		StopAfterTool: func(name string) bool {
-			return name == e.completionTool && e.completed.Load()
-		},
-		StopGuard: func(_ context.Context, _ agentgo.StopInfo) agentgo.StopDecision {
-			if e.completed.Load() {
-				return agentgo.StopDecision{Allow: true}
-			}
-			return agentgo.StopDecision{InjectMessage: e.completionPrompt}
-		},
-		Middlewares: []agentgo.ToolMiddleware{e.toolMiddleware()},
+		StopAfterTool:            e.shouldStopAfterTool,
+		StopGuard:                e.stopGuard,
+		Middlewares:              []agentgo.ToolMiddleware{e.toolMiddleware()},
 	}
 
 	history := e.continuationContext()
@@ -238,6 +236,32 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	}
 	e.recorder.finishExecution(taskType, result, time.Since(startedAt))
 	return result, err
+}
+
+func (e *Execution) shouldStopAfterTool(name string) bool {
+	if name == e.completionTool && e.completed.Load() {
+		return true
+	}
+	if !e.turns.WrapUpIssued() {
+		return false
+	}
+	// A blocked investigation call, or an invalid completion call during
+	// wrap-up, should immediately enter the single corrective final turn.
+	return name == e.completionTool || (len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[name])
+}
+
+func (e *Execution) stopGuard(_ context.Context, _ agentgo.StopInfo) agentgo.StopDecision {
+	if e.completed.Load() {
+		return agentgo.StopDecision{Allow: true}
+	}
+	if !e.turns.WrapUpIssued() {
+		return agentgo.StopDecision{InjectMessage: e.completionPrompt}
+	}
+	if e.wrapUpFinalTurnGranted.CompareAndSwap(false, true) {
+		return agentgo.StopDecision{InjectMessage: e.spec.WrapUpPrompt + "\n" + e.completionPrompt}
+	}
+	e.wrapUpForcedStop.Store(true)
+	return agentgo.StopDecision{Allow: true}
 }
 
 func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo.AgentMessage {
@@ -387,6 +411,11 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 	result.context = e.contextSnapshot()
 	if e.completed.Load() && e.summary != nil && e.summary.EndReason == agentgo.EndReasonStop {
 		result.State = OutcomeCompleted
+		return result, nil
+	}
+	if e.wrapUpForcedStop.Load() {
+		result.State = OutcomeTruncated
+		result.Reason = "wrap-up completion not submitted"
 		return result, nil
 	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
