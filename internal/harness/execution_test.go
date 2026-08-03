@@ -676,6 +676,47 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	}
 }
 
+func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: "unexpected"}
+	registry.Register(provider)
+	registry.Freeze()
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-3", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-4", "task_done", `{}`, nil),
+	}}
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:          client,
+		Messages:           []msg.Msg{msg.Text("user", "review")},
+		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
+		Tools:              registry,
+		MaxTurns:           10,
+		WrapUpPrompt:       "wrap up now",
+		WrapUpAfterTurns:   1,
+		WrapUpAllowedTools: []string{"task_done"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeTruncated || result.Reason != "wrap-up completion not submitted" {
+		t.Fatalf("result = %+v, want bounded wrap-up truncation", result)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want only the pre-wrap-up read", provider.calls)
+	}
+	requests := client.Requests()
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want investigation plus one blocked turn and one final turn", len(requests))
+	}
+	if !strings.Contains(requestText(requests[2]), "wrap up now") ||
+		!strings.Contains(requestText(requests[2]), defaultCompletionPrompt) {
+		t.Fatalf("final correction prompt missing: %q", requestText(requests[2]))
+	}
+}
+
 func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) {
 	body := "File: pkg/a.go (Total lines: 30)\nIS_TRUNCATED: false\nLINE_RANGE: 1-20\n1|package a\n"
 	registry := tool.NewRegistry()
