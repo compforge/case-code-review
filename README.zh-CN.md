@@ -51,7 +51,7 @@ Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提
 | **Language Knowledge** | 语法感知的 symbol、span、outline、definition、reference、call、import、symbol/file proximity（关系接近度），以及将作者声明绑定到代码的语法和稳定身份 |
 | **Project Knowledge** | Repository / Component / FileRole / entrypoint 等结构知识，以及 `spec`、`case`、`link`、`rule`、`doc` 等作者声明的 Biz Knowledge |
 
-Language 拥有如何抽取和绑定，Project Knowledge 拥有这些声明在当前项目里表达的业务含义。`spec / case / link / rule / doc` 正是 case-code-review 名字中 “case” 的来源。[`spec-case`](https://github.com/qiankunli/spec-case) 仍是可选的契约编写与分发方式；没有采用它的仓库也能使用 ccr。
+Language 拥有如何抽取和绑定，Project Knowledge 拥有这些声明在当前项目里表达的业务含义。`spec / case / link / rule / doc` 正是 case-code-review 名字中 “case” 的来源。[`spec-case`](https://github.com/compforge/spec-case) 仍是可选的契约编写与分发方式；没有采用它的仓库也能使用 ccr。
 
 设计展开：[`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness 与可观测性`](docs/harness.md)
 
