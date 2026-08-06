@@ -51,7 +51,7 @@ Two knowledge foundations support Unit formation and both review stages:
 | **Language Knowledge** | syntax-aware symbols, spans, outlines, definitions, references, calls, imports, symbol/file proximity, plus the syntax and identities used to bind authored declarations to code |
 | **Project Knowledge** | structural knowledge such as Repository, Component, FileRole and entrypoints; authored biz knowledge such as `spec`, `case`, `link`, `rule`, and `doc` |
 
-Language owns how authored knowledge is extracted and attached; Project Knowledge owns what those declarations mean in the reviewed project. This `spec / case / link / rule / doc` model is the origin of the “case” in case-code-review. [`spec-case`](https://github.com/qiankunli/spec-case) remains an optional way to author and distribute it; ccr also works without it.
+Language owns how authored knowledge is extracted and attached; Project Knowledge owns what those declarations mean in the reviewed project. This `spec / case / link / rule / doc` model is the origin of the “case” in case-code-review. [`spec-case`](https://github.com/compforge/spec-case) remains an optional way to author and distribute it; ccr also works without it.
 
 Design details: [`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness and observability`](docs/harness.md)
 

@@ -25,7 +25,7 @@ Session 轨迹分析持续校正 prompt、工具取舍与 schema；Language（�
 持续提供更可靠的源码、项目结构和业务契约事实。不能只靠扩大模型上下文或堆叠 prompt 提升效果。
 
 `ccr` 是 contract 资产的消费侧引擎；spec/case/rule/link 的定义、`spec.json` 协议和 `specgen`
-抽取器由独立项目 [`spec-case`](https://github.com/qiankunli/spec-case) 持有。
+抽取器由独立项目 [`spec-case`](https://github.com/compforge/spec-case) 持有。
 
 ## 代码地图与核心模块
 
@@ -80,7 +80,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
   与 HTML Viewer 可观测性——`docs/harness.md`
 - 可观测性：Session JSONL 是共同事实源，Viewer 用于单次运行诊断，eval 用固定数据与 Evaluator
   判断准确性、健壮性和成本——`docs/observability.md`
-- spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/qiankunli/spec-case)
+- spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/compforge/spec-case)
 - 项目知识：Repository / Component / FileRole 等结构知识、作者声明的 Biz Knowledge 及其投影——`docs/project.md`
 - Unit 与上下文：`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费——`docs/unit-model.md`
 - 源码语言边界：Analyzer / RepositoryIndex、symbol-id owner、后端隔离与降级——`docs/language.md`
