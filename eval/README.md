@@ -220,6 +220,38 @@ python3 eval/posterior.py <session.jsonl-or-dir> \
 
 `line_touched` 只是后验候选，仍需人工确认后续 commit 是否确实在修该 finding。
 
+## 可选：生成每周对比报告
+
+周报是 Session 与规范化标签数据集上的可再生成读模型；原始 session、labels、datasets 和 runs
+继续累积存储，不按周搬动。默认生成上一个完整 ISO week，并按 `Asia/Shanghai` 的周一零点切分：
+
+```bash
+uv run --project eval/reviewbench python eval/weekly_report.py
+```
+
+生成指定周、限定一个或多个仓库：
+
+```bash
+uv run --project eval/reviewbench python eval/weekly_report.py \
+  --week 2026-W32 \
+  --repo <repo-path>
+```
+
+默认输出：
+
+```text
+eval/data/reports/weekly/2026-W32/
+├── REPORT.md       人读的本周数据与上周对比
+├── metrics.json    可供后续周报继续比较的机器指标
+└── manifest.json   周区间、时区、输入范围与生成时间
+```
+
+执行指标按 `session_start` 归周，而不是按 Session 文件 mtime；报告分别展示 Review 1 Unit 与
+Review 2 Lane 的完成率、timeout、score、轮次、耗时、token、工具频率和主要扣分项。质量指标也分为
+两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，
+`labeled_this_week` 按人工标签时间统计本周新增标注。版本和模型分布始终单列，避免把一周内混跑的
+不同引擎直接当成同一 cohort。
+
 ## 可选：建立固定 corpus 并重放
 
 从本地 clone 构建 merge-parent corpus：
@@ -277,7 +309,9 @@ python3 -m py_compile \
   eval/ccr_trajectory.py \
   eval/posterior.py \
   eval/replay.py \
-  eval/trajectory_judge.py
+  eval/trajectory_judge.py \
+  eval/weekly_report.py \
+  eval/weekly_report_render.py
 
 git ls-files eval/data
 git ls-files --others --exclude-standard eval/data
