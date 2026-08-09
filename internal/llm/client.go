@@ -189,8 +189,7 @@ type ClientConfig struct {
 	AuthHeader string         // Auth header name: "x-api-key", "authorization", or empty for protocol default
 	Timeout    time.Duration  // Request timeout
 	ExtraBody  map[string]any // Vendor-specific fields merged into every request body
-	MaxRetries int            // SDK in-provider retry budget; 0 → default. Lowered for router members so a
-	// rate-limited model fails fast to the next instead of burning the full backoff.
+	MaxRetries int            // SDK in-provider retry budget; 0 → default, negative → disabled.
 }
 
 // --- Factory ---
@@ -214,6 +213,9 @@ func NewLLMClient(ep ResolvedEndpoint) LLMClient {
 }
 
 func maxRetriesOrDefault(n int) int {
+	if n < 0 {
+		return 0
+	}
 	if n > 0 {
 		return n
 	}
@@ -224,11 +226,12 @@ func maxRetriesOrDefault(n int) int {
 
 // Tunables for LLMRouter. A router member that returns a fallover-worthy error is
 // parked for routerCooldown so concurrent subtasks skip it instead of each re-hitting
-// a model that's down/throttled. Members get a low retry budget so a rate-limited
-// model fails fast to the next rather than burning the full SDK backoff.
+// a model that's down/throttled. Router owns recovery across the pool, so member SDK
+// retries are disabled instead of multiplying with fallover attempts.
 const (
-	routerMemberRetries = 2
-	routerCooldown      = 30 * time.Second
+	routerDisableSDKRetries   = -1
+	routerCooldown            = 30 * time.Second
+	defaultRoutingCallTimeout = 180 * time.Second
 )
 
 // routing.policy values. priority: always prefer member 0, fall over on failure.
@@ -253,34 +256,47 @@ type routerMember struct {
 // Selection is governed by `policy` via the order() seam: "priority" (default) prefers
 // member 0; "round-robin" spreads the starting member across the pool.
 type LLMRouter struct {
-	members  []routerMember
-	policy   string
-	mu       sync.Mutex
-	cooldown map[int]time.Time // member index → parked-until
-	next     uint64            // round-robin cursor (guarded by mu)
+	members     []routerMember
+	policy      string
+	callTimeout time.Duration
+	mu          sync.Mutex
+	cooldown    map[int]time.Time // member index → parked-until
+	next        uint64            // round-robin cursor (guarded by mu)
 }
 
-// NewLLMRouter builds an LLMClient from an ordered pool under the given routing policy
-// ("" → priority). A pool of one returns a plain client (no router overhead, unchanged
-// single-model behavior).
-func NewLLMRouter(eps []ResolvedEndpoint, policy string) LLMClient {
+// NewLLMRouter builds an LLMClient from an ordered pool under the given routing options.
+// Empty policy/timeout use their defaults. A pool of one returns a plain client
+// with unchanged single-model behavior and no router overhead.
+func NewLLMRouter(eps []ResolvedEndpoint, routing RoutingOptions) LLMClient {
 	if len(eps) == 1 {
 		return NewLLMClient(eps[0])
 	}
+	policy := routing.Policy
 	if policy == "" {
 		policy = policyPriority
+	}
+	callTimeout := routing.CallTimeout
+	if callTimeout <= 0 {
+		callTimeout = defaultRoutingCallTimeout
 	}
 	members := make([]routerMember, len(eps))
 	for i, ep := range eps {
 		if ep.MaxRetries == 0 {
-			ep.MaxRetries = routerMemberRetries
+			ep.MaxRetries = routerDisableSDKRetries
 		}
 		members[i] = routerMember{client: NewLLMClient(ep), label: ep.Protocol + "/" + ep.Model, alias: ep.Alias}
 	}
-	return &LLMRouter{members: members, policy: policy, cooldown: make(map[int]time.Time)}
+	return &LLMRouter{members: members, policy: policy, callTimeout: callTimeout, cooldown: make(map[int]time.Time)}
 }
 
 func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	parentCtx := ctx
+	if r.callTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, r.callTimeout)
+		defer cancel()
+	}
+
 	var lastErr error
 	for _, i := range r.order() {
 		resp, err := r.members[i].client.CompletionsWithCtx(ctx, req)
@@ -292,11 +308,10 @@ func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*C
 		}
 		lastErr = err
 		if ctx.Err() != nil {
-			// The shared ctx is canceled or past its deadline: the overall budget is
-			// exhausted and no other member can succeed (they all use this ctx). Stop
-			// here rather than burning fallover attempts. A per-request timeout (ctx
-			// still live) is NOT caught here and still falls over below.
-			return nil, ctx.Err()
+			if parentCtx.Err() != nil {
+				return nil, parentCtx.Err()
+			}
+			return nil, fmt.Errorf("llm routing call timeout exceeded after %s: %w", r.callTimeout, ctx.Err())
 		}
 		if !shouldFallover(err) {
 			return nil, err

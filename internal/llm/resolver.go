@@ -21,7 +21,7 @@ type ResolvedEndpoint struct {
 	AuthHeader string         // Anthropic auth header: "x-api-key" or "authorization"
 	Source     string         // human-readable config source label
 	ExtraBody  map[string]any // vendor-specific request body fields
-	MaxRetries int            // internal SDK retry budget (0 = SDK default); not read from config — set by NewLLMRouter, low for pool members so a throttled one fails fast to the next
+	MaxRetries int            // internal SDK retry budget (0 = SDK default, negative = disabled); not read from config — routed pools disable it so Router owns recovery
 	Alias      string         // routing alias (routing.models[].alias); stamped onto comments this endpoint produces
 	Timeout    time.Duration  // per-request HTTP timeout; 0 means client default (5 min). A stalled call fails here instead of hanging the whole review.
 }
@@ -199,8 +199,17 @@ type modelRef struct {
 // and future per-pool knobs a stable home, and avoids colliding with
 // providers.<name>.models (which is a provider's model catalog, not a routing pool).
 type routingConfig struct {
-	Models []modelRef `json:"models,omitempty"` // ordered pool; index 0 is primary
-	Policy string     `json:"policy,omitempty"` // selection policy; only "priority" supported today
+	Models         []modelRef `json:"models,omitempty"`           // ordered pool; index 0 is primary
+	Policy         string     `json:"policy,omitempty"`           // selection policy: priority or round-robin
+	CallTimeoutSec int        `json:"call_timeout_sec,omitempty"` // one logical completion across all fallovers; 0 = 180s default
+}
+
+// RoutingOptions is the resolved runtime policy for one model pool. CallTimeout is
+// shared by every fallover attempt in a logical completion; provider request
+// timeouts remain independent per endpoint.
+type RoutingOptions struct {
+	Policy      string
+	CallTimeout time.Duration
 }
 
 type configFile struct {
@@ -274,53 +283,60 @@ func resolveModelRef(cfg configFile, ref modelRef) (ResolvedEndpoint, error) {
 	return ep, nil
 }
 
-// ResolveModels resolves the full ordered model pool plus its routing policy.
-func ResolveModels(configPath string) ([]ResolvedEndpoint, string, error) {
+// ResolveModels resolves the full ordered model pool plus its routing options.
+func ResolveModels(configPath string) ([]ResolvedEndpoint, RoutingOptions, error) {
 	return ResolveModelsWithModelOverride(configPath, "")
 }
 
-// ResolveModelsWithModelOverride returns the ordered pool of endpoints and the routing
-// policy ("priority" default). An explicit modelOverride (--model) bypasses the pool and
+// ResolveModelsWithModelOverride returns the ordered pool of endpoints and its routing
+// options. An explicit modelOverride (--model) bypasses the pool and
 // pins a single endpoint (policy "priority"). Without it, a config `routing.models` list
 // resolves to the whole chain; otherwise it falls back to single-endpoint resolution
 // (env / single provider / legacy / shell), wrapped as a one-element pool — so existing
 // configs behave exactly as before.
-func ResolveModelsWithModelOverride(configPath, modelOverride string) ([]ResolvedEndpoint, string, error) {
+func ResolveModelsWithModelOverride(configPath, modelOverride string) ([]ResolvedEndpoint, RoutingOptions, error) {
 	if strings.TrimSpace(modelOverride) == "" {
 		if cfg, ok, err := loadConfigFile(configPath); err != nil {
-			return nil, "", err
+			return nil, RoutingOptions{}, err
 		} else if ok && len(cfg.Routing.Models) > 0 {
 			policy := strings.TrimSpace(cfg.Routing.Policy)
 			if policy == "" {
 				policy = policyPriority
 			}
 			if policy != policyPriority && policy != policyRoundRobin {
-				return nil, "", fmt.Errorf("unsupported routing.policy %q (want %q or %q)", policy, policyPriority, policyRoundRobin)
+				return nil, RoutingOptions{}, fmt.Errorf("unsupported routing.policy %q (want %q or %q)", policy, policyPriority, policyRoundRobin)
+			}
+			routingTimeout, err := validateTimeoutSec(cfg.Routing.CallTimeoutSec)
+			if err != nil {
+				return nil, RoutingOptions{}, fmt.Errorf("routing: %w", err)
+			}
+			if routingTimeout == 0 {
+				routingTimeout = defaultRoutingCallTimeout
 			}
 			envTimeout, hasEnv, err := parseTimeoutEnv()
 			if err != nil {
-				return nil, "", err
+				return nil, RoutingOptions{}, err
 			}
 			eps := make([]ResolvedEndpoint, 0, len(cfg.Routing.Models))
 			for _, ref := range cfg.Routing.Models {
 				ep, err := resolveModelRef(cfg, ref)
 				if err != nil {
-					return nil, "", err
+					return nil, RoutingOptions{}, err
 				}
 				if hasEnv { // env is a global override across the whole routing pool
 					ep.Timeout = envTimeout
 				}
 				eps = append(eps, ep)
 			}
-			return eps, policy, nil
+			return eps, RoutingOptions{Policy: policy, CallTimeout: routingTimeout}, nil
 		}
 	}
 
 	ep, err := ResolveEndpointWithModelOverride(configPath, modelOverride)
 	if err != nil {
-		return nil, "", err
+		return nil, RoutingOptions{}, err
 	}
-	return []ResolvedEndpoint{ep}, policyPriority, nil
+	return []ResolvedEndpoint{ep}, RoutingOptions{Policy: policyPriority}, nil
 }
 
 // tryProviderConfig resolves an endpoint from the provider-based configuration.

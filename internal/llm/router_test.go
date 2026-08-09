@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,12 +125,66 @@ func TestShouldFallover(t *testing.T) {
 
 func TestNewLLMRouter_SinglePoolNoRouter(t *testing.T) {
 	ep := ResolvedEndpoint{URL: "https://x.example.com", Protocol: "openai", Model: "m", Token: "t"}
-	if _, isRouter := NewLLMRouter([]ResolvedEndpoint{ep}, "").(*LLMRouter); isRouter {
+	if _, isRouter := NewLLMRouter([]ResolvedEndpoint{ep}, RoutingOptions{}).(*LLMRouter); isRouter {
 		t.Fatal("single-model pool should not be wrapped in a router")
 	}
-	two := NewLLMRouter([]ResolvedEndpoint{ep, ep}, "")
+	two := NewLLMRouter([]ResolvedEndpoint{ep, ep}, RoutingOptions{})
 	if _, isRouter := two.(*LLMRouter); !isRouter {
 		t.Fatal("multi-model pool should be a router")
+	}
+}
+
+type deadlineClient struct {
+	calls int
+}
+
+func (c *deadlineClient) CompletionsWithCtx(ctx context.Context, _ ChatRequest) (*ChatResponse, error) {
+	c.calls++
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestLLMRouter_SharedCallTimeoutStopsFalloverChain(t *testing.T) {
+	blocked := &deadlineClient{}
+	fallback := &fakeClient{resp: &ChatResponse{ID: "too-late"}}
+	r := newRouter(
+		routerMember{client: blocked, label: "a"},
+		routerMember{client: fallback, label: "b"},
+	)
+	r.callTimeout = 20 * time.Millisecond
+
+	started := time.Now()
+	_, err := r.CompletionsWithCtx(context.Background(), ChatRequest{})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "llm routing call timeout exceeded") {
+		t.Fatalf("err = %v, want routing call timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("routing call timeout took %v, want bounded near 20ms", elapsed)
+	}
+	if blocked.calls != 1 || fallback.calls != 0 {
+		t.Fatalf("calls blocked=%d fallback=%d, want 1/0", blocked.calls, fallback.calls)
+	}
+}
+
+func TestLLMRouter_ParentDeadlineWins(t *testing.T) {
+	blocked := &deadlineClient{}
+	r := newRouter(routerMember{client: blocked, label: "a"})
+	r.callTimeout = time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := r.CompletionsWithCtx(ctx, ChatRequest{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want parent deadline", err)
+	}
+	if strings.Contains(err.Error(), "llm routing call timeout exceeded") {
+		t.Fatalf("parent deadline mislabeled as routing deadline: %v", err)
+	}
+}
+
+func TestRouterMembersDisableSDKRetries(t *testing.T) {
+	if got := maxRetriesOrDefault(routerDisableSDKRetries); got != 0 {
+		t.Fatalf("router member SDK retries = %d, want 0", got)
 	}
 }
 
@@ -153,12 +208,15 @@ func TestResolveModels_Chain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	eps, policy, err := ResolveModels(cfgPath)
+	eps, routing, err := ResolveModels(cfgPath)
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
-	if policy != policyPriority {
-		t.Errorf("policy=%q, want %q", policy, policyPriority)
+	if routing.Policy != policyPriority {
+		t.Errorf("policy=%q, want %q", routing.Policy, policyPriority)
+	}
+	if routing.CallTimeout != defaultRoutingCallTimeout {
+		t.Errorf("routing call timeout=%v, want %v", routing.CallTimeout, defaultRoutingCallTimeout)
 	}
 	if len(eps) != 2 {
 		t.Fatalf("pool size=%d, want 2", len(eps))
@@ -252,11 +310,11 @@ func TestResolveModels_AcceptsRoundRobin(t *testing.T) {
 	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, policy, err := ResolveModels(cfgPath)
+	_, routing, err := ResolveModels(cfgPath)
 	if err != nil {
 		t.Fatalf("ResolveModels: %v", err)
 	}
-	if policy != policyRoundRobin {
-		t.Errorf("policy=%q, want %q", policy, policyRoundRobin)
+	if routing.Policy != policyRoundRobin {
+		t.Errorf("policy=%q, want %q", routing.Policy, policyRoundRobin)
 	}
 }

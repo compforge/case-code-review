@@ -120,6 +120,30 @@ func TestResolveModels_NoTimeoutConfigLeavesZero(t *testing.T) {
 	}
 }
 
+func TestResolveModels_RoutingCallTimeout(t *testing.T) {
+	clearLLMEnv(t)
+	cfg := arkRoutingConfig(120)
+	cfg.Routing.CallTimeoutSec = 45
+	cfgPath := writeTempConfig(t, cfg)
+	_, routing, err := ResolveModels(cfgPath)
+	if err != nil {
+		t.Fatalf("resolve models: %v", err)
+	}
+	if routing.CallTimeout != 45*time.Second {
+		t.Errorf("routing.CallTimeout = %v, want 45s", routing.CallTimeout)
+	}
+}
+
+func TestResolveModels_NegativeRoutingCallTimeoutRejected(t *testing.T) {
+	clearLLMEnv(t)
+	cfg := arkRoutingConfig(120)
+	cfg.Routing.CallTimeoutSec = -1
+	cfgPath := writeTempConfig(t, cfg)
+	if _, _, err := ResolveModels(cfgPath); err == nil || !strings.Contains(err.Error(), "routing") {
+		t.Fatalf("err = %v, want invalid routing timeout", err)
+	}
+}
+
 func TestStripModelSuffix(t *testing.T) {
 	tests := []struct {
 		input string
