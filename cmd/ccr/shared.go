@@ -173,18 +173,18 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath, modelOverride string
 	}
 	tpl.ApplyLanguage(lang)
 
-	eps, policy, err := llm.ResolveModelsWithModelOverride(cfgPath, modelOverride)
+	eps, routing, err := llm.ResolveModelsWithModelOverride(cfgPath, modelOverride)
 	if err != nil {
 		return nil, fmt.Errorf("resolve LLM endpoint: %w", err)
 	}
 	if !routingEnabled && len(eps) > 1 {
 		// routing gate off: collapse to a single model (deterministic — no
 		// round-robin variance). NewLLMRouter with a 1-pool returns a plain client.
-		eps, policy = eps[:1], ""
+		eps, routing = eps[:1], llm.RoutingOptions{}
 	}
 
 	return &llmRuntime{
-		Client:       llm.NewLLMRouter(eps, policy),
+		Client:       llm.NewLLMRouter(eps, routing),
 		Model:        eps[0].Model,
 		PlanToolDefs: planToolDefs,
 		MainToolDefs: mainToolDefs,
