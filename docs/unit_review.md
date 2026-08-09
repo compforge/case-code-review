@@ -167,8 +167,10 @@ running
   └─ deadline / provider failure ─▶ incomplete（已接受结果保留）
 ```
 
-AgentGo `BeforeTurn` 提供 turn 边界，Harness `Execution` 负责 wrap-up、StopGuard 和停止状态；Runner
-的 `HypothesisHook` 只负责单个结果的校验与接收。三层都不互相偷走职责。
+AgentGo `BeforeTurn` / `BeforeModelCall` 提供 turn 与逻辑模型调用边界，Harness `Execution` 负责
+wrap-up、调用约束、StopGuard 和停止状态；Runner 的 `HypothesisHook` 只负责单个结果的校验与接收。
+三层都不互相偷走职责。Unit Review 允许无成熟 Hypothesis 时自然结束，因此不会强制工具调用；需要
+terminal tool 的执行在 wrap-up 阶段由 Harness 强制提交。
 
 ### 3. 探索预算结束后硬关闭调查工具
 

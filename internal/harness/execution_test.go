@@ -272,6 +272,10 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 	if result.State != OutcomeCompleted || result.Turns != 2 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	requests := client.Requests()
+	if len(requests) != 2 || requests[1].ToolChoice != nil {
+		t.Fatalf("natural-completion wrap-up forced a tool: %#v", requests)
+	}
 }
 
 func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
@@ -749,6 +753,12 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	if len(requests) != 2 || len(requests[0].Tools) != len(requests[1].Tools) {
 		t.Fatalf("tool schemas changed across wrap-up: %#v", requests)
 	}
+	if requests[0].ToolChoice == nil || requests[0].ToolChoice.Mode != "required" {
+		t.Fatalf("initial wrap-up tool choice = %#v, want required", requests[0].ToolChoice)
+	}
+	if requests[1].ToolChoice == nil || requests[1].ToolChoice.Name != "task_done" {
+		t.Fatalf("final correction tool choice = %#v, want task_done", requests[1].ToolChoice)
+	}
 	for i := range requests[0].Tools {
 		if requests[0].Tools[i].Function.Name != requests[1].Tools[i].Function.Name {
 			t.Fatalf("tool schema order changed: %#v vs %#v", requests[0].Tools, requests[1].Tools)
@@ -794,6 +804,12 @@ func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
 	requests := client.Requests()
 	if len(requests) != 3 {
 		t.Fatalf("requests = %d, want investigation plus one blocked turn and one final turn", len(requests))
+	}
+	if requests[1].ToolChoice == nil || requests[1].ToolChoice.Mode != "required" {
+		t.Fatalf("initial wrap-up tool choice = %#v, want required", requests[1].ToolChoice)
+	}
+	if requests[2].ToolChoice == nil || requests[2].ToolChoice.Name != "task_done" {
+		t.Fatalf("final correction tool choice = %#v, want task_done", requests[2].ToolChoice)
 	}
 	if !strings.Contains(requestText(requests[2]), "wrap up now") ||
 		!strings.Contains(requestText(requests[2]), defaultCompletionPrompt) {
@@ -945,6 +961,14 @@ func TestExecutionInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 	}
 
 	requests := client.Requests()
+	if requests[0].ToolChoice != nil {
+		t.Fatalf("investigation turn tool choice = %#v, want provider default", requests[0].ToolChoice)
+	}
+	for i := 1; i < len(requests); i++ {
+		if requests[i].ToolChoice == nil || requests[i].ToolChoice.Mode != "required" {
+			t.Fatalf("wrap-up request %d tool choice = %#v, want required", i+1, requests[i].ToolChoice)
+		}
+	}
 	if strings.Contains(requestText(requests[0]), "wrap up now") {
 		t.Fatal("wrap-up was injected before the reserved turns")
 	}

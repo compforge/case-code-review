@@ -489,13 +489,20 @@ func NewOpenAIClient(cfg ClientConfig) *OpenAIClient {
 	}
 }
 
+// ToolChoice constrains one model request to any tool or one named tool.
+type ToolChoice struct {
+	Mode string `json:"mode,omitempty"`
+	Name string `json:"name,omitempty"`
+}
+
 // ChatRequest represents the payload for a chat completion call.
 type ChatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	MaxTokens   int       `json:"max_tokens,omitempty"`
+	Model       string      `json:"model"`
+	Messages    []Message   `json:"messages"`
+	Tools       []ToolDef   `json:"tools,omitempty"`
+	ToolChoice  *ToolChoice `json:"tool_choice,omitempty"`
+	Temperature *float64    `json:"temperature,omitempty"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
 }
 
 // CompletionsWithCtx sends a chat completion request with context support for cancellation and timeout.
@@ -576,6 +583,15 @@ func (c *OpenAIClient) buildOpenAIParams(model string, req ChatRequest) openai.C
 
 	if len(tools) > 0 {
 		params.Tools = tools
+	}
+	if req.ToolChoice != nil {
+		if req.ToolChoice.Name != "" {
+			params.ToolChoice = openai.ToolChoiceOptionFunctionToolChoice(
+				openai.ChatCompletionNamedToolChoiceFunctionParam{Name: req.ToolChoice.Name},
+			)
+		} else if req.ToolChoice.Mode != "" {
+			params.ToolChoice.OfAuto = openai.String(req.ToolChoice.Mode)
+		}
 	}
 	if req.MaxTokens > 0 {
 		params.MaxCompletionTokens = openai.Int(int64(req.MaxTokens))
@@ -830,6 +846,19 @@ func (c *AnthropicClient) buildAnthropicParams(model string, req ChatRequest) (a
 	if len(tools) > 0 {
 		tools[len(tools)-1].OfTool.CacheControl = anthropic.NewCacheControlEphemeralParam()
 		params.Tools = tools
+	}
+	if req.ToolChoice != nil {
+		switch {
+		case req.ToolChoice.Name != "":
+			params.ToolChoice = anthropic.ToolChoiceParamOfTool(req.ToolChoice.Name)
+		case req.ToolChoice.Mode == "required":
+			params.ToolChoice.OfAny = &anthropic.ToolChoiceAnyParam{}
+		case req.ToolChoice.Mode == "auto":
+			params.ToolChoice.OfAuto = &anthropic.ToolChoiceAutoParam{}
+		case req.ToolChoice.Mode == "none":
+			none := anthropic.NewToolChoiceNoneParam()
+			params.ToolChoice.OfNone = &none
+		}
 	}
 	if req.Temperature != nil {
 		params.Temperature = anthropic.Float(*req.Temperature)

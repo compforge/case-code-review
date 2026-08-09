@@ -214,6 +214,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		CommitContext:            e.replaceContext,
 		CommitMessage:            e.appendContext,
 		BeforeTurn:               e.turns.BeforeTurn,
+		BeforeModelCall:          e.beforeModelCall,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
 		Middlewares:              []agentgo.ToolMiddleware{e.toolMiddleware()},
@@ -252,6 +253,25 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	}
 	e.recorder.finishExecution(taskType, result, result.Duration)
 	return result, err
+}
+
+func (e *Execution) beforeModelCall(
+	context.Context,
+	agentgo.BeforeModelCallContext,
+) ([]agentgo.CallOption, error) {
+	if !e.turns.WrapUpIssued() || e.naturalCompletion {
+		return nil, nil
+	}
+	// The first wrap-up request must still be able to flush result tools before
+	// completion. Only the single corrective turn targets the terminal tool
+	// itself; forcing it earlier would skip valid final results such as comments.
+	if e.wrapUpFinalTurnGranted.Load() && e.completionTool != "" {
+		return []agentgo.CallOption{agentgo.WithToolChoice(map[string]any{
+			"type": "tool",
+			"name": e.completionTool,
+		})}, nil
+	}
+	return []agentgo.CallOption{agentgo.WithToolChoice("required")}, nil
 }
 
 func (e *Execution) shouldStopAfterTool(name string) bool {
