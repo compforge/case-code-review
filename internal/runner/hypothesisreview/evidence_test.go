@@ -2,6 +2,7 @@ package hypothesisreview
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -100,20 +101,40 @@ func TestEvidenceLedgerDeduplicatesRetainedReceipts(t *testing.T) {
 }
 
 func TestReviewHandlerRecordsExternalEvidenceBoundaryWithoutFailure(t *testing.T) {
-	ledger := &EvidenceLedger{}
-	hypothesis := unit.Hypothesis{ID: "h-external", Trigger: "provider emits state x"}
-	handler := &ReviewHandler{Evidence: ledger, Hypothesis: hypothesis}
-	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
-		Tool: CheckExternalEvidence,
-		Call: llm.ToolCall{ID: "call-external"},
-		Args: map[string]any{"claim": "provider emits state x"},
-	})
-	if !handled || checkpoint.Data == "" || checkpoint.Data[:1] != "{" {
-		t.Fatalf("external boundary was not a successful structured result: handled=%v result=%q", handled, checkpoint.Data)
+	tests := []struct {
+		name string
+		tool tool.Tool
+		args map[string]any
+	}{
+		{name: "search", tool: WebSearch, args: map[string]any{"query": "provider state x contract"}},
+		{name: "fetch", tool: WebFetch, args: map[string]any{"url": "https://example.com/contract"}},
 	}
-	receipts := ledger.Receipts()
-	if len(receipts) != 1 || receipts[0].Kind != ExternalEvidenceUnverifiedReceipt ||
-		receipts[0].Ref != hypothesis.ID || receipts[0].ToolCallID != "call-external" {
-		t.Fatalf("unexpected external boundary receipt: %+v", receipts)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ledger := &EvidenceLedger{}
+			hypothesis := unit.Hypothesis{ID: "h-external", Trigger: "provider emits state x"}
+			handler := &ReviewHandler{Evidence: ledger, Hypothesis: hypothesis}
+			checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
+				Tool: tt.tool,
+				Call: llm.ToolCall{ID: "call-external"},
+				Args: tt.args,
+			})
+			if !handled || checkpoint.Data == "" || checkpoint.Data[:1] != "{" {
+				t.Fatalf("external boundary was not a successful structured result: handled=%v result=%q", handled, checkpoint.Data)
+			}
+			var result map[string]any
+			if err := json.Unmarshal([]byte(checkpoint.Data), &result); err != nil {
+				t.Fatalf("external boundary result is not JSON: %v", err)
+			}
+			if result["status"] != "unavailable" || result["verification"] != "unverified" ||
+				result["capability"] != tt.tool.Name() {
+				t.Fatalf("unexpected external boundary result: %+v", result)
+			}
+			receipts := ledger.Receipts()
+			if len(receipts) != 1 || receipts[0].Kind != ExternalEvidenceUnverifiedReceipt ||
+				receipts[0].Ref != hypothesis.ID || receipts[0].ToolCallID != "call-external" {
+				t.Fatalf("unexpected external boundary receipt: %+v", receipts)
+			}
+		})
 	}
 }

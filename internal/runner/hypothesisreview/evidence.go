@@ -180,8 +180,10 @@ func (h *ReviewHandler) HandleTool(
 	if request.Tool == SubmitAssessment {
 		return h.Assessments.HandleTool(ctx, request)
 	}
-	if request.Tool == CheckExternalEvidence {
-		result, receipt := externalEvidenceResult(request.Call.ID, h.Hypothesis, request.Args)
+	if request.Tool == WebSearch || request.Tool == WebFetch {
+		result, receipt := externalEvidenceUnavailableResult(
+			request.Call.ID, h.Hypothesis, request.Tool, request.Args,
+		)
 		if h.Evidence != nil {
 			h.Evidence.RecordReceipt(receipt)
 		}

@@ -29,7 +29,7 @@ func TestToolDefsAreConvergent(t *testing.T) {
 	}
 	for _, required := range []string{
 		"read_files", "read_base_files", "search_code",
-		CheckExternalEvidence.Name(), SubmitAssessment.Name(),
+		WebSearch.Name(), WebFetch.Name(), SubmitAssessment.Name(),
 	} {
 		if !got[required] {
 			t.Errorf("missing review tool %q: %v", required, got)
