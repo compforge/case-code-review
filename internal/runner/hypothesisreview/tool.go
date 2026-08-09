@@ -14,7 +14,10 @@ const WrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop gathering evidence now. "
 	"A valid submit_assessment call ends this review. Use insufficient/unknown when a decisive fact is still missing; do not " +
 	"claim support without the required diff evidence receipt."
 
-var CheckExternalEvidence = tool.Named("check_external_evidence")
+var (
+	WebSearch = tool.Named("web_search")
+	WebFetch  = tool.Named("web_fetch")
+)
 
 const ExternalEvidenceUnverifiedReceipt = "external_unverified"
 
@@ -28,50 +31,80 @@ func ToolDefs(main []llm.ToolDef) []llm.ToolDef {
 		tool.FileReadDiff.Name(): true,
 		tool.CodeSearch.Name():   true,
 	}
-	out := make([]llm.ToolDef, 0, len(main)+2)
+	out := make([]llm.ToolDef, 0, len(main)+3)
 	for _, def := range main {
 		if allowed[def.Function.Name] {
 			out = append(out, def)
 		}
 	}
-	out = append(out, ExternalEvidenceToolDef(), AssessmentToolDef())
+	out = append(out, WebSearchToolDef(), WebFetchToolDef(), AssessmentToolDef())
 	return out
 }
 
-// ExternalEvidenceToolDef exposes CCR's evidence boundary as a tool affordance.
-// It does not pretend to browse the internet: the successful result means this
-// run has no authoritative external contract evidence for the premise.
-func ExternalEvidenceToolDef() llm.ToolDef {
+// WebSearchToolDef exposes web discovery while keeping the current runtime's
+// unavailable external-access boundary explicit to the reviewer.
+func WebSearchToolDef() llm.ToolDef {
+	return externalEvidenceToolDef(
+		WebSearch,
+		"Search the public web when a decisive premise requires discovering an external source. "+
+			"External access is unavailable in this Review 2 runtime, so the result is unverified and requires support=insufficient.",
+		"query",
+		"The search query needed to verify the decisive external premise.",
+	)
+}
+
+// WebFetchToolDef exposes retrieval of a known URL under the same boundary.
+func WebFetchToolDef() llm.ToolDef {
+	return externalEvidenceToolDef(
+		WebFetch,
+		"Fetch a known external URL when its content is decisive to the current hypothesis. "+
+			"External access is unavailable in this Review 2 runtime, so the result is unverified and requires support=insufficient.",
+		"url",
+		"The external URL whose content is needed to verify the decisive premise.",
+	)
+}
+
+func externalEvidenceToolDef(
+	identity tool.Tool,
+	description string,
+	argument string,
+	argumentDescription string,
+) llm.ToolDef {
 	return llm.ToolDef{
 		Type: "function",
 		Function: llm.FunctionDef{
-			Name: CheckExternalEvidence.Name(),
-			Description: "Use when a decisive premise depends on behavior owned by an external provider, SDK, API, database, or protocol and is not proven by retained repository evidence. " +
-				"This records the evidence boundary without performing network research; an unverified result requires support=insufficient.",
+			Name:        identity.Name(),
+			Description: description,
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"claim": map[string]any{
+					argument: map[string]any{
 						"type":        "string",
-						"description": "The decisive external behavior premise. Optional because the current Hypothesis is already bound to this Review 2 execution.",
+						"description": argumentDescription,
 					},
 				},
+				"required": []string{argument},
 			},
 		},
 	}
 }
 
-func externalEvidenceResult(
+func externalEvidenceUnavailableResult(
 	requestID string,
 	hypothesis unit.Hypothesis,
+	capability tool.Tool,
 	args map[string]any,
 ) (string, EvidenceReceipt) {
-	claim := strings.TrimSpace(stringValue(args, "claim"))
-	if claim == "" {
-		claim = strings.TrimSpace(hypothesis.Trigger)
+	argument := "query"
+	if capability == WebFetch {
+		argument = "url"
 	}
-	if claim == "" {
-		claim = strings.TrimSpace(hypothesis.Content)
+	target := strings.TrimSpace(stringValue(args, argument))
+	if target == "" {
+		target = strings.TrimSpace(hypothesis.Trigger)
+	}
+	if target == "" {
+		target = strings.TrimSpace(hypothesis.Content)
 	}
 	receipt := EvidenceReceipt{
 		ToolCallID: requestID,
@@ -79,9 +112,11 @@ func externalEvidenceResult(
 		Ref:        hypothesis.ID,
 	}
 	result, _ := json.Marshal(map[string]any{
-		"status":           "unverified",
-		"claim":            claim,
-		"message":          "CCR has no authoritative external contract evidence for this premise in the current run.",
+		"status":           "unavailable",
+		"verification":     "unverified",
+		"capability":       capability.Name(),
+		"target":           target,
+		"message":          "CCR cannot access this external source in the current Review 2 run.",
 		"required_support": "insufficient",
 		"receipt":          receipt,
 	})

@@ -164,7 +164,7 @@ func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
 	hypothesis := completeHypothesis("h-external", "adapter.go")
 	hypothesis.Trigger = "external provider emits state x"
 	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
-		reviewToolResponse("external-1", CheckExternalEvidence.Name(), `{}`),
+		reviewToolResponse("external-1", WebSearch.Name(), `{"query":"provider state x contract"}`),
 		reviewToolResponse("submit-supported", SubmitAssessment.Name(), `{
 			"support":"supported","attribution":"caused","value":"actionable",
 			"novelty":"new","reason":"the external state triggers the issue",
