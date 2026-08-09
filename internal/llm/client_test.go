@@ -162,6 +162,40 @@ func TestBuildAnthropicParams_CacheControl(t *testing.T) {
 	})
 }
 
+func TestBuildOpenAIParams_ToolChoice(t *testing.T) {
+	client := NewOpenAIClient(ClientConfig{URL: "https://api.example.com"})
+
+	required := client.buildOpenAIParams("gpt-5", ChatRequest{ToolChoice: &ToolChoice{Mode: "required"}})
+	if !required.ToolChoice.OfAuto.Valid() || required.ToolChoice.OfAuto.Value != "required" {
+		t.Fatalf("required tool choice = %#v", required.ToolChoice)
+	}
+
+	named := client.buildOpenAIParams("gpt-5", ChatRequest{ToolChoice: &ToolChoice{Name: "submit_result"}})
+	if function := named.ToolChoice.GetFunction(); function == nil || function.Name != "submit_result" {
+		t.Fatalf("named tool choice = %#v", named.ToolChoice)
+	}
+}
+
+func TestBuildAnthropicParams_ToolChoice(t *testing.T) {
+	client := NewAnthropicClient(ClientConfig{URL: "https://api.anthropic.com"})
+
+	required, err := client.buildAnthropicParams("claude-sonnet-4", ChatRequest{ToolChoice: &ToolChoice{Mode: "required"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required.ToolChoice.OfAny == nil {
+		t.Fatalf("required tool choice = %#v", required.ToolChoice)
+	}
+
+	named, err := client.buildAnthropicParams("claude-sonnet-4", ChatRequest{ToolChoice: &ToolChoice{Name: "submit_result"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name := named.ToolChoice.GetName(); name == nil || *name != "submit_result" {
+		t.Fatalf("named tool choice = %#v", named.ToolChoice)
+	}
+}
+
 func TestBuildAnthropicParams_CacheControl_NoTools(t *testing.T) {
 	client := NewAnthropicClient(ClientConfig{URL: "https://api.anthropic.com"})
 

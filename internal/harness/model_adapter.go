@@ -40,10 +40,11 @@ func (m *chatModel) Generate(
 	}
 
 	request := llm.ChatRequest{
-		Model:     m.model,
-		Messages:  toLLMMessages(messages),
-		Tools:     toLLMToolDefs(tools),
-		MaxTokens: maxTokens,
+		Model:      m.model,
+		Messages:   toLLMMessages(messages),
+		Tools:      toLLMToolDefs(tools),
+		ToolChoice: toLLMToolChoice(cfg.ToolChoice),
+		MaxTokens:  maxTokens,
 	}
 	record := m.recorder.beginModel(m.taskType, request.Messages)
 	started := time.Now()
@@ -87,6 +88,20 @@ func (m *chatModel) GenerateStream(
 
 func (m *chatModel) SupportsTools() bool { return true }
 func (m *chatModel) ModelName() string   { return m.model }
+
+func toLLMToolChoice(choice any) *llm.ToolChoice {
+	switch value := choice.(type) {
+	case string:
+		if value != "" {
+			return &llm.ToolChoice{Mode: value}
+		}
+	case map[string]any:
+		if name, _ := value["name"].(string); name != "" {
+			return &llm.ToolChoice{Name: name}
+		}
+	}
+	return nil
+}
 
 func toLLMMessages(messages []agentgo.Message) []llm.Message {
 	out := make([]llm.Message, 0, len(messages))

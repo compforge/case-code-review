@@ -86,6 +86,7 @@ func (e *scanExecutor) Run(
 		MaxTokens:               e.maxTokens,
 		ContextWindow:           e.maxTokens,
 		WrapUpPrompt:            e.wrapUpPrompt,
+		WrapUpAllowedTools:      []string{finding.CodeComment.Name()},
 		CompressionSystemPrompt: e.compressionSystemPrompt,
 		CompressionPrompt:       e.compressionPrompt,
 		CompressionUpdatePrompt: e.compressionPrompt,
