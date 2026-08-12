@@ -231,19 +231,19 @@ system: <Review 1 system prompt / rules>
 user:   <review task；Unit diff、Clue 摘要、源码 slot pointer>
 
 user: InitialFileContext
-  - [source] A.go — exact source follows
   - [outline] B.go — Language FileOutline
   - [reference] C.go — statically related path
 
 <file_messages>
   user: File(path=A, range=..., context="code under review")
-  user: File(path=B, range=..., context="related caller/callee/project context")
+  user: File(path=D, range=..., context="related caller/callee context")
   ...
 </file_messages>
 ```
 
 进入 agent loop 后，assistant tool call 与对应 tool result 继续追加到同一条 conversation。工具结果先
-由 `FromLLM` 恢复成 typed message，下一次请求时再按当前压缩等级 `ToLLM`：
+由 `FromLLM` 恢复成 typed message；需要压缩时消息按目标 ratio 更新自己的当前投影，下一次请求由
+无参数 `ToLLM()` 渲染该投影：
 
 ```text
 assistant: <assistant text, if any> + tool_calls(search_code, read_files(reads=[...]), ...)
@@ -313,12 +313,14 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 ```
 
 随后依次执行 covered-range 去重、typed compaction、必要时的通用 context strategy，最后统一降成 provider
-消息。`system + review task` 尽量保持稳定；文件、搜索和 diff 可以从 full 降为 condensed/reference，
+消息。Runner 交给 Harness 的消息始终保留全本；窗口未超压时首次请求仍使用 full。只有 ContextManager
+判断需要压缩时才把目标比例交给消息，文件由 `msg.File` 自行在 full/outline/path 中选择，搜索和 diff
+仍可从 full 降为 condensed/reference，
 但 tool call/result 配对和消息顺序不变。Review Plan 是有限 lead 清单，Review 1 不因全局 turn 上限尚有
 余量而继续扩散；简单 Unit 可以很快自然结束，不必等待 wrap-up。有限调查窗口结束后才进入 wrap-up；
 工具 schema 仍不变，执行层只允许最终结果提交，避免继续调查空转。
 
-预载 File 的 condensed 形态是 Language 生成的 `FileOutline`：代码保留声明与数据成员，JSON 保留
+预载 File 自有的 outline 形态由 Language 生成 `FileOutline`：代码保留声明与数据成员，JSON 保留
 key/容器结构并压短长 value，Markdown 保留标题层级。它位于“完整源码 → 文件引用”之间，只帮助模型
 导航；一旦源码降成 Outline，该范围不再算作完整覆盖，模型需要行为细节时仍可重新读取。
 
@@ -327,11 +329,14 @@ key/容器结构并压短长 value，Markdown 保留标题层级。它位于“�
 - 永久保留 Unit diff、当前 lead ledger、已确认事实和证据引用；
 - 原始 search 列表在完成下一步定位后可淘汰；
 - 预载源码优先降为 FileOutline，再降为 path/line 引用；动态 `read_files` 结果仍按可重建内容处理；
+- Priority 按当前执行中的证据价值赋给消息实例：diff 所在源码高于静态 caller/callee 源码，loop 临时读取
+  的文件保持默认低优先级；
 - `search_code` / `file_find` 结果保留 query 和命中索引；工具无命中作为该 query 的反证保留一次，
   不在后续多轮携带完整相似词建议；
 - 试验性的 Board 只共享事实或 Hypothesis，不共享“某 Unit 读过某文件”这种操作日志。
 
-压缩等级只由 ContextManager 在预算趋紧时选择，消息自己决定对应形态。默认从尾部向前压并在够用
+ContextManager 在预算趋紧时只给出目标 ratio，每个 domain message 自己决定满足预算时的内容取舍，
+不存在跨消息共享的压缩等级。默认从尾部向前压并在够用
 时停止，使 system/task 和较早消息保持稳定；已经提交的压缩不再反向展开。模型请求末尾会附一份
 当前仍完整可见的 path/range/角色清单，既帮助模型复用已有源码，也作为 `read_files` 覆盖判断的同一
 事实来源。
@@ -352,7 +357,7 @@ Session debrief 同时记录实际预载的源码，以及 Unit 按 caller/calle
 静态知道的路径。Viewer 将二者分别与 `read_files` 对比：前者判断预载是否命中，后者回答“静态分析
 本可提前提供多少读取目标”，为后续扩大 caller/callee 预载范围提供数据，而不是先拍脑袋全量预载。
 
-Initial Context 进一步把静态关系投影成 `source / outline / reference` 三档：Unit 和已解析的直接调用
+Initial Context 进一步把静态关系投影成独立 `File` source 消息与 `outline / reference` 导航目录：Unit 和已解析的直接调用
 邻居优先给源码，其余 Language Outline 与 RepositoryIndex 相关路径按预算降级；`outline/reference`
 只负责导航，绝不冒充源码覆盖或拦截读取。每项材料同时保留“为何进入 Initial Context”的结构化来源。
 

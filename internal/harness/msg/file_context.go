@@ -10,12 +10,13 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// FileContextView describes how much of a statically related file was placed
-// in the initial request. Only ViewSource is evidence-bearing source; Outline
-// and Reference are navigation hints and must never suppress read_files.
+// FileContextView describes how much navigation context was supplied for a
+// statically related file. Exact source is represented only by File.
 type FileContextView string
 
 const (
+	// ViewSource is emitted by File context items; FileContext itself carries
+	// only outline/reference entries.
 	ViewSource    FileContextView = "source"
 	ViewOutline   FileContextView = "outline"
 	ViewReference FileContextView = "reference"
@@ -36,12 +37,25 @@ type FileContextEntry struct {
 // model and to trajectory analysis without flattening those roles into prompt
 // prose assembled by Runner.
 type FileContext struct {
-	entries  []FileContextEntry
-	priority int
+	entries        []FileContextEntry
+	priority       int
+	representation fileContextRepresentation
 }
 
+type fileContextRepresentation uint8
+
+const (
+	fileContextDetailed fileContextRepresentation = iota
+	fileContextReferences
+)
+
 func NewFileContext(entries []FileContextEntry) *FileContext {
-	copyEntries := append([]FileContextEntry(nil), entries...)
+	copyEntries := make([]FileContextEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.View != ViewSource {
+			copyEntries = append(copyEntries, entry)
+		}
+	}
 	sort.SliceStable(copyEntries, func(i, j int) bool {
 		if copyEntries[i].View != copyEntries[j].View {
 			return fileViewRank(copyEntries[i].View) > fileViewRank(copyEntries[j].View)
@@ -51,13 +65,15 @@ func NewFileContext(entries []FileContextEntry) *FileContext {
 	return &FileContext{entries: copyEntries}
 }
 
-func (c *FileContext) ToLLM(level CompactionLevel) llm.Message {
+func (c *FileContext) ToLLM() llm.Message { return c.render(c.representation) }
+
+func (c *FileContext) render(representation fileContextRepresentation) llm.Message {
 	var b strings.Builder
-	b.WriteString("INITIAL FILE CONTEXT (source was supplied as exact code; outline/reference are navigation hints; use the current file inventory for present coverage):\n")
+	b.WriteString("INITIAL FILE CONTEXT (outline/reference are navigation hints; exact source, when present, is supplied as separate file messages):\n")
 	for _, entry := range c.entries {
 		view := entry.View
 		content := entry.Content
-		if level >= CompactionCondensed && view == ViewOutline {
+		if representation >= fileContextReferences && view == ViewOutline {
 			view = ViewReference
 			content = ""
 		}
@@ -80,14 +96,18 @@ func (c *FileContext) ToLLM(level CompactionLevel) llm.Message {
 	return llm.NewTextMessage("user", strings.TrimRight(b.String(), "\n"))
 }
 
-func (c *FileContext) MaxCompaction() CompactionLevel { return CompactionCondensed }
-func (c *FileContext) Priority() int                  { return c.priority }
+func (c *FileContext) Compact(expect float64) (Msg, float64) {
+	next := c.clone()
+	next.representation, expect = compactRepresentation(expect, c.representation, fileContextReferences, next.render)
+	return next, expect
+}
+func (c *FileContext) Priority() int { return c.priority }
 
-func (c *FileContext) ContextItems(level CompactionLevel) []agentgo.ContextItem {
+func (c *FileContext) ContextItems() []agentgo.ContextItem {
 	out := make([]agentgo.ContextItem, len(c.entries))
 	for i, entry := range c.entries {
 		representation := entry.View
-		if level >= CompactionCondensed && representation == ViewOutline {
+		if c.representation >= fileContextReferences && representation == ViewOutline {
 			representation = ViewReference
 		}
 		out[i] = agentgo.ContextItem{
@@ -105,13 +125,11 @@ func (c *FileContext) Entries() []FileContextEntry {
 }
 
 func (c *FileContext) clone() *FileContext {
-	return &FileContext{entries: c.Entries(), priority: c.priority}
+	return &FileContext{entries: c.Entries(), priority: c.priority, representation: c.representation}
 }
 
 func fileViewRank(view FileContextView) int {
 	switch view {
-	case ViewSource:
-		return 3
 	case ViewOutline:
 		return 2
 	case ViewReference:

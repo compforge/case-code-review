@@ -12,15 +12,25 @@ import "github.com/qiankunli/case-code-review/internal/llm"
 // It is NOT dedup-eligible (each digest is a distinct point-in-time snapshot,
 // not a re-read of the same range), so it implements only the evict path.
 type Board struct {
-	digest  string
-	evicted bool
+	digest         string
+	evicted        bool
+	representation boardRepresentation
 }
+
+type boardRepresentation uint8
+
+const (
+	boardDigest boardRepresentation = iota
+	boardReference
+)
 
 // NewBoard wraps a rendered board digest as an evictable user message.
 func NewBoard(digest string) *Board { return &Board{digest: digest} }
 
-func (b *Board) ToLLM(level CompactionLevel) llm.Message {
-	if level >= CompactionReference {
+func (b *Board) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *Board) render(representation boardRepresentation) llm.Message {
+	if representation >= boardReference {
 		return llm.NewTextMessage("user",
 			"(peer-unit board notes compacted; fresh notes can be pulled again)")
 	}
@@ -31,9 +41,13 @@ func (b *Board) ToLLM(level CompactionLevel) llm.Message {
 	return llm.NewTextMessage("user", b.digest)
 }
 
-func (b *Board) Lower() llm.Message { return b.ToLLM(CompactionNone) }
+func (b *Board) Compact(expect float64) (Msg, float64) {
+	next := *b
+	next.representation, expect = compactRepresentation(expect, b.representation, boardReference, next.render)
+	return &next, expect
+}
 
-func (b *Board) MaxCompaction() CompactionLevel { return CompactionReference }
+func (b *Board) Priority() int { return 0 }
 
 // Reclaim elides the digest under token pressure (idempotent; msg.Reclaimable).
 // Board notes are the most re-derivable slice of the conversation — losing them

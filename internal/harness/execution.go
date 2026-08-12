@@ -315,7 +315,7 @@ func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.Tool
 		Tool: call.Name, ToolCallID: call.ID, Arguments: args,
 		Content: string(result.Content), IsError: result.IsError,
 	})
-	return domainMessage{value: decoded, timestamp: time.Now()}
+	return newDomainMessage(decoded, time.Now())
 }
 
 func (e *Execution) continuationContext() []agentgo.AgentMessage {

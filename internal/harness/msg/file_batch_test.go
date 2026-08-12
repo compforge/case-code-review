@@ -23,11 +23,12 @@ func TestFileBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	if batch.Files()[0].Path != "a.go" || batch.Files()[1].Path != "b.go" {
 		t.Fatalf("file order = %#v", batch.Files())
 	}
-	items := batch.ContextItems(CompactionReference)
+	reference, _ := batch.Compact(0)
+	items := reference.(*FileBatch).ContextItems()
 	if len(items) != 2 || items[0].Identity != "a.go" || items[0].Representation != "reference" || items[1].Identity != "b.go" {
 		t.Fatalf("batch context items = %#v", items)
 	}
-	wire := batch.ToLLM(CompactionNone)
+	wire := batch.ToLLM()
 	if wire.ToolCallID != "batch-1" || !strings.Contains(wire.ExtractText(), "missing.go") {
 		t.Fatalf("batch lowering lost pairing/error: %+v", wire)
 	}

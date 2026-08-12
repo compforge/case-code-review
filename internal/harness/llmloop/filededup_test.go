@@ -181,7 +181,7 @@ func TestEvictReclaimable_IncludesBoard(t *testing.T) {
 	if !bd.Reclaimed() {
 		t.Fatal("board not reclaimed")
 	}
-	lw := bd.Lower()
+	lw := bd.ToLLM()
 	if !strings.Contains(lw.ExtractText(), "elided") {
 		t.Fatalf("reclaimed board must render a pointer: %q", lw.ExtractText())
 	}

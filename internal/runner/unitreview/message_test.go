@@ -7,13 +7,14 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 )
 
-func TestBoardDigestOwnsReviewSemantics(t *testing.T) {
-	board := NewBoardDigest("peer confirmed a caller")
-	full := board.ToLLM(msg.CompactionNone)
+func TestBoardOwnsReviewSemantics(t *testing.T) {
+	board := msg.NewBoard("peer confirmed a caller")
+	full := board.ToLLM()
 	if got := full.ExtractText(); got != "peer confirmed a caller" {
 		t.Fatalf("full board = %q", got)
 	}
-	reference := board.ToLLM(msg.CompactionReference)
+	projected, _ := board.Compact(0)
+	reference := projected.ToLLM()
 	if got := reference.ExtractText(); !strings.Contains(got, "peer-unit") {
 		t.Fatalf("board reference = %q", got)
 	}

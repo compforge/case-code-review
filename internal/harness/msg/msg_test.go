@@ -31,7 +31,7 @@ func TestWrapLowerRoundTrip(t *testing.T) {
 }
 
 func TestText(t *testing.T) {
-	m := Text("user", "hi").ToLLM(CompactionNone)
+	m := Text("user", "hi").ToLLM()
 	if m.Role != "user" || m.ExtractText() != "hi" {
 		t.Fatalf("Text lowered wrong: %+v", m)
 	}

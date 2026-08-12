@@ -8,17 +8,12 @@ import (
 	"strings"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
 )
-
-// preloadSourceBudget caps source injected before one Unit Review. Typical
-// units fit whole; a giant file cannot crowd the prompt toward the token guard.
-const preloadSourceBudget = 32 * 1024
 
 const (
 	sourceNotPreloaded   = "(not preloaded — fetch what you need via read_files)"
@@ -28,33 +23,33 @@ const (
 	maxInitialOutlines   = 6
 	maxInitialReferences = 24
 	initialOutlineBudget = 12 * 1024
+
+	// Priority is relative within one Review 1 execution. Files containing the
+	// reviewed diff are primary evidence; statically selected neighbors are
+	// useful context; files discovered during the loop keep the default 0.
+	priorityRelatedSource = 10
+	priorityUnitSource    = 20
 )
 
 // preloadReviewFiles reads the high-confidence source already implied by the
-// Unit. Own files are filled first; call-adjacent bodies use the remaining
-// budget. The returned File messages preserve path/range identity for later
-// coverage checks and compaction.
+// Unit. Every selected source enters Harness as a full-fidelity File; the File
+// itself chooses source, outline, or path when ContextManager projects it.
 func (a *Runner) preloadReviewFiles(
 	ctx context.Context,
 	u unit.Unit,
-) (own, related []*msg.File, notes, outcomes []string) {
+) (own, related []*msg.File, outcomes []string) {
 	if a.fileReader() == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil
 	}
 
-	budget := preloadSourceBudget
 	symbols := symbolsByPath(u)
 	for _, filePath := range u.Paths() {
-		files, note, outcome := a.preloadPath(
-			ctx, filePath, symbols[filePath], true, "code under review", &budget,
-		)
+		files, outcome := a.preloadPath(ctx, filePath, symbols[filePath], true, "code under review")
 		for _, file := range files {
-			file.ConfigureContext("unit", strings.Join(symbols[filePath], ", "))
+			file.ConfigureContext("unit", strings.Join(symbols[filePath], ", ")).
+				ConfigurePriority(priorityUnitSource)
 		}
 		own = append(own, files...)
-		if note != "" {
-			notes = append(notes, note)
-		}
 		if outcome != "" {
 			outcomes = append(outcomes, outcome)
 		}
@@ -63,18 +58,17 @@ func (a *Runner) preloadReviewFiles(
 	for _, clue := range a.relatedSourceClues(u) {
 		filePath, _, _ := language.SplitSymbolID(clue.Ref)
 		label := "related " + string(clue.Relation) + " " + clue.Ref
-		files, _, outcome := a.preloadPath(
-			ctx, filePath, []string{clue.Ref}, false, label, &budget,
-		)
+		files, outcome := a.preloadPath(ctx, filePath, []string{clue.Ref}, false, label)
 		for _, file := range files {
-			file.ConfigureContext(string(clue.Relation), clue.Ref)
+			file.ConfigureContext(string(clue.Relation), clue.Ref).
+				ConfigurePriority(priorityRelatedSource)
 		}
 		related = append(related, files...)
 		if outcome != "" {
 			outcomes = append(outcomes, outcome)
 		}
 	}
-	return own, related, notes, outcomes
+	return own, related, outcomes
 }
 
 func symbolsByPath(u unit.Unit) map[string][]string {
@@ -114,26 +108,23 @@ func (a *Runner) relatedSourceClues(u unit.Unit) []unit.Clue {
 	return out
 }
 
-// preloadPath mirrors read_files's numbered-line format. Own source prefers the
-// whole file and falls back to changed function spans; related source always
-// carries only the named function bodies.
+// preloadPath mirrors read_files's numbered-line format. Own source carries the
+// whole file; related source carries only the named function bodies.
 func (a *Runner) preloadPath(
 	ctx context.Context,
 	filePath string,
 	symbols []string,
 	whole bool,
 	label string,
-	budget *int,
-) (files []*msg.File, note, outcome string) {
+) (files []*msg.File, outcome string) {
 	content, err := a.fileReader().Read(ctx, filePath)
 	if err != nil {
-		return nil, "", "unreadable " + filePath
+		return nil, "unreadable " + filePath
 	}
 	lines := strings.Split(strings.TrimRight(content, "\n"), "\n")
 	outline, _ := a.sourceAnalyzer().FileOutline(ctx, language.Source{Path: filePath, Content: content})
 
-	if whole && len(content) <= *budget {
-		*budget -= len(content)
+	if whole {
 		var b strings.Builder
 		fmt.Fprintf(&b, "File: %s (Total lines: %d)\n", filePath, len(lines))
 		for i, line := range lines {
@@ -142,23 +133,16 @@ func (a *Runner) preloadPath(
 		return []*msg.File{
 			msg.NewFile(filePath, 1, len(lines), len(lines), strings.TrimRight(b.String(), "\n")).
 				ConfigurePresentation(label, outline.Render()),
-		}, "", "whole " + filePath
+		}, "whole " + filePath
 	}
 
-	if len(symbols) > 0 && (!whole || a.features.Enabled(feature.RangedPreload)) {
-		files = a.preloadSpans(ctx, filePath, symbols, label, content, lines, outline, budget)
+	if len(symbols) > 0 {
+		files = a.preloadSpans(ctx, filePath, symbols, label, content, lines, outline)
 		if len(files) > 0 {
-			return files, "", "ranged " + filePath
+			return files, "ranged " + filePath
 		}
 	}
-
-	if whole {
-		return nil, fmt.Sprintf(
-			"File: %s — %d bytes exceeds the preload budget; read on demand via read_files",
-			filePath, len(content),
-		), "budget_miss " + filePath
-	}
-	return nil, "", "dropped " + label
+	return nil, "dropped " + label
 }
 
 func (a *Runner) preloadSpans(
@@ -168,7 +152,6 @@ func (a *Runner) preloadSpans(
 	label, content string,
 	lines []string,
 	outline language.FileOutline,
-	budget *int,
 ) []*msg.File {
 	var out []*msg.File
 	for _, symbol := range symbols {
@@ -184,10 +167,6 @@ func (a *Runner) preloadSpans(
 		for i := start; i <= end; i++ {
 			fmt.Fprintf(&b, "%d|%s\n", i, lines[i-1])
 		}
-		if b.Len() > *budget {
-			continue // a smaller later function may still fit
-		}
-		*budget -= b.Len()
 		out = append(out, msg.NewFile(
 			filePath, start, end, len(lines), strings.TrimRight(b.String(), "\n"),
 		).ConfigurePresentation(label, outline.RenderRange(start, end)))
@@ -196,114 +175,32 @@ func (a *Runner) preloadSpans(
 }
 
 // assembleReviewMessages keeps [system, task] as a stable prefix and appends
-// each source range as a separate File message. If the assembled prompt is too
-// large, related source is removed before the Unit's own source.
+// every selected source range as a separate full-fidelity File message.
 func (a *Runner) assembleReviewMessages(
 	build func(unitSlot, relatedSlot string) []llm.Message,
 	own, related []*msg.File,
 	initial []msg.FileContextEntry,
-	notes []string,
-	tokenLimit int,
-	deb *session.Debrief,
 ) []msg.Msg {
-	assemble := func(withOwn, withRelated bool) []msg.Msg {
-		unitSlot := sourceNotPreloaded
-		if withOwn && len(own) > 0 {
-			unitSlot = unitSourcePointer
-		}
-		if len(notes) > 0 {
-			unitSlot += "\n" + strings.Join(notes, "\n")
-		}
-		relatedSlot := ""
-		if withRelated && len(related) > 0 {
-			relatedSlot = relatedSourcePointer
-		}
-
-		out := msg.Wrap(build(unitSlot, relatedSlot))
-		catalog := initialFileCatalog(initial, own, related, withOwn, withRelated)
-		if len(catalog) > 0 {
-			out = append(out, msg.NewFileContext(catalog))
-		}
-		if withOwn {
-			for _, file := range own {
-				out = append(out, file)
-			}
-		}
-		if withRelated {
-			for _, file := range related {
-				out = append(out, file)
-			}
-		}
-		return out
+	unitSlot := sourceNotPreloaded
+	if len(own) > 0 {
+		unitSlot = unitSourcePointer
+	}
+	relatedSlot := ""
+	if len(related) > 0 {
+		relatedSlot = relatedSourcePointer
 	}
 
-	over := func(messages []msg.Msg) bool {
-		return llm.CountMessagesTokens(msg.Lower(messages)) > tokenLimit
+	out := msg.Wrap(build(unitSlot, relatedSlot))
+	if len(initial) > 0 {
+		out = append(out, msg.NewFileContext(initial))
 	}
-	domain := assemble(true, true)
-	if len(related) > 0 && over(domain) {
-		domain = assemble(true, false)
-		deb.Degradations = append(deb.Degradations, "related_source_dropped")
+	for _, file := range own {
+		out = append(out, file)
 	}
-	if len(own) > 0 && over(domain) {
-		domain = assemble(false, false)
-		deb.Degradations = append(deb.Degradations, "unit_source_dropped")
-	}
-	return domain
-}
-
-func initialFileCatalog(
-	initial []msg.FileContextEntry,
-	own, related []*msg.File,
-	withOwn, withRelated bool,
-) []msg.FileContextEntry {
-	byPath := make(map[string]msg.FileContextEntry)
-	add := func(entry msg.FileContextEntry) {
-		filePath := path.Clean(entry.Path)
-		if filePath == "." || filePath == "" {
-			return
-		}
-		entry.Path = filePath
-		current, exists := byPath[filePath]
-		if !exists || initialContextViewRank(entry.View) > initialContextViewRank(current.View) {
-			byPath[filePath] = entry
-		}
-	}
-	for _, entry := range initial {
-		add(entry)
-	}
-	addFiles := func(files []*msg.File, included bool) {
-		for _, file := range files {
-			view := msg.ViewSource
-			if !included {
-				view = msg.ViewReference
-			}
-			add(msg.FileContextEntry{
-				Path: file.Path, View: view, Reason: file.ContextReason, Ref: file.ContextRef,
-			})
-		}
-	}
-	addFiles(own, withOwn)
-	addFiles(related, withRelated)
-
-	out := make([]msg.FileContextEntry, 0, len(byPath))
-	for _, entry := range byPath {
-		out = append(out, entry)
+	for _, file := range related {
+		out = append(out, file)
 	}
 	return out
-}
-
-func initialContextViewRank(view msg.FileContextView) int {
-	switch view {
-	case msg.ViewSource:
-		return 3
-	case msg.ViewOutline:
-		return 2
-	case msg.ViewReference:
-		return 1
-	default:
-		return 0
-	}
 }
 
 // initialFileContext turns statically known relationships into a bounded

@@ -28,42 +28,25 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// CompactionLevel is selected only by Harness context projection. Callers
-// provide full-fidelity domain messages; they never choose or persist a level.
-type CompactionLevel uint8
-
-const (
-	CompactionNone CompactionLevel = iota
-	CompactionCondensed
-	CompactionReference
-)
-
 // Msg is one review-domain message in a loop's conversation.
 type Msg interface {
-	// ToLLM renders the message into its LLM wire form at the fidelity chosen
-	// by ContextManager (exactly one message — see the package invariant).
-	ToLLM(CompactionLevel) llm.Message
+	// ToLLM renders the message's current projection into exactly one LLM wire
+	// message. Representation selection belongs to Compact, not the renderer.
+	ToLLM() llm.Message
+	// Compact returns the highest-fidelity immutable projection that satisfies
+	// expect, measured against this message's full representation. The ratio is
+	// only a budget target: each domain message owns its semantic trade-offs.
+	Compact(expect float64) (Msg, float64)
+	// Priority is execution-local information importance. Higher-priority
+	// messages are compacted after lower-priority messages.
+	Priority() int
 }
 
 // ContextItemProvider lets a domain message expose structured admission facts
 // through AgentGo's shared protocol without changing its LLM rendering.
 type ContextItemProvider interface {
 	Msg
-	ContextItems(CompactionLevel) []agentgo.ContextItem
-}
-
-// Compactable lets a message declare how far ContextManager may compact it.
-// The message owns each representation; Harness owns when to select one.
-type Compactable interface {
-	Msg
-	MaxCompaction() CompactionLevel
-}
-
-// Prioritized lets the application state which messages should retain detail
-// longest. Higher values compact later; messages without it use priority 0.
-type Prioritized interface {
-	Msg
-	Priority() int
+	ContextItems() []agentgo.ContextItem
 }
 
 // ToolResultMsg preserves the tool identity needed to reconstruct typed
@@ -92,11 +75,9 @@ type Raw struct {
 	M llm.Message
 }
 
-func (r Raw) ToLLM(CompactionLevel) llm.Message { return r.M }
-
-// Lower keeps the old call-site convenience for code that explicitly wants
-// the un-compacted wire form. Runtime projection goes through ToLLM.
-func (r Raw) Lower() llm.Message { return r.ToLLM(CompactionNone) }
+func (r Raw) ToLLM() llm.Message             { return r.M }
+func (r Raw) Compact(float64) (Msg, float64) { return r, 1 }
+func (r Raw) Priority() int                  { return 0 }
 
 // Text is shorthand for a Raw text message — the loop's steering nudges
 // ("call task_done", wrap-up) are wire-shaped user/assistant text by nature.
@@ -119,7 +100,7 @@ func Wrap(msgs []llm.Message) []Msg {
 func Lower(msgs []Msg) []llm.Message {
 	out := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
-		out[i] = m.ToLLM(CompactionNone)
+		out[i] = m.ToLLM()
 	}
 	return out
 }
@@ -140,6 +121,18 @@ func CloneAll(msgs []Msg) []Msg {
 			out[i] = value.clone()
 		case *SearchBatch:
 			out[i] = value.clone()
+		case *SearchResult:
+			cp := *value
+			cp.Paths = append([]string(nil), value.Paths...)
+			if value.SearchedFiles != nil {
+				count := *value.SearchedFiles
+				cp.SearchedFiles = &count
+			}
+			out[i] = &cp
+		case *Diff:
+			cp := *value
+			cp.Paths = append([]string(nil), value.Paths...)
+			out[i] = &cp
 		case *Board:
 			cp := *value
 			out[i] = &cp
@@ -150,4 +143,36 @@ func CloneAll(msgs []Msg) []Msg {
 		}
 	}
 	return out
+}
+
+// compactRepresentation selects the first message-owned representation that
+// satisfies expect. Representation types stay private to each message; this
+// helper only centralizes ratio accounting.
+func compactRepresentation[R ~uint8](
+	expect float64,
+	current, maxRepresentation R,
+	render func(R) llm.Message,
+) (R, float64) {
+	var rawRepresentation R
+	raw := render(rawRepresentation)
+	rawTokens := llm.CountTokens(raw.ExtractText())
+	if rawTokens <= 0 {
+		return current, 1
+	}
+	ratio := func(representation R) float64 {
+		wire := render(representation)
+		return float64(llm.CountTokens(wire.ExtractText())) / float64(rawTokens)
+	}
+	actual := ratio(current)
+	if actual <= expect {
+		return current, actual
+	}
+	for representation := current + 1; representation <= maxRepresentation; representation++ {
+		current = representation
+		actual = ratio(representation)
+		if actual <= expect {
+			break
+		}
+	}
+	return current, actual
 }

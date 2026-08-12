@@ -29,7 +29,8 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	if batch.Results()[0].Query != "Alpha" || batch.Results()[1].Query != "Missing" {
 		t.Fatalf("search order = %#v", batch.Results())
 	}
-	wire := batch.ToLLM(CompactionReference)
+	projected, _ := batch.Compact(0)
+	wire := projected.ToLLM()
 	text := wire.ExtractText()
 	if wire.ToolCallID != "search-1" ||
 		!strings.Contains(text, `search_code "Missing" returned no matches across 3 scoped files`) ||
@@ -63,7 +64,8 @@ func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
 		}),
 	}).(*SearchBatch)
 
-	wire := message.ToLLM(CompactionReference)
+	projected, _ := message.Compact(0)
+	wire := projected.ToLLM()
 	if text := wire.ExtractText(); !strings.Contains(text, "searched no files because its path scope was empty") {
 		t.Fatalf("compacted result lost scope warning: %s", text)
 	}

@@ -18,60 +18,65 @@ import (
 )
 
 type domainMessage struct {
-	value      msg.Msg
-	timestamp  time.Time
-	compaction msg.CompactionLevel
+	raw       msg.Msg
+	projected msg.Msg
+	timestamp time.Time
+}
+
+func newDomainMessage(raw msg.Msg, timestamp time.Time) domainMessage {
+	return domainMessage{
+		raw: raw, projected: msg.CloneAll([]msg.Msg{raw})[0], timestamp: timestamp,
+	}
+}
+
+func (m domainMessage) current() msg.Msg {
+	if m.projected != nil {
+		return m.projected
+	}
+	return m.raw
 }
 
 func (m domainMessage) GetRole() agentgo.Role {
-	return agentgo.Role(m.value.ToLLM(m.compaction).Role)
+	return agentgo.Role(m.current().ToLLM().Role)
 }
 func (m domainMessage) GetTimestamp() time.Time { return m.timestamp }
 func (m domainMessage) Raw() agentgo.AgentMessage {
-	m.compaction = msg.CompactionNone
-	return m
+	return newDomainMessage(m.raw, m.timestamp)
 }
-func (m domainMessage) Priority() int {
-	if prioritized, ok := m.value.(msg.Prioritized); ok {
-		return prioritized.Priority()
-	}
-	return 0
-}
+func (m domainMessage) Priority() int { return m.raw.Priority() }
 func (m domainMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
-	raw := m.value.ToLLM(msg.CompactionNone)
+	raw := m.raw.ToLLM()
 	rawTokens := llm.CountTokens(raw.ExtractText())
 	if rawTokens <= 0 {
 		return m, 1
 	}
 	currentTokens := llm.CountTokens(m.TextContent())
-	if float64(currentTokens)/float64(rawTokens) <= expect {
-		return m, float64(currentTokens) / float64(rawTokens)
+	currentRatio := float64(currentTokens) / float64(rawTokens)
+	if currentRatio <= expect {
+		return m, currentRatio
 	}
-	compactable, ok := m.value.(msg.Compactable)
-	if !ok {
-		return m, float64(currentTokens) / float64(rawTokens)
+	projected, _ := m.raw.Compact(expect)
+	projectedWire := projected.ToLLM()
+	projectedTokens := llm.CountTokens(projectedWire.ExtractText())
+	if projectedTokens >= currentTokens {
+		return m, currentRatio
 	}
-	for level := m.compaction + 1; level <= compactable.MaxCompaction(); level++ {
-		m.compaction = level
-		currentTokens = llm.CountTokens(m.TextContent())
-		if float64(currentTokens)/float64(rawTokens) <= expect {
-			break
-		}
-	}
-	return m, float64(currentTokens) / float64(rawTokens)
+	m.projected = projected
+	return m, float64(projectedTokens) / float64(rawTokens)
 }
 func (m domainMessage) TextContent() string {
-	wire := m.value.ToLLM(m.compaction)
+	wire := m.current().ToLLM()
 	return wire.ExtractText()
 }
 func (m domainMessage) ThinkingContent() string { return "" }
 func (m domainMessage) HasToolCalls() bool {
-	return len(m.value.ToLLM(m.compaction).ToolCalls) > 0
+	return len(m.current().ToLLM().ToolCalls) > 0
 }
 func (m domainMessage) ToMessage() (agentgo.Message, bool) {
-	lowered := wireToAgentMessage(m.value.ToLLM(m.compaction))
+	current := m.current()
+	lowered := wireToAgentMessage(current.ToLLM())
 	lowered.Timestamp = m.timestamp
-	if result, ok := m.value.(msg.ToolResultMsg); ok && lowered.Role == agentgo.RoleTool {
+	if result, ok := current.(msg.ToolResultMsg); ok && lowered.Role == agentgo.RoleTool {
 		if lowered.Metadata == nil {
 			lowered.Metadata = make(map[string]any)
 		}
@@ -80,11 +85,11 @@ func (m domainMessage) ToMessage() (agentgo.Message, bool) {
 	return lowered, true
 }
 func (m domainMessage) ContextItems() []agentgo.ContextItem {
-	provider, ok := m.value.(msg.ContextItemProvider)
+	provider, ok := m.current().(msg.ContextItemProvider)
 	if !ok {
 		return nil
 	}
-	return provider.ContextItems(m.compaction)
+	return provider.ContextItems()
 }
 
 // contextManager keeps CCR's typed messages alive until the provider boundary.
@@ -412,18 +417,18 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 		switch value := message.(type) {
 		case domainMessage:
 			var files []*msg.File
-			switch typed := value.value.(type) {
+			switch typed := value.current().(type) {
 			case *msg.File:
 				files = []*msg.File{typed}
 			case *msg.FileBatch:
-				files = typed.Files()
+				files = typed.VisibleFiles()
 			}
 			for _, file := range files {
-				if !file.FullContentVisible(value.compaction) {
+				if !file.FullContentVisible() {
 					continue
 				}
 				source := fileFromPreload
-				if _, batch := value.value.(*msg.FileBatch); batch || file.IsToolResult() {
+				if _, batch := value.current().(*msg.FileBatch); batch || file.IsToolResult() {
 					if file.Snapshot == msg.SnapshotBaseline {
 						source = fileFromBaseline
 					} else {
@@ -466,7 +471,7 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 func wrapDomainMessages(messages []msg.Msg) []agentgo.AgentMessage {
 	out := make([]agentgo.AgentMessage, len(messages))
 	for i, message := range messages {
-		out[i] = domainMessage{value: message, timestamp: time.Now(), compaction: msg.CompactionNone}
+		out[i] = newDomainMessage(message, time.Now())
 	}
 	return out
 }
@@ -478,8 +483,12 @@ func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentM
 	for _, message := range messages {
 		switch value := message.(type) {
 		case domainMessage:
-			cloned := msg.CloneAll([]msg.Msg{value.value})
-			out = append(out, domainMessage{value: cloned[0], timestamp: value.timestamp, compaction: value.compaction})
+			cloned := msg.CloneAll([]msg.Msg{value.raw})
+			var projected msg.Msg
+			if value.projected != nil {
+				projected = msg.CloneAll([]msg.Msg{value.projected})[0]
+			}
+			out = append(out, domainMessage{raw: cloned[0], projected: projected, timestamp: value.timestamp})
 		case agentgo.Message:
 			changed = true
 			wire := toLLMMessages([]agentgo.Message{value})
@@ -498,14 +507,11 @@ func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentM
 						Tool: invocation.name, ToolCallID: toolCallID, Arguments: invocation.args,
 						Content: wire[0].ExtractText(), IsError: isError,
 					})
-					out = append(out, domainMessage{value: decoded, timestamp: value.Timestamp})
+					out = append(out, newDomainMessage(decoded, value.Timestamp))
 					continue
 				}
 			}
-			out = append(out, domainMessage{
-				value:     msg.Raw{M: wire[0]},
-				timestamp: value.Timestamp,
-			})
+			out = append(out, newDomainMessage(msg.Raw{M: wire[0]}, value.Timestamp))
 		default:
 			out = append(out, value)
 		}
@@ -523,9 +529,13 @@ func countContextTokens(messages []agentgo.AgentMessage) int {
 
 func compactCoveredFiles(messages []agentgo.AgentMessage) (compacted int) {
 	values := make([]msg.Msg, 0, len(messages))
-	for _, message := range messages {
-		if domain, ok := message.(domainMessage); ok && domain.compaction < msg.CompactionReference {
-			values = append(values, domain.value)
+	for i, message := range messages {
+		if domain, ok := message.(domainMessage); ok {
+			if domain.projected == nil {
+				domain.projected = msg.CloneAll([]msg.Msg{domain.raw})[0]
+				messages[i] = domain
+			}
+			values = append(values, domain.projected)
 		}
 	}
 	return msg.DedupFiles(values)
@@ -561,7 +571,7 @@ func toolInvocations(messages []agentgo.AgentMessage) map[string]toolInvocation 
 		var calls []llm.ToolCall
 		switch value := message.(type) {
 		case domainMessage:
-			calls = value.value.ToLLM(value.compaction).ToolCalls
+			calls = value.current().ToLLM().ToolCalls
 		case agentgo.Message:
 			for _, call := range value.ToolCalls() {
 				calls = append(calls, llm.ToolCall{

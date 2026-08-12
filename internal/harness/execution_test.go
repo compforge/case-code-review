@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -498,7 +499,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 }
 
 func TestDomainMessageDelegatesApplicationPriority(t *testing.T) {
-	domain := domainMessage{value: msg.NewFile("a.go", 1, 1, 1, "1|x").ConfigurePriority(42)}
+	domain := domainMessage{raw: msg.NewFile("a.go", 1, 1, 1, "1|x").ConfigurePriority(42)}
 	if got := domain.Priority(); got != 42 {
 		t.Fatalf("domain priority = %d, want 42", got)
 	}
@@ -522,14 +523,14 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	if !ok {
 		t.Fatalf("read_files result stayed wire-shaped: %T", normalized[0])
 	}
-	batch, ok := domain.value.(*msg.FileBatch)
+	batch, ok := domain.raw.(*msg.FileBatch)
 	if !ok || len(batch.Files()) != 1 {
-		t.Fatalf("promoted message = %#v", domain.value)
+		t.Fatalf("promoted message = %#v", domain.raw)
 	}
 	file := batch.Files()[0]
 	if file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 ||
-		batch.ToLLM(msg.CompactionNone).ToolCallID != "call-1" {
-		t.Fatalf("promoted message = %#v", domain.value)
+		batch.ToLLM().ToolCallID != "call-1" {
+		t.Fatalf("promoted message = %#v", domain.raw)
 	}
 }
 
@@ -550,9 +551,9 @@ func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 		t.Fatalf("normalized=%d changed=%t", len(normalized), changed)
 	}
 	domain := normalized[1].(domainMessage)
-	search, ok := domain.value.(*msg.SearchBatch)
+	search, ok := domain.raw.(*msg.SearchBatch)
 	if !ok || len(search.Results()) != 1 || search.Results()[0].Query != "NewExecution" {
-		t.Fatalf("promoted search = %#v", domain.value)
+		t.Fatalf("promoted search = %#v", domain.raw)
 	}
 }
 
@@ -669,21 +670,22 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	}
 }
 
-func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
+func TestContextCompactsFromTailAndCommitsProjection(t *testing.T) {
 	content := func(path string) string {
 		return fmt.Sprintf("File: %s (Total lines: 80)\n%s", path, strings.Repeat("1|source evidence for review\n", 80))
 	}
 	messages := []agentgo.AgentMessage{
-		domainMessage{value: msg.Text("system", "stable system")},
-		domainMessage{value: msg.Text("user", "stable task")},
-		domainMessage{value: msg.NewFile("a.go", 1, 80, 80, content("a.go"))},
-		domainMessage{value: msg.NewFile("b.go", 1, 80, 80, content("b.go"))},
-		domainMessage{value: msg.NewFile("c.go", 1, 80, 80, content("c.go"))},
+		domainMessage{raw: msg.Text("system", "stable system")},
+		domainMessage{raw: msg.Text("user", "stable task")},
+		domainMessage{raw: msg.NewFile("a.go", 1, 80, 80, content("a.go"))},
+		domainMessage{raw: msg.NewFile("b.go", 1, 80, 80, content("b.go"))},
+		domainMessage{raw: msg.NewFile("c.go", 1, 80, 80, content("c.go"))},
 	}
 	full := countContextTokens(messages)
 	tail := append([]agentgo.AgentMessage(nil), messages...)
 	last := tail[len(tail)-1].(domainMessage)
-	last.compaction = msg.CompactionReference
+	compacted, _ := last.Compact(0)
+	last = compacted.(domainMessage)
 	tail[len(tail)-1] = last
 	afterTail := countContextTokens(tail)
 	limit := (full + afterTail) / 2
@@ -704,12 +706,12 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 		t.Fatalf("projection lost AgentGo compaction details: %+v", projection.Compaction)
 	}
 	for i := 2; i < 4; i++ {
-		if got := committed[i].(domainMessage).compaction; got != msg.CompactionNone {
-			t.Fatalf("message %d compacted before tail: %v", i, got)
+		if text := committed[i].TextContent(); strings.Contains(text, "compacted to a reference") {
+			t.Fatalf("message %d compacted before tail: %q", i, text)
 		}
 	}
-	if got := committed[4].(domainMessage).compaction; got != msg.CompactionReference {
-		t.Fatalf("tail compaction = %v, want reference", got)
+	if text := committed[4].TextContent(); !strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("tail compaction = %q, want reference", text)
 	}
 
 	second, err := manager.Project(context.Background(), committed)
@@ -721,6 +723,104 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	if firstWire[0].TextContent() != secondWire[0].TextContent() ||
 		firstWire[1].TextContent() != secondWire[1].TextContent() {
 		t.Fatal("stable prompt prefix changed after committed compaction")
+	}
+}
+
+func TestMessagePriorityOverridesRecencyDuringCompaction(t *testing.T) {
+	full := func(path string) string {
+		return fmt.Sprintf("File: %s (Total lines: 400)\n%s", path, strings.Repeat("1|source evidence\n", 400))
+	}
+	low := msg.NewFile("temporary.go", 1, 400, 400, full("temporary.go")).
+		ConfigurePresentation("loop-discovered file", "File outline: temporary.go\n- func Temporary()")
+	high := msg.NewFile("changed.go", 1, 400, 400, full("changed.go")).
+		ConfigurePresentation("code under review", "File outline: changed.go\n- func Changed()").
+		ConfigurePriority(20)
+	messages := wrapDomainMessages([]msg.Msg{low, high})
+
+	projected, err := agentcontext.NewMessageCompactor().Compact(context.Background(), messages, 0.75)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := projected[0].TextContent(); !strings.Contains(text, "File outline: temporary.go") || strings.Contains(text, "source evidence") {
+		t.Fatalf("low-priority file was not compacted first: %q", text)
+	}
+	if text := projected[1].TextContent(); !strings.Contains(text, "source evidence") || strings.Contains(text, "File outline: changed.go") {
+		t.Fatalf("high-priority diff file lost full source: %q", text)
+	}
+}
+
+func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
+	content := "File: large.go (Total lines: 160)\n" + strings.Repeat("1|source evidence for review\n", 160)
+	file := msg.NewFile("large.go", 1, 160, 160, content).
+		ConfigurePresentation("code under review", "File outline: large.go (go)\n- func Review()")
+	messages := []agentgo.AgentMessage{
+		domainMessage{raw: msg.Text("system", "stable system")},
+		domainMessage{raw: msg.Text("user", "stable task")},
+		domainMessage{raw: file},
+	}
+	full := countContextTokens(messages)
+	roomy := newContextManager(ExecutionSpec{
+		ContextWindow:    full * 2,
+		FileEvictEnabled: true,
+	}, &chatModel{client: &scriptedClient{}})
+	fullProjection, err := roomy.Project(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := fullProjection.Messages[2].TextContent(); !strings.Contains(text, "source evidence") ||
+		strings.Contains(text, "File outline:") {
+		t.Fatalf("roomy first projection must keep the full File: %q", text)
+	}
+
+	outlineMessages := append([]agentgo.AgentMessage(nil), messages...)
+	outline, _ := outlineMessages[2].Compact(0.9)
+	outlineMessages[2] = outline
+	afterOutline := countContextTokens(outlineMessages)
+	limit := (full + afterOutline) / 2
+	manager := newContextManager(ExecutionSpec{
+		ContextWindow:    limit * 5 / 4,
+		FileEvictEnabled: true,
+	}, &chatModel{client: &scriptedClient{}})
+
+	projection, err := manager.Project(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projection.ShouldCommit || len(projection.CommitMessages) != len(messages) {
+		t.Fatalf("first projection did not commit: %+v", projection)
+	}
+	text := projection.CommitMessages[2].TextContent()
+	if !strings.Contains(text, "File outline: large.go") || strings.Contains(text, "source evidence") ||
+		strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("first projection selected the wrong File representation: %q", text)
+	}
+	raw := projection.CommitMessages[2].Raw()
+	if text := raw.TextContent(); !strings.Contains(text, "source evidence") || strings.Contains(text, "File outline:") {
+		t.Fatalf("AgentMessage.Raw did not return the full File: %q", text)
+	}
+	if text := projection.CommitMessages[2].TextContent(); !strings.Contains(text, "File outline: large.go") {
+		t.Fatalf("Raw changed the committed projection: %q", text)
+	}
+}
+
+func TestDomainMessageRawSurvivesFileDedupProjection(t *testing.T) {
+	older := msg.NewFile("a.go", 1, 2, 2, "File: a.go (Total lines: 2)\n1|old source\n2|body")
+	newer := msg.NewFile("a.go", 1, 3, 3, "File: a.go (Total lines: 3)\n1|new source\n2|body\n3|more")
+	messages := wrapDomainMessages([]msg.Msg{older, newer})
+
+	if compacted := compactCoveredFiles(messages); compacted != 1 {
+		t.Fatalf("dedup compacted %d files, want 1", compacted)
+	}
+	if text := messages[0].TextContent(); !strings.Contains(text, "superseded") || strings.Contains(text, "old source") {
+		t.Fatalf("dedup projection = %q", text)
+	}
+
+	raw := messages[0].Raw()
+	if text := raw.TextContent(); !strings.Contains(text, "old source") || strings.Contains(text, "superseded") {
+		t.Fatalf("Raw did not return the full source: %q", text)
+	}
+	if text := messages[0].TextContent(); !strings.Contains(text, "superseded") {
+		t.Fatalf("Raw changed the current projection: %q", text)
 	}
 }
 

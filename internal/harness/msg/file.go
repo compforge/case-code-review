@@ -25,9 +25,9 @@ import (
 // tool_result it answers, unpaired as user text.
 //
 // A File is held by pointer so the retained llmloop can still stub it in place.
-// Active ContextManager keeps the value immutable and raises an envelope's
-// CompactionLevel instead: projection swaps lowered text for a one-line pointer
-// while keeping the message's position and
+// Active ContextManager keeps the value immutable and passes its target ratio
+// to Compact: File selects source, outline, or path itself while keeping the
+// message's position and
 // tool_call pairing — the 1:1 lowering invariant and the wire protocol's
 // call/result pairing both stay intact.
 type File struct {
@@ -44,14 +44,23 @@ type File struct {
 	// by Initial Context evaluation. Label remains presentation-only.
 	ContextReason string
 	ContextRef    string
-	// CondensedContent is an optional producer-authored lower-cost rendering.
-	// Harness never parses source/JSON/TOML to invent this representation.
-	CondensedContent string
-	priority         int
+	// Outline is the producer-authored structural view. Harness never parses
+	// source/JSON/TOML to invent it.
+	Outline        string
+	representation fileRepresentation
+	priority       int
 
 	toolCallID string     // non-empty: entered via the tool protocol; pairing must survive
 	stubbed    StubReason // "" = full content
 }
+
+type fileRepresentation uint8
+
+const (
+	fileSource fileRepresentation = iota
+	fileOutline
+	fileReference
+)
 
 type FileSnapshot string
 
@@ -75,23 +84,24 @@ const (
 // ToLLM renders the full content, or — once stubbed — a pointer that spends no
 // meaningful tokens. Shape selection lives HERE, not at construction: paired
 // content answers its tool call, unpaired content is user text.
-func (f *File) ToLLM(level CompactionLevel) llm.Message {
-	text := f.render(level)
+func (f *File) ToLLM() llm.Message {
+	text := f.render()
 	if f.toolCallID != "" {
 		return llm.NewToolResultMessage(f.toolCallID, text)
 	}
 	return llm.NewTextMessage("user", text)
 }
 
-func (f *File) render(level CompactionLevel) string {
+func (f *File) render() string {
+	representation := f.representation
 	text := f.Content
-	if level == CompactionCondensed && f.CondensedContent != "" {
-		text = f.CondensedContent
+	if representation == fileOutline && f.Outline != "" {
+		text = f.Outline
 	}
-	if f.Label != "" && level < CompactionReference {
+	if f.Label != "" && representation < fileReference {
 		text = addContextLabel(text, f.Label)
 	}
-	if level == CompactionReference {
+	if representation == fileReference {
 		toolName := f.ToolName()
 		text = fmt.Sprintf("File: %s lines %d-%d (%s snapshot) — compacted to a reference; call %s if the content is needed again.",
 			f.Path, f.Start, f.End, f.Snapshot, toolName)
@@ -144,20 +154,53 @@ func (f *File) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (f *File) Lower() llm.Message { return f.ToLLM(CompactionNone) }
+func (f *File) Priority() int { return f.priority }
 
-func (f *File) MaxCompaction() CompactionLevel { return CompactionReference }
-func (f *File) Priority() int                  { return f.priority }
+// Compact selects the first File-owned representation that satisfies expect.
+// Ratios are always measured against the full source representation, including
+// the context label exactly as it would be sent to the model.
+func (f *File) Compact(expect float64) (Msg, float64) {
+	rawTokens := llm.CountTokens(f.renderRepresentation(fileSource))
+	if rawTokens <= 0 {
+		return f, 1
+	}
+	currentTokens := llm.CountTokens(f.render())
+	currentRatio := float64(currentTokens) / float64(rawTokens)
+	if currentRatio <= expect {
+		return f, currentRatio
+	}
 
-func (f *File) ContextItems(level CompactionLevel) []agentgo.ContextItem {
+	next := *f
+	for representation := f.representation + 1; representation <= fileReference; representation++ {
+		if representation == fileOutline && f.Outline == "" {
+			continue
+		}
+		next.representation = representation
+		currentTokens = llm.CountTokens(next.render())
+		currentRatio = float64(currentTokens) / float64(rawTokens)
+		if currentRatio <= expect {
+			return &next, currentRatio
+		}
+	}
+	return &next, currentRatio
+}
+
+func (f *File) renderRepresentation(representation fileRepresentation) string {
+	view := *f
+	view.representation = representation
+	return view.render()
+}
+
+func (f *File) ContextItems() []agentgo.ContextItem {
 	reason := f.ContextReason
 	if reason == "" && f.IsToolResult() {
 		reason = "prior_read"
 	}
 	representation := ViewSource
-	if f.Stubbed() || level >= CompactionReference {
+	effective := f.representation
+	if f.Stubbed() || effective >= fileReference {
 		representation = ViewReference
-	} else if level == CompactionCondensed && f.CondensedContent != "" {
+	} else if effective == fileOutline && f.Outline != "" {
 		representation = ViewOutline
 	}
 	kind := "file"
@@ -192,11 +235,12 @@ func (f *File) Stubbed() bool { return f.stubbed != "" }
 // FullContentVisible reports whether this projection still contains the exact
 // source range. A producer-authored condensed form such as FileOutline is
 // useful context, but must not suppress a later read_files request for source.
-func (f *File) FullContentVisible(level CompactionLevel) bool {
-	if f.Stubbed() || level >= CompactionReference {
+func (f *File) FullContentVisible() bool {
+	effective := f.representation
+	if f.Stubbed() || effective >= fileReference {
 		return false
 	}
-	return level != CompactionCondensed || f.CondensedContent == ""
+	return effective != fileOutline || f.Outline == ""
 }
 
 // Reclaim / Reclaimed implement msg.Reclaimable: eviction under token pressure
@@ -239,11 +283,11 @@ func NewFile(path string, start, end, total int, content string) *File {
 	}
 }
 
-// ConfigurePresentation attaches execution-facing display policy. The caller
-// supplies semantic variants while ContextManager remains the only level owner.
-func (f *File) ConfigurePresentation(label, condensed string) *File {
+// ConfigurePresentation attaches execution-facing display policy and the
+// producer-authored outline used by File's ratio-based projection.
+func (f *File) ConfigurePresentation(label, outline string) *File {
 	f.Label = label
-	f.CondensedContent = condensed
+	f.Outline = outline
 	return f
 }
 

@@ -10,9 +10,18 @@ import (
 // SearchBatch keeps search_code's one call/result pairing while exposing each
 // query as a typed SearchResult for independent compaction and diagnostics.
 type SearchBatch struct {
-	items      []searchBatchItem
-	toolCallID string
+	items          []searchBatchItem
+	toolCallID     string
+	representation searchBatchRepresentation
 }
+
+type searchBatchRepresentation uint8
+
+const (
+	searchBatchFull searchBatchRepresentation = iota
+	searchBatchCondensed
+	searchBatchReference
+)
 
 type searchBatchItem struct {
 	result *SearchResult
@@ -55,11 +64,13 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (b *SearchBatch) ToLLM(level CompactionLevel) llm.Message {
+func (b *SearchBatch) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *SearchBatch) render(representation searchBatchRepresentation) llm.Message {
 	parts := make([]string, len(b.items))
 	for i, item := range b.items {
 		if item.result != nil {
-			parts[i] = item.result.render(level)
+			parts[i] = item.result.render(searchRepresentation(representation))
 		} else {
 			parts[i] = item.raw
 		}
@@ -69,7 +80,13 @@ func (b *SearchBatch) ToLLM(level CompactionLevel) llm.Message {
 
 func (b *SearchBatch) ToolName() string { return CodeSearchToolName }
 
-func (b *SearchBatch) MaxCompaction() CompactionLevel { return CompactionReference }
+func (b *SearchBatch) Priority() int { return 0 }
+
+func (b *SearchBatch) Compact(expect float64) (Msg, float64) {
+	next := b.clone()
+	next.representation, expect = compactRepresentation(expect, b.representation, searchBatchReference, next.render)
+	return next, expect
+}
 
 // Results returns successful typed members in request order. Item-local
 // errors remain in the wire batch but are not evidence-bearing results.
@@ -84,11 +101,12 @@ func (b *SearchBatch) Results() []*SearchResult {
 }
 
 func (b *SearchBatch) clone() *SearchBatch {
-	copyBatch := &SearchBatch{toolCallID: b.toolCallID, items: make([]searchBatchItem, len(b.items))}
+	copyBatch := &SearchBatch{toolCallID: b.toolCallID, representation: b.representation, items: make([]searchBatchItem, len(b.items))}
 	for i, item := range b.items {
 		copyBatch.items[i].raw = item.raw
 		if item.result != nil {
 			result := *item.result
+			result.Paths = append([]string(nil), item.result.Paths...)
 			if item.result.SearchedFiles != nil {
 				count := *item.result.SearchedFiles
 				result.SearchedFiles = &count

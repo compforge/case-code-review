@@ -317,7 +317,7 @@ func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []ms
 	}
 	atomic.AddInt64(&r.boardPulled, int64(count))
 	atomic.AddInt64(&r.boardTokens, int64(llm.CountTokens(digest)))
-	return []msg.Msg{NewBoardDigest(digest)}
+	return []msg.Msg{msg.NewBoard(digest)}
 }
 
 func (r *unitExecution) HandleTool(

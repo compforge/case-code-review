@@ -72,8 +72,8 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 ### 3.1 Typed message 是内部语义，wire message 是边界投影
 
-Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义，并直接实现 AgentGo 的
-`AgentMessage` 契约。模型返回的普通消息先进入
+Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义；adapter 保留 typed message，
+并实现 AgentGo 的 `AgentMessage` 生命周期契约。模型返回的普通消息先进入
 `Raw`，可识别的工具结果（例如 `read_files`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
 视角出发。只有在调用模型前才降成 provider wire message：
 
@@ -82,11 +82,16 @@ msg.Msg / msg.File
    ── context lifecycle ──▶ lowered model messages
 ```
 
-CCR 消息仍通过 `ToLLM(CompactionLevel)` 定义 full、condensed、reference 等领域投影，Harness adapter
-把它映射为 AgentGo 的 `Raw / Compact / ToMessage`；只有 AgentGo 发起模型调用时才执行 `ToMessage`。
-可识别消息同时按当前 compaction level 暴露 AgentGo `ContextItem`，所以轨迹看到的是模型实际收到的
+Harness 外始终传入保留完整事实的消息。`Compact(expect)` 中的 ratio 只表达预算目标，不表达统一压缩档位；
+每个 domain message 根据自己的信息结构精细决定内容取舍并返回实际比例。例如 File 在
+source、outline、path 中选择，Diff 在完整 hunk、anchor、path 中选择，Search 还会单独保留无命中反证。
+Harness adapter 只把 ContextManager 给出的 `expect` 透传给消息，不理解任何消息的内部形态；`ToLLM()`
+只渲染消息已经选定的当前投影，只有 AgentGo 发起模型调用时才执行 `ToMessage`。
+可识别消息同时按当前投影暴露 AgentGo `ContextItem`，所以轨迹看到的是模型实际收到的
 `source / outline / reference`，而不是消息未经压缩时的原始档位。
-Harness 外只提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
+Harness 外只提供完整消息；只有 ContextManager 判断需要压缩时才产生投影副本。
+adapter 同时保留 raw 与 projected，AgentGo 调用 `Raw()` 会返回独立的全本视图，不会清除或修改当前投影。
+文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
 ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
 
@@ -98,7 +103,7 @@ ContextManager 才能判断两个范围是否
   参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
 - `read_diffs` → `Diff`，压缩时保留 path 与 hunk anchor；
 - `search_code` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
-- `FileContext` → 初始 `source / outline / reference` 文件目录；只有 source 对应独立 `File` 消息并参与覆盖判断；
+- `FileContext` → 初始 `outline / reference` 导航目录；source 只由独立 `File` 消息表达并参与覆盖判断；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
 无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
@@ -125,6 +130,8 @@ provider 并行读取，并按请求顺序装回同一条结果。ContextManager
 ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo Compactor 单调降低消息 fidelity，
 再做通用 tool-result trim 和 summary。默认先处理低优先级消息，同一优先级从尾部向前压，够用即停；
 压缩一旦提交不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
+也可以按消息实例声明当前执行内的证据价值：例如包含待审 diff 的源码高于静态关联源码，而 loop 中临时
+读取、可随时重取的文件保持低优先级。Priority 只决定先压谁，具体如何按 ratio 取舍仍由消息自己负责。
 但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
 统计和恢复行为会分裂。
 

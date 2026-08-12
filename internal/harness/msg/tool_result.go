@@ -32,14 +32,26 @@ func (r LLMToolResult) failed() bool {
 // SearchResult is one content-search member or one file-discovery result. Its
 // raw hits can be re-derived, so compact forms retain the query and locations.
 type SearchResult struct {
-	Tool          string
-	Query         string
-	Content       string
-	ToolCallID    string
-	NoMatches     bool
-	SearchStatus  string
-	SearchedFiles *int
+	Tool           string
+	Query          string
+	Paths          []string
+	Content        string
+	ToolCallID     string
+	NoMatches      bool
+	SearchStatus   string
+	SearchedFiles  *int
+	Label          string
+	representation searchRepresentation
+	priority       int
 }
+
+type searchRepresentation uint8
+
+const (
+	searchFull searchRepresentation = iota
+	searchCondensed
+	searchReference
+)
 
 func (r *SearchResult) FromLLM(result LLMToolResult) bool {
 	// search_code is batch-only and is decoded by SearchBatch; accepting a
@@ -57,13 +69,20 @@ func (r *SearchResult) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (r SearchResult) ToLLM(level CompactionLevel) llm.Message {
-	return llm.NewToolResultMessage(r.ToolCallID, r.render(level))
+func (r SearchResult) ToLLM() llm.Message {
+	text := r.render(r.representation)
+	if r.Label != "" {
+		text = r.Label + ":\n" + text
+	}
+	if r.ToolCallID != "" {
+		return llm.NewToolResultMessage(r.ToolCallID, text)
+	}
+	return llm.NewTextMessage("user", text)
 }
 
-func (r SearchResult) render(level CompactionLevel) string {
+func (r SearchResult) render(representation searchRepresentation) string {
 	text := r.Content
-	if r.NoMatches && level >= CompactionReference {
+	if r.NoMatches && representation >= searchReference {
 		if r.SearchStatus == "scope_empty" {
 			return fmt.Sprintf("%s %q searched no files because its path scope was empty; correct the scope before drawing a conclusion.", r.Tool, r.Query)
 		}
@@ -72,10 +91,10 @@ func (r SearchResult) render(level CompactionLevel) string {
 		}
 		return fmt.Sprintf("%s %q returned no matches; this negative result is retained after compaction.", r.Tool, r.Query)
 	}
-	switch level {
-	case CompactionCondensed:
+	switch representation {
+	case searchCondensed:
 		text = r.condensed()
-	case CompactionReference:
+	case searchReference:
 		text = fmt.Sprintf("%s result for %q compacted to a reference; rerun %s if exact hits are needed.",
 			r.Tool, r.Query, r.Tool)
 	}
@@ -84,9 +103,29 @@ func (r SearchResult) render(level CompactionLevel) string {
 
 func (r SearchResult) ToolName() string { return r.Tool }
 
-func (r SearchResult) MaxCompaction() CompactionLevel { return CompactionReference }
+func (r SearchResult) Priority() int { return r.priority }
+
+func (r *SearchResult) ConfigurePresentation(label string, priority int) *SearchResult {
+	r.Label = label
+	r.priority = priority
+	return r
+}
+
+func (r SearchResult) Compact(expect float64) (Msg, float64) {
+	next := r
+	next.Paths = append([]string(nil), r.Paths...)
+	next.representation, expect = compactRepresentation(expect, r.representation, searchReference, func(representation searchRepresentation) llm.Message {
+		view := next
+		view.representation = representation
+		return view.ToLLM()
+	})
+	return next, expect
+}
 
 func (r SearchResult) condensed() string {
+	if len(r.Paths) > 0 {
+		return fmt.Sprintf("Search %q matched:\n- %s", r.Query, strings.Join(r.Paths, "\n- "))
+	}
 	if r.Tool == FileFindToolName {
 		if strings.Contains(strings.ToLower(r.Content), "file was not found") {
 			return fmt.Sprintf("file_find %q had no matches.", r.Query)
@@ -123,10 +162,21 @@ func (r SearchResult) condensed() string {
 // Diff is a re-readable slice of the reviewed change. Its condensed form keeps
 // file and hunk anchors while dropping changed-line bodies.
 type Diff struct {
-	Paths      []string
-	Content    string
-	ToolCallID string
+	Paths          []string
+	Content        string
+	ToolCallID     string
+	Label          string
+	representation diffRepresentation
+	priority       int
 }
+
+type diffRepresentation uint8
+
+const (
+	diffFull diffRepresentation = iota
+	diffAnchors
+	diffReference
+)
 
 func (d *Diff) FromLLM(result LLMToolResult) bool {
 	if result.failed() || result.Tool != FileReadDiffToolName {
@@ -140,10 +190,12 @@ func (d *Diff) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (d Diff) ToLLM(level CompactionLevel) llm.Message {
+func (d Diff) ToLLM() llm.Message { return d.render(d.representation) }
+
+func (d Diff) render(representation diffRepresentation) llm.Message {
 	text := d.Content
-	switch level {
-	case CompactionCondensed:
+	switch representation {
+	case diffAnchors:
 		var anchors []string
 		for _, line := range strings.Split(d.Content, "\n") {
 			if strings.HasPrefix(line, "==== FILE: ") || strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "@@ ") {
@@ -153,18 +205,41 @@ func (d Diff) ToLLM(level CompactionLevel) llm.Message {
 		if len(anchors) > 0 {
 			text = "Diff anchors retained after compaction:\n" + strings.Join(anchors, "\n")
 		}
-	case CompactionReference:
+	case diffReference:
 		paths := append([]string(nil), d.Paths...)
 		sort.Strings(paths)
 		text = fmt.Sprintf("Diff for [%s] compacted to a reference; call %s for exact hunks.",
 			strings.Join(paths, ", "), FileReadDiffToolName)
 	}
-	return llm.NewToolResultMessage(d.ToolCallID, text)
+	if d.Label != "" {
+		text = d.Label + ":\n" + text
+	}
+	if d.ToolCallID != "" {
+		return llm.NewToolResultMessage(d.ToolCallID, text)
+	}
+	return llm.NewTextMessage("user", text)
 }
 
 func (d Diff) ToolName() string { return FileReadDiffToolName }
 
-func (d Diff) MaxCompaction() CompactionLevel { return CompactionReference }
+func (d Diff) Priority() int { return d.priority }
+
+func NewDiff(paths []string, content string) *Diff {
+	return &Diff{Paths: append([]string(nil), paths...), Content: content}
+}
+
+func (d *Diff) ConfigurePresentation(label string, priority int) *Diff {
+	d.Label = label
+	d.priority = priority
+	return d
+}
+
+func (d Diff) Compact(expect float64) (Msg, float64) {
+	next := d
+	next.Paths = append([]string(nil), d.Paths...)
+	next.representation, expect = compactRepresentation(expect, d.representation, diffReference, next.render)
+	return next, expect
+}
 
 // ToolReceipt is the small protocol acknowledgement for result/terminal tools
 // and recoverable tool errors. Domain artifacts live in Runner collectors, so
@@ -180,11 +255,15 @@ func (r *ToolReceipt) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (r ToolReceipt) ToLLM(CompactionLevel) llm.Message {
+func (r ToolReceipt) ToLLM() llm.Message {
 	return llm.NewToolResultMessage(r.ToolCallID, r.Content)
 }
 
+func (r ToolReceipt) Compact(float64) (Msg, float64) { return r, 1 }
+
 func (r ToolReceipt) ToolName() string { return r.Tool }
+
+func (r ToolReceipt) Priority() int { return 0 }
 
 type llmDecoder interface {
 	Msg
