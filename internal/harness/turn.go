@@ -42,14 +42,14 @@ func (c *turnController) BeforeTurn(
 	ctx context.Context,
 	turn agentgo.BeforeTurnContext,
 ) ([]agentgo.AgentMessage, error) {
-	var messages []msg.Msg
+	var messages []agentgo.AgentMessage
 	if c.provider != nil {
 		messages = append(messages, c.provider.PullTurnContext(ctx, c.scope)...)
 	}
 	if c.shouldWrapUp(ctx, turn.TurnIndex) {
 		messages = append(messages, msg.Text("user", c.wrapUpPrompt))
 	}
-	return wrapDomainMessages(msg.CloneAll(messages)), nil
+	return rawMessages(messages), nil
 }
 
 func (c *turnController) WrapUpIssued() bool {

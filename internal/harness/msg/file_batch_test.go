@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
@@ -44,7 +46,8 @@ func TestDedupFilesHandlesBatchMembers(t *testing.T) {
 		Tool: FileReadToolName, ToolCallID: "batch-1", Content: content,
 	}).(*FileBatch)
 
-	if got := DedupFiles([]Msg{older, batch}); got != 1 || !older.Stubbed() {
-		t.Fatalf("dedup batch members = %d, older stubbed=%t", got, older.Stubbed())
+	projected, got := DedupFiles([]agentgo.AgentMessage{older, batch})
+	if got != 1 || older.Stubbed() || !projected[0].(*File).Stubbed() {
+		t.Fatalf("dedup batch members = %d, original stubbed=%t", got, older.Stubbed())
 	}
 }

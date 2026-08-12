@@ -7,7 +7,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
@@ -16,81 +15,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
-
-type domainMessage struct {
-	raw       msg.Msg
-	projected msg.Msg
-	timestamp time.Time
-}
-
-func newDomainMessage(raw msg.Msg, timestamp time.Time) domainMessage {
-	return domainMessage{
-		raw: raw, projected: msg.CloneAll([]msg.Msg{raw})[0], timestamp: timestamp,
-	}
-}
-
-func (m domainMessage) current() msg.Msg {
-	if m.projected != nil {
-		return m.projected
-	}
-	return m.raw
-}
-
-func (m domainMessage) GetRole() agentgo.Role {
-	return agentgo.Role(m.current().ToLLM().Role)
-}
-func (m domainMessage) GetTimestamp() time.Time { return m.timestamp }
-func (m domainMessage) Raw() agentgo.AgentMessage {
-	return newDomainMessage(m.raw, m.timestamp)
-}
-func (m domainMessage) Priority() int { return m.raw.Priority() }
-func (m domainMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
-	raw := m.raw.ToLLM()
-	rawTokens := llm.CountTokens(raw.ExtractText())
-	if rawTokens <= 0 {
-		return m, 1
-	}
-	currentTokens := llm.CountTokens(m.TextContent())
-	currentRatio := float64(currentTokens) / float64(rawTokens)
-	if currentRatio <= expect {
-		return m, currentRatio
-	}
-	projected, _ := m.raw.Compact(expect)
-	projectedWire := projected.ToLLM()
-	projectedTokens := llm.CountTokens(projectedWire.ExtractText())
-	if projectedTokens >= currentTokens {
-		return m, currentRatio
-	}
-	m.projected = projected
-	return m, float64(projectedTokens) / float64(rawTokens)
-}
-func (m domainMessage) TextContent() string {
-	wire := m.current().ToLLM()
-	return wire.ExtractText()
-}
-func (m domainMessage) ThinkingContent() string { return "" }
-func (m domainMessage) HasToolCalls() bool {
-	return len(m.current().ToLLM().ToolCalls) > 0
-}
-func (m domainMessage) ToMessage() (agentgo.Message, bool) {
-	current := m.current()
-	lowered := wireToAgentMessage(current.ToLLM())
-	lowered.Timestamp = m.timestamp
-	if result, ok := current.(msg.ToolResultMsg); ok && lowered.Role == agentgo.RoleTool {
-		if lowered.Metadata == nil {
-			lowered.Metadata = make(map[string]any)
-		}
-		lowered.Metadata["tool_name"] = result.ToolName()
-	}
-	return lowered, true
-}
-func (m domainMessage) ContextItems() []agentgo.ContextItem {
-	provider, ok := m.current().(msg.ContextItemProvider)
-	if !ok {
-		return nil
-	}
-	return provider.ContextItems()
-}
 
 // contextManager keeps CCR's typed messages alive until the provider boundary.
 // Projection is deterministic: deduplicate covered file reads, then shed
@@ -299,8 +223,10 @@ func (m *contextManager) rewrite(
 	_ bool,
 ) ([]agentgo.AgentMessage, *agentgo.ContextUsage, bool) {
 	view, changed := normalizeContextMessages(messages)
-	if m.dedupEnabled && compactCoveredFiles(view) > 0 {
-		changed = true
+	if m.dedupEnabled {
+		var compacted int
+		view, compacted = msg.DedupFiles(view)
+		changed = changed || compacted > 0
 	}
 
 	return view, m.estimateUsage(view), changed
@@ -415,25 +341,30 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 	var out []visibleFile
 	for _, message := range messages {
 		switch value := message.(type) {
-		case domainMessage:
-			var files []*msg.File
-			switch typed := value.current().(type) {
-			case *msg.File:
-				files = []*msg.File{typed}
-			case *msg.FileBatch:
-				files = typed.VisibleFiles()
-			}
+		case *msg.File:
+			files := []*msg.File{value}
 			for _, file := range files {
 				if !file.FullContentVisible() {
 					continue
 				}
 				source := fileFromPreload
-				if _, batch := value.current().(*msg.FileBatch); batch || file.IsToolResult() {
+				if file.IsToolResult() {
 					if file.Snapshot == msg.SnapshotBaseline {
 						source = fileFromBaseline
 					} else {
 						source = fileFromTool
 					}
+				}
+				out = append(out, visibleFile{
+					path: path.Clean(file.Path), start: file.Start, end: file.End,
+					total: file.Total, source: source, label: file.Label, snapshot: file.Snapshot,
+				})
+			}
+		case *msg.FileBatch:
+			for _, file := range value.VisibleFiles() {
+				source := fileFromTool
+				if file.Snapshot == msg.SnapshotBaseline {
+					source = fileFromBaseline
 				}
 				out = append(out, visibleFile{
 					path: path.Clean(file.Path), start: file.Start, end: file.End,
@@ -468,33 +399,13 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 	return out
 }
 
-func wrapDomainMessages(messages []msg.Msg) []agentgo.AgentMessage {
-	out := make([]agentgo.AgentMessage, len(messages))
-	for i, message := range messages {
-		out[i] = newDomainMessage(message, time.Now())
-	}
-	return out
-}
-
 func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentMessage, bool) {
 	invocations := toolInvocations(messages)
 	out := make([]agentgo.AgentMessage, 0, len(messages))
 	changed := false
 	for _, message := range messages {
 		switch value := message.(type) {
-		case domainMessage:
-			cloned := msg.CloneAll([]msg.Msg{value.raw})
-			var projected msg.Msg
-			if value.projected != nil {
-				projected = msg.CloneAll([]msg.Msg{value.projected})[0]
-			}
-			out = append(out, domainMessage{raw: cloned[0], projected: projected, timestamp: value.timestamp})
 		case agentgo.Message:
-			changed = true
-			wire := toLLMMessages([]agentgo.Message{value})
-			if len(wire) == 0 {
-				continue
-			}
 			if value.Role == agentgo.RoleTool {
 				toolCallID := metadataString(value.Metadata, "tool_call_id")
 				invocation := invocations[toolCallID]
@@ -505,13 +416,14 @@ func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentM
 					isError, _ := value.Metadata["is_error"].(bool)
 					decoded := msg.FromLLM(msg.LLMToolResult{
 						Tool: invocation.name, ToolCallID: toolCallID, Arguments: invocation.args,
-						Content: wire[0].ExtractText(), IsError: isError,
+						Content: value.TextContent(), IsError: isError, Timestamp: value.Timestamp,
 					})
-					out = append(out, newDomainMessage(decoded, value.Timestamp))
+					out = append(out, decoded)
+					changed = true
 					continue
 				}
 			}
-			out = append(out, newDomainMessage(msg.Raw{M: wire[0]}, value.Timestamp))
+			out = append(out, value)
 		default:
 			out = append(out, value)
 		}
@@ -525,20 +437,6 @@ func countContextTokens(messages []agentgo.AgentMessage) int {
 		total += llm.CountTokens(message.TextContent())
 	}
 	return total
-}
-
-func compactCoveredFiles(messages []agentgo.AgentMessage) (compacted int) {
-	values := make([]msg.Msg, 0, len(messages))
-	for i, message := range messages {
-		if domain, ok := message.(domainMessage); ok {
-			if domain.projected == nil {
-				domain.projected = msg.CloneAll([]msg.Msg{domain.raw})[0]
-				messages[i] = domain
-			}
-			values = append(values, domain.projected)
-		}
-	}
-	return msg.DedupFiles(values)
 }
 
 func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
@@ -557,7 +455,7 @@ func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.Agent
 		}
 		b.WriteByte('\n')
 	}
-	return append(messages, wireToAgentMessage(llm.NewTextMessage("user", strings.TrimRight(b.String(), "\n"))))
+	return append(messages, msg.Text("user", strings.TrimRight(b.String(), "\n")))
 }
 
 type toolInvocation struct {
@@ -568,22 +466,14 @@ type toolInvocation struct {
 func toolInvocations(messages []agentgo.AgentMessage) map[string]toolInvocation {
 	out := make(map[string]toolInvocation)
 	for _, message := range messages {
-		var calls []llm.ToolCall
-		switch value := message.(type) {
-		case domainMessage:
-			calls = value.current().ToLLM().ToolCalls
-		case agentgo.Message:
-			for _, call := range value.ToolCalls() {
-				calls = append(calls, llm.ToolCall{
-					ID: call.ID, Type: "function",
-					Function: llm.FunctionCall{Name: call.Name, Arguments: string(call.Args)},
-				})
-			}
+		lowered, include := message.ToMessage()
+		if !include {
+			continue
 		}
-		for _, call := range calls {
+		for _, call := range lowered.ToolCalls() {
 			var args map[string]any
-			_ = json.Unmarshal([]byte(call.Function.Arguments), &args)
-			out[call.ID] = toolInvocation{name: call.Function.Name, args: args}
+			_ = json.Unmarshal(call.Args, &args)
+			out[call.ID] = toolInvocation{name: call.Name, args: args}
 		}
 	}
 	return out

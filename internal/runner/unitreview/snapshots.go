@@ -3,6 +3,8 @@ package unitreview
 import (
 	"encoding/json"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -12,7 +14,7 @@ import (
 // AttachMessages retains the exact repository snapshots that were admitted to
 // a Unit Review context. Prompt text and execution steering remain in Session
 // JSONL rather than becoming Unit state.
-func AttachMessages(reviewUnit *unit.Unit, messages []msg.Msg) {
+func AttachMessages(reviewUnit *unit.Unit, messages []agentgo.AgentMessage) {
 	if reviewUnit == nil {
 		return
 	}
@@ -52,7 +54,7 @@ func AttachResult(reviewUnit *unit.Unit, name string, args map[string]any, resul
 	decoded := msg.FromLLM(msg.LLMToolResult{
 		Tool: name, Arguments: args, Content: result,
 	})
-	AttachMessages(reviewUnit, []msg.Msg{decoded})
+	AttachMessages(reviewUnit, []agentgo.AgentMessage{decoded})
 }
 
 func fileSnapshot(file *msg.File) unit.FileSnapshot {

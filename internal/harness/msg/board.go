@@ -1,19 +1,17 @@
 package msg
 
-import "github.com/qiankunli/case-code-review/internal/llm"
+import (
+	"github.com/compforge/agentgo"
 
-// Board is the legacy llmloop's digest of peer units' bulletins. Active
-// AgentGo Unit Review owns this domain message in runner/unitreview. Like
-// File it is re-derivable — the content came from
-// the board and can be pulled again — so it participates in eviction: under
-// token pressure a stale board digest is shed before the model's own
-// reasoning, the same re-derivability ordering File uses.
-//
-// It is NOT dedup-eligible (each digest is a distinct point-in-time snapshot,
-// not a re-read of the same range), so it implements only the evict path.
+	"github.com/qiankunli/case-code-review/internal/llm"
+)
+
+// Board is AgentGo Unit Review's digest of peer units' bulletins. Like
+// File it is re-derivable — the content came from the board and can be pulled
+// again — so its compact form is a reference to fresh notes.
 type Board struct {
+	messageMeta
 	digest         string
-	evicted        bool
 	representation boardRepresentation
 }
 
@@ -25,34 +23,35 @@ const (
 )
 
 // NewBoard wraps a rendered board digest as an evictable user message.
-func NewBoard(digest string) *Board { return &Board{digest: digest} }
+func NewBoard(digest string) *Board { return &Board{messageMeta: newMessageMeta(), digest: digest} }
 
 func (b *Board) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *Board) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *Board) Raw() agentgo.AgentMessage {
+	raw := *b
+	raw.representation = boardDigest
+	return &raw
+}
+func (b *Board) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *Board) ThinkingContent() string { return "" }
+func (b *Board) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *Board) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(b.ToLLM(), "", b.GetTimestamp())
+}
 
 func (b *Board) render(representation boardRepresentation) llm.Message {
 	if representation >= boardReference {
 		return llm.NewTextMessage("user",
 			"(peer-unit board notes compacted; fresh notes can be pulled again)")
 	}
-	if b.evicted {
-		return llm.NewTextMessage("user",
-			"(peer-unit board notes elided to fit the context budget)")
-	}
 	return llm.NewTextMessage("user", b.digest)
 }
 
-func (b *Board) Compact(expect float64) (Msg, float64) {
+func (b *Board) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := *b
 	next.representation, expect = compactRepresentation(expect, b.representation, boardReference, next.render)
 	return &next, expect
 }
 
 func (b *Board) Priority() int { return 0 }
-
-// Reclaim elides the digest under token pressure (idempotent; msg.Reclaimable).
-// Board notes are the most re-derivable slice of the conversation — losing them
-// costs nothing the loop can't re-pull — so eviction sheds them first.
-func (b *Board) Reclaim() { b.evicted = true }
-
-// Reclaimed reports whether the digest has been elided.
-func (b *Board) Reclaimed() bool { return b.evicted }

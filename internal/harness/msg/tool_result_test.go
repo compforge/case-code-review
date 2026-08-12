@@ -26,7 +26,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 	fullWire := searchBatch.ToLLM()
 	condensedRatio := float64(llm.CountTokens(condensedWire.ExtractText())) / float64(llm.CountTokens(fullWire.ExtractText()))
 	projected, _ := searchBatch.Compact(condensedRatio)
-	condensed := projected.ToLLM()
+	condensed := projected.(*SearchBatch).ToLLM()
 	if condensed.ToolCallID != "search-1" || !strings.Contains(condensed.ExtractText(), "2 hits") {
 		t.Fatalf("condensed search = %+v", condensed)
 	}
@@ -41,7 +41,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 		t.Fatalf("diff result = %#v", diff)
 	}
 	diffProjection, _ := diffResult.Compact(0)
-	diffReference := diffProjection.ToLLM()
+	diffReference := diffProjection.(Diff).ToLLM()
 	if text := diffReference.ExtractText(); !strings.Contains(text, "a.go, b.go") {
 		t.Fatalf("diff reference = %q", text)
 	}
@@ -56,7 +56,7 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 		t.Fatalf("file_find result = %#v", find)
 	}
 	findProjection, _ := findResult.Compact(0)
-	findCondensed := findProjection.ToLLM()
+	findCondensed := findProjection.(SearchResult).ToLLM()
 	if text := findCondensed.ExtractText(); !strings.Contains(text, "no matches") {
 		t.Fatalf("file_find miss = %q", text)
 	}

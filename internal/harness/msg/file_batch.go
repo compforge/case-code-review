@@ -12,6 +12,7 @@ import (
 // one-call/one-result pairing intact without flattening batch members into
 // opaque text that ContextManager cannot deduplicate or compact.
 type FileBatch struct {
+	messageMeta
 	items          []fileBatchItem
 	tool           string
 	toolCallID     string
@@ -48,11 +49,30 @@ func (b *FileBatch) FromLLM(result LLMToolResult) bool {
 			items[i].raw = part
 		}
 	}
-	*b = FileBatch{items: items, tool: result.Tool, toolCallID: result.ToolCallID}
+	*b = FileBatch{messageMeta: result.messageMeta(), items: items, tool: result.Tool, toolCallID: result.ToolCallID}
 	return true
 }
 
 func (b *FileBatch) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *FileBatch) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *FileBatch) Raw() agentgo.AgentMessage {
+	raw := b.clone()
+	raw.representation = fileBatchSource
+	for i := range raw.items {
+		if raw.items[i].file != nil {
+			raw.items[i].file.representation = fileSource
+			raw.items[i].file.stubbed = ""
+		}
+	}
+	return raw
+}
+func (b *FileBatch) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *FileBatch) ThinkingContent() string { return "" }
+func (b *FileBatch) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *FileBatch) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(b.ToLLM(), b.ToolName(), b.GetTimestamp())
+}
 
 func (b *FileBatch) render(representation fileBatchRepresentation) llm.Message {
 	parts := make([]string, len(b.items))
@@ -75,7 +95,7 @@ func (b *FileBatch) ToolName() string { return b.tool }
 
 func (b *FileBatch) Priority() int { return 0 }
 
-func (b *FileBatch) Compact(expect float64) (Msg, float64) {
+func (b *FileBatch) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := b.clone()
 	next.representation, expect = compactRepresentation(expect, b.representation, fileBatchReference, next.render)
 	return next, expect
@@ -93,25 +113,6 @@ func (b *FileBatch) ContextItems() []agentgo.ContextItem {
 	return out
 }
 
-func (b *FileBatch) Reclaim() {
-	for _, file := range b.Files() {
-		file.Reclaim()
-	}
-}
-
-func (b *FileBatch) Reclaimed() bool {
-	files := b.Files()
-	if len(files) == 0 {
-		return true
-	}
-	for _, file := range files {
-		if !file.Reclaimed() {
-			return false
-		}
-	}
-	return true
-}
-
 // Files returns the typed file members in request order. Error members remain
 // in the batch result but do not claim visible coverage or evidence.
 func (b *FileBatch) Files() []*File {
@@ -125,8 +126,7 @@ func (b *FileBatch) Files() []*File {
 }
 
 // VisibleFiles returns the batch members whose current batch projection still
-// contains exact source. Returned values are views; Files remains the mutable
-// member access used by deduplication and reclaim.
+// contains exact source. Returned values are views.
 func (b *FileBatch) VisibleFiles() []*File {
 	var visible []*File
 	for _, file := range b.Files() {
@@ -142,7 +142,7 @@ func (b *FileBatch) VisibleFiles() []*File {
 }
 
 func (b *FileBatch) clone() *FileBatch {
-	copyBatch := &FileBatch{tool: b.tool, toolCallID: b.toolCallID, representation: b.representation, items: make([]fileBatchItem, len(b.items))}
+	copyBatch := &FileBatch{messageMeta: b.messageMeta, tool: b.tool, toolCallID: b.toolCallID, representation: b.representation, items: make([]fileBatchItem, len(b.items))}
 	for i, item := range b.items {
 		copyBatch.items[i].raw = item.raw
 		if item.file != nil {

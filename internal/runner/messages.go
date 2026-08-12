@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -180,7 +182,7 @@ func (a *Runner) assembleReviewMessages(
 	build func(unitSlot, relatedSlot string) []llm.Message,
 	own, related []*msg.File,
 	initial []msg.FileContextEntry,
-) []msg.Msg {
+) []agentgo.AgentMessage {
 	unitSlot := sourceNotPreloaded
 	if len(own) > 0 {
 		unitSlot = unitSourcePointer

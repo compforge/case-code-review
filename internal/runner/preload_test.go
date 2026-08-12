@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -139,12 +141,12 @@ func TestAssembleReviewMessages(t *testing.T) {
 	if len(domain) != 4 {
 		t.Fatalf("messages = %d, want 4", len(domain))
 	}
-	taskWire := domain[1].ToLLM()
-	taskText := taskWire.ExtractText()
+	taskWire, _ := domain[1].ToMessage()
+	taskText := taskWire.TextContent()
 	if !strings.Contains(taskText, unitSourcePointer) || !strings.Contains(taskText, relatedSourcePointer) {
 		t.Fatalf("task slots off:\n%s", taskText)
 	}
-	if _, ok := domain[0].(msg.Raw); !ok {
+	if _, ok := domain[0].(agentgo.Message); !ok {
 		t.Fatalf("system task should use the generic message type: %T", domain[0])
 	}
 	if domain[2] != own[0] || domain[3] != related[0] {

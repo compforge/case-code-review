@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -146,37 +148,11 @@ func TestFileCompactChoosesItsOwnRepresentationByRatio(t *testing.T) {
 		t.Fatalf("actual ratio = %f, want %f", actual, outlineRatio)
 	}
 	projected, _ = outline.Compact(0)
-	if text := textOf(projected.ToLLM()); !strings.Contains(text, "compacted to a reference") {
+	if text := textOf(projected.(*File).ToLLM()); !strings.Contains(text, "compacted to a reference") {
 		t.Fatalf("terminal projection did not choose path reference: %q", text)
 	}
 	if text := textOf(f.ToLLM()); !strings.Contains(text, "1|code") {
 		t.Fatal("Compact mutated the original File")
-	}
-}
-
-func TestFileStubKeepsPairing(t *testing.T) {
-	f := mkFile(t, "pkg/a.go", 120, 10, 40)
-	f.Stub(StubSuperseded)
-	got := f.ToLLM()
-	if got.Role != "tool" || got.ToolCallID != "c1" {
-		t.Fatalf("stub must keep the tool_result pairing: %+v", got)
-	}
-	if !strings.Contains(got.ExtractText(), "superseded") || strings.Contains(got.ExtractText(), "1|code") {
-		t.Fatalf("stub must elide content: %q", got.ExtractText())
-	}
-
-	// Eviction has its own pointer text (how to get the content back), and the
-	// first stub reason wins.
-	e := mkFile(t, "pkg/b.go", 10, 1, 10)
-	e.Stub(StubEvicted)
-	ew := e.ToLLM()
-	if txt := ew.ExtractText(); !strings.Contains(txt, "context budget") || !strings.Contains(txt, "read_files") {
-		t.Fatalf("evicted stub text off: %q", txt)
-	}
-	f.Stub(StubEvicted)
-	fw := f.ToLLM()
-	if !strings.Contains(fw.ExtractText(), "superseded") {
-		t.Fatal("first stub reason must win")
 	}
 }
 
@@ -186,18 +162,19 @@ func TestDedupFiles(t *testing.T) {
 	partial := mkFile(t, "pkg/a.go", 120, 5, 20) // overlaps but not covered by newer
 	newer := mkFile(t, "pkg/a.go", 120, 10, 60)  // covers old, not partial
 
-	msgs := []Msg{Text("user", "task"), old, other, partial, Text("assistant", "…"), newer}
-	if n := DedupFiles(msgs); n != 1 {
+	msgs := []agentgo.AgentMessage{Text("user", "task"), old, other, partial, Text("assistant", "…"), newer}
+	projected, n := DedupFiles(msgs)
+	if n != 1 {
 		t.Fatalf("stubbed = %d, want 1", n)
 	}
-	if !old.Stubbed() {
-		t.Fatal("covered earlier read must be stubbed")
+	if old.Stubbed() || !projected[1].(*File).Stubbed() {
+		t.Fatal("dedup must stub only the immutable projection")
 	}
 	if other.Stubbed() || partial.Stubbed() || newer.Stubbed() {
 		t.Fatal("uncovered / different-path / newest reads must be kept")
 	}
 	// Idempotent: a second pass finds nothing new.
-	if n := DedupFiles(msgs); n != 0 {
+	if _, n := DedupFiles(projected); n != 0 {
 		t.Fatalf("second pass stubbed %d, want 0", n)
 	}
 }

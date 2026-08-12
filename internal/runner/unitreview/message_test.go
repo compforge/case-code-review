@@ -14,7 +14,7 @@ func TestBoardOwnsReviewSemantics(t *testing.T) {
 		t.Fatalf("full board = %q", got)
 	}
 	projected, _ := board.Compact(0)
-	reference := projected.ToLLM()
+	reference := projected.(*msg.Board).ToLLM()
 	if got := reference.ExtractText(); !strings.Contains(got, "peer-unit") {
 		t.Fatalf("board reference = %q", got)
 	}

@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -49,7 +51,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		MaxTokens: 1_000,
 	}, &HypothesisHook{}, nil)
 
-	outcome, err := executor.Run(context.Background(), []msg.Msg{
+	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
 	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
 	if err != nil {
@@ -95,7 +97,7 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, hook, nil)
 
-	outcome, err := executor.Run(context.Background(), []msg.Msg{
+	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
 	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
 	if err != nil {
@@ -121,7 +123,7 @@ func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
 		Session:   history,
 	}, &HypothesisHook{}, nil)
 
-	outcome, err := executor.Run(context.Background(), []msg.Msg{
+	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
 	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
 	if err != nil {
@@ -153,7 +155,7 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, nil, nil)
 
-	outcome, err := executor.Run(context.Background(), []msg.Msg{
+	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
 	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
 	if err != nil {
@@ -190,7 +192,7 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 		Session:      &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, &HypothesisHook{}, sharedBoard)
 
-	outcome, err := executor.Run(context.Background(), []msg.Msg{
+	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
 	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
 	if err != nil {

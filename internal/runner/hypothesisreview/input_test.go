@@ -27,8 +27,7 @@ func TestHypothesisMessageCompactionKeepsClaim(t *testing.T) {
 	fullTokens := llm.CountTokens(fullWire.ExtractText())
 	condensedTokens := llm.CountTokens(condensed)
 	projected, _ := message.Compact(float64(condensedTokens) / float64(fullTokens))
-	lowered := projected.ToLLM()
-	compact := lowered.ExtractText()
+	compact := projected.TextContent()
 	for _, required := range []string{"h-1", "trigger one"} {
 		if !strings.Contains(compact, required) {
 			t.Fatalf("compacted input dropped %q: %s", required, compact)
@@ -41,8 +40,7 @@ func TestHypothesisMessageCompactionKeepsClaim(t *testing.T) {
 		t.Fatalf("compacted input dropped evidence paths: %s", compact)
 	}
 	terminal, _ := message.Compact(0)
-	terminalWire := terminal.ToLLM()
-	if got := terminalWire.ExtractText(); got != compact {
+	if got := terminal.TextContent(); got != compact {
 		t.Fatalf("Review input compacted below the complete hypothesis: %q", got)
 	}
 }
@@ -78,8 +76,7 @@ func TestReviewContextMessagesCompactIndependentlyWithoutChangingUnitSnapshots(t
 			t.Fatalf("message %d priority = %d, want %d", i, message.Priority(), wantPriorities[i])
 		}
 		projected, _ := message.Compact(0)
-		wire := projected.ToLLM()
-		if !strings.Contains(wire.ExtractText(), "compacted to a reference") {
+		if !strings.Contains(projected.TextContent(), "compacted to a reference") {
 			t.Fatalf("message %d ratio compaction has no reference form: %T", i, message)
 		}
 	}

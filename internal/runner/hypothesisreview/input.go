@@ -2,6 +2,9 @@ package hypothesisreview
 
 import (
 	"slices"
+	"time"
+
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -79,9 +82,9 @@ const (
 // reviewContextMessages projects immutable Unit state into independently
 // compactable AgentMessages. Compaction changes only the execution view; the
 // full snapshots remain on the Unit for later Review and Trial stages.
-func reviewContextMessages(input ReviewInput) []msg.Msg {
+func reviewContextMessages(input ReviewInput) []agentgo.AgentMessage {
 	snapshot := input.turnSnapshots()
-	out := make([]msg.Msg, 0, len(input.turnFragments())+len(snapshot.FileSnapshots)+len(snapshot.RelatedDiffs)+len(snapshot.SearchResults))
+	out := make([]agentgo.AgentMessage, 0, len(input.turnFragments())+len(snapshot.FileSnapshots)+len(snapshot.RelatedDiffs)+len(snapshot.SearchResults))
 	for _, fragment := range input.turnFragments() {
 		diff := unit.DiffSnapshot{
 			Paths:   []string{fragment.Path},
@@ -157,10 +160,11 @@ type hypothesisMessage struct {
 	full      string
 	condensed string
 	compacted bool
+	timestamp time.Time
 }
 
 func newHypothesisMessage(full, condensed string) hypothesisMessage {
-	return hypothesisMessage{full: full, condensed: condensed}
+	return hypothesisMessage{full: full, condensed: condensed, timestamp: time.Now()}
 }
 
 func (m hypothesisMessage) ToLLM() llm.Message {
@@ -171,7 +175,23 @@ func (m hypothesisMessage) ToLLM() llm.Message {
 	return llm.NewTextMessage("user", content)
 }
 
-func (m hypothesisMessage) Compact(expect float64) (msg.Msg, float64) {
+func (m hypothesisMessage) GetRole() agentgo.Role     { return agentgo.RoleUser }
+func (m hypothesisMessage) GetTimestamp() time.Time   { return m.timestamp }
+func (m hypothesisMessage) Raw() agentgo.AgentMessage { m.compacted = false; return m }
+func (m hypothesisMessage) TextContent() string {
+	wire := m.ToLLM()
+	return wire.ExtractText()
+}
+func (m hypothesisMessage) ThinkingContent() string { return "" }
+func (m hypothesisMessage) HasToolCalls() bool      { return false }
+func (m hypothesisMessage) ToMessage() (agentgo.Message, bool) {
+	return agentgo.Message{
+		Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(m.TextContent())},
+		Timestamp: m.timestamp,
+	}, true
+}
+
+func (m hypothesisMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	rawTokens := llm.CountTokens(m.full)
 	if rawTokens <= 0 {
 		return m, 1

@@ -30,7 +30,7 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 		t.Fatalf("search order = %#v", batch.Results())
 	}
 	projected, _ := batch.Compact(0)
-	wire := projected.ToLLM()
+	wire := projected.(*SearchBatch).ToLLM()
 	text := wire.ExtractText()
 	if wire.ToolCallID != "search-1" ||
 		!strings.Contains(text, `search_code "Missing" returned no matches across 3 scoped files`) ||
@@ -39,7 +39,7 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	}
 }
 
-func TestCloneAllCopiesSearchBatch(t *testing.T) {
+func TestRawCopiesSearchBatch(t *testing.T) {
 	message := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
 		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha", "syntax": "literal"}}},
@@ -47,9 +47,9 @@ func TestCloneAllCopiesSearchBatch(t *testing.T) {
 			"File: a.go\nMatch lines: 1\n10|func Alpha()\n",
 		}),
 	}).(*SearchBatch)
-	cloned := CloneAll([]Msg{message})[0].(*SearchBatch)
+	cloned := message.Raw().(*SearchBatch)
 	if cloned == message || cloned.Results()[0] == message.Results()[0] {
-		t.Fatal("CloneAll shared SearchBatch state")
+		t.Fatal("Raw shared SearchBatch state")
 	}
 }
 
@@ -65,7 +65,7 @@ func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
 	}).(*SearchBatch)
 
 	projected, _ := message.Compact(0)
-	wire := projected.ToLLM()
+	wire := projected.(*SearchBatch).ToLLM()
 	if text := wire.ExtractText(); !strings.Contains(text, "searched no files because its path scope was empty") {
 		t.Fatalf("compacted result lost scope warning: %s", text)
 	}

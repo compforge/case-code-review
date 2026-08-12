@@ -30,7 +30,7 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("code_comment"), toolDef("task_done")},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 			if request.Tool.Name() != "code_comment" {

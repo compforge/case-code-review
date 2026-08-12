@@ -9,9 +9,10 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -67,7 +68,7 @@ func newScanExecutor(args Args, handler harness.ToolHandler) *scanExecutor {
 
 func (e *scanExecutor) Run(
 	ctx context.Context,
-	messages []msg.Msg,
+	messages []agentgo.AgentMessage,
 	scope session.Scope,
 ) (harness.ExecutionResult, error) {
 	run := &scanExecution{executor: e, ctx: ctx}

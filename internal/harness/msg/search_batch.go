@@ -3,6 +3,8 @@ package msg
 import (
 	"strings"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -10,6 +12,7 @@ import (
 // SearchBatch keeps search_code's one call/result pairing while exposing each
 // query as a typed SearchResult for independent compaction and diagnostics.
 type SearchBatch struct {
+	messageMeta
 	items          []searchBatchItem
 	toolCallID     string
 	representation searchBatchRepresentation
@@ -49,10 +52,11 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 			continue
 		}
 		items[i].result = &SearchResult{
-			Tool:      CodeSearchToolName,
-			Query:     requests[i].SearchText,
-			Content:   part,
-			NoMatches: searchHadNoMatches(part),
+			messageMeta: result.messageMeta(),
+			Tool:        CodeSearchToolName,
+			Query:       requests[i].SearchText,
+			Content:     part,
+			NoMatches:   searchHadNoMatches(part),
 		}
 		if outcome, ok := tool.ParseCodeSearchOutcome(part); ok {
 			items[i].result.NoMatches = true
@@ -60,11 +64,29 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 			items[i].result.SearchedFiles = outcome.SearchedFiles
 		}
 	}
-	*b = SearchBatch{items: items, toolCallID: result.ToolCallID}
+	*b = SearchBatch{messageMeta: result.messageMeta(), items: items, toolCallID: result.ToolCallID}
 	return true
 }
 
 func (b *SearchBatch) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *SearchBatch) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *SearchBatch) Raw() agentgo.AgentMessage {
+	raw := b.clone()
+	raw.representation = searchBatchFull
+	for i := range raw.items {
+		if raw.items[i].result != nil {
+			raw.items[i].result.representation = searchFull
+		}
+	}
+	return raw
+}
+func (b *SearchBatch) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *SearchBatch) ThinkingContent() string { return "" }
+func (b *SearchBatch) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *SearchBatch) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(b.ToLLM(), b.ToolName(), b.GetTimestamp())
+}
 
 func (b *SearchBatch) render(representation searchBatchRepresentation) llm.Message {
 	parts := make([]string, len(b.items))
@@ -82,7 +104,7 @@ func (b *SearchBatch) ToolName() string { return CodeSearchToolName }
 
 func (b *SearchBatch) Priority() int { return 0 }
 
-func (b *SearchBatch) Compact(expect float64) (Msg, float64) {
+func (b *SearchBatch) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := b.clone()
 	next.representation, expect = compactRepresentation(expect, b.representation, searchBatchReference, next.render)
 	return next, expect
@@ -101,7 +123,7 @@ func (b *SearchBatch) Results() []*SearchResult {
 }
 
 func (b *SearchBatch) clone() *SearchBatch {
-	copyBatch := &SearchBatch{toolCallID: b.toolCallID, representation: b.representation, items: make([]searchBatchItem, len(b.items))}
+	copyBatch := &SearchBatch{messageMeta: b.messageMeta, toolCallID: b.toolCallID, representation: b.representation, items: make([]searchBatchItem, len(b.items))}
 	for i, item := range b.items {
 		copyBatch.items[i].raw = item.raw
 		if item.result != nil {

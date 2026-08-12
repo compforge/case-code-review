@@ -24,13 +24,14 @@ import (
 // Today the decision is fixed: paired content renders as the
 // tool_result it answers, unpaired as user text.
 //
-// A File is held by pointer so the retained llmloop can still stub it in place.
-// Active ContextManager keeps the value immutable and passes its target ratio
-// to Compact: File selects source, outline, or path itself while keeping the
+// A File is held by pointer while ContextManager treats the value immutably and
+// passes its target ratio to Compact: File selects source, outline, or path
+// itself while keeping the
 // message's position and
 // tool_call pairing — the 1:1 lowering invariant and the wire protocol's
 // call/result pairing both stay intact.
 type File struct {
+	messageMeta
 	Path       string
 	Start, End int    // 1-indexed inclusive line range actually shown
 	Total      int    // total lines in the file at read time
@@ -69,27 +70,42 @@ const (
 	SnapshotBaseline FileSnapshot = "baseline"
 )
 
-// StubReason selects the pointer text a stubbed File lowers to — the model
-// must know WHY content vanished: a superseded copy points forward to the
-// newer read; an evicted one says how to get the content back.
+// StubReason selects the pointer text a deduplicated File lowers to.
 type StubReason string
 
 const (
 	// StubSuperseded: a later read covers this one; the content is below.
 	StubSuperseded StubReason = "superseded"
-	// StubEvicted: elided under token pressure; re-derivable via read_files.
-	StubEvicted StubReason = "evicted"
 )
 
-// ToLLM renders the full content, or — once stubbed — a pointer that spends no
-// meaningful tokens. Shape selection lives HERE, not at construction: paired
-// content answers its tool call, unpaired content is user text.
+// ToLLM renders the current semantic projection.
 func (f *File) ToLLM() llm.Message {
 	text := f.render()
 	if f.toolCallID != "" {
 		return llm.NewToolResultMessage(f.toolCallID, text)
 	}
 	return llm.NewTextMessage("user", text)
+}
+
+func (f *File) GetRole() agentgo.Role { return domainRole(f.ToLLM()) }
+
+// Raw restores the complete source projection without changing the current
+// compacted value.
+//
+// +spec=`Raw always returns the full original file source; it must not mutate or preserve an outline/reference/superseded projection`
+// +case:id=raw_restores_source,desc=`Raw is called on a compacted file`,expect=`returned message contains full source and receiver remains compacted`
+func (f *File) Raw() agentgo.AgentMessage {
+	raw := *f
+	raw.representation = fileSource
+	raw.stubbed = ""
+	return &raw
+}
+
+func (f *File) TextContent() string     { return domainText(f.ToLLM()) }
+func (f *File) ThinkingContent() string { return "" }
+func (f *File) HasToolCalls() bool      { return domainHasToolCalls(f.ToLLM()) }
+func (f *File) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(f.ToLLM(), f.ToolName(), f.GetTimestamp())
 }
 
 func (f *File) render() string {
@@ -109,9 +125,6 @@ func (f *File) render() string {
 	switch f.stubbed {
 	case StubSuperseded:
 		text = fmt.Sprintf("File: %s lines %d-%d — superseded by a later read of the same content below; elided.",
-			f.Path, f.Start, f.End)
-	case StubEvicted:
-		text = fmt.Sprintf("File: %s lines %d-%d — elided to fit the context budget; call read_files again if you still need it.",
 			f.Path, f.Start, f.End)
 	}
 	return text
@@ -142,14 +155,15 @@ func (f *File) FromLLM(result LLMToolResult) bool {
 		}
 	}
 	*f = File{
-		Path:       strings.TrimSpace(m[1]),
-		Start:      start,
-		End:        end,
-		Total:      total,
-		Content:    result.Content,
-		Snapshot:   snapshot,
-		Ref:        ref,
-		toolCallID: result.ToolCallID,
+		messageMeta: result.messageMeta(),
+		Path:        strings.TrimSpace(m[1]),
+		Start:       start,
+		End:         end,
+		Total:       total,
+		Content:     result.Content,
+		Snapshot:    snapshot,
+		Ref:         ref,
+		toolCallID:  result.ToolCallID,
 	}
 	return true
 }
@@ -159,7 +173,11 @@ func (f *File) Priority() int { return f.priority }
 // Compact selects the first File-owned representation that satisfies expect.
 // Ratios are always measured against the full source representation, including
 // the context label exactly as it would be sent to the model.
-func (f *File) Compact(expect float64) (Msg, float64) {
+// Compact selects a semantic projection without mutating the full message.
+//
+// +spec=`Compact is immutable and selects source, producer outline, then path reference according to the requested ratio; actual is measured against full source`
+// +case:id=outline_before_path,desc=`ratio fits outline but not source`,expect=`outline projection is returned and Raw still returns source`
+func (f *File) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	rawTokens := llm.CountTokens(f.renderRepresentation(fileSource))
 	if rawTokens <= 0 {
 		return f, 1
@@ -220,15 +238,6 @@ func (f *File) ToolName() string {
 	return FileReadToolName
 }
 
-// Stub elides the content with the given reason (idempotent; the first reason
-// wins — a superseded copy staying "superseded" under later eviction pressure
-// keeps its forward pointer meaningful).
-func (f *File) Stub(reason StubReason) {
-	if f.stubbed == "" {
-		f.stubbed = reason
-	}
-}
-
 // Stubbed reports whether the content has been elided.
 func (f *File) Stubbed() bool { return f.stubbed != "" }
 
@@ -242,11 +251,6 @@ func (f *File) FullContentVisible() bool {
 	}
 	return effective != fileOutline || f.Outline == ""
 }
-
-// Reclaim / Reclaimed implement msg.Reclaimable: eviction under token pressure
-// is the evicted-reason stub. (Dedup uses Stub(StubSuperseded) directly.)
-func (f *File) Reclaim()        { f.Stub(StubEvicted) }
-func (f *File) Reclaimed() bool { return f.Stubbed() }
 
 // Covers reports whether f's range contains g's range of the same path — the
 // dedup precondition: everything g shows, f shows too.
@@ -278,7 +282,8 @@ const FileReadBaseToolName = "read_base_files"
 // participation; it just has no tool_call pairing to preserve.
 func NewFile(path string, start, end, total int, content string) *File {
 	return &File{
-		Path: path, Start: start, End: end, Total: total, Content: content,
+		messageMeta: newMessageMeta(),
+		Path:        path, Start: start, End: end, Total: total, Content: content,
 		Snapshot: SnapshotCurrent,
 	}
 }
@@ -302,6 +307,9 @@ func (f *File) ConfigureContext(reason, ref string) *File {
 // ConfigurePriority sets execution-local retention importance without making
 // it part of the immutable repository snapshot stored on a Unit.
 func (f *File) ConfigurePriority(priority int) *File {
+	if f.timestamp.IsZero() {
+		f.messageMeta = newMessageMeta()
+	}
 	f.priority = priority
 	return f
 }
@@ -375,37 +383,67 @@ func VisibleFileLabel(text string) string {
 // content once. Line-shift safety: reads at different times could see
 // different file states, but within one review loop the workspace/ref is
 // fixed, so same path + covered range ⇒ same content.
-func DedupFiles(messages []Msg) (stubbed int) {
-	var files []*File
-	for _, message := range messages {
-		files = append(files, filesInMessage(message)...)
+// DedupFiles returns an immutable projection in which earlier covered file
+// reads are replaced by forward references. Raw on every projected message
+// still restores its original full content.
+func DedupFiles(messages []agentgo.AgentMessage) ([]agentgo.AgentMessage, int) {
+	type fileLocation struct {
+		message int
+		item    int
+		file    *File
 	}
+	var files []fileLocation
+	for messageIndex, message := range messages {
+		switch value := message.(type) {
+		case *File:
+			files = append(files, fileLocation{message: messageIndex, item: -1, file: value})
+		case *FileBatch:
+			for itemIndex, item := range value.items {
+				if item.file != nil {
+					files = append(files, fileLocation{message: messageIndex, item: itemIndex, file: item.file})
+				}
+			}
+		}
+	}
+	stubbed := make(map[int]map[int]bool)
 	for i := len(files) - 1; i >= 0; i-- {
-		newer := files[i]
+		newer := files[i].file
 		if newer.Stubbed() {
 			continue
 		}
 		for j := range i {
-			older := files[j]
+			older := files[j].file
 			if older.Stubbed() {
 				continue
 			}
 			if newer.Covers(older) {
-				older.Stub(StubSuperseded)
-				stubbed++
+				if stubbed[files[j].message] == nil {
+					stubbed[files[j].message] = make(map[int]bool)
+				}
+				stubbed[files[j].message][files[j].item] = true
 			}
 		}
 	}
-	return stubbed
-}
-
-func filesInMessage(message Msg) []*File {
-	switch value := message.(type) {
-	case *File:
-		return []*File{value}
-	case *FileBatch:
-		return value.Files()
-	default:
-		return nil
+	if len(stubbed) == 0 {
+		return messages, 0
 	}
+	out := append([]agentgo.AgentMessage(nil), messages...)
+	count := 0
+	for messageIndex, items := range stubbed {
+		switch value := messages[messageIndex].(type) {
+		case *File:
+			copyFile := *value
+			copyFile.stubbed = StubSuperseded
+			out[messageIndex] = &copyFile
+			count++
+		case *FileBatch:
+			copyBatch := value.clone()
+			for itemIndex := range items {
+				copyBatch.items[itemIndex].file.stubbed = StubSuperseded
+				count++
+			}
+			out[messageIndex] = copyBatch
+		}
+	}
+	return out, count
 }

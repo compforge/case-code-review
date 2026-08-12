@@ -1,148 +1,76 @@
-// Package msg is ccr's review-domain message model: the review loop's
-// conversation is a []Msg of DOMAIN messages (what the content IS — a unit's
-// initial context, a file's source, a board note), and the LLM wire format
-// (llm.Message's user/assistant/tool roles) appears only at the Lower
-// boundary, immediately before an API call.
-//
-// Why a domain layer (see docs/harness.md): wire roles erase identity.
-// Once a file's content is flattened into a user-role string, nothing can
-// tell it apart from instructions — so it can't be deduplicated against a
-// later read_files, evicted by staleness when the context tightens, or
-// re-rendered for a provider that prefers tool_result form. Typed messages
-// keep that identity until the last moment; rendering decisions become
-// per-type policy in one place instead of assembly-time string concatenation.
-//
-// Evolution is incremental, pi-style (passthrough first): Raw wraps an
-// llm.Message unchanged, so swapping the loop's currency is byte-identical
-// on the wire; typed messages (file / board / bulletin …) are introduced one
-// consumer at a time.
-//
-// Harness adapts each Msg to AgentGo AgentMessage and preserves a 1:1 model
-// projection. AgentGo may ask that wrapper for a smaller representation, but
-// the domain value keeps its raw form for later compaction decisions.
+// Package msg contains CCR's concrete review-domain AgentMessages. Each type
+// owns its raw form, compaction policy, priority, and model projection; Harness
+// passes the values to AgentGo without another message abstraction or wrapper.
 package msg
 
 import (
+	"encoding/json"
+	"time"
+
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// Msg is one review-domain message in a loop's conversation.
-type Msg interface {
-	// ToLLM renders the message's current projection into exactly one LLM wire
-	// message. Representation selection belongs to Compact, not the renderer.
-	ToLLM() llm.Message
-	// Compact returns the highest-fidelity immutable projection that satisfies
-	// expect, measured against this message's full representation. The ratio is
-	// only a budget target: each domain message owns its semantic trade-offs.
-	Compact(expect float64) (Msg, float64)
-	// Priority is execution-local information importance. Higher-priority
-	// messages are compacted after lower-priority messages.
-	Priority() int
+type messageMeta struct {
+	timestamp time.Time
 }
 
-// ContextItemProvider lets a domain message expose structured admission facts
-// through AgentGo's shared protocol without changing its LLM rendering.
-type ContextItemProvider interface {
-	Msg
-	ContextItems() []agentgo.ContextItem
+func newMessageMeta() messageMeta { return messageMeta{timestamp: time.Now()} }
+
+func (m messageMeta) GetTimestamp() time.Time { return m.timestamp }
+
+// Text creates a generic model-level message. Steering prompts have no CCR
+// domain lifecycle, so agentgo.Message is their native representation.
+func Text(role, content string) agentgo.AgentMessage {
+	message := wireMessage(llm.NewTextMessage(role, content), "")
+	message.Timestamp = time.Now()
+	return message
 }
 
-// ToolResultMsg preserves the tool identity needed to reconstruct typed
-// results after AgentGo or a context strategy temporarily lowers them.
-type ToolResultMsg interface {
-	Msg
-	ToolName() string
-}
-
-// Reclaimable is a message whose content can be RE-DERIVED — a file re-read, a
-// board re-pull — so under token pressure it may be shed (Reclaim) before the
-// loop pays for LLM summarization, which is neither free nor lossless. Eviction
-// is idempotent. File and Board implement it; the compression engine sheds
-// reclaimables oldest-first before summarizing (see evictReclaimable).
-type Reclaimable interface {
-	Msg
-	Reclaim() // elide content, keeping a one-line pointer
-	Reclaimed() bool
-}
-
-// Raw is the passthrough type: an llm.Message carried as-is (task prompts,
-// assistant turns, tool results, wrap-up nudges). It keeps the currency swap
-// byte-identical and remains the right type for anything that is genuinely
-// wire-shaped rather than domain-shaped.
-type Raw struct {
-	M llm.Message
-}
-
-func (r Raw) ToLLM() llm.Message             { return r.M }
-func (r Raw) Compact(float64) (Msg, float64) { return r, 1 }
-func (r Raw) Priority() int                  { return 0 }
-
-// Text is shorthand for a Raw text message — the loop's steering nudges
-// ("call task_done", wrap-up) are wire-shaped user/assistant text by nature.
-func Text(role, content string) Msg {
-	return Raw{M: llm.NewTextMessage(role, content)}
-}
-
-// Wrap lifts wire messages into the domain as Raw passthroughs.
-func Wrap(msgs []llm.Message) []Msg {
-	out := make([]Msg, len(msgs))
-	for i, m := range msgs {
-		out[i] = Raw{M: m}
+// Wrap converts existing prompt-builder output to AgentGo's model message.
+// It is a construction helper, not a second application message interface.
+func Wrap(messages []llm.Message) []agentgo.AgentMessage {
+	out := make([]agentgo.AgentMessage, len(messages))
+	for i, message := range messages {
+		converted := wireMessage(message, "")
+		converted.Timestamp = time.Now()
+		out[i] = converted
 	}
 	return out
 }
 
-// Lower renders a conversation for an API call. len(out) == len(msgs), in
-// order (the package invariant), so index-based reasoning done on []Msg
-// (compression zones, rounds) holds on the wire form too.
-func Lower(msgs []Msg) []llm.Message {
-	out := make([]llm.Message, len(msgs))
-	for i, m := range msgs {
-		out[i] = m.ToLLM()
+func wireMessage(message llm.Message, toolName string) agentgo.Message {
+	content := []agentgo.ContentBlock{agentgo.TextBlock(message.ExtractText())}
+	for _, call := range message.ToolCalls {
+		content = append(content, agentgo.ToolCallBlock(agentgo.ToolCall{
+			ID: call.ID, Name: call.Function.Name,
+			Args: json.RawMessage(call.Function.Arguments),
+		}))
 	}
-	return out
-}
-
-// CloneAll copies a conversation without sharing mutable typed messages.
-// Context projection may stub File or Board values, while the runtime
-// transcript must remain unchanged until a rewrite is explicitly committed.
-func CloneAll(msgs []Msg) []Msg {
-	out := make([]Msg, len(msgs))
-	for i, m := range msgs {
-		switch value := m.(type) {
-		case *File:
-			cp := *value
-			out[i] = &cp
-		case *FileBatch:
-			out[i] = value.clone()
-		case *FileContext:
-			out[i] = value.clone()
-		case *SearchBatch:
-			out[i] = value.clone()
-		case *SearchResult:
-			cp := *value
-			cp.Paths = append([]string(nil), value.Paths...)
-			if value.SearchedFiles != nil {
-				count := *value.SearchedFiles
-				cp.SearchedFiles = &count
-			}
-			out[i] = &cp
-		case *Diff:
-			cp := *value
-			cp.Paths = append([]string(nil), value.Paths...)
-			out[i] = &cp
-		case *Board:
-			cp := *value
-			out[i] = &cp
-		case Raw:
-			out[i] = Raw{M: value.M}
-		default:
-			out[i] = value
+	converted := agentgo.Message{Role: agentgo.Role(message.Role), Content: content}
+	if message.ToolCallID != "" || toolName != "" {
+		converted.Metadata = make(map[string]any, 2)
+		if message.ToolCallID != "" {
+			converted.Metadata["tool_call_id"] = message.ToolCallID
+		}
+		if toolName != "" {
+			converted.Metadata["tool_name"] = toolName
 		}
 	}
-	return out
+	return converted
+}
+
+func domainRole(message llm.Message) agentgo.Role { return agentgo.Role(message.Role) }
+
+func domainText(message llm.Message) string { return message.ExtractText() }
+
+func domainHasToolCalls(message llm.Message) bool { return len(message.ToolCalls) > 0 }
+
+func domainToMessage(message llm.Message, toolName string, timestamp time.Time) (agentgo.Message, bool) {
+	converted := wireMessage(message, toolName)
+	converted.Timestamp = timestamp
+	return converted, true
 }
 
 // compactRepresentation selects the first message-owned representation that

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -23,6 +26,14 @@ type LLMToolResult struct {
 	Arguments  map[string]any
 	Content    string
 	IsError    bool
+	Timestamp  time.Time
+}
+
+func (r LLMToolResult) messageMeta() messageMeta {
+	if r.Timestamp.IsZero() {
+		return newMessageMeta()
+	}
+	return messageMeta{timestamp: r.Timestamp}
 }
 
 func (r LLMToolResult) failed() bool {
@@ -32,6 +43,7 @@ func (r LLMToolResult) failed() bool {
 // SearchResult is one content-search member or one file-discovery result. Its
 // raw hits can be re-derived, so compact forms retain the query and locations.
 type SearchResult struct {
+	messageMeta
 	Tool           string
 	Query          string
 	Paths          []string
@@ -60,11 +72,12 @@ func (r *SearchResult) FromLLM(result LLMToolResult) bool {
 		return false
 	}
 	*r = SearchResult{
-		Tool:       result.Tool,
-		Query:      stringArgument(result.Arguments, "query_name"),
-		Content:    result.Content,
-		ToolCallID: result.ToolCallID,
-		NoMatches:  searchHadNoMatches(result.Content),
+		messageMeta: result.messageMeta(),
+		Tool:        result.Tool,
+		Query:       stringArgument(result.Arguments, "query_name"),
+		Content:     result.Content,
+		ToolCallID:  result.ToolCallID,
+		NoMatches:   searchHadNoMatches(result.Content),
 	}
 	return true
 }
@@ -78,6 +91,20 @@ func (r SearchResult) ToLLM() llm.Message {
 		return llm.NewToolResultMessage(r.ToolCallID, text)
 	}
 	return llm.NewTextMessage("user", text)
+}
+
+func (r SearchResult) GetRole() agentgo.Role { return domainRole(r.ToLLM()) }
+func (r SearchResult) Raw() agentgo.AgentMessage {
+	raw := r
+	raw.Paths = append([]string(nil), r.Paths...)
+	raw.representation = searchFull
+	return raw
+}
+func (r SearchResult) TextContent() string     { return domainText(r.ToLLM()) }
+func (r SearchResult) ThinkingContent() string { return "" }
+func (r SearchResult) HasToolCalls() bool      { return domainHasToolCalls(r.ToLLM()) }
+func (r SearchResult) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(r.ToLLM(), r.ToolName(), r.GetTimestamp())
 }
 
 func (r SearchResult) render(representation searchRepresentation) string {
@@ -106,12 +133,15 @@ func (r SearchResult) ToolName() string { return r.Tool }
 func (r SearchResult) Priority() int { return r.priority }
 
 func (r *SearchResult) ConfigurePresentation(label string, priority int) *SearchResult {
+	if r.timestamp.IsZero() {
+		r.messageMeta = newMessageMeta()
+	}
 	r.Label = label
 	r.priority = priority
 	return r
 }
 
-func (r SearchResult) Compact(expect float64) (Msg, float64) {
+func (r SearchResult) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := r
 	next.Paths = append([]string(nil), r.Paths...)
 	next.representation, expect = compactRepresentation(expect, r.representation, searchReference, func(representation searchRepresentation) llm.Message {
@@ -162,6 +192,7 @@ func (r SearchResult) condensed() string {
 // Diff is a re-readable slice of the reviewed change. Its condensed form keeps
 // file and hunk anchors while dropping changed-line bodies.
 type Diff struct {
+	messageMeta
 	Paths          []string
 	Content        string
 	ToolCallID     string
@@ -183,14 +214,29 @@ func (d *Diff) FromLLM(result LLMToolResult) bool {
 		return false
 	}
 	*d = Diff{
-		Paths:      stringArguments(result.Arguments, "paths"),
-		Content:    result.Content,
-		ToolCallID: result.ToolCallID,
+		messageMeta: result.messageMeta(),
+		Paths:       stringArguments(result.Arguments, "paths"),
+		Content:     result.Content,
+		ToolCallID:  result.ToolCallID,
 	}
 	return true
 }
 
 func (d Diff) ToLLM() llm.Message { return d.render(d.representation) }
+
+func (d Diff) GetRole() agentgo.Role { return domainRole(d.ToLLM()) }
+func (d Diff) Raw() agentgo.AgentMessage {
+	raw := d
+	raw.Paths = append([]string(nil), d.Paths...)
+	raw.representation = diffFull
+	return raw
+}
+func (d Diff) TextContent() string     { return domainText(d.ToLLM()) }
+func (d Diff) ThinkingContent() string { return "" }
+func (d Diff) HasToolCalls() bool      { return domainHasToolCalls(d.ToLLM()) }
+func (d Diff) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(d.ToLLM(), d.ToolName(), d.GetTimestamp())
+}
 
 func (d Diff) render(representation diffRepresentation) llm.Message {
 	text := d.Content
@@ -225,7 +271,7 @@ func (d Diff) ToolName() string { return FileReadDiffToolName }
 func (d Diff) Priority() int { return d.priority }
 
 func NewDiff(paths []string, content string) *Diff {
-	return &Diff{Paths: append([]string(nil), paths...), Content: content}
+	return &Diff{messageMeta: newMessageMeta(), Paths: append([]string(nil), paths...), Content: content}
 }
 
 func (d *Diff) ConfigurePresentation(label string, priority int) *Diff {
@@ -234,7 +280,7 @@ func (d *Diff) ConfigurePresentation(label string, priority int) *Diff {
 	return d
 }
 
-func (d Diff) Compact(expect float64) (Msg, float64) {
+func (d Diff) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := d
 	next.Paths = append([]string(nil), d.Paths...)
 	next.representation, expect = compactRepresentation(expect, d.representation, diffReference, next.render)
@@ -245,13 +291,14 @@ func (d Diff) Compact(expect float64) (Msg, float64) {
 // and recoverable tool errors. Domain artifacts live in Runner collectors, so
 // duplicating their payload in conversation would create a second truth source.
 type ToolReceipt struct {
+	messageMeta
 	Tool       string
 	Content    string
 	ToolCallID string
 }
 
 func (r *ToolReceipt) FromLLM(result LLMToolResult) bool {
-	*r = ToolReceipt{Tool: result.Tool, Content: result.Content, ToolCallID: result.ToolCallID}
+	*r = ToolReceipt{messageMeta: result.messageMeta(), Tool: result.Tool, Content: result.Content, ToolCallID: result.ToolCallID}
 	return true
 }
 
@@ -259,21 +306,29 @@ func (r ToolReceipt) ToLLM() llm.Message {
 	return llm.NewToolResultMessage(r.ToolCallID, r.Content)
 }
 
-func (r ToolReceipt) Compact(float64) (Msg, float64) { return r, 1 }
+func (r ToolReceipt) GetRole() agentgo.Role     { return domainRole(r.ToLLM()) }
+func (r ToolReceipt) Raw() agentgo.AgentMessage { return r }
+func (r ToolReceipt) TextContent() string       { return domainText(r.ToLLM()) }
+func (r ToolReceipt) ThinkingContent() string   { return "" }
+func (r ToolReceipt) HasToolCalls() bool        { return domainHasToolCalls(r.ToLLM()) }
+func (r ToolReceipt) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(r.ToLLM(), r.ToolName(), r.GetTimestamp())
+}
+func (r ToolReceipt) Compact(float64) (agentgo.AgentMessage, float64) { return r, 1 }
 
 func (r ToolReceipt) ToolName() string { return r.Tool }
 
 func (r ToolReceipt) Priority() int { return 0 }
 
 type llmDecoder interface {
-	Msg
+	agentgo.AgentMessage
 	FromLLM(LLMToolResult) bool
 }
 
 // FromLLM restores one wire tool result to the first matching message type.
 // The dispatcher contains no message-specific parsing; each decoder sits next
 // to that type's ToLLM so the two directions evolve together.
-func FromLLM(result LLMToolResult) Msg {
+func FromLLM(result LLMToolResult) agentgo.AgentMessage {
 	decoders := []llmDecoder{&FileBatch{}, &File{}, &SearchBatch{}, &SearchResult{}, &Diff{}}
 	for _, decoder := range decoders {
 		if decoder.FromLLM(result) {

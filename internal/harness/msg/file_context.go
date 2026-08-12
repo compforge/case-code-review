@@ -37,6 +37,7 @@ type FileContextEntry struct {
 // model and to trajectory analysis without flattening those roles into prompt
 // prose assembled by Runner.
 type FileContext struct {
+	messageMeta
 	entries        []FileContextEntry
 	priority       int
 	representation fileContextRepresentation
@@ -62,10 +63,23 @@ func NewFileContext(entries []FileContextEntry) *FileContext {
 		}
 		return copyEntries[i].Path < copyEntries[j].Path
 	})
-	return &FileContext{entries: copyEntries}
+	return &FileContext{messageMeta: newMessageMeta(), entries: copyEntries}
 }
 
 func (c *FileContext) ToLLM() llm.Message { return c.render(c.representation) }
+
+func (c *FileContext) GetRole() agentgo.Role { return domainRole(c.ToLLM()) }
+func (c *FileContext) Raw() agentgo.AgentMessage {
+	raw := c.clone()
+	raw.representation = fileContextDetailed
+	return raw
+}
+func (c *FileContext) TextContent() string     { return domainText(c.ToLLM()) }
+func (c *FileContext) ThinkingContent() string { return "" }
+func (c *FileContext) HasToolCalls() bool      { return domainHasToolCalls(c.ToLLM()) }
+func (c *FileContext) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(c.ToLLM(), "", c.GetTimestamp())
+}
 
 func (c *FileContext) render(representation fileContextRepresentation) llm.Message {
 	var b strings.Builder
@@ -96,7 +110,7 @@ func (c *FileContext) render(representation fileContextRepresentation) llm.Messa
 	return llm.NewTextMessage("user", strings.TrimRight(b.String(), "\n"))
 }
 
-func (c *FileContext) Compact(expect float64) (Msg, float64) {
+func (c *FileContext) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := c.clone()
 	next.representation, expect = compactRepresentation(expect, c.representation, fileContextReferences, next.render)
 	return next, expect
@@ -125,7 +139,7 @@ func (c *FileContext) Entries() []FileContextEntry {
 }
 
 func (c *FileContext) clone() *FileContext {
-	return &FileContext{entries: c.Entries(), priority: c.priority, representation: c.representation}
+	return &FileContext{messageMeta: c.messageMeta, entries: c.Entries(), priority: c.priority, representation: c.representation}
 }
 
 func fileViewRank(view FileContextView) int {
