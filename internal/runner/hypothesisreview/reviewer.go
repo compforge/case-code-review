@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
@@ -57,7 +59,7 @@ func Review(
 		return ReviewResult{}
 	}
 
-	messages := make([]msg.Msg, 0, len(config.Task.Messages))
+	messages := make([]agentgo.AgentMessage, 0, len(config.Task.Messages))
 	for _, message := range config.Task.Messages {
 		if continueFrom != nil && message.Role != "user" {
 			continue

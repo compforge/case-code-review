@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/msg"
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -32,7 +33,7 @@ type ToolHandler interface {
 // The provider owns the source semantics (for example, a Review Team board);
 // Harness only commits the returned typed messages into the conversation.
 type TurnContextProvider interface {
-	PullTurnContext(context.Context, session.Scope) []msg.Msg
+	PullTurnContext(context.Context, session.Scope) []agentgo.AgentMessage
 }
 
 type ExecutionEventType string

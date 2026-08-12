@@ -12,10 +12,20 @@ import (
 // one-call/one-result pairing intact without flattening batch members into
 // opaque text that ContextManager cannot deduplicate or compact.
 type FileBatch struct {
-	items      []fileBatchItem
-	tool       string
-	toolCallID string
+	messageMeta
+	items          []fileBatchItem
+	tool           string
+	toolCallID     string
+	representation fileBatchRepresentation
 }
+
+type fileBatchRepresentation uint8
+
+const (
+	fileBatchSource fileBatchRepresentation = iota
+	fileBatchOutline
+	fileBatchReference
+)
 
 type fileBatchItem struct {
 	file *File
@@ -39,15 +49,41 @@ func (b *FileBatch) FromLLM(result LLMToolResult) bool {
 			items[i].raw = part
 		}
 	}
-	*b = FileBatch{items: items, tool: result.Tool, toolCallID: result.ToolCallID}
+	*b = FileBatch{messageMeta: result.messageMeta(), items: items, tool: result.Tool, toolCallID: result.ToolCallID}
 	return true
 }
 
-func (b *FileBatch) ToLLM(level CompactionLevel) llm.Message {
+func (b *FileBatch) ToLLM() llm.Message { return b.render(b.representation) }
+
+func (b *FileBatch) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *FileBatch) Raw() agentgo.AgentMessage {
+	raw := b.clone()
+	raw.representation = fileBatchSource
+	for i := range raw.items {
+		if raw.items[i].file != nil {
+			raw.items[i].file.representation = fileSource
+			raw.items[i].file.stubbed = ""
+		}
+	}
+	return raw
+}
+func (b *FileBatch) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *FileBatch) ThinkingContent() string { return "" }
+func (b *FileBatch) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *FileBatch) ToMessage() (agentgo.Message, bool) {
+	return domainToMessage(b.ToLLM(), b.ToolName(), b.GetTimestamp())
+}
+
+func (b *FileBatch) render(representation fileBatchRepresentation) llm.Message {
 	parts := make([]string, len(b.items))
 	for i, item := range b.items {
 		if item.file != nil {
-			parts[i] = item.file.render(level)
+			view := *item.file
+			requested := fileRepresentation(representation)
+			if requested > view.representation {
+				view.representation = requested
+			}
+			parts[i] = view.render()
 		} else {
 			parts[i] = item.raw
 		}
@@ -57,33 +93,24 @@ func (b *FileBatch) ToLLM(level CompactionLevel) llm.Message {
 
 func (b *FileBatch) ToolName() string { return b.tool }
 
-func (b *FileBatch) MaxCompaction() CompactionLevel { return CompactionReference }
+func (b *FileBatch) Priority() int { return 0 }
 
-func (b *FileBatch) ContextItems(level CompactionLevel) []agentgo.ContextItem {
+func (b *FileBatch) Compact(expect float64) (agentgo.AgentMessage, float64) {
+	next := b.clone()
+	next.representation, expect = compactRepresentation(expect, b.representation, fileBatchReference, next.render)
+	return next, expect
+}
+
+func (b *FileBatch) ContextItems() []agentgo.ContextItem {
 	var out []agentgo.ContextItem
 	for _, file := range b.Files() {
-		out = append(out, file.ContextItems(level)...)
+		view := *file
+		if requested := fileRepresentation(b.representation); requested > view.representation {
+			view.representation = requested
+		}
+		out = append(out, view.ContextItems()...)
 	}
 	return out
-}
-
-func (b *FileBatch) Reclaim() {
-	for _, file := range b.Files() {
-		file.Reclaim()
-	}
-}
-
-func (b *FileBatch) Reclaimed() bool {
-	files := b.Files()
-	if len(files) == 0 {
-		return true
-	}
-	for _, file := range files {
-		if !file.Reclaimed() {
-			return false
-		}
-	}
-	return true
 }
 
 // Files returns the typed file members in request order. Error members remain
@@ -98,8 +125,24 @@ func (b *FileBatch) Files() []*File {
 	return files
 }
 
+// VisibleFiles returns the batch members whose current batch projection still
+// contains exact source. Returned values are views.
+func (b *FileBatch) VisibleFiles() []*File {
+	var visible []*File
+	for _, file := range b.Files() {
+		view := *file
+		if requested := fileRepresentation(b.representation); requested > view.representation {
+			view.representation = requested
+		}
+		if view.FullContentVisible() {
+			visible = append(visible, &view)
+		}
+	}
+	return visible
+}
+
 func (b *FileBatch) clone() *FileBatch {
-	copyBatch := &FileBatch{tool: b.tool, toolCallID: b.toolCallID, items: make([]fileBatchItem, len(b.items))}
+	copyBatch := &FileBatch{messageMeta: b.messageMeta, tool: b.tool, toolCallID: b.toolCallID, representation: b.representation, items: make([]fileBatchItem, len(b.items))}
 	for i, item := range b.items {
 		copyBatch.items[i].raw = item.raw
 		if item.file != nil {

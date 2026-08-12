@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/compforge/agentgo"
+
+	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 func fileResult(path string, total, start, end int, body string) string {
@@ -26,6 +30,9 @@ func TestFileFromLLM(t *testing.T) {
 	if f.Path != "pkg/a.go" || f.Start != 10 || f.End != 40 || f.Total != 120 {
 		t.Fatalf("parsed identity off: %+v", f)
 	}
+	if f.Priority() != 0 {
+		t.Fatalf("loop-discovered file priority = %d, want 0", f.Priority())
+	}
 	// Other tools and malformed results stay Raw.
 	if (&File{}).FromLLM(LLMToolResult{Tool: "search_code", ToolCallID: "c1", Content: "hits"}) {
 		t.Fatal("non-read_files must not promote")
@@ -34,7 +41,7 @@ func TestFileFromLLM(t *testing.T) {
 		t.Fatal("error result must not promote")
 	}
 	// Lowering an un-stubbed File is the original wire message.
-	if got := f.Lower(); got.ToolCallID != "c1" || !strings.Contains(got.ExtractText(), "1|code") {
+	if got := f.ToLLM(); got.ToolCallID != "c1" || !strings.Contains(got.ExtractText(), "1|code") {
 		t.Fatalf("lowered wire off: %+v", got)
 	}
 }
@@ -50,7 +57,7 @@ func TestFileFromBaselineResultKeepsSnapshotIdentity(t *testing.T) {
 	if baseline.Covers(current) || current.Covers(baseline) {
 		t.Fatal("baseline and current snapshots must never deduplicate each other")
 	}
-	baselineWire := baseline.ToLLM(CompactionNone)
+	baselineWire := baseline.ToLLM()
 	path, start, end, total, ok := VisibleFileRange(baselineWire.ExtractText())
 	if !ok || path != "pkg/a.go" || start != 10 || end != 40 || total != 120 {
 		t.Fatalf("baseline visible range = %q %d-%d/%d ok=%t", path, start, end, total, ok)
@@ -75,7 +82,7 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	f := mkFile(t, "pkg/a.go", 120, 10, 40)
 	f.ConfigurePresentation("code under review", "File: pkg/a.go (Total lines: 120)\nLINE_RANGE: 10-40\n10|condensed\n")
 
-	full := f.ToLLM(CompactionNone)
+	full := f.ToLLM()
 	if full.ToolCallID != "c1" || !strings.Contains(full.ExtractText(), "CONTEXT: code under review") {
 		t.Fatalf("full projection lost pairing or label: %+v", full)
 	}
@@ -87,55 +94,65 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 		t.Fatalf("label = %q", got)
 	}
 
-	condensed := f.ToLLM(CompactionCondensed)
+	outlineView := *f
+	outlineView.representation = fileOutline
+	outlineWire := outlineView.ToLLM()
+	outlineRatio := float64(llm.CountTokens(outlineWire.ExtractText())) / float64(llm.CountTokens(full.ExtractText()))
+	projected, _ := f.Compact(outlineRatio)
+	outline := projected.(*File)
+	condensed := outline.ToLLM()
 	if !strings.Contains(condensed.ExtractText(), "10|condensed") || condensed.ToolCallID != "c1" {
 		t.Fatalf("condensed projection off: %+v", condensed)
 	}
-	if f.FullContentVisible(CompactionCondensed) {
+	if outline.FullContentVisible() {
 		t.Fatal("producer-authored condensed content must not claim full source coverage")
 	}
-	if items := f.ContextItems(CompactionCondensed); len(items) != 1 || items[0].Representation != "outline" {
+	if items := outline.ContextItems(); len(items) != 1 || items[0].Representation != "outline" {
 		t.Fatalf("condensed context items = %#v", items)
 	}
 	plain := mkFile(t, "pkg/plain.go", 10, 1, 10)
-	if !plain.FullContentVisible(CompactionCondensed) {
-		t.Fatal("condensed level without an alternate projection still contains full source")
+	if roomy, _ := plain.Compact(1); !roomy.(*File).FullContentVisible() {
+		t.Fatal("a roomy projection must retain full source")
 	}
-	reference := f.ToLLM(CompactionReference)
+	referenceProjection, _ := f.Compact(0)
+	referenceFile := referenceProjection.(*File)
+	reference := referenceFile.ToLLM()
 	if reference.ToolCallID != "c1" || !strings.Contains(reference.ExtractText(), "compacted to a reference") {
 		t.Fatalf("reference projection off: %+v", reference)
 	}
 	if _, _, _, _, ok := VisibleFileRange(reference.ExtractText()); ok {
 		t.Fatal("reference-only file must not count as visible content")
 	}
-	if items := f.ContextItems(CompactionReference); len(items) != 1 || items[0].Representation != "reference" {
+	if items := referenceFile.ContextItems(); len(items) != 1 || items[0].Representation != "reference" {
 		t.Fatalf("reference context items = %#v", items)
 	}
 }
 
-func TestFileStubKeepsPairing(t *testing.T) {
+func TestFileCompactChoosesItsOwnRepresentationByRatio(t *testing.T) {
 	f := mkFile(t, "pkg/a.go", 120, 10, 40)
-	f.Stub(StubSuperseded)
-	got := f.Lower()
-	if got.Role != "tool" || got.ToolCallID != "c1" {
-		t.Fatalf("stub must keep the tool_result pairing: %+v", got)
-	}
-	if !strings.Contains(got.ExtractText(), "superseded") || strings.Contains(got.ExtractText(), "1|code") {
-		t.Fatalf("stub must elide content: %q", got.ExtractText())
-	}
+	f.ConfigurePresentation("code under review", "File outline: pkg/a.go\nfunc F()")
+	textOf := func(message llm.Message) string { return message.ExtractText() }
 
-	// Eviction has its own pointer text (how to get the content back), and the
-	// first stub reason wins.
-	e := mkFile(t, "pkg/b.go", 10, 1, 10)
-	e.Stub(StubEvicted)
-	ew := e.Lower()
-	if txt := ew.ExtractText(); !strings.Contains(txt, "context budget") || !strings.Contains(txt, "read_files") {
-		t.Fatalf("evicted stub text off: %q", txt)
+	fullTokens := llm.CountTokens(textOf(f.ToLLM()))
+	outlineView := *f
+	outlineView.representation = fileOutline
+	outlineTokens := llm.CountTokens(textOf(outlineView.ToLLM()))
+	outlineRatio := float64(outlineTokens) / float64(fullTokens)
+
+	projected, actual := f.Compact(outlineRatio)
+	outline := projected.(*File)
+	if text := textOf(outline.ToLLM()); !strings.Contains(text, "File outline: pkg/a.go") {
+		t.Fatalf("ratio projection did not choose outline: %q", text)
 	}
-	f.Stub(StubEvicted)
-	fw := f.Lower()
-	if !strings.Contains(fw.ExtractText(), "superseded") {
-		t.Fatal("first stub reason must win")
+	if actual != outlineRatio {
+		t.Fatalf("actual ratio = %f, want %f", actual, outlineRatio)
+	}
+	projected, _ = outline.Compact(0)
+	if text := textOf(projected.(*File).ToLLM()); !strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("terminal projection did not choose path reference: %q", text)
+	}
+	if text := textOf(f.ToLLM()); !strings.Contains(text, "1|code") {
+		t.Fatal("Compact mutated the original File")
 	}
 }
 
@@ -145,18 +162,19 @@ func TestDedupFiles(t *testing.T) {
 	partial := mkFile(t, "pkg/a.go", 120, 5, 20) // overlaps but not covered by newer
 	newer := mkFile(t, "pkg/a.go", 120, 10, 60)  // covers old, not partial
 
-	msgs := []Msg{Text("user", "task"), old, other, partial, Text("assistant", "…"), newer}
-	if n := DedupFiles(msgs); n != 1 {
+	msgs := []agentgo.AgentMessage{Text("user", "task"), old, other, partial, Text("assistant", "…"), newer}
+	projected, n := DedupFiles(msgs)
+	if n != 1 {
 		t.Fatalf("stubbed = %d, want 1", n)
 	}
-	if !old.Stubbed() {
-		t.Fatal("covered earlier read must be stubbed")
+	if old.Stubbed() || !projected[1].(*File).Stubbed() {
+		t.Fatal("dedup must stub only the immutable projection")
 	}
 	if other.Stubbed() || partial.Stubbed() || newer.Stubbed() {
 		t.Fatal("uncovered / different-path / newest reads must be kept")
 	}
 	// Idempotent: a second pass finds nothing new.
-	if n := DedupFiles(msgs); n != 0 {
+	if _, n := DedupFiles(projected); n != 0 {
 		t.Fatalf("second pass stubbed %d, want 0", n)
 	}
 }

@@ -21,7 +21,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
-	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
@@ -237,8 +236,7 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"unit_watermark":       formation.DefaultWatermark,
-				"preload_budget_bytes": preloadSourceBudget,
+				"unit_watermark": formation.DefaultWatermark,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -1187,33 +1185,12 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 		UsageSites:   usageCount,
 	}
 
-	maxAllowed := a.args.Template.MaxTokens
-	tokenLimit := maxAllowed * 4 / 5 // 80% of MaxTokens
-
-	// Preloaded source is an optimization, never the reason a Unit is skipped:
-	// related files drop before the reviewed source when the prompt is too large.
-	ownFiles, relatedFiles, notes, outcomes := a.preloadReviewFiles(ctx, u)
+	// Hand the full domain messages to Harness. ContextManager performs the first
+	// projection, and each File owns its source/outline/path ratio decision.
+	ownFiles, relatedFiles, outcomes := a.preloadReviewFiles(ctx, u)
 	initialFiles := a.initialFileContext(ctx, u, usagePaths, ownFiles, relatedFiles)
 	deb.SourcePreloads = outcomes
-	domain := a.assembleReviewMessages(
-		buildMessages, ownFiles, relatedFiles, initialFiles, notes, tokenLimit, &deb,
-	)
-
-	tokenCount := llm.CountMessagesTokens(msg.Lower(domain))
-	if tokenCount > tokenLimit {
-		msg := fmt.Sprintf("prompt tokens (%d) exceed %d%% of max_tokens(%d)", tokenCount, 80, maxAllowed)
-		fmt.Fprintf(console.Out(), "[ccr] WARNING: %s for %s\n", msg, newPath)
-		a.recordWarning("token_threshold_exceeded", newPath, msg)
-		telemetry.Event(ctx, "token.threshold.exceeded",
-			telemetry.AnyToAttr("file.path", newPath),
-			telemetry.AnyToAttr("tokens", tokenCount),
-			telemetry.AnyToAttr("max_tokens", maxAllowed))
-		// A governor's decision, not a failure — the debrief must keep the two
-		// distinguishable (lowering the threshold shifts skips, not the fault rate).
-		deb.Outcome, deb.Reason = "skipped_policy", msg
-		a.session.CloseScope(sc, deb)
-		return nil
-	}
+	domain := a.assembleReviewMessages(buildMessages, ownFiles, relatedFiles, initialFiles)
 
 	unitreview.AttachMessages(&u, domain)
 	outcome, err := a.executor.Run(ctx, domain, sc, &u)

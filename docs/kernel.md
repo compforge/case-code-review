@@ -158,8 +158,7 @@ Harness 可以提供 typed messages、context、tools、hooks、events、budget�
 但不 import Unit / Finding，也不内建“代码评审团队”。Lane、Assessment 以及试验性的 Review Team
 都是 Runner 上的 review extension，通过通用机制接入。
 
-旧 `llmloop` 可以保留作隔离参考，但新的领域链路只依赖统一 Harness execution，避免两套运行时同时
-演进。
+CCR 的领域链路统一通过 Harness execution 运行，消息生命周期由 AgentGo `AgentMessage` 契约承载。
 
 ### 3.7 可观测性是正确性的一部分
 

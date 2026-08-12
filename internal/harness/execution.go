@@ -28,12 +28,14 @@ const (
 	OutcomeLLMError  = "llm_error"
 )
 
-// ExecutionSpec is the immutable input for one Harness execution. It uses CCR
-// types at the boundary so callers never need to import agentgo directly.
+// ExecutionSpec is the immutable input for one Harness execution.
+//
+// +spec=`Messages contains full AgentMessages; Harness must not pre-project them before AgentGo ContextManager requests compaction`
+// +case:id=full_messages_enter_harness,desc=`execution starts with compactable domain messages`,expect=`first unconstrained model request sees full content and Raw remains full after later compaction`
 type ExecutionSpec struct {
 	LLMClient        llm.LLMClient
 	Model            string
-	Messages         []msg.Msg
+	Messages         []agentgo.AgentMessage
 	ToolDefs         []llm.ToolDef
 	Tools            *tool.Registry
 	ToolHandler      ToolHandler
@@ -127,8 +129,7 @@ type Execution struct {
 	contextMessages []agentgo.AgentMessage
 }
 
-// NewExecution validates and assembles one isolated Harness execution without
-// exposing AgentGo types to the review domain.
+// NewExecution validates and assembles one isolated Harness execution.
 func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	if spec.LLMClient == nil {
 		return nil, fmt.Errorf("harness: LLM client is required")
@@ -139,7 +140,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 
 	// The execution owns its input snapshot; later caller mutations cannot
 	// change a run that has already been assembled.
-	spec.Messages = msg.CloneAll(spec.Messages)
+	spec.Messages = rawMessages(spec.Messages)
 	e := &Execution{
 		id:                uuid.V4(),
 		spec:              spec,
@@ -197,6 +198,14 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	return e, nil
 }
 
+func rawMessages(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
+	out := make([]agentgo.AgentMessage, len(messages))
+	for i, message := range messages {
+		out[i] = message.Raw()
+	}
+	return out
+}
+
 // Run drives the Execution to one terminal result. An Execution is single-use:
 // reusing it would mix recorder, context, and completion state across loops.
 func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
@@ -225,7 +234,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	e.contextManager.Sync(history)
 	events := agentgo.AgentLoop(
 		ctx,
-		wrapDomainMessages(e.spec.Messages),
+		e.spec.Messages,
 		agentgo.AgentContext{Messages: history, Tools: e.tools},
 		config,
 	)
@@ -313,9 +322,9 @@ func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.Tool
 	_ = json.Unmarshal(call.Args, &args)
 	decoded := msg.FromLLM(msg.LLMToolResult{
 		Tool: call.Name, ToolCallID: call.ID, Arguments: args,
-		Content: string(result.Content), IsError: result.IsError,
+		Content: string(result.Content), IsError: result.IsError, Timestamp: time.Now(),
 	})
-	return domainMessage{value: decoded, timestamp: time.Now()}
+	return decoded
 }
 
 func (e *Execution) continuationContext() []agentgo.AgentMessage {

@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -57,7 +59,7 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		},
 	}, nil)
 
-	result, err := executor.Run(context.Background(), []msg.Msg{
+	result, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "scan"),
 	}, session.Scope{ID: "a.go", Kind: "unit", Type: "file", Paths: []string{"a.go"}})
 	if err != nil {
@@ -93,7 +95,7 @@ func TestScanExecutorRecordsIncompleteReview(t *testing.T) {
 		Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
 	}, nil)
 
-	result, err := executor.Run(context.Background(), []msg.Msg{
+	result, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "scan"),
 	}, session.Scope{ID: "a.go", Paths: []string{"a.go"}})
 	if err != nil {

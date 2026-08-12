@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
@@ -23,11 +25,12 @@ func TestFileBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	if batch.Files()[0].Path != "a.go" || batch.Files()[1].Path != "b.go" {
 		t.Fatalf("file order = %#v", batch.Files())
 	}
-	items := batch.ContextItems(CompactionReference)
+	reference, _ := batch.Compact(0)
+	items := reference.(*FileBatch).ContextItems()
 	if len(items) != 2 || items[0].Identity != "a.go" || items[0].Representation != "reference" || items[1].Identity != "b.go" {
 		t.Fatalf("batch context items = %#v", items)
 	}
-	wire := batch.ToLLM(CompactionNone)
+	wire := batch.ToLLM()
 	if wire.ToolCallID != "batch-1" || !strings.Contains(wire.ExtractText(), "missing.go") {
 		t.Fatalf("batch lowering lost pairing/error: %+v", wire)
 	}
@@ -43,7 +46,8 @@ func TestDedupFilesHandlesBatchMembers(t *testing.T) {
 		Tool: FileReadToolName, ToolCallID: "batch-1", Content: content,
 	}).(*FileBatch)
 
-	if got := DedupFiles([]Msg{older, batch}); got != 1 || !older.Stubbed() {
-		t.Fatalf("dedup batch members = %d, older stubbed=%t", got, older.Stubbed())
+	projected, got := DedupFiles([]agentgo.AgentMessage{older, batch})
+	if got != 1 || older.Stubbed() || !projected[0].(*File).Stubbed() {
+		t.Fatalf("dedup batch members = %d, original stubbed=%t", got, older.Stubbed())
 	}
 }

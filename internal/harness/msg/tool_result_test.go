@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 func TestFromLLMToolResultFamilies(t *testing.T) {
@@ -19,7 +20,13 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 	if !ok || len(searchBatch.Results()) != 1 || searchBatch.Results()[0].Query != "NewExecution" {
 		t.Fatalf("search result = %#v", search)
 	}
-	condensed := searchBatch.ToLLM(CompactionCondensed)
+	condensedView := searchBatch.clone()
+	condensedView.representation = searchBatchCondensed
+	condensedWire := condensedView.ToLLM()
+	fullWire := searchBatch.ToLLM()
+	condensedRatio := float64(llm.CountTokens(condensedWire.ExtractText())) / float64(llm.CountTokens(fullWire.ExtractText()))
+	projected, _ := searchBatch.Compact(condensedRatio)
+	condensed := projected.(*SearchBatch).ToLLM()
 	if condensed.ToolCallID != "search-1" || !strings.Contains(condensed.ExtractText(), "2 hits") {
 		t.Fatalf("condensed search = %+v", condensed)
 	}
@@ -33,7 +40,8 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 	if !ok || len(diffResult.Paths) != 2 {
 		t.Fatalf("diff result = %#v", diff)
 	}
-	diffReference := diffResult.ToLLM(CompactionReference)
+	diffProjection, _ := diffResult.Compact(0)
+	diffReference := diffProjection.(Diff).ToLLM()
 	if text := diffReference.ExtractText(); !strings.Contains(text, "a.go, b.go") {
 		t.Fatalf("diff reference = %q", text)
 	}
@@ -47,8 +55,9 @@ func TestFromLLMToolResultFamilies(t *testing.T) {
 	if !ok {
 		t.Fatalf("file_find result = %#v", find)
 	}
-	findCondensed := findResult.ToLLM(CompactionCondensed)
-	if text := findCondensed.ExtractText(); !strings.Contains(text, "had no matches") {
+	findProjection, _ := findResult.Compact(0)
+	findCondensed := findProjection.(SearchResult).ToLLM()
+	if text := findCondensed.ExtractText(); !strings.Contains(text, "no matches") {
 		t.Fatalf("file_find miss = %q", text)
 	}
 

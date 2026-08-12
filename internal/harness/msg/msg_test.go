@@ -1,16 +1,12 @@
 package msg
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// The currency swap's byte-identical guarantee: lifting wire messages into the
-// domain and lowering them back is the identity, for every wire shape the loop
-// produces (text, tool-call, tool-result).
-func TestWrapLowerRoundTrip(t *testing.T) {
+func TestWrapCreatesAgentMessages(t *testing.T) {
 	wire := []llm.Message{
 		llm.NewTextMessage("system", "you are a reviewer"),
 		llm.NewTextMessage("user", "review this"),
@@ -20,19 +16,23 @@ func TestWrapLowerRoundTrip(t *testing.T) {
 		llm.NewToolResultMessage("c1", "3 hits"),
 		llm.NewTextMessage("assistant", "done"),
 	}
-	got := Lower(Wrap(wire))
-	if !reflect.DeepEqual(got, wire) {
-		t.Fatalf("round trip not identity:\n got %+v\nwant %+v", got, wire)
+	got := Wrap(wire)
+	if len(got) != len(wire) {
+		t.Fatal("conversion must remain 1:1")
 	}
-	// The 1:1 invariant compression's index arithmetic depends on.
-	if len(Wrap(wire)) != len(wire) || len(got) != len(wire) {
-		t.Fatal("lowering must be 1:1")
+	toolCall, _ := got[2].ToMessage()
+	if calls := toolCall.ToolCalls(); len(calls) != 1 || calls[0].Name != "search_code" {
+		t.Fatalf("tool call conversion = %#v", calls)
+	}
+	toolResult, _ := got[3].ToMessage()
+	if toolResult.Role != "tool" || toolResult.Metadata["tool_call_id"] != "c1" {
+		t.Fatalf("tool result conversion = %#v", toolResult)
 	}
 }
 
 func TestText(t *testing.T) {
-	m := Text("user", "hi").ToLLM(CompactionNone)
-	if m.Role != "user" || m.ExtractText() != "hi" {
+	m, _ := Text("user", "hi").ToMessage()
+	if m.Role != "user" || m.TextContent() != "hi" {
 		t.Fatalf("Text lowered wrong: %+v", m)
 	}
 }

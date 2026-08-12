@@ -88,9 +88,9 @@ func (in Interest) score(b Bulletin) int {
 	return hit * (int(b.Level) + 1)
 }
 
-// Board is the seam llmloop consumes (llmloop.Deps.Board; nil = no team). It
-// stays minimal: register a subscriber's interest, publish a bulletin, pull the
-// rendered digest of new relevant bulletins.
+// Board is the seam Unit Review turn context consumes. It stays minimal:
+// register a subscriber's interest, publish a bulletin, and pull the rendered
+// digest of new relevant bulletins.
 type Board interface {
 	// Register records a scope's interest before its loop starts.
 	Register(scopeID string, in Interest)

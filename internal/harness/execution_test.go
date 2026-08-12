@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -27,7 +28,7 @@ func TestExecutionCompletesWithTaskDone(t *testing.T) {
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
 		Model:     "review-model",
-		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  1,
 		MaxTokens: 512,
@@ -67,7 +68,7 @@ func TestExecutionCompletesWithDomainTerminalTool(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:        client,
-		Messages:         []msg.Msg{msg.Text("user", "produce a result")},
+		Messages:         []agentgo.AgentMessage{msg.Text("user", "produce a result")},
 		ToolDefs:         []llm.ToolDef{toolDef("submit_result")},
 		ToolHandler:      handler,
 		CompletionTool:   "submit_result",
@@ -105,7 +106,7 @@ func TestExecutionKeepsRunningAfterRejectedTerminalSubmission(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:      client,
-		Messages:       []msg.Msg{msg.Text("user", "produce a result")},
+		Messages:       []agentgo.AgentMessage{msg.Text("user", "produce a result")},
 		ToolDefs:       []llm.ToolDef{toolDef("submit_result")},
 		ToolHandler:    handler,
 		CompletionTool: "submit_result",
@@ -132,7 +133,7 @@ func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 	}}
 	execution, err := NewExecution(ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		MaxTurns:  1,
 	})
 	if err != nil {
@@ -153,7 +154,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 	}}
 	first, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "first hypothesis")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "first hypothesis")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  1,
 	})
@@ -162,7 +163,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 	}
 	second, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:    client,
-		Messages:     []msg.Msg{msg.Text("user", "second hypothesis")},
+		Messages:     []agentgo.AgentMessage{msg.Text("user", "second hypothesis")},
 		ToolDefs:     []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:     1,
 		ContinueFrom: &first,
@@ -191,7 +192,7 @@ func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  2,
 	})
@@ -219,7 +220,7 @@ func TestExecutionAllowsConfiguredNaturalCompletion(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:         client,
-		Messages:          []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:          []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		MaxTurns:          3,
 		NaturalCompletion: true,
 	})
@@ -254,7 +255,7 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"), toolDef("submit_result"),
 		},
@@ -286,7 +287,7 @@ func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
 	checks := 0
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "assess every item")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "assess every item")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  2,
 		CompletionCheck: func(context.Context) (bool, string) {
@@ -313,7 +314,7 @@ func TestExecutionReportsTurnBudgetAsTruncation(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		MaxTurns:  1,
 	})
 	if err != nil {
@@ -337,7 +338,7 @@ func TestExecutionAdaptsRegistryTools(t *testing.T) {
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "use echo")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "use echo")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
 			toolDef("task_done"),
@@ -393,7 +394,7 @@ func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:   client,
-		Messages:    []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:    []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:    []llm.ToolDef{toolDef("code_comment"), toolDef("task_done")},
 		ToolHandler: handler,
 		Session:     history,
@@ -455,7 +456,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review this unit")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("read_files"),
 			toolDef("task_done"),
@@ -497,8 +498,8 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	}
 }
 
-func TestDomainMessageDelegatesApplicationPriority(t *testing.T) {
-	domain := domainMessage{value: msg.NewFile("a.go", 1, 1, 1, "1|x").ConfigurePriority(42)}
+func TestDomainMessageOwnsApplicationPriority(t *testing.T) {
+	domain := msg.NewFile("a.go", 1, 1, 1, "1|x").ConfigurePriority(42)
 	if got := domain.Priority(); got != 42 {
 		t.Fatalf("domain priority = %d, want 42", got)
 	}
@@ -518,18 +519,17 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	if len(normalized) != 1 {
 		t.Fatalf("normalized messages = %d", len(normalized))
 	}
-	domain, ok := normalized[0].(domainMessage)
+	batch, ok := normalized[0].(*msg.FileBatch)
 	if !ok {
 		t.Fatalf("read_files result stayed wire-shaped: %T", normalized[0])
 	}
-	batch, ok := domain.value.(*msg.FileBatch)
-	if !ok || len(batch.Files()) != 1 {
-		t.Fatalf("promoted message = %#v", domain.value)
+	if len(batch.Files()) != 1 {
+		t.Fatalf("promoted message = %#v", batch)
 	}
 	file := batch.Files()[0]
 	if file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 ||
-		batch.ToLLM(msg.CompactionNone).ToolCallID != "call-1" {
-		t.Fatalf("promoted message = %#v", domain.value)
+		batch.ToLLM().ToolCallID != "call-1" {
+		t.Fatalf("promoted message = %#v", batch)
 	}
 }
 
@@ -549,10 +549,9 @@ func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
 	if !changed || len(normalized) != 2 {
 		t.Fatalf("normalized=%d changed=%t", len(normalized), changed)
 	}
-	domain := normalized[1].(domainMessage)
-	search, ok := domain.value.(*msg.SearchBatch)
+	search, ok := normalized[1].(*msg.SearchBatch)
 	if !ok || len(search.Results()) != 1 || search.Results()[0].Query != "NewExecution" {
-		t.Fatalf("promoted search = %#v", domain.value)
+		t.Fatalf("promoted search = %#v", normalized[1])
 	}
 }
 
@@ -565,7 +564,7 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 		t.Fatal("baseline result was not promoted")
 	}
 	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
-	projection, err := manager.Project(context.Background(), wrapDomainMessages([]msg.Msg{baseline}))
+	projection, err := manager.Project(context.Background(), []agentgo.AgentMessage{baseline})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -584,7 +583,7 @@ func TestFileContextAdmissionDoesNotSuppressSourceRead(t *testing.T) {
 	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
 		t.Fatal("outline navigation must not suppress an exact source read")
 	}
-	items := agentgo.CollectContextItems(wrapDomainMessages([]msg.Msg{contextMessage}))
+	items := agentgo.CollectContextItems([]agentgo.AgentMessage{contextMessage})
 	if len(items) != 2 || items[0].Identity != "pkg/a.go" || items[0].Representation != "outline" ||
 		items[0].Reason != "callee" || items[0].Ref != "pkg/a.go::A" ||
 		items[1].Identity != "pkg/b.go" || items[1].Representation != "reference" ||
@@ -606,7 +605,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages: []msg.Msg{
+		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 1, 3, 3, body).
 				ConfigurePresentation("code under review", ""),
@@ -646,7 +645,7 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages: []msg.Msg{
+		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 1, 3, 3, preload),
 		},
@@ -669,22 +668,21 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	}
 }
 
-func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
+func TestContextCompactsFromTailAndCommitsProjection(t *testing.T) {
 	content := func(path string) string {
 		return fmt.Sprintf("File: %s (Total lines: 80)\n%s", path, strings.Repeat("1|source evidence for review\n", 80))
 	}
 	messages := []agentgo.AgentMessage{
-		domainMessage{value: msg.Text("system", "stable system")},
-		domainMessage{value: msg.Text("user", "stable task")},
-		domainMessage{value: msg.NewFile("a.go", 1, 80, 80, content("a.go"))},
-		domainMessage{value: msg.NewFile("b.go", 1, 80, 80, content("b.go"))},
-		domainMessage{value: msg.NewFile("c.go", 1, 80, 80, content("c.go"))},
+		msg.Text("system", "stable system"),
+		msg.Text("user", "stable task"),
+		msg.NewFile("a.go", 1, 80, 80, content("a.go")),
+		msg.NewFile("b.go", 1, 80, 80, content("b.go")),
+		msg.NewFile("c.go", 1, 80, 80, content("c.go")),
 	}
 	full := countContextTokens(messages)
 	tail := append([]agentgo.AgentMessage(nil), messages...)
-	last := tail[len(tail)-1].(domainMessage)
-	last.compaction = msg.CompactionReference
-	tail[len(tail)-1] = last
+	compacted, _ := tail[len(tail)-1].Compact(0)
+	tail[len(tail)-1] = compacted
 	afterTail := countContextTokens(tail)
 	limit := (full + afterTail) / 2
 	manager := newContextManager(ExecutionSpec{
@@ -704,12 +702,12 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 		t.Fatalf("projection lost AgentGo compaction details: %+v", projection.Compaction)
 	}
 	for i := 2; i < 4; i++ {
-		if got := committed[i].(domainMessage).compaction; got != msg.CompactionNone {
-			t.Fatalf("message %d compacted before tail: %v", i, got)
+		if text := committed[i].TextContent(); strings.Contains(text, "compacted to a reference") {
+			t.Fatalf("message %d compacted before tail: %q", i, text)
 		}
 	}
-	if got := committed[4].(domainMessage).compaction; got != msg.CompactionReference {
-		t.Fatalf("tail compaction = %v, want reference", got)
+	if text := committed[4].TextContent(); !strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("tail compaction = %q, want reference", text)
 	}
 
 	second, err := manager.Project(context.Background(), committed)
@@ -721,6 +719,105 @@ func TestContextCompactsFromTailAndCommitsLevel(t *testing.T) {
 	if firstWire[0].TextContent() != secondWire[0].TextContent() ||
 		firstWire[1].TextContent() != secondWire[1].TextContent() {
 		t.Fatal("stable prompt prefix changed after committed compaction")
+	}
+}
+
+func TestMessagePriorityOverridesRecencyDuringCompaction(t *testing.T) {
+	full := func(path string) string {
+		return fmt.Sprintf("File: %s (Total lines: 400)\n%s", path, strings.Repeat("1|source evidence\n", 400))
+	}
+	low := msg.NewFile("temporary.go", 1, 400, 400, full("temporary.go")).
+		ConfigurePresentation("loop-discovered file", "File outline: temporary.go\n- func Temporary()")
+	high := msg.NewFile("changed.go", 1, 400, 400, full("changed.go")).
+		ConfigurePresentation("code under review", "File outline: changed.go\n- func Changed()").
+		ConfigurePriority(20)
+	messages := []agentgo.AgentMessage{low, high}
+
+	projected, err := agentcontext.NewMessageCompactor().Compact(context.Background(), messages, 0.75)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := projected[0].TextContent(); !strings.Contains(text, "File outline: temporary.go") || strings.Contains(text, "source evidence") {
+		t.Fatalf("low-priority file was not compacted first: %q", text)
+	}
+	if text := projected[1].TextContent(); !strings.Contains(text, "source evidence") || strings.Contains(text, "File outline: changed.go") {
+		t.Fatalf("high-priority diff file lost full source: %q", text)
+	}
+}
+
+func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
+	content := "File: large.go (Total lines: 160)\n" + strings.Repeat("1|source evidence for review\n", 160)
+	file := msg.NewFile("large.go", 1, 160, 160, content).
+		ConfigurePresentation("code under review", "File outline: large.go (go)\n- func Review()")
+	messages := []agentgo.AgentMessage{
+		msg.Text("system", "stable system"),
+		msg.Text("user", "stable task"),
+		file,
+	}
+	full := countContextTokens(messages)
+	roomy := newContextManager(ExecutionSpec{
+		ContextWindow:    full * 2,
+		FileEvictEnabled: true,
+	}, &chatModel{client: &scriptedClient{}})
+	fullProjection, err := roomy.Project(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := fullProjection.Messages[2].TextContent(); !strings.Contains(text, "source evidence") ||
+		strings.Contains(text, "File outline:") {
+		t.Fatalf("roomy first projection must keep the full File: %q", text)
+	}
+
+	outlineMessages := append([]agentgo.AgentMessage(nil), messages...)
+	outline, _ := outlineMessages[2].Compact(0.9)
+	outlineMessages[2] = outline
+	afterOutline := countContextTokens(outlineMessages)
+	limit := (full + afterOutline) / 2
+	manager := newContextManager(ExecutionSpec{
+		ContextWindow:    limit * 5 / 4,
+		FileEvictEnabled: true,
+	}, &chatModel{client: &scriptedClient{}})
+
+	projection, err := manager.Project(context.Background(), messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projection.ShouldCommit || len(projection.CommitMessages) != len(messages) {
+		t.Fatalf("first projection did not commit: %+v", projection)
+	}
+	text := projection.CommitMessages[2].TextContent()
+	if !strings.Contains(text, "File outline: large.go") || strings.Contains(text, "source evidence") ||
+		strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("first projection selected the wrong File representation: %q", text)
+	}
+	raw := projection.CommitMessages[2].Raw()
+	if text := raw.TextContent(); !strings.Contains(text, "source evidence") || strings.Contains(text, "File outline:") {
+		t.Fatalf("AgentMessage.Raw did not return the full File: %q", text)
+	}
+	if text := projection.CommitMessages[2].TextContent(); !strings.Contains(text, "File outline: large.go") {
+		t.Fatalf("Raw changed the committed projection: %q", text)
+	}
+}
+
+func TestRawSurvivesFileDedupProjection(t *testing.T) {
+	older := msg.NewFile("a.go", 1, 2, 2, "File: a.go (Total lines: 2)\n1|old source\n2|body")
+	newer := msg.NewFile("a.go", 1, 3, 3, "File: a.go (Total lines: 3)\n1|new source\n2|body\n3|more")
+	messages := []agentgo.AgentMessage{older, newer}
+
+	projected, compacted := msg.DedupFiles(messages)
+	if compacted != 1 {
+		t.Fatalf("dedup compacted %d files, want 1", compacted)
+	}
+	if text := projected[0].TextContent(); !strings.Contains(text, "superseded") || strings.Contains(text, "old source") {
+		t.Fatalf("dedup projection = %q", text)
+	}
+
+	raw := projected[0].Raw()
+	if text := raw.TextContent(); !strings.Contains(text, "old source") || strings.Contains(text, "superseded") {
+		t.Fatalf("Raw did not return the full source: %q", text)
+	}
+	if text := projected[0].TextContent(); !strings.Contains(text, "superseded") {
+		t.Fatalf("Raw changed the current projection: %q", text)
 	}
 }
 
@@ -736,7 +833,7 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:          client,
-		Messages:           []msg.Msg{msg.Text("user", "review")},
+		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:              registry,
 		MaxTurns:           2,
@@ -784,7 +881,7 @@ func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:          client,
-		Messages:           []msg.Msg{msg.Text("user", "review")},
+		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:              registry,
 		MaxTurns:           10,
@@ -830,7 +927,7 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 	}}
 	_, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages: []msg.Msg{
+		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 10, 20, 30, "File: pkg/a.go (Total lines: 30)\nLINE_RANGE: 10-20\n10|func F() {}\n"),
 		},
@@ -857,7 +954,7 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:        client,
-		Messages:         []msg.Msg{msg.Text("user", "review"), file},
+		Messages:         []agentgo.AgentMessage{msg.Text("user", "review"), file},
 		ToolDefs:         []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:         1,
 		ContextWindow:    100,
@@ -890,7 +987,7 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 
 func TestExecutionUsesAgentGoSummaryAndRecordsItsUsage(t *testing.T) {
 	long := strings.Repeat("review evidence and reasoning ", 30)
-	messages := make([]msg.Msg, 0, 8)
+	messages := make([]agentgo.AgentMessage, 0, 8)
 	for range 8 {
 		messages = append(messages, msg.Text("user", long))
 	}
@@ -944,7 +1041,7 @@ func TestExecutionInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
 			toolDef("task_done"),
@@ -992,7 +1089,7 @@ func TestExecutionWrapsUpAfterPlannedInvestigationTurns(t *testing.T) {
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
 			toolDef("task_done"),
@@ -1033,16 +1130,16 @@ func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 	}}
 
 	pulls := 0
-	turnContext := turnContextFunc(func(_ context.Context, scope session.Scope) []msg.Msg {
+	turnContext := turnContextFunc(func(_ context.Context, scope session.Scope) []agentgo.AgentMessage {
 		pulls++
 		if scope.ID != "unit-1" || pulls > 1 {
 			return nil
 		}
-		return []msg.Msg{msg.NewBoard("peer confirmed the call path")}
+		return []agentgo.AgentMessage{msg.NewBoard("peer confirmed the call path")}
 	})
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client,
-		Messages:  []msg.Msg{msg.Text("user", "review")},
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
 			toolDef("task_done"),
@@ -1084,9 +1181,9 @@ func (f toolHandlerFunc) HandleTool(ctx context.Context, request ToolRequest) (t
 	return f(ctx, request)
 }
 
-type turnContextFunc func(context.Context, session.Scope) []msg.Msg
+type turnContextFunc func(context.Context, session.Scope) []agentgo.AgentMessage
 
-func (f turnContextFunc) PullTurnContext(ctx context.Context, scope session.Scope) []msg.Msg {
+func (f turnContextFunc) PullTurnContext(ctx context.Context, scope session.Scope) []agentgo.AgentMessage {
 	return f(ctx, scope)
 }
 

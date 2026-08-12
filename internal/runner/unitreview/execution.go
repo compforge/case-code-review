@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
@@ -116,7 +118,7 @@ func NewExecutor(
 
 func (e *Executor) Run(
 	ctx context.Context,
-	messages []msg.Msg,
+	messages []agentgo.AgentMessage,
 	scope session.Scope,
 	reviewUnit *unit.Unit,
 ) (Outcome, error) {
@@ -306,7 +308,7 @@ type unitExecution struct {
 	boardPosted    int64
 }
 
-func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []msg.Msg {
+func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []agentgo.AgentMessage {
 	r.mu.Lock()
 	r.turn++
 	r.mu.Unlock()
@@ -317,7 +319,7 @@ func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []ms
 	}
 	atomic.AddInt64(&r.boardPulled, int64(count))
 	atomic.AddInt64(&r.boardTokens, int64(llm.CountTokens(digest)))
-	return []msg.Msg{NewBoardDigest(digest)}
+	return []agentgo.AgentMessage{msg.NewBoard(digest)}
 }
 
 func (r *unitExecution) HandleTool(

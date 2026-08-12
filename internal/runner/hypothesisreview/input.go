@@ -1,10 +1,10 @@
 package hypothesisreview
 
 import (
-	"fmt"
 	"slices"
-	"sort"
-	"strings"
+	"time"
+
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -82,16 +82,17 @@ const (
 // reviewContextMessages projects immutable Unit state into independently
 // compactable AgentMessages. Compaction changes only the execution view; the
 // full snapshots remain on the Unit for later Review and Trial stages.
-func reviewContextMessages(input ReviewInput) []msg.Msg {
+func reviewContextMessages(input ReviewInput) []agentgo.AgentMessage {
 	snapshot := input.turnSnapshots()
-	out := make([]msg.Msg, 0, len(input.turnFragments())+len(snapshot.FileSnapshots)+len(snapshot.RelatedDiffs)+len(snapshot.SearchResults))
+	out := make([]agentgo.AgentMessage, 0, len(input.turnFragments())+len(snapshot.FileSnapshots)+len(snapshot.RelatedDiffs)+len(snapshot.SearchResults))
 	for _, fragment := range input.turnFragments() {
 		diff := unit.DiffSnapshot{
 			Paths:   []string{fragment.Path},
 			Content: "==== FILE: " + fragment.Path + " ====\n" + fragment.Diff,
 		}
 		diff.ID = unit.DiffSnapshotIDFor(diff)
-		out = append(out, diffSnapshotMessage{snapshot: diff, target: true})
+		out = append(out, msg.NewDiff(diff.Paths, diff.Content).
+			ConfigurePresentation("UNIT TARGET DIFF", priorityTargetDiff))
 	}
 	for _, file := range snapshot.FileSnapshots {
 		kind := msg.SnapshotCurrent
@@ -105,69 +106,16 @@ func reviewContextMessages(input ReviewInput) []msg.Msg {
 		}).ConfigurePriority(priorityFile))
 	}
 	for _, diff := range snapshot.RelatedDiffs {
-		out = append(out, diffSnapshotMessage{snapshot: diff})
+		out = append(out, msg.NewDiff(diff.Paths, diff.Content).
+			ConfigurePresentation("RELATED DIFF RETAINED BY UNIT REVIEW", priorityRelatedDiff))
 	}
 	for _, result := range snapshot.SearchResults {
-		out = append(out, searchResultMessage{result: result})
+		out = append(out, (&msg.SearchResult{
+			Tool: msg.CodeSearchToolName, Query: result.Query, Paths: result.Paths, Content: result.Content,
+		}).ConfigurePresentation("SEARCH RESULT RETAINED BY UNIT REVIEW", prioritySearch))
 	}
 	return out
 }
-
-type diffSnapshotMessage struct {
-	snapshot unit.DiffSnapshot
-	target   bool
-}
-
-func (m diffSnapshotMessage) ToLLM(level msg.CompactionLevel) llm.Message {
-	content := m.snapshot.Content
-	switch level {
-	case msg.CompactionCondensed:
-		var anchors []string
-		for _, line := range strings.Split(content, "\n") {
-			if strings.HasPrefix(line, "==== FILE: ") || strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "@@ ") {
-				anchors = append(anchors, line)
-			}
-		}
-		if len(anchors) > 0 {
-			content = "Diff anchors retained after compaction:\n" + strings.Join(anchors, "\n")
-		}
-	case msg.CompactionReference:
-		paths := append([]string(nil), m.snapshot.Paths...)
-		sort.Strings(paths)
-		content = fmt.Sprintf("Diff for [%s] compacted to a reference; call read_diffs for exact hunks.", strings.Join(paths, ", "))
-	}
-	label := "RELATED DIFF RETAINED BY UNIT REVIEW"
-	if m.target {
-		label = "UNIT TARGET DIFF"
-	}
-	return llm.NewTextMessage("user", label+":\n"+content)
-}
-
-func (m diffSnapshotMessage) MaxCompaction() msg.CompactionLevel { return msg.CompactionReference }
-func (m diffSnapshotMessage) Priority() int {
-	if m.target {
-		return priorityTargetDiff
-	}
-	return priorityRelatedDiff
-}
-
-type searchResultMessage struct{ result unit.SearchResult }
-
-func (m searchResultMessage) ToLLM(level msg.CompactionLevel) llm.Message {
-	content := m.result.Content
-	switch level {
-	case msg.CompactionCondensed:
-		if len(m.result.Paths) > 0 {
-			content = fmt.Sprintf("Search %q matched:\n- %s", m.result.Query, strings.Join(m.result.Paths, "\n- "))
-		}
-	case msg.CompactionReference:
-		content = fmt.Sprintf("Search result for %q compacted to a reference; rerun the search for exact hits.", m.result.Query)
-	}
-	return llm.NewTextMessage("user", "SEARCH RESULT RETAINED BY UNIT REVIEW:\n"+content)
-}
-
-func (m searchResultMessage) MaxCompaction() msg.CompactionLevel { return msg.CompactionReference }
-func (m searchResultMessage) Priority() int                      { return prioritySearch }
 
 func UnitReceipts(reviewUnit unit.Unit) []EvidenceReceipt {
 	var out []EvidenceReceipt
@@ -211,22 +159,51 @@ func UnitReceipts(reviewUnit unit.Unit) []EvidenceReceipt {
 type hypothesisMessage struct {
 	full      string
 	condensed string
+	compacted bool
+	timestamp time.Time
 }
 
 func newHypothesisMessage(full, condensed string) hypothesisMessage {
-	return hypothesisMessage{full: full, condensed: condensed}
+	return hypothesisMessage{full: full, condensed: condensed, timestamp: time.Now()}
 }
 
-func (m hypothesisMessage) ToLLM(level msg.CompactionLevel) llm.Message {
+func (m hypothesisMessage) ToLLM() llm.Message {
 	content := m.full
-	if level >= msg.CompactionCondensed && m.condensed != "" {
+	if m.compacted && m.condensed != "" {
 		content = m.condensed
 	}
 	return llm.NewTextMessage("user", content)
 }
 
-func (m hypothesisMessage) MaxCompaction() msg.CompactionLevel {
-	return msg.CompactionCondensed
+func (m hypothesisMessage) GetRole() agentgo.Role     { return agentgo.RoleUser }
+func (m hypothesisMessage) GetTimestamp() time.Time   { return m.timestamp }
+func (m hypothesisMessage) Raw() agentgo.AgentMessage { m.compacted = false; return m }
+func (m hypothesisMessage) TextContent() string {
+	wire := m.ToLLM()
+	return wire.ExtractText()
+}
+func (m hypothesisMessage) ThinkingContent() string { return "" }
+func (m hypothesisMessage) HasToolCalls() bool      { return false }
+func (m hypothesisMessage) ToMessage() (agentgo.Message, bool) {
+	return agentgo.Message{
+		Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(m.TextContent())},
+		Timestamp: m.timestamp,
+	}, true
+}
+
+func (m hypothesisMessage) Compact(expect float64) (agentgo.AgentMessage, float64) {
+	rawTokens := llm.CountTokens(m.full)
+	if rawTokens <= 0 {
+		return m, 1
+	}
+	currentWire := m.ToLLM()
+	currentRatio := float64(llm.CountTokens(currentWire.ExtractText())) / float64(rawTokens)
+	if currentRatio <= expect || m.compacted || m.condensed == "" {
+		return m, currentRatio
+	}
+	m.compacted = true
+	compactedWire := m.ToLLM()
+	return m, float64(llm.CountTokens(compactedWire.ExtractText())) / float64(rawTokens)
 }
 
 func (m hypothesisMessage) Priority() int { return priorityHypothesis }

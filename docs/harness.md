@@ -72,21 +72,27 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 
 ### 3.1 Typed message 是内部语义，wire message 是边界投影
 
-Harness 内部消息保留文本、文件、来源、范围、优先级和可重取性等语义，并直接实现 AgentGo 的
-`AgentMessage` 契约。模型返回的普通消息先进入
-`Raw`，可识别的工具结果（例如 `read_files`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
+CCR 的 domain message 直接实现 AgentGo `AgentMessage`，保留文件、来源、范围、优先级和可重取性等语义。
+`AgentMessage` 是 Harness 唯一的消息生命周期契约：普通 prompt 使用 `agentgo.Message`；
+可识别的工具结果（例如 `read_files`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
 视角出发。只有在调用模型前才降成 provider wire message：
 
 ```text
-msg.Msg / msg.File
+agentgo.Message / msg.File / msg.Diff / msg.SearchResult
    ── context lifecycle ──▶ lowered model messages
 ```
 
-CCR 消息仍通过 `ToLLM(CompactionLevel)` 定义 full、condensed、reference 等领域投影，Harness adapter
-把它映射为 AgentGo 的 `Raw / Compact / ToMessage`；只有 AgentGo 发起模型调用时才执行 `ToMessage`。
-可识别消息同时按当前 compaction level 暴露 AgentGo `ContextItem`，所以轨迹看到的是模型实际收到的
+Harness 外始终传入保留完整事实的消息。`Compact(expect)` 中的 ratio 只表达预算目标，不表达统一压缩档位；
+每个 domain message 根据自己的信息结构精细决定内容取舍并返回实际比例。例如 File 在
+source、outline、path 中选择，Diff 在完整 hunk、anchor、path 中选择，Search 还会单独保留无命中反证。
+ContextManager 只把 `expect` 交给消息，不理解任何消息的内部形态；每个 domain message 的 `ToMessage`
+只渲染自身已经选定的当前投影。
+可识别消息同时按当前投影暴露 AgentGo `ContextItem`，所以轨迹看到的是模型实际收到的
 `source / outline / reference`，而不是消息未经压缩时的原始档位。
-Harness 外只提供完整消息，不选择压缩等级。文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
+Harness 接收的始终是完整消息；只有 ContextManager 判断需要压缩时才产生投影副本。
+每个 domain message 的 `Raw()` 返回独立全本视图，不会清除或修改当前投影；AgentGo 负责 raw/current
+投影生命周期。
+文件内容不是“碰巧放在一段字符串里的文本”。保留类型后，
 ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
 
@@ -98,7 +104,7 @@ ContextManager 才能判断两个范围是否
   参与身份，不能跨版本去重；一次 tool call 仍只对应一条 tool result；
 - `read_diffs` → `Diff`，压缩时保留 path 与 hunk anchor；
 - `search_code` / `file_find` → `SearchResult`，保留 query、命中位置或无命中反证；
-- `FileContext` → 初始 `source / outline / reference` 文件目录；只有 source 对应独立 `File` 消息并参与覆盖判断；
+- `FileContext` → 初始 `outline / reference` 导航目录；source 只由独立 `File` 消息表达并参与覆盖判断；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
 无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
@@ -125,6 +131,8 @@ provider 并行读取，并按请求顺序装回同一条结果。ContextManager
 ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo Compactor 单调降低消息 fidelity，
 再做通用 tool-result trim 和 summary。默认先处理低优先级消息，同一优先级从尾部向前压，够用即停；
 压缩一旦提交不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
+也可以按消息实例声明当前执行内的证据价值：例如包含待审 diff 的源码高于静态关联源码，而 loop 中临时
+读取、可随时重取的文件保持低优先级。Priority 只决定先压谁，具体如何按 ratio 取舍仍由消息自己负责。
 但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
 统计和恢复行为会分裂。
 
@@ -153,13 +161,14 @@ partial/incomplete，不把空输出包装成成功；此前已被领域层接�
 这允许同一个 `read_files` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
 的能力。Runner 适配可以依赖 Harness，Harness 不依赖 Runner。
 
-### 3.5 AgentGo 是内核依赖，不是项目领域模型
+### 3.5 AgentGo 定义统一运行时消息协议
 
-AgentGo 负责模型循环和通用上下文机制。CCR 在 Harness 边界将自身 typed message、tool provider、
-hook 和事件适配进去，并把 AgentGo response 转回稳定 ExecutionResult。
+AgentGo 负责模型循环、`AgentMessage` 和通用上下文机制。CCR 的 Runner 可直接组装
+`[]agentgo.AgentMessage`，其中普通 prompt 使用 `agentgo.Message`，文件、diff、search 等由 CCR
+domain message 实现同一接口。Harness 把 tool、hook 和事件收敛为稳定 ExecutionResult。
 
-AgentGo 类型不应泄漏到 Runner、Session Viewer 或 Unit 模型。这样替换执行内核、保留旧 `llmloop`
-作参考或并行演进 Viewer，都不会迫使评审领域一起迁移。
+AgentGo 的运行时消息协议可以出现在 Runner 的 execution assembly，但不进入 Unit/Finding 等持久领域
+模型，也不要求 Session Viewer 理解具体 domain message。
 
 ## 4. 可观测性：Session JSONL 与 HTML Viewer
 

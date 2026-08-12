@@ -33,7 +33,7 @@ const (
 	// Source-context gates control what each Unit receives before its loop so the
 	// model does not spend rounds fetching already-known files.
 	UsageSites     Gate = "usage_sites"     // pre-grepped use sites of the changed symbols
-	RangedPreload  Gate = "ranged_preload"  // over-budget file fallback: inline the unit's function bodies
+	RangedPreload  Gate = "ranged_preload"  // deprecated compatibility gate; File preloads are now full-fidelity
 	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
@@ -79,7 +79,7 @@ var registry = map[Gate]def{
 	TypedGraph:       {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
 
 	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the initial context", false},
-	RangedPreload:  {true, "over-budget file fallback: inline the unit's function bodies", false},
+	RangedPreload:  {true, "deprecated compatibility gate; File preloads are now full-fidelity", false},
 	NeighborSource: {true, "callchain context: inline caller/callee neighbor bodies", false},
 	FileDedup:      {true, "stub earlier read_files results superseded by a later covering read", false},
 	FileEvict:      {true, "under token pressure, shed re-derivable file content before LLM compression", false},

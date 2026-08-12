@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/compforge/agentgo"
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
@@ -32,7 +34,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	collector := NewAssessmentCollector(hypothesis.ID)
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient:      client,
-		Messages:       []msg.Msg{msg.Text("user", "review the case")},
+		Messages:       []agentgo.AgentMessage{msg.Text("user", "review the case")},
 		ToolDefs:       []llm.ToolDef{AssessmentToolDef()},
 		ToolHandler:    &AssessmentHook{Collector: collector},
 		CompletionTool: SubmitAssessment.Name(),

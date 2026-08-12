@@ -7,8 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
@@ -38,31 +39,34 @@ func TestPreloadReviewFilesWholeSource(t *testing.T) {
 		"pkg/a.go": "package a\n\nfunc F() {}\n",
 	})
 	u := unit.UnitOf(unit.Fragment{Path: "pkg/a.go", Symbols: []string{"pkg/a.go::F"}})
-	own, related, notes, outcomes := a.preloadReviewFiles(context.Background(), u)
-	if len(own) != 1 || len(related) != 0 || len(notes) != 0 {
-		t.Fatalf("preloaded files off: own=%d related=%d notes=%v", len(own), len(related), notes)
+	own, related, outcomes := a.preloadReviewFiles(context.Background(), u)
+	if len(own) != 1 || len(related) != 0 {
+		t.Fatalf("preloaded files off: own=%d related=%d", len(own), len(related))
 	}
 	if own[0].Path != "pkg/a.go" || own[0].Label != "code under review" ||
 		!strings.Contains(own[0].Content, "1|package a") || !strings.Contains(own[0].Content, "3|func F() {}") {
 		t.Fatalf("own source off: %+v", own[0])
 	}
-	if !strings.Contains(own[0].CondensedContent, "File outline: pkg/a.go (go)") ||
-		!strings.Contains(own[0].CondensedContent, "func F()") {
-		t.Fatalf("own outline off:\n%s", own[0].CondensedContent)
+	if own[0].Priority() != priorityUnitSource {
+		t.Fatalf("diff file priority = %d, want %d", own[0].Priority(), priorityUnitSource)
+	}
+	if !strings.Contains(own[0].Outline, "File outline: pkg/a.go (go)") ||
+		!strings.Contains(own[0].Outline, "func F()") {
+		t.Fatalf("own outline off:\n%s", own[0].Outline)
 	}
 	if len(outcomes) != 1 || outcomes[0] != "whole pkg/a.go" {
 		t.Fatalf("outcomes = %v", outcomes)
 	}
 
 	missing := unit.UnitOf(unit.Fragment{Path: "gone.go"})
-	own, _, _, outcomes = a.preloadReviewFiles(context.Background(), missing)
+	own, _, outcomes = a.preloadReviewFiles(context.Background(), missing)
 	if len(own) != 0 || len(outcomes) != 1 || outcomes[0] != "unreadable gone.go" {
 		t.Fatalf("missing source result off: own=%d outcomes=%v", len(own), outcomes)
 	}
 }
 
-func TestPreloadReviewFilesBudgetAndRangedFallback(t *testing.T) {
-	big := strings.Repeat("x", preloadSourceBudget+1)
+func TestPreloadReviewFilesKeepsLargeWholeSource(t *testing.T) {
+	big := strings.Repeat("x", 40*1024)
 	a := newPreloadRunner(t, map[string]string{"big.go": big, "small.go": "ok\n"})
 	u := unit.Unit{
 		Scope: unit.ScopeCallChain,
@@ -71,34 +75,13 @@ func TestPreloadReviewFilesBudgetAndRangedFallback(t *testing.T) {
 			{Path: "small.go"},
 		},
 	}
-	own, _, notes, outcomes := a.preloadReviewFiles(context.Background(), u)
-	if len(own) != 1 || own[0].Path != "small.go" || len(notes) != 1 ||
-		!strings.Contains(notes[0], "exceeds the preload budget") {
-		t.Fatalf("budget fallback off: own=%+v notes=%v", own, notes)
+	own, _, outcomes := a.preloadReviewFiles(context.Background(), u)
+	if len(own) != 2 || own[0].Path != "big.go" || own[1].Path != "small.go" ||
+		!strings.Contains(own[0].Content, big) {
+		t.Fatalf("full source preload off: own=%+v", own)
 	}
-	if len(outcomes) != 2 || outcomes[0] != "budget_miss big.go" || outcomes[1] != "whole small.go" {
+	if len(outcomes) != 2 || outcomes[0] != "whole big.go" || outcomes[1] != "whole small.go" {
 		t.Fatalf("outcomes = %v", outcomes)
-	}
-
-	filler := "// " + strings.Repeat("y", 120)
-	var source strings.Builder
-	source.WriteString("package big\n\n")
-	for range preloadSourceBudget / len(filler) {
-		source.WriteString(filler + "\n")
-	}
-	source.WriteString("\nfunc Changed() int {\n\treturn 42\n}\n")
-	a = newPreloadRunner(t, map[string]string{"big.go": source.String()})
-	u = unit.UnitOf(unit.Fragment{Path: "big.go", Symbols: []string{"big.go::Changed"}})
-	own, _, notes, _ = a.preloadReviewFiles(context.Background(), u)
-	if len(own) != 1 || len(notes) != 0 || !strings.Contains(own[0].Content, "LINE_RANGE: ") ||
-		!strings.Contains(own[0].Content, "func Changed() int {") || strings.Contains(own[0].Content, filler) {
-		t.Fatalf("ranged fallback off: own=%+v notes=%v", own, notes)
-	}
-
-	a.features = feature.Set{feature.RangedPreload: false}
-	own, _, notes, _ = a.preloadReviewFiles(context.Background(), u)
-	if len(own) != 0 || len(notes) != 1 || !strings.Contains(notes[0], "exceeds the preload budget") {
-		t.Fatalf("disabled ranged fallback off: own=%+v notes=%v", own, notes)
 	}
 }
 
@@ -117,7 +100,7 @@ func TestPreloadReviewFilesAddsBoundedCallNeighbors(t *testing.T) {
 		{Kind: unit.ClueDoc, Relation: unit.RelCallee, Ref: "a.go::F2", Text: "member file — skip"},
 		{Kind: unit.ClueSpec, Relation: unit.RelOwner, Ref: "d.go::T", Text: "not a call edge — skip"},
 	}
-	own, related, _, _ := a.preloadReviewFiles(context.Background(), u)
+	own, related, _ := a.preloadReviewFiles(context.Background(), u)
 	if len(own) != 2 || len(related) != 1 {
 		t.Fatalf("source counts off: own=%d related=%d", len(own), len(related))
 	}
@@ -126,9 +109,12 @@ func TestPreloadReviewFilesAddsBoundedCallNeighbors(t *testing.T) {
 		strings.Contains(related[0].Content, "1|package p") {
 		t.Fatalf("related source off: %+v", related[0])
 	}
+	if own[0].Priority() != priorityUnitSource || related[0].Priority() != priorityRelatedSource {
+		t.Fatalf("source priorities: unit=%d related=%d", own[0].Priority(), related[0].Priority())
+	}
 
 	a.features = feature.Set{feature.NeighborSource: false}
-	_, related, _, _ = a.preloadReviewFiles(context.Background(), u)
+	_, related, _ = a.preloadReviewFiles(context.Background(), u)
 	if len(related) != 0 {
 		t.Fatalf("neighbor_source off must remove related source: %+v", related)
 	}
@@ -149,41 +135,22 @@ func TestAssembleReviewMessages(t *testing.T) {
 		msg.NewFile("n.go", 5, 9, 9, "File: n.go (Total lines: 9)\nLINE_RANGE: 5-9\n5|z").
 			ConfigurePresentation("related caller n.go::C", ""),
 	}
-	notes := []string{"File: big.go — 99999 bytes exceeds the preload budget; read on demand via read_files"}
 	a := &Runner{}
 
-	deb := session.Debrief{}
-	domain := a.assembleReviewMessages(build, own, related, nil, notes, 1<<20, &deb)
-	if len(domain) != 5 {
-		t.Fatalf("messages = %d, want 5", len(domain))
+	domain := a.assembleReviewMessages(build, own, related, nil)
+	if len(domain) != 4 {
+		t.Fatalf("messages = %d, want 4", len(domain))
 	}
-	taskWire := domain[1].ToLLM(msg.CompactionNone)
-	taskText := taskWire.ExtractText()
-	if !strings.Contains(taskText, unitSourcePointer) || !strings.Contains(taskText, notes[0]) ||
-		!strings.Contains(taskText, relatedSourcePointer) {
+	taskWire, _ := domain[1].ToMessage()
+	taskText := taskWire.TextContent()
+	if !strings.Contains(taskText, unitSourcePointer) || !strings.Contains(taskText, relatedSourcePointer) {
 		t.Fatalf("task slots off:\n%s", taskText)
 	}
-	if _, ok := domain[0].(msg.Raw); !ok {
+	if _, ok := domain[0].(agentgo.Message); !ok {
 		t.Fatalf("system task should use the generic message type: %T", domain[0])
 	}
-
-	fullTokens := llm.CountMessagesTokens(msg.Lower(domain))
-	deb = session.Debrief{}
-	domain = a.assembleReviewMessages(build, own, related, nil, notes, fullTokens-1, &deb)
-	if len(domain) != 4 || len(deb.Degradations) != 1 || deb.Degradations[0] != "related_source_dropped" {
-		t.Fatalf("related-drop stage off: n=%d deg=%v", len(domain), deb.Degradations)
-	}
-	taskWire = domain[1].ToLLM(msg.CompactionNone)
-	if strings.Contains(taskWire.ExtractText(), relatedSourcePointer) {
-		t.Fatal("dropped related source must not remain advertised")
-	}
-
-	deb = session.Debrief{}
-	domain = a.assembleReviewMessages(build, own, related, nil, notes, 10, &deb)
-	taskWire = domain[1].ToLLM(msg.CompactionNone)
-	if len(domain) != 3 || !strings.Contains(taskWire.ExtractText(), sourceNotPreloaded) ||
-		len(deb.Degradations) != 2 {
-		t.Fatalf("own-drop stage off: n=%d deg=%v", len(domain), deb.Degradations)
+	if domain[2] != own[0] || domain[3] != related[0] {
+		t.Fatal("assembly must pass full File messages to Harness unchanged")
 	}
 }
 
@@ -202,7 +169,7 @@ func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
 		{Relation: unit.RelOwner, Ref: "owner.go::Owner"},
 		{Relation: unit.RelProject, Ref: "pyproject.toml"},
 	}
-	own, related, _, _ := a.preloadReviewFiles(context.Background(), u)
+	own, related, _ := a.preloadReviewFiles(context.Background(), u)
 	entries := a.initialFileContext(context.Background(), u, nil, own, related)
 	byPath := make(map[string]msg.FileContextEntry)
 	for _, entry := range entries {
