@@ -203,6 +203,37 @@ class AttributeFailuresTest(unittest.TestCase):
             {"h-1": "hypothesis_fingerprint"},
         )
 
+    def test_identity_without_line_does_not_match_unrelated_hypothesis_by_path(self):
+        known = {
+            "id": "known-1",
+            "path": "a.go",
+            "hypothesis_id": "h-other",
+        }
+        result = attribute_issue(known, session(unit(), hypothesis()))
+        self.assertEqual(result["stage"], UNIT_REVIEW)
+
+    def test_identity_without_line_does_not_deliver_unrelated_finding_by_path(self):
+        known = {
+            "id": "known-1",
+            "path": "a.go",
+            "hypothesis_id": "h-1",
+        }
+        result = attribute_issue(
+            known,
+            session(
+                unit(),
+                hypothesis(),
+                {
+                    "type": "finding",
+                    "hypothesis_id": "h-other",
+                    "path": "a.go",
+                    "start_line": 10,
+                    "end_line": 14,
+                },
+            ),
+        )
+        self.assertEqual(result["stage"], HYPOTHESIS_REVIEW)
+
 
 if __name__ == "__main__":
     unittest.main()

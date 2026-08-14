@@ -119,7 +119,7 @@ def _location_matches(issue: dict, candidate: dict) -> bool:
         return False
     line = _int(issue.get("line"))
     if line <= 0:
-        return True
+        return False
     start = _int(candidate.get("start_line"))
     end = _int(candidate.get("end_line")) or start
     return start > 0 and start <= line <= end
