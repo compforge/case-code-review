@@ -119,6 +119,44 @@ Viewer 中发现的重复 `read_files`、搜索空转或未完成 Unit，可以�
 确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中确认问题具有普遍性、指标改善且没有召回
 或成本回退，才能认为优化有效。
 
+### 3.1 已知问题的阶段归因
+
+一个已知问题没有形成 Finding，只能说明交付失败，不能直接说明应该改 prompt。问题可能在 Formation
+时没有进入正确 Unit，也可能在 Unit Review、Hypothesis Review、Trial 或最终持久化时丢失；相关
+Execution 没有完成时，领域阶段甚至没有产生可判定结果。eval 因此把外部确认的已知问题与 Session
+事实连接，寻找它在评审漏斗中到达的最深位置：
+
+```text
+Expected Issue
+      │
+      ▼
+Formation ─▶ Unit Review ─▶ Hypothesis Review ─▶ Trial ─▶ Finding
+      │             │                 │              │          │
+   Unit scope    Hypothesis       Assessment      decision   delivered
+                    └──────── Execution terminal state ────────┘
+```
+
+归因遵循以下顺序：
+
+1. 已有匹配 Finding 时结果为 `delivered`；
+2. 完整 Session 中没有 Unit 覆盖问题位置时归到 `formation`；
+3. 相关 Unit 已完成但没有匹配 Hypothesis 时归到 `unit_review`；
+4. 匹配 Hypothesis 没有 Assessment，或 Assessment 在 support、attribution、value、novelty 任一轴拒绝
+   交付时归到 `hypothesis_review`；
+5. Review 2 支持该问题，但确定性 Trial 没有批准交付时归到 `trial`；
+6. Trial 已批准但 Session 没有持久化匹配 Finding 时归到 `finding`；
+7. 相关 Unit 或 Lane 缺少完成终态时优先归到 `execution`，避免把运行中断误判为领域阶段漏报。
+
+问题与阶段产物优先通过 Hypothesis ID / fingerprint 连接；缺少稳定身份时才使用 `path + line`。
+归因器不使用 LLM 判断两段自然语言是否表达同一缺陷，因为语义近似会把不可复现的 judge 偏差带入
+根因定位。匹配方式与参与判断的 Unit、Hypothesis、Assessment、Trial decision 和 Execution outcome
+必须随归因结果保留，供人复查。
+
+阶段归因是**定位信号**，不是根因证明：`formation` 不等于语言解析器必然有错，
+`hypothesis_review` 也不等于 Review 2 prompt 必然有错。它只把调查范围收敛到拥有该阶段判断的模块；
+具体修改仍需结合对应 artifact、trajectory 和代码事实求证，再通过固定 corpus 对照实验验证。归因输入、
+命令和 JSONL 输出协议见 [`eval/README.md`](../eval/README.md)。
+
 eval 的标签协议、数据边界、数据集构建、Trajectory 诊断、固定 corpus 与重放命令不在本文展开，统一见
 [`eval/README.md`](../eval/README.md)。真实 corpus、labels、datasets 和 trajectory 放在被忽略的
 `eval/data/`；公开仓只提交通用工具、匿名 fixture 与方法说明。

@@ -210,6 +210,32 @@ ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval �
 需要原文；`missing→read` 则提示 Language/Project Knowledge 尚未覆盖该关系。后续没有 demand 保持中性，
 是否过量注入需要固定 corpus 的 A/B 成本与效果共同判断。
 
+### 已知问题未交付的阶段归因
+
+`attribute_failures.py` 将一组已知问题与一次 Session JSONL 对齐，沿
+`Formation → Unit Review → Hypothesis Review → Trial → Finding` 找到交付停止的位置；若对应
+Unit 或 Lane 没有完成，则归到 `execution`。归因只读取 Unit scope、Hypothesis、Assessment、Trial
+decision、Finding 和终态事件，不调用 LLM。
+
+已知问题使用 JSONL，每条至少提供稳定 `id`、`path`，以及 `line` 或 Hypothesis 身份：
+
+```json
+{"id":"known-issue-1","path":"path/to/file.go","line":42}
+```
+
+由 `build_label_dataset.py` 生成的记录也可直接作为输入；归因器只保留 `important`、`minor`、
+`missed`，优先使用 `engine.hypothesis` 中的 ID / fingerprint，缺失时才回退到 `path + line`：
+
+```bash
+python3 eval/attribute_failures.py \
+  ~/.casecodereview/sessions/<repo>/<session>.jsonl \
+  eval/data/datasets/expected-issues.jsonl \
+  --out eval/data/runs/<run>/failure-attribution.jsonl
+```
+
+每条输出包含 `stage`、可复查的 `reason`，以及参与判断的 Unit、Hypothesis、Assessment、Trial 或
+Execution 证据。`delivered` 表示已知问题成功交付，不属于失败阶段。
+
 后验扫描 finding 指向的代码是否被后续提交修改：
 
 ```bash
@@ -307,6 +333,7 @@ python3 -m py_compile \
   eval/build_hypothesis_dataset.py \
   eval/collect.py \
   eval/ccr_trajectory.py \
+  eval/attribute_failures.py \
   eval/posterior.py \
   eval/replay.py \
   eval/trajectory_judge.py \
