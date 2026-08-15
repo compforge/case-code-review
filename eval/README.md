@@ -267,14 +267,18 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 
 ```text
 eval/data/reports/weekly/2026-W32/
-├── REPORT.md       人读的本周数据与上周对比
-├── metrics.json    可供后续周报继续比较的机器指标
-└── manifest.json   周区间、时区、输入范围与生成时间
+├── REPORT.md             人读的本周数据与上周对比，以及最慢 Unit
+├── metrics.json          可供后续周报继续比较的机器指标
+├── unit-durations.jsonl  每个 Review 1 Unit 的耗时、结果、轮次和 token
+└── manifest.json         周区间、时区、输入范围与生成时间
 ```
 
 执行指标按 `session_start` 归周，而不是按 Session 文件 mtime；报告分别展示 Review 1 Unit 与
-Review 2 Lane 的完成率、timeout、score、轮次、耗时、token、工具频率和主要扣分项。质量指标也分为
-两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，
+Review 2 Lane 的完成率、timeout、score、轮次、耗时、token、工具频率和主要扣分项。
+平均、p50 和 p95 耗时同时进入本周与上周的对比表。
+`REPORT.md` 展示最慢的 20 个 Review 1 Unit，完整的逐 Unit 耗时记录保存在
+`unit-durations.jsonl`，可按 Unit、Session、执行结果、轮次、token、模型和工具版本继续分析。
+质量指标分为两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，
 `labeled_this_week` 按人工标签时间统计本周新增标注。版本和模型分布始终单列，避免把一周内混跑的
 不同引擎直接当成同一 cohort。
 

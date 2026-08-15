@@ -153,9 +153,53 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(metrics["completion_rate"], 0.5)
         self.assertEqual(metrics["timeout_rate"], 0.5)
         self.assertEqual(metrics["average_score"], 0.833)
+        self.assertEqual(metrics["duration_sec"]["average"], 21.667)
         self.assertEqual(metrics["duration_sec"]["p95"], 50)
         self.assertEqual(metrics["prompt_tokens"]["average"], 150)
         self.assertEqual(metrics["tool_freq"], {"search_code": 2, "read_files": 1})
+
+    def test_unit_duration_records_keep_each_unit_and_sort_slowest_first(self) -> None:
+        rows = [
+            {
+                "stage": "review1",
+                "session_id": "s1",
+                "trajectory_id": "a.py",
+                "execution_id": "e1",
+                "unit": "a.py",
+                "outcome": "completed",
+                "reason": "",
+                "duration_sec": 12.5,
+                "rounds": 2,
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cached_tokens": 10,
+                "model": "m1",
+                "tool_version": "v1",
+            },
+            {
+                "stage": "review1",
+                "session_id": "s1",
+                "trajectory_id": "b.py",
+                "execution_id": "e2",
+                "unit": "b.py",
+                "outcome": "timeout",
+                "reason": "deadline",
+                "duration_sec": 40,
+                "rounds": 4,
+                "prompt_tokens": 300,
+                "completion_tokens": 30,
+                "cached_tokens": 0,
+                "model": "m1",
+                "tool_version": "v1",
+            },
+            {"stage": "review2", "duration_sec": 99},
+        ]
+
+        records = weekly.unit_duration_records(rows)
+
+        self.assertEqual([record["unit"] for record in records], ["b.py", "a.py"])
+        self.assertEqual(records[0]["duration_sec"], 40)
+        self.assertEqual(records[0]["execution_id"], "e2")
 
     def test_quality_separates_review_week_from_label_week(self) -> None:
         session = weekly.SessionRecord(
@@ -194,6 +238,28 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(metrics["review_week"]["label_coverage"], 0.5)
         self.assertEqual(metrics["labeled_this_week"]["by_label"], {"important": 1})
         self.assertEqual(metrics["review_week"]["wrong_tags"], {"cross-file": 1})
+
+    def test_comparison_includes_week_over_week_duration(self) -> None:
+        current = {
+            "review1": {"duration_sec": {"average": 20, "p50": 15, "p95": 40}},
+            "review2": {"duration_sec": {"average": 30, "p50": 25, "p95": 50}},
+        }
+        previous = {
+            "review1": {"duration_sec": {"average": 10, "p50": 12, "p95": 30}},
+            "review2": {"duration_sec": {"average": 20, "p50": 20, "p95": 45}},
+        }
+
+        comparison = {
+            item["metric"]: item
+            for item in weekly.build_comparison(current, previous)
+        }
+
+        review1_average = comparison["Review 1 average duration (sec)"]
+        self.assertEqual(review1_average["current"], 20)
+        self.assertEqual(review1_average["previous"], 10)
+        self.assertEqual(review1_average["delta"], 10)
+        self.assertEqual(review1_average["change_pct"], 1.0)
+        self.assertEqual(comparison["Review 2 p95 duration (sec)"]["delta"], 5)
 
     def test_writes_week_partition_with_machine_and_human_reports(self) -> None:
         empty = {
@@ -242,12 +308,41 @@ class WeeklyReportTest(unittest.TestCase):
         comparison = weekly.build_comparison(empty, previous)
         with tempfile.TemporaryDirectory() as raw:
             out = weekly.write_report(
-                Path(raw), empty, previous, comparison, {"week": "2026-W32"}
+                Path(raw),
+                empty,
+                previous,
+                comparison,
+                {"week": "2026-W32"},
+                [
+                    {
+                        "session_id": "s1",
+                        "trajectory_id": "src/a.py",
+                        "execution_id": "e1",
+                        "unit": "src/a.py",
+                        "outcome": "completed",
+                        "reason": "",
+                        "duration_sec": 12,
+                        "rounds": 2,
+                        "prompt_tokens": 100,
+                        "completion_tokens": 20,
+                        "cached_tokens": 0,
+                        "model": "m1",
+                        "tool_version": "v1",
+                    }
+                ],
             )
             self.assertEqual(out.name, "2026-W32")
             self.assertTrue((out / "REPORT.md").is_file())
             self.assertTrue((out / "metrics.json").is_file())
             self.assertTrue((out / "manifest.json").is_file())
+            self.assertTrue((out / "unit-durations.jsonl").is_file())
+            unit = json.loads(
+                (out / "unit-durations.jsonl").read_text(encoding="utf-8")
+            )
+            self.assertEqual(unit["unit"], "src/a.py")
+            report = (out / "REPORT.md").read_text(encoding="utf-8")
+            self.assertIn("Slowest Review 1 units", report)
+            self.assertIn("avg sec", report)
 
 
 if __name__ == "__main__":

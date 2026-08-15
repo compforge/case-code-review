@@ -45,7 +45,10 @@ def _markdown_table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 
 def render_markdown(
-    current: dict[str, Any], previous: dict[str, Any], comparison: list[dict[str, Any]]
+    current: dict[str, Any],
+    previous: dict[str, Any],
+    comparison: list[dict[str, Any]],
+    unit_durations: list[dict[str, Any]],
 ) -> str:
     lines = [
         f"# CCR weekly eval — {current['week']}",
@@ -108,6 +111,7 @@ def render_markdown(
                 _format_value(metrics["timeout_rate"], "percent"),
                 _format_value(metrics["average_score"], "score"),
                 _format_value(metrics["rounds"]["p50"]),
+                _format_value(metrics["duration_sec"]["average"]),
                 _format_value(metrics["duration_sec"]["p50"]),
                 _format_value(metrics["duration_sec"]["p95"]),
             ]
@@ -122,11 +126,38 @@ def render_markdown(
                 "Timeout",
                 "Score",
                 "p50 rounds",
+                "avg sec",
                 "p50 sec",
                 "p95 sec",
             ],
             stage_rows,
         )
+    )
+
+    lines.extend(["", "### Slowest Review 1 units", ""])
+    lines.extend(
+        _markdown_table(
+            ["Unit", "Duration sec", "Outcome", "Rounds", "Prompt tokens", "Session"],
+            [
+                [
+                    str(record["unit"]),
+                    _format_value(record["duration_sec"]),
+                    str(record["outcome"]),
+                    _format_value(record["rounds"]),
+                    _format_value(record["prompt_tokens"]),
+                    str(record["session_id"]),
+                ]
+                for record in unit_durations[:20]
+            ],
+        )
+        if unit_durations
+        else ["No Review 1 units in this week."]
+    )
+    lines.extend(
+        [
+            "",
+            "Complete per-Unit timing records are available in `unit-durations.jsonl`.",
+        ]
     )
 
     lines.extend(["", "### Token usage", ""])
