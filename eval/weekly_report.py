@@ -233,6 +233,10 @@ def load_trajectory_rows(
                     {
                         "session_id": session.session_id,
                         "trajectory_id": trajectory.trajectory_id,
+                        "execution_id": str(metadata.get("execution_id") or ""),
+                        "unit": str(
+                            metadata.get("file_path") or trajectory.trajectory_id
+                        ),
                         "stage": signals["stage"],
                         "outcome": str(metadata.get("execution_outcome") or "unknown"),
                         "reason": str(metadata.get("execution_reason") or ""),
@@ -264,6 +268,38 @@ def load_trajectory_rows(
                 file=sys.stderr,
             )
     return rows, failures
+
+
+def unit_duration_records(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Project Review 1 trajectories into one timing record per Unit execution."""
+    fields = (
+        "session_id",
+        "trajectory_id",
+        "execution_id",
+        "unit",
+        "outcome",
+        "reason",
+        "duration_sec",
+        "rounds",
+        "prompt_tokens",
+        "completion_tokens",
+        "cached_tokens",
+        "model",
+        "tool_version",
+    )
+    records = [
+        {field: row.get(field) for field in fields}
+        for row in rows
+        if row["stage"] == REVIEW1
+    ]
+    return sorted(
+        records,
+        key=lambda record: (
+            -float(record["duration_sec"] or 0),
+            str(record["session_id"] or ""),
+            str(record["unit"] or ""),
+        ),
+    )
 
 
 def _percentile(values: list[float], percentile: float) -> float | int | None:
@@ -486,12 +522,26 @@ COMPARISON_METRICS = (
     ("Review 1 completion", (REVIEW1, "completion_rate"), "percent"),
     ("Review 1 timeout", (REVIEW1, "timeout_rate"), "percent"),
     ("Review 1 score", (REVIEW1, "average_score"), "score"),
+    (
+        "Review 1 average duration (sec)",
+        (REVIEW1, "duration_sec", "average"),
+        "number",
+    ),
+    ("Review 1 p50 duration (sec)", (REVIEW1, "duration_sec", "p50"), "number"),
+    ("Review 1 p95 duration (sec)", (REVIEW1, "duration_sec", "p95"), "number"),
     ("Review 1 prompt/chain", (REVIEW1, "prompt_tokens", "average"), "number"),
     ("Review 2 chains", (REVIEW2, "chains"), "number"),
     ("Review 2 outcome coverage", (REVIEW2, "outcome_coverage"), "percent"),
     ("Review 2 completion", (REVIEW2, "completion_rate"), "percent"),
     ("Review 2 timeout", (REVIEW2, "timeout_rate"), "percent"),
     ("Review 2 score", (REVIEW2, "average_score"), "score"),
+    (
+        "Review 2 average duration (sec)",
+        (REVIEW2, "duration_sec", "average"),
+        "number",
+    ),
+    ("Review 2 p50 duration (sec)", (REVIEW2, "duration_sec", "p50"), "number"),
+    ("Review 2 p95 duration (sec)", (REVIEW2, "duration_sec", "p95"), "number"),
     ("Review 2 prompt/chain", (REVIEW2, "prompt_tokens", "average"), "number"),
     (
         "Review-week labeled findings",
@@ -550,17 +600,29 @@ def _write_json(path: Path, value: Any) -> None:
     )
 
 
+def _write_jsonl(path: Path, values: Iterable[dict[str, Any]]) -> None:
+    _write_text(
+        path,
+        "".join(
+            json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n"
+            for value in values
+        ),
+    )
+
+
 def write_report(
     out_root: Path,
     current: dict[str, Any],
     previous: dict[str, Any],
     comparison: list[dict[str, Any]],
     manifest: dict[str, Any],
+    unit_durations: list[dict[str, Any]],
 ) -> Path:
     report_dir = out_root / current["week"]
     report_dir.mkdir(parents=True, exist_ok=True)
     _write_text(
-        report_dir / "REPORT.md", render_markdown(current, previous, comparison)
+        report_dir / "REPORT.md",
+        render_markdown(current, previous, comparison, unit_durations),
     )
     _write_json(
         report_dir / "metrics.json",
@@ -572,6 +634,7 @@ def write_report(
         },
     )
     _write_json(report_dir / "manifest.json", manifest)
+    _write_jsonl(report_dir / "unit-durations.jsonl", unit_durations)
     return report_dir
 
 
@@ -641,6 +704,14 @@ def main() -> int:
     current = build_week_metrics(current_window, **metric_args)
     previous = build_week_metrics(previous_window, **metric_args)
     comparison = build_comparison(current, previous)
+    current_session_ids = {
+        session.session_id
+        for session in sessions
+        if current_window.contains(session.started_at)
+    }
+    unit_durations = unit_duration_records(
+        row for row in rows if row["session_id"] in current_session_ids
+    )
     generated_at = datetime.now(timezone.utc).isoformat()
     manifest = {
         "schema_version": "weekly-report-v1",
@@ -655,8 +726,21 @@ def main() -> int:
         "session_files_valid": len(sessions),
         "session_files_invalid": invalid_sessions,
         "session_files_in_comparison": len(selected_sessions),
+        "artifacts": [
+            "REPORT.md",
+            "metrics.json",
+            "manifest.json",
+            "unit-durations.jsonl",
+        ],
     }
-    report_dir = write_report(args.out_root, current, previous, comparison, manifest)
+    report_dir = write_report(
+        args.out_root,
+        current,
+        previous,
+        comparison,
+        manifest,
+        unit_durations,
+    )
     print(
         json.dumps(
             {
@@ -665,6 +749,7 @@ def main() -> int:
                 "review1_chains": current[REVIEW1]["chains"],
                 "review2_chains": current[REVIEW2]["chains"],
                 "report": str(report_dir / "REPORT.md"),
+                "unit_durations": str(report_dir / "unit-durations.jsonl"),
             },
             ensure_ascii=False,
         )
