@@ -31,7 +31,7 @@ DEFAULT_DATASETS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v2"
+REPORT_SCHEMA_VERSION = "weekly-report-v3"
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,12 +469,21 @@ def _wrong_tags(records: Iterable[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(tags.items(), key=lambda item: (-item[1], item[0])))
 
 
+def _label_rate(
+    distribution: dict[str, int], labels: tuple[str, ...], total: int, available: bool
+) -> float | None:
+    if not available or not total:
+        return None
+    return round(sum(distribution.get(label, 0) for label in labels) / total, 3)
+
+
 def quality_metrics(
     datasets: list[dict[str, Any]],
     week_sessions: list[SessionRecord],
     window: WeekWindow,
     scoped_session_ids: set[str],
     repositories_scoped: bool,
+    dataset_status: str,
 ) -> dict[str, Any]:
     week_ids = {session.session_id for session in week_sessions}
     review_records = [
@@ -498,22 +507,62 @@ def quality_metrics(
         label_records.append(record)
 
     finding_events = sum(session.finding_count for session in week_sessions)
-    labeled_findings = sum(record.get("kind") == "finding" for record in review_records)
+    finding_records = [
+        record for record in review_records if record.get("kind") == "finding"
+    ]
+    labeled_findings = len(finding_records)
+    review_distribution = _label_distribution(finding_records)
+    label_distribution = _label_distribution(label_records)
+    quality_available = dataset_status == "ready"
     return {
+        "label_dataset": {
+            "status": dataset_status,
+            "records": len(datasets),
+        },
         "review_week": {
-            "examples": len(review_records),
-            "labeled_findings": labeled_findings,
-            "by_label": _label_distribution(review_records),
-            "wrong_tags": _wrong_tags(review_records),
+            "examples": len(review_records) if quality_available else None,
+            "labeled_findings": labeled_findings if quality_available else None,
+            "by_label": review_distribution if quality_available else {},
+            "wrong_tags": _wrong_tags(review_records) if quality_available else {},
             "label_coverage": round(labeled_findings / finding_events, 3)
-            if finding_events
+            if quality_available and finding_events
             else None,
+            "accepted_rate": _label_rate(
+                review_distribution,
+                ("important", "minor"),
+                labeled_findings,
+                quality_available,
+            ),
+            "wrong_rate": _label_rate(
+                review_distribution,
+                ("wrong",),
+                labeled_findings,
+                quality_available,
+            ),
+            "repeat_rate": _label_rate(
+                review_distribution,
+                ("repeat",),
+                labeled_findings,
+                quality_available,
+            ),
+            "debatable_rate": _label_rate(
+                review_distribution,
+                ("debatable",),
+                labeled_findings,
+                quality_available,
+            ),
+            # A missed count alone has no denominator. Recall needs a review-level
+            # marker that says the human ground truth is exhaustive.
+            "recall_rate": None,
         },
         "labeled_this_week": {
-            "examples": len(label_records),
-            "by_label": _label_distribution(label_records),
-            "wrong_tags": _wrong_tags(label_records),
-            "without_session": labels_without_session,
+            "examples": len(label_records) if quality_available else None,
+            "by_label": label_distribution if quality_available else {},
+            "wrong_tags": _wrong_tags(label_records) if quality_available else {},
+            "without_session": labels_without_session if quality_available else None,
+            "missed_findings_reported": label_distribution.get("missed", 0)
+            if quality_available
+            else None,
         },
     }
 
@@ -535,6 +584,13 @@ def build_week_metrics(
     session_ids = {session.session_id for session in sessions}
     week_rows = [row for row in rows if row["session_id"] in session_ids]
     scoped_session_ids = {session.session_id for session in all_sessions}
+    dataset_status = (
+        "missing"
+        if missing_datasets
+        else "invalid"
+        if invalid_dataset_lines
+        else "ready"
+    )
     return {
         "week": window.key,
         "window": {
@@ -552,6 +608,7 @@ def build_week_metrics(
             window,
             scoped_session_ids,
             repositories_scoped,
+            dataset_status,
         ),
         "data_quality": {
             "invalid_session_files_in_scan": invalid_session_files,
@@ -625,7 +682,37 @@ COMPARISON_METRICS = (
         ("quality", "review_week", "labeled_findings"),
         "number",
     ),
+    (
+        "Review-week label coverage",
+        ("quality", "review_week", "label_coverage"),
+        "percent",
+    ),
+    (
+        "Review-week accepted findings",
+        ("quality", "review_week", "accepted_rate"),
+        "percent",
+    ),
+    (
+        "Review-week wrong findings",
+        ("quality", "review_week", "wrong_rate"),
+        "percent",
+    ),
+    (
+        "Review-week repeat findings",
+        ("quality", "review_week", "repeat_rate"),
+        "percent",
+    ),
+    (
+        "Review-week debatable findings",
+        ("quality", "review_week", "debatable_rate"),
+        "percent",
+    ),
     ("Labels added", ("quality", "labeled_this_week", "examples"), "number"),
+    (
+        "Missed findings reported",
+        ("quality", "labeled_this_week", "missed_findings_reported"),
+        "number",
+    ),
 )
 
 
@@ -825,6 +912,7 @@ def main() -> int:
                 "sessions": current["sessions"]["total"],
                 "review1_chains": current[REVIEW1]["chains"],
                 "review2_chains": current[REVIEW2]["chains"],
+                "label_dataset_status": current["quality"]["label_dataset"]["status"],
                 "report": str(report_dir / "REPORT.md"),
                 "unit_durations": str(report_dir / "unit-durations.jsonl"),
             },

@@ -268,6 +268,18 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
   --repo <repo-path>
 ```
 
+`eval/data/` 是 gitignore 的本地事实源，不会随 git worktree 复制。在隔离 worktree 生成报告时，
+应显式传入主数据目录中的全部规范化数据集：
+
+```bash
+uv run --project eval/reviewbench python eval/weekly_report.py \
+  --dataset <shared-eval-data>/datasets/review-comments-public.jsonl \
+  --dataset <shared-eval-data>/datasets/review-comments-private.jsonl
+```
+
+缺少任一输入或存在无效 JSONL 时，报告仍生成执行指标，但 label coverage 与 Finding 质量比例显示
+为不可用，不能把缺数据解释成 `0%`。
+
 默认输出：
 
 ```text
@@ -288,7 +300,9 @@ Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周�
 `unit-durations.jsonl`，可按 Unit、Session、执行结果、轮次、token、模型和工具版本继续分析。
 质量指标分为两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，
 `labeled_this_week` 按人工标签时间统计本周新增标注。版本和模型分布始终单列，避免把一周内混跑的
-不同引擎直接当成同一 cohort。
+不同引擎直接当成同一 cohort。对已标注 Finding，报告分别展示 `important + minor` 的 accepted
+比例以及 `wrong`、`repeat`、`debatable` 比例，不把它们压成含义不清的“准确率”。`ccr:missed`
+只作为漏报信号计数；在每个被评审变更都没有完整人工 ground truth 之前，recall 保持不可用。
 
 ## 可选：建立固定 corpus 并重放
 
