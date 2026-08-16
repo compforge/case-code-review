@@ -14,11 +14,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from trajectory_harness import Evaluation, Step, Trajectory
+from trajectory_harness import EvaluationResult, EvaluatorSpec, Step, Trajectory
 
 REVIEW1 = "review1"
 REVIEW2 = "review2"
 UNKNOWN_STAGE = "unknown"
+
+
+def _evaluator_spec(
+    evaluator_id: str, title: str, description: str
+) -> EvaluatorSpec:
+    return EvaluatorSpec(
+        evaluator_id=evaluator_id,
+        title=title,
+        description=description,
+        kind="domain",
+        owner="case-code-review",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,19 +174,24 @@ class ATIFTrajectoryLoader:
 
 @dataclass(frozen=True, slots=True)
 class ToolFailureEvaluator:
-    name: str = "tool_success"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "tool_success",
+        "Tool success",
+        "Measure successful tool executions in one CCR trajectory.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         calls = _tool_steps(trajectory)
         if not calls:
-            return _not_evaluated(self.name, "Trajectory contains no tool calls.")
+            return _not_evaluated(
+                self.spec.evaluator_id, "Trajectory contains no tool calls."
+            )
         failed = [step.step_id for step in calls if step.status == "error"]
         return _ratio_evaluation(
-            self.name,
+            self.spec.evaluator_id,
             len(calls) - len(failed),
             len(calls),
             failed,
@@ -186,20 +203,26 @@ class ToolFailureEvaluator:
 class SearchScopeEvaluator:
     """Reject failed searches and empty scopes without penalizing valid absence."""
 
-    name: str = "search_scope_validity"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "search_scope_validity",
+        "Search scope validity",
+        "Measure whether code searches execute against a valid non-empty scope.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         observations = _code_search_observations(trajectory)
         if not observations:
-            return _not_evaluated(self.name, "Trajectory contains no search_code calls.")
+            return _not_evaluated(
+                self.spec.evaluator_id,
+                "Trajectory contains no search_code calls.",
+            )
         evaluated = [item for item in observations if item["outcome"] != "scope_unknown"]
         if not evaluated:
             return _not_evaluated(
-                self.name,
+                self.spec.evaluator_id,
                 "Searches returned legacy or unmeasured empty scopes.",
             )
         failed = [
@@ -208,7 +231,7 @@ class SearchScopeEvaluator:
             if item["outcome"] in {"scope_miss", "tool_failure"}
         ]
         return _ratio_evaluation(
-            self.name,
+            self.spec.evaluator_id,
             len(evaluated) - len(failed),
             len(evaluated),
             failed,
@@ -220,12 +243,15 @@ class SearchScopeEvaluator:
 class FileReadCoverageEvaluator:
     """Score how much read_files output adds coverage not seen earlier."""
 
-    name: str = "file_read_coverage"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "file_read_coverage",
+        "File read coverage",
+        "Measure how much read_files output adds previously unseen line coverage.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         covered: dict[str, list[tuple[int, int]]] = {}
         total_lines = 0
@@ -248,13 +274,15 @@ class FileReadCoverageEvaluator:
 
         if total_lines == 0:
             return _not_evaluated(
-                self.name, "Trajectory contains no successful ranged read_files output."
+                self.spec.evaluator_id,
+                "Trajectory contains no successful ranged read_files output.",
             )
         score = round(novel_lines / total_lines, 3)
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=score,
-            label="pass" if novel_lines == total_lines else "fail",
+            verdict="pass" if novel_lines == total_lines else "fail",
             explanation=(
                 f"{novel_lines} of {total_lines} returned file lines added new coverage."
             ),
@@ -266,24 +294,29 @@ class FileReadCoverageEvaluator:
 class PromptFileCoverageEvaluator:
     """Measure read_files content already visible in initial File messages."""
 
-    name: str = "file_read_prompt_novelty"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "file_read_prompt_novelty",
+        "File read prompt novelty",
+        "Measure whether read_files output was already present in initial context.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         overlap = prompt_file_read_overlap(trajectory)
         if overlap["total_lines"] == 0:
             return _not_evaluated(
-                self.name, "Trajectory contains no successful ranged read_files output."
+                self.spec.evaluator_id,
+                "Trajectory contains no successful ranged read_files output.",
             )
         novel = overlap["total_lines"] - overlap["covered_lines"]
         score = round(novel / overlap["total_lines"], 3)
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=score,
-            label="pass" if overlap["covered_lines"] == 0 else "fail",
+            verdict="pass" if overlap["covered_lines"] == 0 else "fail",
             explanation=(
                 f"{overlap['covered_lines']} of {overlap['total_lines']} returned file "
                 "lines were already visible in initial File messages."
@@ -296,22 +329,29 @@ class PromptFileCoverageEvaluator:
 class FileReadFragmentationEvaluator:
     """Detect adjacent or overlapping ranges that fit in fewer reads."""
 
-    name: str = "file_read_fragmentation"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "file_read_fragmentation",
+        "File read fragmentation",
+        "Detect adjacent or overlapping file ranges that could use fewer reads.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         fragmentation = file_read_fragmentation(trajectory)
         calls = fragmentation["calls"]
         if calls == 0:
-            return _not_evaluated(self.name, "Trajectory contains no ranged read_files output.")
+            return _not_evaluated(
+                self.spec.evaluator_id,
+                "Trajectory contains no ranged read_files output.",
+            )
         merged = fragmentation["minimal_ranges"]
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=round(merged / calls, 3),
-            label="pass" if calls == merged else "fail",
+            verdict="pass" if calls == merged else "fail",
             explanation=(
                 f"{calls} file reads collapse to {merged} adjacent or overlapping ranges; "
                 f"{fragmentation['mergeable_reads']} reads could merge if their targets "
@@ -325,24 +365,29 @@ class FileReadFragmentationEvaluator:
 class ReviewCompletionEvaluator:
     """Score the authoritative Execution outcome, independent of result yield."""
 
-    name: str = "review_completion"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "review_completion",
+        "Review completion",
+        "Check the authoritative execution outcome of one CCR review scope.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         outcome = str(trajectory.metadata.get("execution_outcome") or "")
         if not outcome:
             return _not_evaluated(
-                self.name, "Trajectory does not carry an authoritative Execution outcome."
+                self.spec.evaluator_id,
+                "Trajectory does not carry an authoritative Execution outcome.",
             )
         completed = outcome == "completed"
         reason = str(trajectory.metadata.get("execution_reason") or "")
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=1.0 if completed else 0.0,
-            label="pass" if completed else "fail",
+            verdict="pass" if completed else "fail",
             explanation=(
                 "Review execution completed."
                 if completed
@@ -355,28 +400,34 @@ class ReviewCompletionEvaluator:
 class AssessmentCompletionEvaluator:
     """A Review 2 execution completes by submitting an Assessment."""
 
-    name: str = "assessment_submission"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "assessment_submission",
+        "Assessment submission",
+        "Measure whether Review 2 submitted and completed its Assessments.",
+    )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         calls = _tool_steps(trajectory)
         if not calls and not any(step.operation == "inference" for step in trajectory.steps):
-            return _not_evaluated(self.name, "Trajectory contains no model execution.")
+            return _not_evaluated(
+                self.spec.evaluator_id, "Trajectory contains no model execution."
+            )
         submissions = [step for step in calls if step.name == "submit_assessment"]
         if not submissions:
-            return Evaluation(
-                name=self.name,
+            return EvaluationResult(
+                evaluator_id=self.spec.evaluator_id,
+                status="evaluated",
                 score=0.0,
-                label="fail",
+                verdict="fail",
                 explanation="Review 2 ended without submitting an Assessment.",
             )
         completed = [step for step in submissions if _assessment_completed(step)]
         failed = [step.step_id for step in submissions if step not in completed]
         return _ratio_evaluation(
-            self.name,
+            self.spec.evaluator_id,
             len(completed),
             len(submissions),
             failed,
@@ -388,24 +439,30 @@ class AssessmentCompletionEvaluator:
 class RoundEfficiencyEvaluator:
     """Score inference rounds per Unit or completed Lane assessment."""
 
-    name: str = "round_efficiency"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "round_efficiency",
+        "Round efficiency",
+        "Measure inference rounds per Unit or completed Lane assessment.",
+    )
     target_rounds_per_item: int = 12
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         rounds = sum(step.operation == "inference" for step in trajectory.steps)
         if rounds == 0:
-            return _not_evaluated(self.name, "Trajectory contains no model execution.")
+            return _not_evaluated(
+                self.spec.evaluator_id, "Trajectory contains no model execution."
+            )
         items = _review_work_items(trajectory)
         budget = self.target_rounds_per_item * items
         score = min(1.0, round(budget / rounds, 3))
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=score,
-            label="pass" if rounds <= budget else "fail",
+            verdict="pass" if rounds <= budget else "fail",
             explanation=(
                 f"{rounds} inference rounds for {items} review item(s); "
                 f"target is at most {budget} ({self.target_rounds_per_item} per item)."
@@ -417,18 +474,23 @@ class RoundEfficiencyEvaluator:
 class DurationEfficiencyEvaluator:
     """Score model/tool duration per Unit or completed Lane assessment."""
 
-    name: str = "duration_efficiency"
-    weight: float = 1.0
+    spec: EvaluatorSpec = _evaluator_spec(
+        "duration_efficiency",
+        "Duration efficiency",
+        "Measure model and tool duration per Unit or completed Lane assessment.",
+    )
     review1_seconds_per_item: int = 180
     review2_seconds_per_item: int = 120
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> Evaluation:
+    ) -> EvaluationResult:
         del reference
         duration = round(sum(step.duration_ms for step in trajectory.steps) / 1000)
         if duration == 0:
-            return _not_evaluated(self.name, "Trajectory contains no recorded duration.")
+            return _not_evaluated(
+                self.spec.evaluator_id, "Trajectory contains no recorded duration."
+            )
         items = _review_work_items(trajectory)
         per_item = (
             self.review2_seconds_per_item
@@ -437,10 +499,11 @@ class DurationEfficiencyEvaluator:
         )
         budget = per_item * items
         score = min(1.0, round(budget / duration, 3))
-        return Evaluation(
-            name=self.name,
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
             score=score,
-            label="pass" if duration <= budget else "fail",
+            verdict="pass" if duration <= budget else "fail",
             explanation=(
                 f"{duration}s recorded duration for {items} review item(s); "
                 f"target is at most {budget}s ({per_item}s per item)."
@@ -1065,8 +1128,12 @@ def _hypotheses_accepted(step: Step) -> bool:
     return response.startswith("Hypothesis accepted for independent review.")
 
 
-def _not_evaluated(name: str, explanation: str) -> Evaluation:
-    return Evaluation(name=name, score=None, label="not_evaluated", explanation=explanation)
+def _not_evaluated(evaluator_id: str, explanation: str) -> EvaluationResult:
+    return EvaluationResult(
+        evaluator_id=evaluator_id,
+        status="not_applicable",
+        explanation=explanation,
+    )
 
 
 def _ratio_evaluation(
@@ -1075,12 +1142,13 @@ def _ratio_evaluation(
     total: int,
     failed_step_ids: list[str],
     description: str,
-) -> Evaluation:
+) -> EvaluationResult:
     score = round(passed / total, 3)
-    return Evaluation(
-        name=name,
+    return EvaluationResult(
+        evaluator_id=name,
+        status="evaluated",
         score=score,
-        label="pass" if passed == total else "fail",
+        verdict="pass" if passed == total else "fail",
         explanation=f"{passed} of {total} {description}.",
         step_ids=tuple(failed_step_ids),
     )

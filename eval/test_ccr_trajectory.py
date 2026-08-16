@@ -136,15 +136,18 @@ class CCRTrajectoryTest(unittest.TestCase):
             "The changed path needs more evidence.",
         )
         self.assertEqual([step.operation for step in self.trajectory.steps].count("execute_tool"), 4)
-        self.assertEqual(report.evaluations[0].label, "fail")
-        self.assertEqual(report.evaluations[1].score, 0.75)
-        self.assertEqual(report.evaluations[2].score, 0)
-        self.assertEqual(report.evaluations[3].score, 0.5)
-        self.assertEqual(report.evaluations[4].score, 0.2)
-        self.assertEqual(report.evaluations[5].score, 0.5)
-        self.assertEqual(report.evaluations[6].score, 1)
-        self.assertEqual(report.evaluations[7].score, 1)
-        self.assertEqual(report.evaluations[8].score, 1)
+        self.assertEqual(report.results[0].verdict, "warning")
+        self.assertIsNone(report.results[0].score)
+        self.assertEqual(report.results[0].signals[0].code, "repeated_tool_call")
+        self.assertTrue(report.results[0].signals[0].hypotheses)
+        self.assertEqual(report.results[1].score, 0.75)
+        self.assertEqual(report.results[2].score, 0)
+        self.assertEqual(report.results[3].score, 0.5)
+        self.assertEqual(report.results[4].score, 0.2)
+        self.assertEqual(report.results[5].score, 0.5)
+        self.assertEqual(report.results[6].score, 1)
+        self.assertEqual(report.results[7].score, 1)
+        self.assertEqual(report.results[8].score, 1)
         self.assertEqual(hypothesis_yield(self.trajectory), 1)
         self.assertEqual(
             initial_context_stats(self.trajectory),
@@ -187,7 +190,10 @@ class CCRTrajectoryTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            [item["name"] for item in objective_signals(self.trajectory)["evaluations"]],
+            [
+                item["evaluator_id"]
+                for item in objective_signals(self.trajectory)["evaluations"]
+            ],
             [
                 "repeated_tool_call",
                 "tool_success",
@@ -238,9 +244,15 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         self.assertEqual(review_stage(trajectory), REVIEW2)
         self.assertEqual(AssessmentCompletionEvaluator().evaluate(trajectory).score, 1)
-        self.assertEqual(ReviewCompletionEvaluator().evaluate(trajectory).label, "not_evaluated")
         self.assertEqual(
-            [item["name"] for item in objective_signals(trajectory)["evaluations"]],
+            ReviewCompletionEvaluator().evaluate(trajectory).status,
+            "not_applicable",
+        )
+        self.assertEqual(
+            [
+                item["evaluator_id"]
+                for item in objective_signals(trajectory)["evaluations"]
+            ],
             [
                 "repeated_tool_call",
                 "tool_success",
@@ -373,14 +385,30 @@ class CCRTrajectoryTest(unittest.TestCase):
             [
                 {
                     "evaluations": [
-                        {"name": "duration", "label": "fail", "score": 0.4},
-                        {"name": "search", "label": "fail", "score": 0.7},
+                        {
+                            "evaluator_id": "duration",
+                            "verdict": "fail",
+                            "score": 0.4,
+                        },
+                        {
+                            "evaluator_id": "search",
+                            "verdict": "fail",
+                            "score": 0.7,
+                        },
                     ]
                 },
                 {
                     "evaluations": [
-                        {"name": "duration", "label": "fail", "score": 0.5},
-                        {"name": "completion", "label": "pass", "score": 1.0},
+                        {
+                            "evaluator_id": "duration",
+                            "verdict": "fail",
+                            "score": 0.5,
+                        },
+                        {
+                            "evaluator_id": "completion",
+                            "verdict": "pass",
+                            "score": 1.0,
+                        },
                     ]
                 },
             ]

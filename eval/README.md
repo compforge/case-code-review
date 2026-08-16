@@ -201,8 +201,10 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
 average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内
 未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。确定性结果统一产生
-0~1 score、label、explanation 与证据 step id；可选 LLM judge 只在其后解释“为什么慢或弱”，不再
-直接解析 ATIF 私有字段。
+`EvaluationResult`，用 status、verdict、可选 0~1 score、explanation 与 step id 区分执行健康、
+判断和证据。重复工具调用只产生带 hypotheses 的 `DiagnosticSignal`，不伪装为执行 Failure 或低分；
+CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
+judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
 ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
 提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率
