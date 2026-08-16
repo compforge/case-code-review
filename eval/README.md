@@ -206,6 +206,9 @@ average/max batch；零命中按 query 区分有效 scope、空 scope、scope �
 CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
 judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
+[HTML 报告示例](examples/trajectory-evaluation-report.html)展示了 Trajectory facts、Failure、
+EvaluationResult、DiagnosticSignal 与聚合 Metric 在同一读模型中的分层关系。
+
 ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
 提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率
 一起判断是否重复；`outline→read` 表示关系判断正确但结构信息不足；`reference→read` 表示路径有用但
