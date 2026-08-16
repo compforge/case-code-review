@@ -108,10 +108,13 @@ def render_markdown(
                 str(metrics["chains"]),
                 _format_value(metrics["outcome_coverage"], "percent"),
                 _format_value(metrics["completion_rate"], "percent"),
-                _format_value(metrics["timeout_rate"], "percent"),
+                _format_value(metrics["workflow_timeout_rate"], "percent"),
+                _format_value(metrics["llm_routing_timeout_rate"], "percent"),
                 _format_value(metrics["average_score"], "score"),
+                _format_value(metrics["assessments"] if stage == REVIEW2 else None),
                 _format_value(metrics["rounds"]["p50"]),
                 _format_value(metrics["duration_sec"]["average"]),
+                _format_value(metrics["per_assessment"]["duration_sec"]),
                 _format_value(metrics["duration_sec"]["p50"]),
                 _format_value(metrics["duration_sec"]["p95"]),
             ]
@@ -123,10 +126,13 @@ def render_markdown(
                 "Chains",
                 "Outcome coverage",
                 "Complete",
-                "Timeout",
+                "Workflow timeout",
+                "llm.routing.timeout",
                 "Score",
+                "Assessments",
                 "p50 rounds",
-                "avg sec",
+                "avg sec/chain",
+                "avg sec/Assessment",
                 "p50 sec",
                 "p95 sec",
             ],
@@ -134,25 +140,27 @@ def render_markdown(
         )
     )
 
-    lines.extend(["", "### LLM failures", ""])
-    llm_failure_rows = []
+    lines.extend(["", "### Failures", ""])
+    failure_rows = []
     for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
-        for item in current[stage]["llm_failures"]["items"]:
-            llm_failure_rows.append(
+        for item in current[stage]["failures"]["items"]:
+            failure_rows.append(
                 [
                     title,
+                    str(item["impact"]),
                     str(item["failure"]),
-                    str(item["request_phase"]),
                     str(item["count"]),
+                    str(item["affected_chains"]),
+                    _format_value(item["rate"], "percent"),
                 ]
             )
     lines.extend(
         _markdown_table(
-            ["Stage", "Failure", "Observed request phase", "Count"],
-            llm_failure_rows,
+            ["Stage", "Impact", "Failure", "Events", "Affected chains", "Rate"],
+            failure_rows,
         )
-        if llm_failure_rows
-        else ["No structured LLM failures in this week."]
+        if failure_rows
+        else ["No structured failures in this week."]
     )
 
     lines.extend(["", "### Slowest Review 1 units", ""])
@@ -186,9 +194,12 @@ def render_markdown(
         _markdown_table(
             [
                 "Stage",
-                "Prompt/chain",
-                "Completion/chain",
-                "Cached/chain",
+                "Prompt/Unit or Lane",
+                "Prompt/Assessment",
+                "Completion/Unit or Lane",
+                "Completion/Assessment",
+                "Cached/Unit or Lane",
+                "Cached/Assessment",
                 "Total prompt",
                 "Total completion",
             ],
@@ -196,8 +207,13 @@ def render_markdown(
                 [
                     title,
                     _format_value(current[stage]["prompt_tokens"]["average"]),
+                    _format_value(current[stage]["per_assessment"]["prompt_tokens"]),
                     _format_value(current[stage]["completion_tokens"]["average"]),
+                    _format_value(
+                        current[stage]["per_assessment"]["completion_tokens"]
+                    ),
                     _format_value(current[stage]["cached_tokens"]["average"]),
+                    _format_value(current[stage]["per_assessment"]["cached_tokens"]),
                     _format_value(current[stage]["prompt_tokens"]["total"]),
                     _format_value(current[stage]["completion_tokens"]["total"]),
                 ]

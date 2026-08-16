@@ -14,7 +14,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from trajectory_harness import EvaluationResult, EvaluatorSpec, Failure, Step, Trajectory
+from trajectory_harness import (
+    EvaluationResult,
+    EvaluatorSpec,
+    ExecutionResult,
+    Failure,
+    Step,
+    Trajectory,
+)
 
 REVIEW1 = "review1"
 REVIEW2 = "review2"
@@ -112,6 +119,8 @@ class ATIFTrajectoryLoader:
             if reasoning := raw.get("reasoning_content"):
                 attributes["reasoning_content"] = reasoning
             failure = _failure_from_value(attributes.get("failure"))
+            if failure is None:
+                failure = _legacy_llm_failure(str(attributes.get("llm_error") or ""))
             steps.append(
                 Step(
                     step_id=step_id,
@@ -171,6 +180,7 @@ class ATIFTrajectoryLoader:
         return Trajectory(
             trajectory_id=str(chain.get("trajectory_id") or ""),
             steps=tuple(steps),
+            execution=_execution_result(metadata, steps),
             source=source,
             metadata=metadata,
         )
@@ -191,6 +201,53 @@ def _failure_from_value(value: Any) -> Failure | None:
         code=str(value.get("code") or ""),
         message=str(value.get("message") or ""),
     )
+
+
+def _legacy_llm_failure(message: str) -> Failure | None:
+    # Older CCR sessions only persisted the router's stable error prefix. Keep
+    # this exact match at the source Loader boundary; unknown text stays unknown.
+    if not message.startswith("llm routing call timeout exceeded"):
+        return None
+    return Failure(
+        kind="llm",
+        phase="routing",
+        error_type="timeout",
+        code="routing_budget_exhausted",
+        message=message,
+    )
+
+
+def _execution_result(
+    metadata: dict[str, Any], steps: list[Step]
+) -> ExecutionResult | None:
+    raw_outcome = str(metadata.get("execution_outcome") or "")
+    if not raw_outcome:
+        return None
+
+    outcome = {
+        "completed": "completed",
+        "timeout": "timeout",
+        "aborted": "canceled",
+        "canceled": "canceled",
+        "unknown": "unknown",
+    }.get(raw_outcome, "failed")
+    reason = str(metadata.get("execution_reason") or "")
+    failure = None
+    if raw_outcome == "timeout":
+        failure = Failure(
+            kind="workflow", phase="", error_type="timeout", message=reason
+        )
+    elif raw_outcome == "llm_error":
+        failure = next(
+            (step.failure for step in reversed(steps) if step.failure is not None),
+            Failure(
+                kind="llm",
+                phase="unknown",
+                error_type="unknown",
+                message=reason,
+            ),
+        )
+    return ExecutionResult(outcome=outcome, failure=failure)
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,6 +611,14 @@ def _review_work_items(trajectory: Trajectory) -> int:
 
     if review_stage(trajectory) != REVIEW2:
         return 1
+    return max(assessment_count(trajectory), 1)
+
+
+def assessment_count(trajectory: Trajectory) -> int:
+    """Count accepted Assessments represented by a Review 2 trajectory."""
+
+    if review_stage(trajectory) != REVIEW2:
+        return 0
     accepted = set()
     completed_submissions = 0
     for step in _tool_steps(trajectory):
@@ -570,7 +635,7 @@ def _review_work_items(trajectory: Trajectory) -> int:
             accepted.add(str(values))
         if _assessment_completed(step):
             completed_submissions += 1
-    return max(len(accepted), completed_submissions, 1)
+    return max(len(accepted), completed_submissions)
 
 
 def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:

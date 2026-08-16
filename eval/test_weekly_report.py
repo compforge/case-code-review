@@ -133,11 +133,28 @@ class WeeklyReportTest(unittest.TestCase):
                 "tool_freq": {"search_code": 2},
                 "signals": {
                     "evaluations": [],
-                    "llm_failures": [
+                    "failures": [
                         {
-                            "key": "llm.routing.timeout",
-                            "request_phase": "await_response",
+                            "impact": "execution",
+                            "key": "workflow.timeout",
                         }
+                    ],
+                },
+            },
+            {
+                "stage": "review1",
+                "outcome": "llm_error",
+                "score": 0.5,
+                "rounds": 3,
+                "duration_sec": 25,
+                "prompt_tokens": 200,
+                "completion_tokens": 20,
+                "tool_freq": {},
+                "signals": {
+                    "evaluations": [],
+                    "failures": [
+                        {"impact": "step", "key": "llm.routing.timeout"},
+                        {"impact": "execution", "key": "llm.routing.timeout"},
                     ],
                 },
             },
@@ -156,26 +173,87 @@ class WeeklyReportTest(unittest.TestCase):
 
         metrics = weekly.aggregate_stage(rows, "review1")
 
-        self.assertEqual(metrics["chains"], 3)
-        self.assertEqual(metrics["outcome_coverage"], 0.667)
-        self.assertEqual(metrics["completion_rate"], 0.5)
-        self.assertEqual(metrics["timeout_rate"], 0.5)
-        self.assertEqual(metrics["average_score"], 0.833)
-        self.assertEqual(metrics["duration_sec"]["average"], 21.667)
+        self.assertEqual(metrics["chains"], 4)
+        self.assertEqual(metrics["outcome_coverage"], 0.75)
+        self.assertEqual(metrics["completion_rate"], 0.333)
+        self.assertEqual(metrics["workflow_timeout_rate"], 0.25)
+        self.assertEqual(metrics["llm_routing_timeout_rate"], 0.25)
+        self.assertEqual(metrics["average_score"], 0.75)
+        self.assertEqual(metrics["duration_sec"]["average"], 22.5)
         self.assertEqual(metrics["duration_sec"]["p95"], 50)
-        self.assertEqual(metrics["prompt_tokens"]["average"], 150)
+        self.assertEqual(metrics["prompt_tokens"]["average"], 162.5)
         self.assertEqual(metrics["tool_freq"], {"search_code": 2, "read_files": 1})
         self.assertEqual(
-            metrics["llm_failures"],
+            metrics["failures"],
             {
-                "total": 1,
+                "events": 3,
                 "items": [
                     {
+                        "impact": "execution",
                         "failure": "llm.routing.timeout",
-                        "request_phase": "await_response",
                         "count": 1,
-                    }
+                        "affected_chains": 1,
+                        "rate": 0.25,
+                    },
+                    {
+                        "impact": "execution",
+                        "failure": "workflow.timeout",
+                        "count": 1,
+                        "affected_chains": 1,
+                        "rate": 0.25,
+                    },
+                    {
+                        "impact": "step",
+                        "failure": "llm.routing.timeout",
+                        "count": 1,
+                        "affected_chains": 1,
+                        "rate": 0.25,
+                    },
                 ],
+            },
+        )
+
+    def test_review2_cost_is_reported_per_lane_and_per_assessment(self) -> None:
+        rows = [
+            {
+                "stage": "review2",
+                "outcome": "completed",
+                "score": 1.0,
+                "rounds": 6,
+                "duration_sec": 120,
+                "prompt_tokens": 300,
+                "completion_tokens": 30,
+                "cached_tokens": 15,
+                "tool_freq": {},
+                "signals": {"evaluations": [], "assessment_count": 2},
+            },
+            {
+                "stage": "review2",
+                "outcome": "completed",
+                "score": 1.0,
+                "rounds": 3,
+                "duration_sec": 60,
+                "prompt_tokens": 90,
+                "completion_tokens": 15,
+                "cached_tokens": 0,
+                "tool_freq": {},
+                "signals": {"evaluations": [], "assessment_count": 1},
+            },
+        ]
+
+        metrics = weekly.aggregate_stage(rows, "review2")
+
+        self.assertEqual(metrics["chains"], 2)
+        self.assertEqual(metrics["assessments"], 3)
+        self.assertEqual(metrics["duration_sec"]["average"], 90)
+        self.assertEqual(metrics["prompt_tokens"]["average"], 195)
+        self.assertEqual(
+            metrics["per_assessment"],
+            {
+                "duration_sec": 60.0,
+                "prompt_tokens": 130.0,
+                "completion_tokens": 15.0,
+                "cached_tokens": 5.0,
             },
         )
 
@@ -357,13 +435,20 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "metrics.json").is_file())
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
+            metrics = json.loads(
+                (out / "metrics.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(metrics["schema_version"], "weekly-report-v2")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
             self.assertEqual(unit["unit"], "src/a.py")
             report = (out / "REPORT.md").read_text(encoding="utf-8")
             self.assertIn("Slowest Review 1 units", report)
-            self.assertIn("LLM failures", report)
+            self.assertIn("Failures", report)
+            self.assertIn("Workflow timeout", report)
+            self.assertIn("llm.routing.timeout", report)
+            self.assertIn("Prompt/Assessment", report)
             self.assertIn("avg sec", report)
 
 
