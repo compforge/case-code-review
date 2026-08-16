@@ -139,14 +139,12 @@ ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo
 ### 3.3 预算是机制，完成策略属于调用方
 
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
-增量上下文与“接近边界”的 wrap-up。进入 wrap-up 时工具 schema 保持不变，消息尾部追加稳定的
-收敛指令；要求 terminal tool 的执行还通过 `BeforeModelCall` 强制本轮必须调用工具。若调用方配置
-硬门，middleware 拒绝继续执行调查工具，但结果/完成工具仍可用。模型忽略硬门时只再获得一次明确
-的 completion 修正轮，且该轮直接指定 terminal tool；仍不提交合法终态则以 truncated 结束，而不是
-用相同拒绝结果耗尽剩余轮次。Natural completion 不强制工具，避免无结果时制造虚假提交。这样既
-不能靠输出 prose 或忽略 prompt 继续空转，也不因中途换工具集破坏 provider cache。调用方定义终态
-动作和收敛语义。例如 Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个
-输入都有 Assessment。
+增量上下文与“接近边界”的 wrap-up。进入 wrap-up 时，首次模型请求只暴露调用方声明的结果提交工具
+和 completion tool；若仍未结束，唯一一次 completion 修正请求只暴露 terminal tool，并直接指定它。
+仍不提交合法终态则以 truncated 结束，而不是用相同拒绝结果耗尽剩余轮次。Tool middleware 继续拒绝
+执行越界调查调用，作为模型忽略 schema 时的本地兜底。Natural completion 不强制工具：首次收卷仍可
+提交成熟结果，最终纠正请求不暴露工具，允许模型明确自然结束。调用方定义终态动作和收敛语义。例如
+Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个输入都有 Assessment。
 
 Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用方给出的 completion contract。需要
 完整结构化结果的流程可以要求 terminal tool；允许“检查完即结束”的流程可以选择 natural completion，
