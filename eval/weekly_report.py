@@ -329,8 +329,16 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     outcomes = Counter(row["outcome"] for row in selected)
     scores = [float(row["score"]) for row in selected if row["score"] is not None]
     tools: Counter[str] = Counter()
+    llm_failures: Counter[tuple[str, str]] = Counter()
     for row in selected:
         tools.update(row["tool_freq"])
+        for failure in (row.get("signals") or {}).get("llm_failures") or []:
+            llm_failures[
+                (
+                    str(failure.get("key") or "llm.unknown.unknown"),
+                    str(failure.get("request_phase") or "unknown"),
+                )
+            ] += 1
     count = len(selected)
     known_outcomes = count - outcomes["unknown"]
     return {
@@ -356,6 +364,16 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             [float(row.get("cached_tokens", 0)) for row in selected]
         ),
         "tool_freq": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))),
+        "llm_failures": {
+            "total": sum(llm_failures.values()),
+            "items": [
+                {"failure": failure, "request_phase": phase, "count": count}
+                for (failure, phase), count in sorted(
+                    llm_failures.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )
+            ],
+        },
         "main_deductions": main_deductions([row["signals"] for row in selected]),
     }
 

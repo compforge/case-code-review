@@ -13,6 +13,7 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/console"
+	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/go-stdx/uuid"
 )
 
@@ -325,7 +326,7 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, ta
 }
 
 // WriteLLMError writes an llm_error entry recording a failed LLM request.
-func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, errorMsg string, duration time.Duration) string {
+func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, errorMsg string, failure *llm.ErrorDetails, duration time.Duration) string {
 	uuid := uuid.V4()
 
 	jw.mu.Lock()
@@ -341,6 +342,9 @@ func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskT
 		"request_no":  requestNo,
 		"error":       errorMsg,
 		"duration_ms": duration.Milliseconds(),
+	}
+	if failure != nil {
+		rec["failure"] = failure
 	}
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)

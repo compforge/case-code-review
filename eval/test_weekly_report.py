@@ -131,7 +131,15 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 300,
                 "completion_tokens": 30,
                 "tool_freq": {"search_code": 2},
-                "signals": {"evaluations": []},
+                "signals": {
+                    "evaluations": [],
+                    "llm_failures": [
+                        {
+                            "key": "llm.routing.timeout",
+                            "request_phase": "await_response",
+                        }
+                    ],
+                },
             },
             {
                 "stage": "review1",
@@ -157,6 +165,19 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(metrics["duration_sec"]["p95"], 50)
         self.assertEqual(metrics["prompt_tokens"]["average"], 150)
         self.assertEqual(metrics["tool_freq"], {"search_code": 2, "read_files": 1})
+        self.assertEqual(
+            metrics["llm_failures"],
+            {
+                "total": 1,
+                "items": [
+                    {
+                        "failure": "llm.routing.timeout",
+                        "request_phase": "await_response",
+                        "count": 1,
+                    }
+                ],
+            },
+        )
 
     def test_unit_duration_records_keep_each_unit_and_sort_slowest_first(self) -> None:
         rows = [
@@ -342,6 +363,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertEqual(unit["unit"], "src/a.py")
             report = (out / "REPORT.md").read_text(encoding="utf-8")
             self.assertIn("Slowest Review 1 units", report)
+            self.assertIn("LLM failures", report)
             self.assertIn("avg sec", report)
 
 

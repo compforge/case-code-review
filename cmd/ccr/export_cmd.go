@@ -123,11 +123,12 @@ type exportEvent struct {
 		CompletionTokens int `json:"completion_tokens"`
 		CacheReadTokens  int `json:"cache_read_tokens"`
 	} `json:"usage"`
-	ToolName string `json:"tool_name"`
-	Args     string `json:"arguments"`
-	Result   string `json:"result"`
-	OK       *bool  `json:"ok"`
-	Error    string `json:"error"`
+	ToolName string         `json:"tool_name"`
+	Args     string         `json:"arguments"`
+	Result   string         `json:"result"`
+	OK       *bool          `json:"ok"`
+	Error    string         `json:"error"`
+	Failure  map[string]any `json:"failure"`
 }
 
 type exportMessage struct {
@@ -366,9 +367,13 @@ func exportSession(path string) (*atifTrajectory, error) {
 		case "llm_error":
 			c := get(e)
 			c.stepID++
+			extra := map[string]any{"llm_error": e.Error, "duration_ms": e.DurationMS}
+			if len(e.Failure) > 0 {
+				extra["failure"] = e.Failure
+			}
 			c.steps = append(c.steps, &atifStep{
 				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent", Message: "",
-				Extra: map[string]any{"llm_error": e.Error, "duration_ms": e.DurationMS},
+				Extra: extra,
 			})
 		case "execution_end":
 			c := get(e)

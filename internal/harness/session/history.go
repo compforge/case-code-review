@@ -585,7 +585,10 @@ func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteLLMError(ss, tr.ExecutionID, tr.Type, tr.RequestNo, err.Error(), duration)
+			p.WriteLLMError(
+				ss, tr.ExecutionID, tr.Type, tr.RequestNo,
+				err.Error(), llm.DescribeError(err), duration,
+			)
 		}
 		atomic.AddInt64(&ss.session.llmFailures, 1)
 	}
