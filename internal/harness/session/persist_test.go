@@ -197,6 +197,42 @@ func TestSetErrorWritesJSONL(t *testing.T) {
 	}
 }
 
+func TestLLMErrorWritesStructuredFailure(t *testing.T) {
+	repoDir := t.TempDir()
+	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
+	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "file", Type: "file", Paths: []string{"foo.go"}})
+	sh.persist.WriteLLMError(
+		fs, "exec-1", MainTask, 1, "routing timed out",
+		&llm.ErrorDetails{
+			Kind: "llm", Phase: "routing", ErrorType: "timeout",
+			Code: "routing_budget_exhausted",
+			Attributes: map[string]any{
+				"request_phase": "await_response",
+			},
+		},
+		3*time.Minute,
+	)
+	sh.Finalize()
+
+	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
+	for _, record := range records {
+		if record["type"] != "llm_error" {
+			continue
+		}
+		failure, ok := record["failure"].(map[string]any)
+		if !ok || failure["kind"] != "llm" || failure["phase"] != "routing" ||
+			failure["error_type"] != "timeout" || failure["code"] != "routing_budget_exhausted" {
+			t.Fatalf("failure = %+v", record["failure"])
+		}
+		attributes := failure["attributes"].(map[string]any)
+		if attributes["request_phase"] != "await_response" {
+			t.Fatalf("failure attributes = %+v", attributes)
+		}
+		return
+	}
+	t.Fatal("no llm_error record found in JSONL")
+}
+
 func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 	repoDir := t.TempDir()
 	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})

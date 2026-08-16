@@ -116,6 +116,22 @@ def objective_signals(trajectory: Trajectory) -> dict:
         for step in trajectory.steps
         if step.operation == "execute_tool" and step.status == "error"
     ]
+    llm_fails = []
+    for step in trajectory.steps:
+        if step.operation != "inference" or step.failure is None:
+            continue
+        raw = step.attributes.get("failure") or {}
+        details = raw.get("attributes") or {}
+        llm_fails.append(
+            {
+                "key": step.failure.key,
+                "code": step.failure.code,
+                "request_phase": str(details.get("request_phase") or "unknown"),
+                "timeout_scope": str(details.get("timeout_scope") or "unknown"),
+                "response_started": details.get("response_started"),
+                "step_id": step.step_id,
+            }
+        )
     return {
         "stage": stage,
         # trajectory_harness intentionally does not invent a cross-Evaluator score;
@@ -134,6 +150,7 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "repeated_reads": repeated_file_reads(trajectory),
         "hypothesis_yield": hypothesis_yield(trajectory) if stage == REVIEW1 else 0,
         "tool_failures": tool_fails,
+        "llm_failures": llm_fails,
     }
 
 

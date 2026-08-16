@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from trajectory_harness import EvaluationResult, EvaluatorSpec, Step, Trajectory
+from trajectory_harness import EvaluationResult, EvaluatorSpec, Failure, Step, Trajectory
 
 REVIEW1 = "review1"
 REVIEW2 = "review2"
@@ -111,6 +111,7 @@ class ATIFTrajectoryLoader:
             }
             if reasoning := raw.get("reasoning_content"):
                 attributes["reasoning_content"] = reasoning
+            failure = _failure_from_value(attributes.get("failure"))
             steps.append(
                 Step(
                     step_id=step_id,
@@ -119,7 +120,10 @@ class ATIFTrajectoryLoader:
                     name=str(raw.get("model_name") or "model"),
                     start_ms=start_ms,
                     duration_ms=duration_ms,
-                    status="error" if (raw.get("extra") or {}).get("llm_error") else "",
+                    status="error"
+                    if failure is not None or attributes.get("llm_error")
+                    else "",
+                    failure=failure,
                     output_messages=(_assistant_message(raw.get("message"), calls),),
                     attributes=attributes,
                 )
@@ -170,6 +174,23 @@ class ATIFTrajectoryLoader:
             source=source,
             metadata=metadata,
         )
+
+
+def _failure_from_value(value: Any) -> Failure | None:
+    if not isinstance(value, dict):
+        return None
+    kind = str(value.get("kind") or "")
+    phase = str(value.get("phase") or "")
+    error_type = str(value.get("error_type") or "")
+    if not kind or not phase or not error_type:
+        return None
+    return Failure(
+        kind=kind,
+        phase=phase,
+        error_type=error_type,
+        code=str(value.get("code") or ""),
+        message=str(value.get("message") or ""),
+    )
 
 
 @dataclass(frozen=True, slots=True)

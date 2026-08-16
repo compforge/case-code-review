@@ -164,6 +164,15 @@ func TestLLMRouter_SharedCallTimeoutStopsFalloverChain(t *testing.T) {
 	if blocked.calls != 1 || fallback.calls != 0 {
 		t.Fatalf("calls blocked=%d fallback=%d, want 1/0", blocked.calls, fallback.calls)
 	}
+	details := DescribeError(err)
+	if details == nil || details.Kind != "llm" || details.Phase != "routing" ||
+		details.ErrorType != "timeout" || details.Code != "routing_budget_exhausted" {
+		t.Fatalf("routing failure details = %+v", details)
+	}
+	if details.Attributes["attempt"] != 1 || details.Attributes["pool_size"] != 2 ||
+		details.Attributes["request_phase"] != nil {
+		t.Fatalf("routing failure attributes = %+v", details.Attributes)
+	}
 }
 
 func TestLLMRouter_ParentDeadlineWins(t *testing.T) {

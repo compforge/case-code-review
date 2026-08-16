@@ -111,3 +111,26 @@ func TestParseRawToolCallShapes(t *testing.T) {
 		t.Fatalf("unparseable args must survive raw: %v", args3)
 	}
 }
+
+func TestExportSessionPreservesLLMFailure(t *testing.T) {
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","timestamp":"2026-07-02T10:00:00Z"}
+{"type":"llm_error","scope_id":"u1","error":"routing timed out","duration_ms":180000,"failure":{"kind":"llm","phase":"routing","error_type":"timeout","code":"routing_budget_exhausted","attributes":{"request_phase":"await_response","response_started":false}},"timestamp":"2026-07-02T10:03:00Z"}
+`
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trajectory, err := exportSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := trajectory.Subagents[0].Steps[0]
+	failure, ok := step.Extra["failure"].(map[string]any)
+	if !ok || failure["phase"] != "routing" || failure["code"] != "routing_budget_exhausted" {
+		t.Fatalf("exported failure = %+v", step.Extra["failure"])
+	}
+	attributes := failure["attributes"].(map[string]any)
+	if attributes["request_phase"] != "await_response" {
+		t.Fatalf("exported failure attributes = %+v", attributes)
+	}
+}

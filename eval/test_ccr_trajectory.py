@@ -662,6 +662,55 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(evaluation.score, 0.75)
         self.assertEqual(evaluation.step_ids, ("1:tool:1:3",))
 
+    def test_llm_failure_is_projected_with_transport_progress(self):
+        root = {
+            "session_id": "llm-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "extra": {
+                                "llm_error": "routing timed out",
+                                "failure": {
+                                    "kind": "llm",
+                                    "phase": "routing",
+                                    "error_type": "timeout",
+                                    "code": "routing_budget_exhausted",
+                                    "attributes": {
+                                        "request_phase": "await_response",
+                                        "response_started": False,
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        step = trajectory.steps[0]
+        self.assertEqual(step.status, "error")
+        self.assertIsNotNone(step.failure)
+        self.assertEqual(step.failure.key, "llm.routing.timeout")
+        self.assertEqual(
+            objective_signals(trajectory)["llm_failures"],
+            [
+                {
+                    "key": "llm.routing.timeout",
+                    "code": "routing_budget_exhausted",
+                    "request_phase": "await_response",
+                    "timeout_scope": "unknown",
+                    "response_started": False,
+                    "step_id": "1",
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -298,7 +298,8 @@ func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*C
 	}
 
 	var lastErr error
-	for _, i := range r.order() {
+	order := r.order()
+	for attemptIndex, i := range order {
 		resp, err := r.members[i].client.CompletionsWithCtx(ctx, req)
 		if err == nil {
 			if resp != nil {
@@ -311,7 +312,9 @@ func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*C
 			if parentCtx.Err() != nil {
 				return nil, parentCtx.Err()
 			}
-			return nil, fmt.Errorf("llm routing call timeout exceeded after %s: %w", r.callTimeout, ctx.Err())
+			return nil, routingTimeoutError(
+				err, r.callTimeout, r.members[i], attemptIndex+1, len(order),
+			)
 		}
 		if !shouldFallover(err) {
 			return nil, err
@@ -514,14 +517,15 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 
 	params := c.buildOpenAIParams(model, req)
 
-	var opts []openaiopt.RequestOption
+	progress := &requestProgress{}
+	opts := []openaiopt.RequestOption{openaiopt.WithMiddleware(progress.middleware)}
 	for k, v := range c.cfg.ExtraBody {
 		opts = append(opts, openaiopt.WithJSONSet(k, v))
 	}
 
 	sdkResp, err := c.sdk.Chat.Completions.New(ctx, params, opts...)
 	if err != nil {
-		return nil, err
+		return nil, annotateRequestError(ctx, err, progress)
 	}
 
 	return c.mapOpenAIResponse(sdkResp), nil
@@ -730,14 +734,15 @@ func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatReques
 		return nil, err
 	}
 
-	var opts []option.RequestOption
+	progress := &requestProgress{}
+	opts := []option.RequestOption{option.WithMiddleware(progress.middleware)}
 	for k, v := range c.cfg.ExtraBody {
 		opts = append(opts, option.WithJSONSet(k, v))
 	}
 
 	sdkResp, err := c.sdk.Messages.New(ctx, params, opts...)
 	if err != nil {
-		return nil, err
+		return nil, annotateRequestError(ctx, err, progress)
 	}
 
 	return c.mapAnthropicResponse(sdkResp), nil

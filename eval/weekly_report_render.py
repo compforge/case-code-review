@@ -134,6 +134,27 @@ def render_markdown(
         )
     )
 
+    lines.extend(["", "### LLM failures", ""])
+    llm_failure_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        for item in current[stage]["llm_failures"]["items"]:
+            llm_failure_rows.append(
+                [
+                    title,
+                    str(item["failure"]),
+                    str(item["request_phase"]),
+                    str(item["count"]),
+                ]
+            )
+    lines.extend(
+        _markdown_table(
+            ["Stage", "Failure", "Observed request phase", "Count"],
+            llm_failure_rows,
+        )
+        if llm_failure_rows
+        else ["No structured LLM failures in this week."]
+    )
+
     lines.extend(["", "### Slowest Review 1 units", ""])
     lines.extend(
         _markdown_table(
