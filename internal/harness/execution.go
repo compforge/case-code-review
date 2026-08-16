@@ -54,9 +54,10 @@ type ExecutionSpec struct {
 	// turns. Zero preserves the default behavior of reserving only the final
 	// turns or deadline window for completion.
 	WrapUpAfterTurns int
-	// WrapUpAllowedTools hard-closes investigation after WrapUpPrompt is
-	// injected without changing the advertised tool schemas. Nil leaves tool
-	// execution unchanged for callers that only need a textual reminder.
+	// WrapUpAllowedTools are result-submission tools advertised alongside the
+	// completion tool on the first wrap-up request. A final corrective request
+	// advertises only the completion tool. Nil leaves tool visibility unchanged
+	// for callers that only need a textual reminder.
 	WrapUpAllowedTools []string
 	// CompletionTool is the domain-selected terminal tool. Empty defaults to
 	// task_done unless NaturalCompletion is enabled. A non-default tool completes
@@ -114,6 +115,10 @@ type Execution struct {
 	naturalCompletion    bool
 	wrapUpAllowed        map[string]bool
 	wrapUpResultAccepted atomic.Bool
+	// wrapUpRequestCount advances once per logical model call after wrap-up.
+	// AgentGo retries reuse the same call options, so retries do not consume the
+	// single corrective request.
+	wrapUpRequestCount atomic.Int32
 	// wrapUpFinalTurnGranted bounds a model that ignores the hard close: after
 	// one corrective completion turn, another non-terminal response stops as
 	// truncated instead of spending the remaining provider turn budget.
@@ -194,6 +199,10 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		if e.completionTool != "" {
 			e.wrapUpAllowed[e.completionTool] = true
 		}
+		// AgentGo keeps one immutable execution tool registry. Projecting schemas
+		// at the model adapter changes what the model can choose without changing
+		// the local execution lookup; middleware remains the enforcement fallback.
+		e.model.toolProjection = e.projectWrapUpTools
 	}
 	return e, nil
 }
@@ -268,19 +277,55 @@ func (e *Execution) beforeModelCall(
 	context.Context,
 	agentgo.BeforeModelCallContext,
 ) ([]agentgo.CallOption, error) {
-	if !e.turns.WrapUpIssued() || e.naturalCompletion {
+	if !e.turns.WrapUpIssued() {
+		return nil, nil
+	}
+	wrapUpRequest := int32(0)
+	if len(e.wrapUpAllowed) > 0 {
+		wrapUpRequest = e.wrapUpRequestCount.Add(1)
+		if wrapUpRequest > 1 {
+			// A result-only first response may naturally continue without consulting
+			// StopGuard. Mark this request as the one final correction either way.
+			e.wrapUpFinalTurnGranted.Store(true)
+		}
+	}
+	if e.naturalCompletion {
 		return nil, nil
 	}
 	// The first wrap-up request must still be able to flush result tools before
 	// completion. Only the single corrective turn targets the terminal tool
 	// itself; forcing it earlier would skip valid final results such as comments.
-	if e.wrapUpFinalTurnGranted.Load() && e.completionTool != "" {
+	if (wrapUpRequest > 1 || e.wrapUpFinalTurnGranted.Load()) && e.completionTool != "" {
 		return []agentgo.CallOption{agentgo.WithToolChoice(map[string]any{
 			"type": "tool",
 			"name": e.completionTool,
 		})}, nil
 	}
 	return []agentgo.CallOption{agentgo.WithToolChoice("required")}, nil
+}
+
+func (e *Execution) projectWrapUpTools(tools []agentgo.ToolSpec) []agentgo.ToolSpec {
+	request := e.wrapUpRequestCount.Load()
+	if request == 0 {
+		return tools
+	}
+	if request == 1 {
+		return filterToolSpecs(tools, e.wrapUpAllowed)
+	}
+	if e.completionTool == "" {
+		return nil
+	}
+	return filterToolSpecs(tools, map[string]bool{e.completionTool: true})
+}
+
+func filterToolSpecs(tools []agentgo.ToolSpec, allowed map[string]bool) []agentgo.ToolSpec {
+	out := make([]agentgo.ToolSpec, 0, len(allowed))
+	for _, spec := range tools {
+		if allowed[spec.Name] {
+			out = append(out, spec)
+		}
+	}
+	return out
 }
 
 func (e *Execution) shouldStopAfterTool(name string) bool {

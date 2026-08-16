@@ -277,6 +277,55 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 	if len(requests) != 2 || requests[1].ToolChoice != nil {
 		t.Fatalf("natural-completion wrap-up forced a tool: %#v", requests)
 	}
+	if got := requestToolNames(requests[1]); strings.Join(got, ",") != "submit_result" {
+		t.Fatalf("wrap-up tools = %v, want only submit_result", got)
+	}
+}
+
+func TestExecutionNaturalCompletionFinalCorrectionAdvertisesNoTools(t *testing.T) {
+	registry := tool.NewRegistry()
+	provider := &fileReadProvider{body: "ok"}
+	registry.Register(provider)
+	registry.Freeze()
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
+		textResponse("No mature result remains."),
+	}}
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient:          client,
+		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
+		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")},
+		Tools:              registry,
+		MaxTurns:           10,
+		WrapUpPrompt:       "submit ready results now",
+		WrapUpAfterTurns:   1,
+		WrapUpAllowedTools: []string{"submit_result"},
+		NaturalCompletion:  true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 3 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("provider calls = %d, want only the pre-wrap-up read", provider.calls)
+	}
+	requests := client.Requests()
+	if len(requests) != 3 {
+		t.Fatalf("requests = %d, want investigation, wrap-up, and final correction", len(requests))
+	}
+	if got := requestToolNames(requests[0]); strings.Join(got, ",") != "read_files,submit_result" {
+		t.Fatalf("investigation tools = %v", got)
+	}
+	if got := requestToolNames(requests[1]); strings.Join(got, ",") != "submit_result" {
+		t.Fatalf("initial wrap-up tools = %v, want submit_result", got)
+	}
+	if got := requestToolNames(requests[2]); len(got) != 0 {
+		t.Fatalf("natural final correction tools = %v, want none", got)
+	}
 }
 
 func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
@@ -821,7 +870,7 @@ func TestRawSurvivesFileDedupProjection(t *testing.T) {
 	}
 }
 
-func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
+func TestExecutionWrapUpProjectsResultAndCompletionTools(t *testing.T) {
 	registry := tool.NewRegistry()
 	provider := &fileReadProvider{body: "unexpected"}
 	registry.Register(provider)
@@ -834,11 +883,11 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:          client,
 		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
-		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
+		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("submit_result"), toolDef("task_done")},
 		Tools:              registry,
 		MaxTurns:           2,
 		WrapUpPrompt:       "wrap up now",
-		WrapUpAllowedTools: []string{"task_done"},
+		WrapUpAllowedTools: []string{"submit_result"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -847,8 +896,8 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 		t.Fatalf("result=%+v provider calls=%d", result, provider.calls)
 	}
 	requests := client.Requests()
-	if len(requests) != 2 || len(requests[0].Tools) != len(requests[1].Tools) {
-		t.Fatalf("tool schemas changed across wrap-up: %#v", requests)
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want initial wrap-up and final correction", len(requests))
 	}
 	if requests[0].ToolChoice == nil || requests[0].ToolChoice.Mode != "required" {
 		t.Fatalf("initial wrap-up tool choice = %#v, want required", requests[0].ToolChoice)
@@ -856,14 +905,59 @@ func TestExecutionWrapUpKeepsSchemasButBlocksInvestigation(t *testing.T) {
 	if requests[1].ToolChoice == nil || requests[1].ToolChoice.Name != "task_done" {
 		t.Fatalf("final correction tool choice = %#v, want task_done", requests[1].ToolChoice)
 	}
-	for i := range requests[0].Tools {
-		if requests[0].Tools[i].Function.Name != requests[1].Tools[i].Function.Name {
-			t.Fatalf("tool schema order changed: %#v vs %#v", requests[0].Tools, requests[1].Tools)
-		}
+	if got := requestToolNames(requests[0]); strings.Join(got, ",") != "submit_result,task_done" {
+		t.Fatalf("initial wrap-up tools = %v, want result and completion tools", got)
+	}
+	if got := requestToolNames(requests[1]); strings.Join(got, ",") != "task_done" {
+		t.Fatalf("final correction tools = %v, want only task_done", got)
 	}
 	if !strings.Contains(requestText(requests[1]), "Investigation is closed") ||
 		!strings.Contains(requestText(requests[1]), "not yet been accepted") {
 		t.Fatalf("blocked tool result missing from next turn: %q", requestText(requests[1]))
+	}
+}
+
+func TestExecutionWrapUpResultSubmissionAdvancesToCompletionOnly(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("call-1", "submit_result", `{"items":[]}`, nil),
+		toolCallResponseID("call-2", "task_done", `{}`, nil),
+	}}
+	handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+		if request.Tool.Name() != "submit_result" {
+			return tool.TaskCheckpoint{}, false
+		}
+		return tool.Of("Result accepted."), true
+	})
+
+	result, err := runExecution(context.Background(), ExecutionSpec{
+		LLMClient: client,
+		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
+		ToolDefs: []llm.ToolDef{
+			toolDef("read_files"), toolDef("submit_result"), toolDef("task_done"),
+		},
+		ToolHandler:        handler,
+		MaxTurns:           2,
+		WrapUpPrompt:       "wrap up now",
+		WrapUpAllowedTools: []string{"submit_result"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeCompleted || result.Turns != 2 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	requests := client.Requests()
+	if len(requests) != 2 {
+		t.Fatalf("requests = %d, want result submission then completion", len(requests))
+	}
+	if got := requestToolNames(requests[0]); strings.Join(got, ",") != "submit_result,task_done" {
+		t.Fatalf("initial wrap-up tools = %v", got)
+	}
+	if got := requestToolNames(requests[1]); strings.Join(got, ",") != "task_done" {
+		t.Fatalf("final correction tools = %v, want task_done", got)
+	}
+	if requests[1].ToolChoice == nil || requests[1].ToolChoice.Name != "task_done" {
+		t.Fatalf("final correction tool choice = %#v, want task_done", requests[1].ToolChoice)
 	}
 }
 
@@ -907,6 +1001,15 @@ func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
 	}
 	if requests[2].ToolChoice == nil || requests[2].ToolChoice.Name != "task_done" {
 		t.Fatalf("final correction tool choice = %#v, want task_done", requests[2].ToolChoice)
+	}
+	if got := requestToolNames(requests[0]); strings.Join(got, ",") != "read_files,task_done" {
+		t.Fatalf("investigation tools = %v", got)
+	}
+	if got := requestToolNames(requests[1]); strings.Join(got, ",") != "task_done" {
+		t.Fatalf("initial wrap-up tools = %v, want task_done", got)
+	}
+	if got := requestToolNames(requests[2]); strings.Join(got, ",") != "task_done" {
+		t.Fatalf("final correction tools = %v, want task_done", got)
 	}
 	if !strings.Contains(requestText(requests[2]), "wrap up now") ||
 		!strings.Contains(requestText(requests[2]), defaultCompletionPrompt) {
@@ -1277,4 +1380,12 @@ func requestText(request llm.ChatRequest) string {
 		out.WriteString(message.ExtractText())
 	}
 	return out.String()
+}
+
+func requestToolNames(request llm.ChatRequest) []string {
+	names := make([]string, 0, len(request.Tools))
+	for _, definition := range request.Tools {
+		names = append(names, definition.Function.Name)
+	}
+	return names
 }

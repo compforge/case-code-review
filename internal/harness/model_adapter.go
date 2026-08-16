@@ -19,12 +19,13 @@ import (
 // model contract. The execution kernel must not know which concrete provider
 // or LLMRouter served a request.
 type chatModel struct {
-	client    llm.LLMClient
-	model     string
-	maxTokens int
-	recorder  *executionRecorder
-	taskType  session.TaskType
-	events    bool
+	client         llm.LLMClient
+	model          string
+	maxTokens      int
+	recorder       *executionRecorder
+	taskType       session.TaskType
+	events         bool
+	toolProjection func([]agentgo.ToolSpec) []agentgo.ToolSpec
 }
 
 func (m *chatModel) Generate(
@@ -37,6 +38,9 @@ func (m *chatModel) Generate(
 	maxTokens := cfg.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = m.maxTokens
+	}
+	if m.toolProjection != nil {
+		tools = m.toolProjection(tools)
 	}
 
 	request := llm.ChatRequest{

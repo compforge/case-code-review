@@ -174,17 +174,16 @@ terminal tool 的执行在 wrap-up 阶段由 Harness 强制提交。
 
 ### 3. 探索预算结束后硬关闭调查工具
 
-执行层将“探索预算”和“终态预留”分开。到达探索边界后，模型看到的工具 schema 不变，但工具
-middleware 将执行能力收敛为：
+执行层将“探索预算”和“终态预留”分开。到达探索边界后，首次收卷请求把模型可见工具收敛为：
 
 ```text
-reject execution: search_code / file_find / read_files / read_diffs / read_base_files
-allow execution:  submit_hypothesis（最终 flush）
+hide: submit_hypothesis 之外的调查工具
+show: submit_hypothesis（最终 flush）
 ```
 
-这由 Harness tool middleware 在本地执行边界强制，而不是只追加 wrap-up 文本。保留 schema 和稳定
-prompt 前缀是为了复用 provider cache。若模型仍调用被拒绝的调查工具，只再提供一次收卷提示；再次
-忽略就标记 incomplete。最终 flush 只提交已经成熟的主张，不要求模型在最后一轮补完困难 lead。
+若首次收卷仍未结束，最终纠正请求不再暴露工具，让自然结束成为唯一动作。Harness tool middleware
+仍在本地拒绝模型异常发出的调查调用，不能只依赖 wrap-up 文本或请求 schema。再次忽略就标记
+incomplete。最终 flush 只提交已经成熟的主张，不要求模型在最后一轮补完困难 lead。
 
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。
@@ -318,7 +317,7 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 仍可从 full 降为 condensed/reference，
 但 tool call/result 配对和消息顺序不变。Review Plan 是有限 lead 清单，Review 1 不因全局 turn 上限尚有
 余量而继续扩散；简单 Unit 可以很快自然结束，不必等待 wrap-up。有限调查窗口结束后才进入 wrap-up；
-工具 schema 仍不变，执行层只允许最终结果提交，避免继续调查空转。
+首次请求只暴露最终结果提交工具，最终纠正请求不再暴露工具，避免继续调查空转。
 
 预载 File 自有的 outline 形态由 Language 生成 `FileOutline`：代码保留声明与数据成员，JSON 保留
 key/容器结构并压短长 value，Markdown 保留标题层级。它位于“完整源码 → 文件引用”之间，只帮助模型
