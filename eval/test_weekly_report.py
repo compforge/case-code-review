@@ -309,7 +309,7 @@ class WeeklyReportTest(unittest.TestCase):
             model="m1",
             tool_version="v1",
             closed=True,
-            finding_count=2,
+            finding_count=5,
         )
         datasets = [
             {
@@ -321,22 +321,126 @@ class WeeklyReportTest(unittest.TestCase):
                 "engine": {"session_id": "s1"},
             },
             {
+                "id": "accepted-important",
+                "kind": "finding",
+                "label": "important",
+                "at": "2026-08-11T10:00:00+08:00",
+                "engine": {"session_id": "s1"},
+            },
+            {
+                "id": "accepted-minor",
+                "kind": "finding",
+                "label": "minor",
+                "at": "2026-08-11T10:00:00+08:00",
+                "engine": {"session_id": "s1"},
+            },
+            {
+                "id": "repeat",
+                "kind": "finding",
+                "label": "repeat",
+                "at": "2026-08-11T10:00:00+08:00",
+                "engine": {"session_id": "s1"},
+            },
+            {
+                "id": "debatable",
+                "kind": "finding",
+                "label": "debatable",
+                "at": "2026-08-11T10:00:00+08:00",
+                "engine": {"session_id": "s1"},
+            },
+            {
                 "id": "b",
                 "kind": "finding",
                 "label": "important",
                 "at": "2026-08-06T10:00:00+08:00",
                 "engine": {"session_id": "older"},
             },
+            {
+                "id": "missed",
+                "kind": "missed",
+                "label": "missed",
+                "at": "2026-08-06T11:00:00+08:00",
+            },
         ]
 
         metrics = weekly.quality_metrics(
-            datasets, [session], self.window, {"s1", "older"}, False
+            datasets, [session], self.window, {"s1", "older"}, False, "ready"
         )
 
-        self.assertEqual(metrics["review_week"]["by_label"], {"wrong": 1})
-        self.assertEqual(metrics["review_week"]["label_coverage"], 0.5)
-        self.assertEqual(metrics["labeled_this_week"]["by_label"], {"important": 1})
+        self.assertEqual(metrics["label_dataset"], {"status": "ready", "records": 7})
+        self.assertEqual(
+            metrics["review_week"]["by_label"],
+            {"debatable": 1, "important": 1, "minor": 1, "repeat": 1, "wrong": 1},
+        )
+        self.assertEqual(metrics["review_week"]["label_coverage"], 1.0)
+        self.assertEqual(metrics["review_week"]["accepted_rate"], 0.4)
+        self.assertEqual(metrics["review_week"]["wrong_rate"], 0.2)
+        self.assertEqual(metrics["review_week"]["repeat_rate"], 0.2)
+        self.assertEqual(metrics["review_week"]["debatable_rate"], 0.2)
+        self.assertIsNone(metrics["review_week"]["recall_rate"])
+        self.assertEqual(
+            metrics["labeled_this_week"]["by_label"],
+            {"important": 1, "missed": 1},
+        )
+        self.assertEqual(metrics["labeled_this_week"]["missed_findings_reported"], 1)
         self.assertEqual(metrics["review_week"]["wrong_tags"], {"cross-file": 1})
+
+    def test_missing_dataset_makes_label_quality_unavailable(self) -> None:
+        session = weekly.SessionRecord(
+            path=Path("s.jsonl"),
+            session_id="s1",
+            started_at=datetime.fromisoformat("2026-08-04T10:00:00+08:00"),
+            cwd="/repo",
+            model="m1",
+            tool_version="v1",
+            closed=True,
+            finding_count=1,
+        )
+        metrics = weekly.quality_metrics(
+            [
+                {
+                    "kind": "finding",
+                    "label": "important",
+                    "engine": {"session_id": "s1"},
+                }
+            ],
+            [session],
+            self.window,
+            {"s1"},
+            False,
+            "missing",
+        )
+
+        self.assertEqual(metrics["label_dataset"]["status"], "missing")
+        self.assertIsNone(metrics["review_week"]["labeled_findings"])
+        self.assertEqual(metrics["review_week"]["by_label"], {})
+        self.assertIsNone(metrics["review_week"]["label_coverage"])
+        self.assertIsNone(metrics["review_week"]["accepted_rate"])
+        self.assertIsNone(metrics["review_week"]["wrong_rate"])
+        self.assertIsNone(metrics["labeled_this_week"]["examples"])
+        self.assertIsNone(metrics["labeled_this_week"]["missed_findings_reported"])
+
+    def test_build_week_metrics_projects_dataset_health(self) -> None:
+        common = {
+            "window": self.window,
+            "all_sessions": [],
+            "rows": [],
+            "failed_session_ids": set(),
+            "datasets": [],
+            "invalid_session_files": 0,
+            "repositories_scoped": False,
+        }
+
+        missing = weekly.build_week_metrics(
+            missing_datasets=1, invalid_dataset_lines=0, **common
+        )
+        invalid = weekly.build_week_metrics(
+            missing_datasets=0, invalid_dataset_lines=1, **common
+        )
+
+        self.assertEqual(missing["quality"]["label_dataset"]["status"], "missing")
+        self.assertEqual(invalid["quality"]["label_dataset"]["status"], "invalid")
+        self.assertIsNone(invalid["quality"]["review_week"]["accepted_rate"])
 
     def test_comparison_includes_week_over_week_duration(self) -> None:
         current = {
@@ -381,18 +485,25 @@ class WeeklyReportTest(unittest.TestCase):
             "review2": weekly.aggregate_stage([], "review2"),
             "unknown": weekly.aggregate_stage([], "unknown"),
             "quality": {
+                "label_dataset": {"status": "missing", "records": 0},
                 "review_week": {
-                    "examples": 0,
-                    "labeled_findings": 0,
+                    "examples": None,
+                    "labeled_findings": None,
                     "by_label": {},
                     "wrong_tags": {},
                     "label_coverage": None,
+                    "accepted_rate": None,
+                    "wrong_rate": None,
+                    "repeat_rate": None,
+                    "debatable_rate": None,
+                    "recall_rate": None,
                 },
                 "labeled_this_week": {
-                    "examples": 0,
+                    "examples": None,
                     "by_label": {},
                     "wrong_tags": {},
-                    "without_session": 0,
+                    "without_session": None,
+                    "missed_findings_reported": None,
                 },
             },
             "data_quality": {
@@ -438,7 +549,7 @@ class WeeklyReportTest(unittest.TestCase):
             metrics = json.loads(
                 (out / "metrics.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metrics["schema_version"], "weekly-report-v2")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v3")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -450,6 +561,8 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("llm.routing.timeout", report)
             self.assertIn("Prompt/Assessment", report)
             self.assertIn("avg sec", report)
+            self.assertIn("finding-quality rates are unavailable", report)
+            self.assertIn("Recall remains unavailable", report)
 
 
 if __name__ == "__main__":

@@ -262,16 +262,47 @@ def render_markdown(
     lines.extend(deductions or ["No recurring deterministic deductions."])
 
     quality = current["quality"]
+    label_dataset = quality["label_dataset"]
     review_week = quality["review_week"]
     labeled_week = quality["labeled_this_week"]
+    lines.extend(["", "## Human labels", ""])
+    if label_dataset["status"] == "ready":
+        lines.append(
+            f"Dataset records={label_dataset['records']}; "
+            f"review-week examples={review_week['examples']}, "
+            f"labeled findings={review_week['labeled_findings']}, "
+            f"coverage={_format_value(review_week['label_coverage'], 'percent')}."
+        )
+    else:
+        lines.append(
+            f"Label dataset status=`{label_dataset['status']}`; coverage and "
+            "finding-quality rates are unavailable. Pass every normalized input with "
+            "`--dataset`."
+        )
     lines.extend(
         [
             "",
-            "## Human labels",
+            *_markdown_table(
+                ["Finding quality", "Rate"],
+                [
+                    [
+                        "Accepted (important + minor)",
+                        _format_value(review_week["accepted_rate"], "percent"),
+                    ],
+                    ["Wrong", _format_value(review_week["wrong_rate"], "percent")],
+                    ["Repeat", _format_value(review_week["repeat_rate"], "percent")],
+                    [
+                        "Debatable",
+                        _format_value(review_week["debatable_rate"], "percent"),
+                    ],
+                    ["Recall", _format_value(review_week["recall_rate"], "percent")],
+                ],
+            ),
             "",
-            f"Review-week examples={review_week['examples']}, "
-            f"labeled findings={review_week['labeled_findings']}, "
-            f"coverage={_format_value(review_week['label_coverage'], 'percent')}.",
+            f"Missed findings reported this week: "
+            f"{_format_value(labeled_week['missed_findings_reported'])}. "
+            "Recall remains unavailable "
+            "until each reviewed change has exhaustive human ground truth.",
             "",
         ]
     )
@@ -289,13 +320,19 @@ def render_markdown(
             ],
         )
         if label_names
-        else ["No normalized labels available. Run `build_label_dataset.py` first."]
+        else [
+            "No labels matched this report window."
+            if label_dataset["status"] == "ready"
+            else "Label distribution unavailable."
+        ]
     )
     wrong_tags = labeled_week["wrong_tags"]
     wrong_tag_text = (
         ", ".join(f"`{tag}`×{count}" for tag, count in wrong_tags.items())
         if wrong_tags
         else "none"
+        if label_dataset["status"] == "ready"
+        else "unavailable"
     )
     lines.extend(["", f"Wrong tags added this week: {wrong_tag_text}."])
 
@@ -310,7 +347,8 @@ def render_markdown(
             f"- Trajectory export failures: {data_quality['trajectory_export_failures']}",
             f"- Missing dataset files: {data_quality['missing_dataset_files']}",
             f"- Invalid dataset lines: {data_quality['invalid_dataset_lines']}",
-            f"- Labels added without a matched session: {labeled_week['without_session']}",
+            f"- Labels added without a matched session: "
+            f"{_format_value(labeled_week['without_session'])}",
             "",
             "Session metrics are grouped by `session_start` in the report timezone. "
             "Review-week quality uses the normalized dataset's `engine.session_id`; "
