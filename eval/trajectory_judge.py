@@ -40,29 +40,33 @@ from collections import Counter
 from pathlib import Path
 
 from ccr_trajectory import (
+    AdjacentFileReadsEvaluator,
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     DurationEfficiencyEvaluator,
+    FileReadBatchingEvaluator,
     FileReadCoverageEvaluator,
-    FileReadFragmentationEvaluator,
     REVIEW1,
     REVIEW2,
     ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     RoundEfficiencyEvaluator,
+    SearchThenReadEvaluator,
     SearchScopeEvaluator,
     ToolFailureEvaluator,
     UNKNOWN_STAGE,
+    adjacent_file_read_stats,
     assessment_count,
     code_search_stats,
     empty_tool_argument_stats,
-    file_read_fragmentation,
     file_read_stats,
     hypothesis_yield,
     initial_context_stats,
     prompt_file_read_overlap,
     repeated_file_reads,
     review_stage,
+    same_turn_file_read_batching,
+    search_then_read_stats,
     tool_frequencies,
 )
 from trajectory_harness import RepeatedToolCallEvaluator, Trajectory, evaluate
@@ -94,7 +98,9 @@ _COMMON_EVALUATORS = (
     SearchScopeEvaluator(),
     FileReadCoverageEvaluator(),
     PromptFileCoverageEvaluator(),
-    FileReadFragmentationEvaluator(),
+    AdjacentFileReadsEvaluator(),
+    FileReadBatchingEvaluator(),
+    SearchThenReadEvaluator(),
     RoundEfficiencyEvaluator(),
     DurationEfficiencyEvaluator(),
     ReviewCompletionEvaluator(),
@@ -157,7 +163,9 @@ def objective_signals(trajectory: Trajectory) -> dict:
         "file_reads": file_read_stats(trajectory),
         "prompt_overlap": prompt_file_read_overlap(trajectory),
         "initial_context": initial_context_stats(trajectory),
-        "read_fragmentation": file_read_fragmentation(trajectory),
+        "adjacent_file_reads": adjacent_file_read_stats(trajectory),
+        "read_batching": same_turn_file_read_batching(trajectory),
+        "search_then_read": search_then_read_stats(trajectory),
         "repeated_reads": repeated_file_reads(trajectory),
         "hypothesis_yield": hypothesis_yield(trajectory) if stage == REVIEW1 else 0,
         "assessment_count": assessment_count(trajectory),
@@ -373,7 +381,8 @@ def main() -> int:
                           f"rounds={reads['rounds']} avg_batch={reads['average_batch']} "
                           f"max_batch={reads['max_batch']} calls/round={reads['calls_per_round']}")
                     overlap = sig["prompt_overlap"]
-                    fragmented = sig["read_fragmentation"]
+                    adjacent = sig["adjacent_file_reads"]
+                    batching = sig["read_batching"]
                     print(
                         f"   prompt_overlap full={overlap['fully_covered']} "
                         f"partial={overlap['partially_covered']} new={overlap['new_context']} "
@@ -382,8 +391,11 @@ def main() -> int:
                         f"lines={overlap['covered_lines']}/{overlap['total_lines']}"
                     )
                     print(
-                        f"   read_fragmentation minimal={fragmented['minimal_ranges']} "
-                        f"mergeable={fragmented['mergeable_reads']}"
+                        f"   adjacent_file_reads mergeable={adjacent['mergeable_range_count']} "
+                        f"cross_turn={adjacent['cross_turn_mergeable_range_count']} "
+                        f"same_turn={adjacent['same_turn_mergeable_range_count']} "
+                        f"same_call={adjacent['same_call_mergeable_range_count']} "
+                        f"unbatched_same_turn={batching['extra_calls']}"
                     )
                 if sig["code_searches"]["calls"]:
                     searches = sig["code_searches"]

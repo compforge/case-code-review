@@ -196,7 +196,11 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 `execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
 尚未提交的 Assessment，避免把“自然 clean”误判为未完成，也避免把“产出过结果”误判为完整执行。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
-小范围可合并出的理论最少读取数。重复读取、初始 Prompt 重叠和读取碎片会参与综合分；轮次与耗时
+小范围可合并出的理论最少读取数。相邻读取按同一 tool call、同一 inference turn 和跨 turn 分层；跨 turn
+相邻通常是逐步导航，不能反推前一次调用已经知道后续范围，因此只产生 `adjacent_file_reads` 诊断信号，不参与综合分。
+同一 inference turn 内发出多个 `read_files` 调用才产生 `unbatched_same_turn_reads` warning；较早的
+`search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计。
+这些模式的 count/rate 通过 Measurements 聚合进报告。重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
 average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内

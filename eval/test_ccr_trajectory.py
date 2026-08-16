@@ -2,27 +2,31 @@ import json
 import unittest
 
 from ccr_trajectory import (
+    AdjacentFileReadsEvaluator,
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     DurationEfficiencyEvaluator,
+    FileReadBatchingEvaluator,
     FileReadCoverageEvaluator,
-    FileReadFragmentationEvaluator,
     ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     REVIEW1,
     REVIEW2,
     RoundEfficiencyEvaluator,
+    SearchThenReadEvaluator,
     SearchScopeEvaluator,
     ToolFailureEvaluator,
+    adjacent_file_read_stats,
     code_search_stats,
     empty_tool_argument_stats,
-    file_read_fragmentation,
     file_read_stats,
     hypothesis_yield,
     initial_context_stats,
     prompt_file_read_overlap,
     repeated_file_reads,
     review_stage,
+    same_turn_file_read_batching,
+    search_then_read_stats,
 )
 from trajectory_harness import RepeatedToolCallEvaluator, evaluate
 from trajectory_judge import main_deductions, objective_signals
@@ -118,7 +122,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 SearchScopeEvaluator(),
                 FileReadCoverageEvaluator(),
                 PromptFileCoverageEvaluator(),
-                FileReadFragmentationEvaluator(),
+                AdjacentFileReadsEvaluator(),
                 RoundEfficiencyEvaluator(),
                 DurationEfficiencyEvaluator(),
                 ReviewCompletionEvaluator(),
@@ -146,7 +150,9 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(report.results[2].score, 0)
         self.assertEqual(report.results[3].score, 0.5)
         self.assertEqual(report.results[4].score, 0.2)
-        self.assertEqual(report.results[5].score, 0.5)
+        self.assertIsNone(report.results[5].score)
+        self.assertIsNone(report.results[5].verdict)
+        self.assertEqual(report.results[5].signals[0].code, "adjacent_file_reads")
         self.assertEqual(report.results[6].score, 1)
         self.assertEqual(report.results[7].score, 1)
         self.assertEqual(report.results[8].score, 1)
@@ -202,7 +208,9 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
-                "file_read_fragmentation",
+                "adjacent_file_reads",
+                "file_read_batching",
+                "search_then_read",
                 "round_efficiency",
                 "duration_efficiency",
                 "review_completion",
@@ -261,7 +269,9 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
-                "file_read_fragmentation",
+                "adjacent_file_reads",
+                "file_read_batching",
+                "search_then_read",
                 "round_efficiency",
                 "duration_efficiency",
                 "review_completion",
@@ -476,13 +486,29 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(result.score, 0.746)
         self.assertEqual(result.step_ids, ("1:tool:2",))
         self.assertEqual(
-            file_read_fragmentation(trajectory),
+            adjacent_file_read_stats(trajectory),
             {
-                "calls": 2,
+                "read_range_count": 2,
                 "minimal_ranges": 1,
-                "mergeable_reads": 1,
-                "fragmented_steps": ["1:tool:2"],
+                "mergeable_range_count": 1,
+                "cross_turn_mergeable_range_count": 0,
+                "same_turn_mergeable_range_count": 1,
+                "same_call_mergeable_range_count": 0,
+                "adjacent_step_ids": ["1:tool:2"],
             },
+        )
+        adjacency = AdjacentFileReadsEvaluator().evaluate(trajectory)
+        self.assertIsNone(adjacency.score)
+        self.assertIsNone(adjacency.verdict)
+        self.assertEqual(adjacency.measurements["mergeable_range_count"], 1)
+        batching = FileReadBatchingEvaluator().evaluate(trajectory)
+        self.assertEqual(batching.verdict, "warning")
+        self.assertEqual(
+            batching.measurements["same_turn_unbatched_call_count"], 1
+        )
+        self.assertEqual(
+            same_turn_file_read_batching(trajectory)["step_ids"],
+            ["1:tool:1", "1:tool:2"],
         )
 
     def test_prompt_overlap_classifies_context_short_circuits(self):
@@ -587,7 +613,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "calls_per_round": 1.0,
             },
         )
-        self.assertEqual(file_read_fragmentation(trajectory)["calls"], 2)
+        self.assertEqual(adjacent_file_read_stats(trajectory)["read_range_count"], 2)
         self.assertEqual(prompt_file_read_overlap(trajectory)["new_context"], 2)
 
     def test_batch_code_search_distinguishes_valid_empty_from_scope_miss(self):
@@ -664,6 +690,95 @@ class CCRTrajectoryTest(unittest.TestCase):
         evaluation = SearchScopeEvaluator().evaluate(trajectory)
         self.assertEqual(evaluation.score, 0.75)
         self.assertEqual(evaluation.step_ids, ("1:tool:1:3",))
+
+    def test_search_then_read_links_only_later_ranges_covering_hits(self):
+        root = {
+            "session_id": "search-then-read",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-then-read",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search",
+                                    "function_name": "search_code",
+                                    "arguments": {"query": "Alpha"},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "search",
+                                        "content": "File: a.go\nMatch lines: 1\n40|func Alpha()\n",
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "reads": [
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 30,
+                                                "end_line": 50,
+                                            },
+                                            {
+                                                "file_path": "b.go",
+                                                "start_line": 1,
+                                                "end_line": 10,
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read",
+                                        "content": (
+                                            "===== FILE_READ RESULT 1/2 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 30-50\n40|func Alpha()\n"
+                                            "===== FILE_READ RESULT 2/2 =====\n"
+                                            "File: b.go (Total lines: 10)\n"
+                                            "LINE_RANGE: 1-10\n1|package b\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            search_then_read_stats(trajectory),
+            {
+                "search_calls": 1,
+                "read_range_count": 2,
+                "search_then_read_range_count": 1,
+                "search_then_read_rate": 0.5,
+                "identifier_search_then_read_range_count": 1,
+                "identifier_search_then_read_rate": 0.5,
+                "step_ids": ["1:tool:1", "2:tool:1"],
+            },
+        )
+        evaluation = SearchThenReadEvaluator().evaluate(trajectory)
+        self.assertIsNone(evaluation.score)
+        self.assertIsNone(evaluation.verdict)
+        self.assertEqual(evaluation.signals[0].code, "search_then_read")
 
     def test_llm_failure_is_projected_with_transport_progress(self):
         root = {

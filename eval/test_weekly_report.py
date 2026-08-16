@@ -120,7 +120,18 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 100,
                 "completion_tokens": 10,
                 "tool_freq": {"read_files": 1},
-                "signals": {"evaluations": []},
+                "signals": {
+                    "evaluations": [
+                        {
+                            "signals": [
+                                {
+                                    "severity": "info",
+                                    "code": "search_then_read",
+                                }
+                            ]
+                        }
+                    ]
+                },
             },
             {
                 "stage": "review1",
@@ -132,7 +143,16 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 30,
                 "tool_freq": {"search_code": 2},
                 "signals": {
-                    "evaluations": [],
+                    "evaluations": [
+                        {
+                            "signals": [
+                                {
+                                    "severity": "warning",
+                                    "code": "unbatched_same_turn_reads",
+                                }
+                            ]
+                        }
+                    ],
                     "failures": [
                         {
                             "impact": "execution",
@@ -205,6 +225,28 @@ class WeeklyReportTest(unittest.TestCase):
                     {
                         "impact": "step",
                         "failure": "llm.routing.timeout",
+                        "count": 1,
+                        "affected_chains": 1,
+                        "rate": 0.25,
+                    },
+                ],
+            },
+        )
+        self.assertEqual(
+            metrics["diagnostic_signals"],
+            {
+                "events": 2,
+                "items": [
+                    {
+                        "severity": "info",
+                        "signal": "search_then_read",
+                        "count": 1,
+                        "affected_chains": 1,
+                        "rate": 0.25,
+                    },
+                    {
+                        "severity": "warning",
+                        "signal": "unbatched_same_turn_reads",
                         "count": 1,
                         "affected_chains": 1,
                         "rate": 0.25,
@@ -549,7 +591,7 @@ class WeeklyReportTest(unittest.TestCase):
             metrics = json.loads(
                 (out / "metrics.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metrics["schema_version"], "weekly-report-v3")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v4")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -557,6 +599,7 @@ class WeeklyReportTest(unittest.TestCase):
             report = (out / "REPORT.md").read_text(encoding="utf-8")
             self.assertIn("Slowest Review 1 units", report)
             self.assertIn("Failures", report)
+            self.assertIn("Diagnostic signals", report)
             self.assertIn("Workflow timeout", report)
             self.assertIn("llm.routing.timeout", report)
             self.assertIn("Prompt/Assessment", report)

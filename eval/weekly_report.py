@@ -31,7 +31,7 @@ DEFAULT_DATASETS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v3"
+REPORT_SCHEMA_VERSION = "weekly-report-v4"
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,15 +336,26 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     tools: Counter[str] = Counter()
     failure_events: Counter[tuple[str, str]] = Counter()
     failure_affected: dict[tuple[str, str], set[int]] = {}
+    diagnostic_events: Counter[tuple[str, str]] = Counter()
+    diagnostic_affected: dict[tuple[str, str], set[int]] = {}
     for row_index, row in enumerate(selected):
         tools.update(row["tool_freq"])
-        for failure in (row.get("signals") or {}).get("failures") or []:
+        signals = row.get("signals") or {}
+        for failure in signals.get("failures") or []:
             key = (
                 str(failure.get("impact") or "step"),
                 str(failure.get("key") or "unknown.unknown.unknown"),
             )
             failure_events[key] += 1
             failure_affected.setdefault(key, set()).add(row_index)
+        for evaluation in signals.get("evaluations") or []:
+            for signal in evaluation.get("signals") or []:
+                key = (
+                    str(signal.get("severity") or "info"),
+                    str(signal.get("code") or "unknown"),
+                )
+                diagnostic_events[key] += 1
+                diagnostic_affected.setdefault(key, set()).add(row_index)
     count = len(selected)
     known_outcomes = count - outcomes["unknown"]
     assessments = sum(
@@ -373,6 +384,19 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         for item in failure_items
         if item["impact"] == "execution"
     }
+    diagnostic_items = [
+        {
+            "severity": severity,
+            "signal": signal,
+            "count": event_count,
+            "affected_chains": len(diagnostic_affected[(severity, signal)]),
+            "rate": round(len(diagnostic_affected[(severity, signal)]) / count, 3),
+        }
+        for (severity, signal), event_count in sorted(
+            diagnostic_events.items(),
+            key=lambda item: (-len(diagnostic_affected[item[0]]), item[0]),
+        )
+    ]
     return {
         "chains": count,
         "outcomes": dict(sorted(outcomes.items())),
@@ -403,6 +427,10 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         "failures": {
             "events": sum(failure_events.values()),
             "items": failure_items,
+        },
+        "diagnostic_signals": {
+            "events": sum(diagnostic_events.values()),
+            "items": diagnostic_items,
         },
         "main_deductions": main_deductions([row["signals"] for row in selected]),
     }

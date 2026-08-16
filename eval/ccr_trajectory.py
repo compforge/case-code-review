@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from trajectory_harness import (
+    DiagnosticSignal,
     EvaluationResult,
     EvaluatorSpec,
     ExecutionResult,
     Failure,
+    MeasurementSpec,
     Step,
     Trajectory,
 )
@@ -29,7 +31,10 @@ UNKNOWN_STAGE = "unknown"
 
 
 def _evaluator_spec(
-    evaluator_id: str, title: str, description: str
+    evaluator_id: str,
+    title: str,
+    description: str,
+    measurements: tuple[MeasurementSpec, ...] = (),
 ) -> EvaluatorSpec:
     return EvaluatorSpec(
         evaluator_id=evaluator_id,
@@ -37,6 +42,7 @@ def _evaluator_spec(
         description=description,
         kind="domain",
         owner="case-code-review",
+        measurements=measurements,
     )
 
 
@@ -404,38 +410,253 @@ class PromptFileCoverageEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class FileReadFragmentationEvaluator:
-    """Detect adjacent or overlapping ranges that fit in fewer reads."""
+class AdjacentFileReadsEvaluator:
+    """Describe adjacent reads without assuming they were knowable upfront."""
 
     spec: EvaluatorSpec = _evaluator_spec(
-        "file_read_fragmentation",
-        "File read fragmentation",
-        "Detect adjacent or overlapping file ranges that could use fewer reads.",
+        "adjacent_file_reads",
+        "Adjacent file reads",
+        "Observe adjacent or overlapping file ranges and when they became available.",
+        (
+            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
+            MeasurementSpec(
+                "mergeable_range_count",
+                "count",
+                "Adjacent or overlapping ranges that fit in one 500-line range.",
+            ),
+            MeasurementSpec(
+                "cross_turn_mergeable_range_count",
+                "count",
+                "Mergeable ranges requested in different inference turns.",
+            ),
+            MeasurementSpec(
+                "same_turn_mergeable_range_count",
+                "count",
+                "Mergeable ranges requested by separate calls in one inference turn.",
+            ),
+            MeasurementSpec(
+                "same_call_mergeable_range_count",
+                "count",
+                "Mergeable ranges already batched in one tool call.",
+            ),
+        ),
     )
 
     def evaluate(
         self, trajectory: Trajectory, reference: Trajectory | None = None
     ) -> EvaluationResult:
         del reference
-        fragmentation = file_read_fragmentation(trajectory)
-        calls = fragmentation["calls"]
-        if calls == 0:
+        stats = adjacent_file_read_stats(trajectory)
+        range_count = stats["read_range_count"]
+        if range_count == 0:
             return _not_evaluated(
                 self.spec.evaluator_id,
                 "Trajectory contains no ranged read_files output.",
             )
-        merged = fragmentation["minimal_ranges"]
+        mergeable = stats["mergeable_range_count"]
+        measurements = {
+            name: stats[name]
+            for name in (
+                "read_range_count",
+                "mergeable_range_count",
+                "cross_turn_mergeable_range_count",
+                "same_turn_mergeable_range_count",
+                "same_call_mergeable_range_count",
+            )
+        }
+        signals = ()
+        if mergeable:
+            signals = (
+                DiagnosticSignal(
+                    code="adjacent_file_reads",
+                    severity="info",
+                    summary=(
+                        f"{mergeable} of {range_count} file ranges are adjacent or "
+                        "overlapping."
+                    ),
+                    step_ids=tuple(stats["adjacent_step_ids"]),
+                    hypotheses=(
+                        "The agent may be navigating a file incrementally across dependent turns.",
+                        "A symbol-aware read may collapse search and source retrieval.",
+                        "Ranges issued in the same turn may benefit from batching.",
+                    ),
+                ),
+            )
         return EvaluationResult(
             evaluator_id=self.spec.evaluator_id,
             status="evaluated",
-            score=round(merged / calls, 3),
-            verdict="pass" if calls == merged else "fail",
+            measurements=measurements,
             explanation=(
-                f"{calls} file reads collapse to {merged} adjacent or overlapping ranges; "
-                f"{fragmentation['mergeable_reads']} reads could merge if their targets "
-                "were known upfront."
+                f"{range_count} observed file ranges contain {mergeable} adjacent or "
+                "overlapping range(s); "
+                f"{stats['cross_turn_mergeable_range_count']} were requested "
+                "across different inference turns."
             ),
-            step_ids=tuple(fragmentation["fragmented_steps"]),
+            step_ids=tuple(stats["adjacent_step_ids"]),
+            signals=signals,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FileReadBatchingEvaluator:
+    """Detect read_files calls that the model emitted in the same response."""
+
+    spec: EvaluatorSpec = _evaluator_spec(
+        "file_read_batching",
+        "File read batching",
+        "Measure read_files batching and detect same-turn calls that could share reads[].",
+        (
+            MeasurementSpec("read_call_count", "count", "Observed read_files calls."),
+            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
+            MeasurementSpec(
+                "average_batch_size", "count", "File ranges per read_files call."
+            ),
+            MeasurementSpec(
+                "same_turn_unbatched_call_count",
+                "count",
+                "Extra read_files calls emitted by the same inference response.",
+                "lower_is_better",
+            ),
+            MeasurementSpec(
+                "same_turn_unbatched_call_rate",
+                "ratio",
+                "Same-turn extra calls divided by read_files calls.",
+                "lower_is_better",
+            ),
+        ),
+    )
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> EvaluationResult:
+        del reference
+        stats = file_read_stats(trajectory)
+        if stats["calls"] == 0:
+            return _not_evaluated(
+                self.spec.evaluator_id, "Trajectory contains no read_files calls."
+            )
+        batching = same_turn_file_read_batching(trajectory)
+        extra_calls = batching["extra_calls"]
+        measurements = {
+            "read_call_count": stats["calls"],
+            "read_range_count": stats["requests"],
+            "average_batch_size": stats["average_batch"],
+            "same_turn_unbatched_call_count": extra_calls,
+            "same_turn_unbatched_call_rate": round(extra_calls / stats["calls"], 3),
+        }
+        signals = ()
+        if extra_calls:
+            signals = (
+                DiagnosticSignal(
+                    code="unbatched_same_turn_reads",
+                    severity="warning",
+                    summary=(
+                        f"{extra_calls} read_files call(s) could join another call "
+                        "from the same inference response."
+                    ),
+                    step_ids=tuple(batching["step_ids"]),
+                    hypotheses=(
+                        "The tool description may not make reads[] batching salient enough.",
+                        "The model may prefer multiple tool calls despite knowing all targets.",
+                    ),
+                ),
+            )
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
+            verdict="warning" if extra_calls else "pass",
+            measurements=measurements,
+            explanation=(
+                f"{stats['requests']} ranges used {stats['calls']} read_files calls; "
+                f"{extra_calls} same-turn extra call(s) were observed."
+            ),
+            step_ids=tuple(batching["step_ids"]),
+            signals=signals,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchThenReadEvaluator:
+    """Observe later reads that cover an earlier search hit."""
+
+    spec: EvaluatorSpec = _evaluator_spec(
+        "search_then_read",
+        "Search then read",
+        "Measure source reads that follow and cover a search_code hit.",
+        (
+            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
+            MeasurementSpec(
+                "search_then_read_range_count",
+                "count",
+                "Read ranges covering an earlier search hit.",
+            ),
+            MeasurementSpec(
+                "search_then_read_rate",
+                "ratio",
+                "Search-linked ranges divided by observed read ranges.",
+            ),
+            MeasurementSpec(
+                "identifier_search_then_read_range_count",
+                "count",
+                "Search-linked ranges reached through an identifier-shaped query.",
+            ),
+            MeasurementSpec(
+                "identifier_search_then_read_rate",
+                "ratio",
+                "Identifier search-linked ranges divided by observed read ranges.",
+            ),
+        ),
+    )
+
+    def evaluate(
+        self, trajectory: Trajectory, reference: Trajectory | None = None
+    ) -> EvaluationResult:
+        del reference
+        stats = search_then_read_stats(trajectory)
+        if not stats["search_calls"] or not stats["read_range_count"]:
+            return _not_evaluated(
+                self.spec.evaluator_id,
+                "Trajectory needs both successful search_code and ranged read_files output.",
+            )
+        linked = stats["search_then_read_range_count"]
+        measurements = {
+            name: stats[name]
+            for name in (
+                "read_range_count",
+                "search_then_read_range_count",
+                "search_then_read_rate",
+                "identifier_search_then_read_range_count",
+                "identifier_search_then_read_rate",
+            )
+        }
+        signals = ()
+        if linked:
+            signals = (
+                DiagnosticSignal(
+                    code="search_then_read",
+                    severity="info",
+                    summary=(
+                        f"{linked} read range(s) cover a hit returned by an earlier "
+                        "search_code call."
+                    ),
+                    step_ids=tuple(stats["step_ids"]),
+                    hypotheses=(
+                        "Search results may be serving as navigation before source retrieval.",
+                        "Identifier-shaped queries may benefit from a symbol-aware read tool.",
+                        "Predictable definitions may belong in initial context.",
+                    ),
+                ),
+            )
+        return EvaluationResult(
+            evaluator_id=self.spec.evaluator_id,
+            status="evaluated",
+            measurements=measurements,
+            explanation=(
+                f"{linked} of {stats['read_range_count']} read range(s) cover an "
+                "earlier search hit."
+            ),
+            step_ids=tuple(stats["step_ids"]),
+            signals=signals,
         )
 
 
@@ -917,22 +1138,32 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
     }
 
 
-def file_read_fragmentation(trajectory: Trajectory) -> dict[str, Any]:
-    """Return the conservative merge potential of observed file ranges."""
+def adjacent_file_read_stats(trajectory: Trajectory) -> dict[str, Any]:
+    """Describe conservative merge potential and when ranges became knowable.
+
+    Cross-turn adjacency is navigation evidence, not proof that the earlier call
+    could have requested a range discovered only after seeing its result.
+    """
 
     by_path: dict[str, list[tuple[int, int, str]]] = {}
-    for step in _tool_steps(trajectory):
+    tool_steps = _tool_steps(trajectory)
+    parent_by_step = {step.step_id: step.parent_step_id for step in tool_steps}
+    for step in tool_steps:
         if step.name != "read_files" or step.status == "error":
             continue
         for path, start, end in _file_read_observed_ranges(step):
             by_path.setdefault(path, []).append((start, end, step.step_id))
 
-    calls = sum(len(ranges) for ranges in by_path.values())
+    range_count = sum(len(ranges) for ranges in by_path.values())
     minimal_ranges = 0
-    fragmented_steps: list[str] = []
+    same_call = 0
+    same_turn = 0
+    cross_turn = 0
+    adjacent_step_ids: list[str] = []
     for ranges in by_path.values():
         current_end = 0
         current_start = 0
+        current_step_id = ""
         for start, end, step_id in sorted(ranges):
             mergeable = (
                 current_start > 0
@@ -941,15 +1172,117 @@ def file_read_fragmentation(trajectory: Trajectory) -> dict[str, Any]:
             )
             if mergeable:
                 current_end = max(current_end, end)
-                fragmented_steps.append(step_id)
+                adjacent_step_ids.append(step_id)
+                if step_id == current_step_id:
+                    same_call += 1
+                elif parent_by_step.get(step_id) == parent_by_step.get(current_step_id):
+                    same_turn += 1
+                else:
+                    cross_turn += 1
+                current_step_id = step_id
                 continue
             minimal_ranges += 1
             current_start, current_end = start, end
+            current_step_id = step_id
     return {
-        "calls": calls,
+        "read_range_count": range_count,
         "minimal_ranges": minimal_ranges,
-        "mergeable_reads": calls - minimal_ranges,
-        "fragmented_steps": fragmented_steps,
+        "mergeable_range_count": range_count - minimal_ranges,
+        "cross_turn_mergeable_range_count": cross_turn,
+        "same_turn_mergeable_range_count": same_turn,
+        "same_call_mergeable_range_count": same_call,
+        "adjacent_step_ids": list(dict.fromkeys(adjacent_step_ids)),
+    }
+
+
+def same_turn_file_read_batching(trajectory: Trajectory) -> dict[str, Any]:
+    """Count extra read_files calls emitted by one inference response."""
+
+    by_parent: dict[str, list[str]] = {}
+    for step in _tool_steps(trajectory):
+        if step.name != "read_files" or not step.parent_step_id:
+            continue
+        by_parent.setdefault(step.parent_step_id, []).append(step.step_id)
+    groups = [step_ids for step_ids in by_parent.values() if len(step_ids) > 1]
+    return {
+        "extra_calls": sum(len(step_ids) - 1 for step_ids in groups),
+        "step_ids": [step_id for group in groups for step_id in group],
+    }
+
+
+def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
+    """Link a read range to earlier search hits it actually covers."""
+
+    search_calls = 0
+    read_range_count = 0
+    linked_ranges = 0
+    identifier_linked_ranges = 0
+    linked_step_ids: list[str] = []
+    hits_by_path: dict[str, list[tuple[int, str, str, str]]] = {}
+    identifier = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$]*$")
+
+    for step in _tool_steps(trajectory):
+        if step.status == "error":
+            continue
+        if step.name == "search_code":
+            search_calls += 1
+            requests = _code_search_requests(step) or [{}]
+            for index, result in enumerate(_code_search_result_parts(step)):
+                query = str(
+                    requests[index].get("query")
+                    if index < len(requests)
+                    else ""
+                )
+                file_matches = list(re.finditer(r"(?m)^File:\s*(.+?)\s*$", result))
+                for file_index, match in enumerate(file_matches):
+                    end = (
+                        file_matches[file_index + 1].start()
+                        if file_index + 1 < len(file_matches)
+                        else len(result)
+                    )
+                    for line_match in re.finditer(
+                        r"(?m)^(\d+)\|", result[match.end() : end]
+                    ):
+                        hits_by_path.setdefault(match.group(1), []).append(
+                            (
+                                int(line_match.group(1)),
+                                query,
+                                step.step_id,
+                                step.parent_step_id,
+                            )
+                        )
+            continue
+        if step.name != "read_files":
+            continue
+        for path, start, end in _file_read_observed_ranges(step):
+            read_range_count += 1
+            hits = [
+                hit
+                for hit in hits_by_path.get(path, [])
+                if start <= hit[0] <= end and hit[3] != step.parent_step_id
+            ]
+            if not hits:
+                continue
+            linked_ranges += 1
+            linked_step_ids.extend(hit[2] for hit in hits)
+            linked_step_ids.append(step.step_id)
+            if any(identifier.fullmatch(hit[1]) for hit in hits):
+                identifier_linked_ranges += 1
+
+    return {
+        "search_calls": search_calls,
+        "read_range_count": read_range_count,
+        "search_then_read_range_count": linked_ranges,
+        "search_then_read_rate": round(linked_ranges / read_range_count, 3)
+        if read_range_count
+        else 0.0,
+        "identifier_search_then_read_range_count": identifier_linked_ranges,
+        "identifier_search_then_read_rate": round(
+            identifier_linked_ranges / read_range_count, 3
+        )
+        if read_range_count
+        else 0.0,
+        "step_ids": list(dict.fromkeys(linked_step_ids)),
     }
 
 
