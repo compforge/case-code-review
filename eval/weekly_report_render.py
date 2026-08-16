@@ -163,6 +163,29 @@ def render_markdown(
         else ["No structured failures in this week."]
     )
 
+    lines.extend(["", "### Diagnostic signals", ""])
+    diagnostic_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        for item in current[stage]["diagnostic_signals"]["items"]:
+            diagnostic_rows.append(
+                [
+                    title,
+                    str(item["severity"]),
+                    str(item["signal"]),
+                    str(item["count"]),
+                    str(item["affected_chains"]),
+                    _format_value(item["rate"], "percent"),
+                ]
+            )
+    lines.extend(
+        _markdown_table(
+            ["Stage", "Severity", "Signal", "Events", "Affected chains", "Rate"],
+            diagnostic_rows,
+        )
+        if diagnostic_rows
+        else ["No diagnostic signals in this week."]
+    )
+
     lines.extend(["", "### Slowest Review 1 units", ""])
     lines.extend(
         _markdown_table(
