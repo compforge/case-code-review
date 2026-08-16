@@ -279,8 +279,11 @@ eval/data/reports/weekly/2026-W32/
 ```
 
 执行指标按 `session_start` 归周，而不是按 Session 文件 mtime；报告分别展示 Review 1 Unit 与
-Review 2 Lane 的完成率、timeout、score、轮次、耗时、token、工具频率和主要扣分项。
-平均、p50 和 p95 耗时同时进入本周与上周的对比表。
+Review 2 Lane 的完成率、`workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
+工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
+不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。
+Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周内承载的 Assessment 数量变化
+扭曲效果判断。平均、p50 和 p95 耗时同时进入本周与上周的对比表。
 `REPORT.md` 展示最慢的 20 个 Review 1 Unit，完整的逐 Unit 耗时记录保存在
 `unit-durations.jsonl`，可按 Unit、Session、执行结果、轮次、token、模型和工具版本继续分析。
 质量指标分为两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，

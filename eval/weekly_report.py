@@ -31,6 +31,7 @@ DEFAULT_DATASETS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
+REPORT_SCHEMA_VERSION = "weekly-report-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,23 +325,54 @@ def distribution(values: list[float]) -> dict[str, float | int | None]:
     }
 
 
+def average_per(values: list[float], count: int) -> float | None:
+    return round(sum(values) / count, 3) if count else None
+
+
 def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     selected = [row for row in rows if row["stage"] == stage]
     outcomes = Counter(row["outcome"] for row in selected)
     scores = [float(row["score"]) for row in selected if row["score"] is not None]
     tools: Counter[str] = Counter()
-    llm_failures: Counter[tuple[str, str]] = Counter()
-    for row in selected:
+    failure_events: Counter[tuple[str, str]] = Counter()
+    failure_affected: dict[tuple[str, str], set[int]] = {}
+    for row_index, row in enumerate(selected):
         tools.update(row["tool_freq"])
-        for failure in (row.get("signals") or {}).get("llm_failures") or []:
-            llm_failures[
-                (
-                    str(failure.get("key") or "llm.unknown.unknown"),
-                    str(failure.get("request_phase") or "unknown"),
-                )
-            ] += 1
+        for failure in (row.get("signals") or {}).get("failures") or []:
+            key = (
+                str(failure.get("impact") or "step"),
+                str(failure.get("key") or "unknown.unknown.unknown"),
+            )
+            failure_events[key] += 1
+            failure_affected.setdefault(key, set()).add(row_index)
     count = len(selected)
     known_outcomes = count - outcomes["unknown"]
+    assessments = sum(
+        int((row.get("signals") or {}).get("assessment_count") or 0)
+        for row in selected
+    )
+    durations = [float(row["duration_sec"]) for row in selected]
+    prompt_tokens = [float(row["prompt_tokens"]) for row in selected]
+    completion_tokens = [float(row["completion_tokens"]) for row in selected]
+    cached_tokens = [float(row.get("cached_tokens", 0)) for row in selected]
+    failure_items = [
+        {
+            "impact": impact,
+            "failure": failure,
+            "count": event_count,
+            "affected_chains": len(failure_affected[(impact, failure)]),
+            "rate": round(len(failure_affected[(impact, failure)]) / count, 3),
+        }
+        for (impact, failure), event_count in sorted(
+            failure_events.items(),
+            key=lambda item: (-len(failure_affected[item[0]]), item[0]),
+        )
+    ]
+    execution_failure_rates = {
+        item["failure"]: item["rate"]
+        for item in failure_items
+        if item["impact"] == "execution"
+    }
     return {
         "chains": count,
         "outcomes": dict(sorted(outcomes.items())),
@@ -348,31 +380,29 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         "completion_rate": round(outcomes["completed"] / known_outcomes, 3)
         if known_outcomes
         else None,
-        "timeout_rate": round(outcomes["timeout"] / known_outcomes, 3)
-        if known_outcomes
-        else None,
+        "workflow_timeout_rate": execution_failure_rates.get(
+            "workflow.timeout", 0.0 if count else None
+        ),
+        "llm_routing_timeout_rate": execution_failure_rates.get(
+            "llm.routing.timeout", 0.0 if count else None
+        ),
         "average_score": round(sum(scores) / len(scores), 3) if scores else None,
+        "assessments": assessments,
         "rounds": distribution([float(row["rounds"]) for row in selected]),
-        "duration_sec": distribution([float(row["duration_sec"]) for row in selected]),
-        "prompt_tokens": distribution(
-            [float(row["prompt_tokens"]) for row in selected]
-        ),
-        "completion_tokens": distribution(
-            [float(row["completion_tokens"]) for row in selected]
-        ),
-        "cached_tokens": distribution(
-            [float(row.get("cached_tokens", 0)) for row in selected]
-        ),
+        "duration_sec": distribution(durations),
+        "prompt_tokens": distribution(prompt_tokens),
+        "completion_tokens": distribution(completion_tokens),
+        "cached_tokens": distribution(cached_tokens),
+        "per_assessment": {
+            "duration_sec": average_per(durations, assessments),
+            "prompt_tokens": average_per(prompt_tokens, assessments),
+            "completion_tokens": average_per(completion_tokens, assessments),
+            "cached_tokens": average_per(cached_tokens, assessments),
+        },
         "tool_freq": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))),
-        "llm_failures": {
-            "total": sum(llm_failures.values()),
-            "items": [
-                {"failure": failure, "request_phase": phase, "count": count}
-                for (failure, phase), count in sorted(
-                    llm_failures.items(),
-                    key=lambda item: (-item[1], item[0]),
-                )
-            ],
+        "failures": {
+            "events": sum(failure_events.values()),
+            "items": failure_items,
         },
         "main_deductions": main_deductions([row["signals"] for row in selected]),
     }
@@ -538,7 +568,16 @@ COMPARISON_METRICS = (
     ("Review 1 chains", (REVIEW1, "chains"), "number"),
     ("Review 1 outcome coverage", (REVIEW1, "outcome_coverage"), "percent"),
     ("Review 1 completion", (REVIEW1, "completion_rate"), "percent"),
-    ("Review 1 timeout", (REVIEW1, "timeout_rate"), "percent"),
+    (
+        "Review 1 workflow timeout",
+        (REVIEW1, "workflow_timeout_rate"),
+        "percent",
+    ),
+    (
+        "Review 1 llm.routing.timeout",
+        (REVIEW1, "llm_routing_timeout_rate"),
+        "percent",
+    ),
     ("Review 1 score", (REVIEW1, "average_score"), "score"),
     (
         "Review 1 average duration (sec)",
@@ -549,18 +588,38 @@ COMPARISON_METRICS = (
     ("Review 1 p95 duration (sec)", (REVIEW1, "duration_sec", "p95"), "number"),
     ("Review 1 prompt/chain", (REVIEW1, "prompt_tokens", "average"), "number"),
     ("Review 2 chains", (REVIEW2, "chains"), "number"),
+    ("Review 2 assessments", (REVIEW2, "assessments"), "number"),
     ("Review 2 outcome coverage", (REVIEW2, "outcome_coverage"), "percent"),
     ("Review 2 completion", (REVIEW2, "completion_rate"), "percent"),
-    ("Review 2 timeout", (REVIEW2, "timeout_rate"), "percent"),
+    (
+        "Review 2 workflow timeout",
+        (REVIEW2, "workflow_timeout_rate"),
+        "percent",
+    ),
+    (
+        "Review 2 llm.routing.timeout",
+        (REVIEW2, "llm_routing_timeout_rate"),
+        "percent",
+    ),
     ("Review 2 score", (REVIEW2, "average_score"), "score"),
     (
-        "Review 2 average duration (sec)",
+        "Review 2 average duration/Lane (sec)",
         (REVIEW2, "duration_sec", "average"),
+        "number",
+    ),
+    (
+        "Review 2 average duration/Assessment (sec)",
+        (REVIEW2, "per_assessment", "duration_sec"),
         "number",
     ),
     ("Review 2 p50 duration (sec)", (REVIEW2, "duration_sec", "p50"), "number"),
     ("Review 2 p95 duration (sec)", (REVIEW2, "duration_sec", "p95"), "number"),
-    ("Review 2 prompt/chain", (REVIEW2, "prompt_tokens", "average"), "number"),
+    ("Review 2 prompt/Lane", (REVIEW2, "prompt_tokens", "average"), "number"),
+    (
+        "Review 2 prompt/Assessment",
+        (REVIEW2, "per_assessment", "prompt_tokens"),
+        "number",
+    ),
     (
         "Review-week labeled findings",
         ("quality", "review_week", "labeled_findings"),
@@ -645,7 +704,7 @@ def write_report(
     _write_json(
         report_dir / "metrics.json",
         {
-            "schema_version": "weekly-report-v1",
+            "schema_version": REPORT_SCHEMA_VERSION,
             "current": current,
             "previous": previous,
             "comparison": comparison,
@@ -732,7 +791,7 @@ def main() -> int:
     )
     generated_at = datetime.now(timezone.utc).isoformat()
     manifest = {
-        "schema_version": "weekly-report-v1",
+        "schema_version": REPORT_SCHEMA_VERSION,
         "week": current_window.key,
         "generated_at": generated_at,
         "timezone": args.timezone,

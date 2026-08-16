@@ -127,6 +127,8 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         self.assertEqual(self.trajectory.metadata["session_id"], "s1")
         self.assertEqual(self.trajectory.metadata["file_path"], "a.go")
+        self.assertIsNotNone(self.trajectory.execution)
+        self.assertEqual(self.trajectory.execution.outcome, "completed")
         self.assertEqual(review_stage(self.trajectory), REVIEW1)
         inference = next(
             step for step in self.trajectory.steps if step.operation == "inference"
@@ -379,6 +381,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(rounds.score, 0.8)
         self.assertIn("2 review item(s)", rounds.explanation)
         self.assertEqual(duration.score, 0.8)
+        self.assertEqual(objective_signals(trajectory)["assessment_count"], 2)
 
     def test_main_deductions_rank_total_score_loss(self):
         deductions = main_deductions(
@@ -668,7 +671,10 @@ class CCRTrajectoryTest(unittest.TestCase):
             "subagent_trajectories": [
                 {
                     "trajectory_id": "unit-timeout",
-                    "extra": {"scope_kind": "unit"},
+                    "extra": {
+                        "scope_kind": "unit",
+                        "execution_outcome": "llm_error",
+                    },
                     "steps": [
                         {
                             "step_id": 1,
@@ -697,18 +703,90 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(step.status, "error")
         self.assertIsNotNone(step.failure)
         self.assertEqual(step.failure.key, "llm.routing.timeout")
+        self.assertIsNotNone(trajectory.execution)
+        self.assertEqual(trajectory.execution.outcome, "failed")
+        self.assertEqual(trajectory.execution.failure.key, "llm.routing.timeout")
         self.assertEqual(
-            objective_signals(trajectory)["llm_failures"],
+            objective_signals(trajectory)["failures"],
             [
                 {
+                    "impact": "step",
                     "key": "llm.routing.timeout",
                     "code": "routing_budget_exhausted",
                     "request_phase": "await_response",
                     "timeout_scope": "unknown",
                     "response_started": False,
                     "step_id": "1",
+                },
+                {
+                    "impact": "execution",
+                    "key": "llm.routing.timeout",
+                    "code": "routing_budget_exhausted",
+                },
+            ],
+        )
+
+    def test_workflow_timeout_is_a_structured_execution_failure(self):
+        root = {
+            "session_id": "workflow-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {
+                        "scope_kind": "unit",
+                        "execution_outcome": "timeout",
+                        "execution_reason": "review deadline exceeded",
+                    },
+                    "steps": [],
                 }
             ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertIsNotNone(trajectory.execution)
+        self.assertEqual(trajectory.execution.outcome, "timeout")
+        self.assertEqual(trajectory.execution.failure.key, "workflow.timeout")
+        self.assertEqual(
+            objective_signals(trajectory)["failures"],
+            [
+                {
+                    "impact": "execution",
+                    "key": "workflow.timeout",
+                    "code": "",
+                }
+            ],
+        )
+
+    def test_legacy_routing_timeout_text_uses_failure_taxonomy(self):
+        root = {
+            "session_id": "legacy-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {"execution_outcome": "llm_error"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "extra": {
+                                "llm_error": (
+                                    "llm routing call timeout exceeded after 3m0s: "
+                                    "context deadline exceeded"
+                                )
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(trajectory.steps[0].failure.key, "llm.routing.timeout")
+        self.assertEqual(
+            trajectory.execution.failure.key,
+            "llm.routing.timeout",
         )
 
 
