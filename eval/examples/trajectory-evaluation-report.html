@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CCR trajectory evaluation report example</title>
+  <style>
+    #trajectory-eval-demo {
+      color-scheme: light dark;
+      --ter-page: light-dark(#f5f7fa, #11151c);
+      --ter-panel: light-dark(#ffffff, #191f29);
+      --ter-panel-strong: light-dark(#f0f3f7, #222a36);
+      --ter-text: light-dark(#17202b, #eef2f7);
+      --ter-muted: light-dark(#657180, #9ca8b7);
+      --ter-border: light-dark(#dce2e9, #333d4c);
+      --ter-blue: light-dark(#1769aa, #72b7eb);
+      --ter-green: light-dark(#18794e, #5fd0a0);
+      --ter-orange: light-dark(#9a5b13, #f0b45f);
+      --ter-red: light-dark(#b42335, #ff8793);
+      --ter-purple: light-dark(#6e4bb8, #bba1f1);
+      color: var(--ter-text);
+      font: inherit;
+      width: 100%;
+    }
+
+    #trajectory-eval-demo * { box-sizing: border-box; }
+
+    #trajectory-eval-demo .ter-shell {
+      background: var(--ter-page);
+      border: 1px solid var(--ter-border);
+      overflow: hidden;
+    }
+
+    #trajectory-eval-demo .ter-header {
+      align-items: flex-start;
+      background: var(--ter-panel);
+      border-bottom: 1px solid var(--ter-border);
+      display: flex;
+      gap: 20px;
+      justify-content: space-between;
+      padding: 20px 22px;
+    }
+
+    #trajectory-eval-demo h1,
+    #trajectory-eval-demo h2,
+    #trajectory-eval-demo h3,
+    #trajectory-eval-demo p { margin: 0; }
+
+    #trajectory-eval-demo h1 { font-size: 1.25em; font-weight: 500; }
+    #trajectory-eval-demo h2 { font-size: 1.05em; font-weight: 500; }
+    #trajectory-eval-demo h3 { font-size: 0.95em; font-weight: 500; }
+
+    #trajectory-eval-demo .ter-subtitle,
+    #trajectory-eval-demo .ter-muted {
+      color: var(--ter-muted);
+    }
+
+    #trajectory-eval-demo .ter-subtitle { margin-top: 5px; }
+
+    #trajectory-eval-demo .ter-run-meta {
+      display: grid;
+      gap: 5px;
+      text-align: right;
+    }
+
+    #trajectory-eval-demo .ter-run-meta code,
+    #trajectory-eval-demo .ter-code {
+      color: var(--ter-blue);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    #trajectory-eval-demo .ter-content {
+      display: grid;
+      gap: 18px;
+      padding: 18px 22px 24px;
+    }
+
+    #trajectory-eval-demo .ter-stats {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    #trajectory-eval-demo .ter-stat {
+      background: var(--ter-panel);
+      border: 1px solid var(--ter-border);
+      min-width: 0;
+      padding: 14px 16px;
+    }
+
+    #trajectory-eval-demo .ter-stat strong {
+      display: block;
+      font-size: 1.45em;
+      font-weight: 500;
+      margin: 5px 0 2px;
+    }
+
+    #trajectory-eval-demo .ter-stat small { color: var(--ter-muted); }
+
+    #trajectory-eval-demo .ter-overview {
+      display: grid;
+      gap: 20px;
+      grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+    }
+
+    #trajectory-eval-demo .ter-section {
+      min-width: 0;
+    }
+
+    #trajectory-eval-demo .ter-section-head {
+      align-items: baseline;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    #trajectory-eval-demo .ter-chart-wrap {
+      background: var(--ter-panel);
+      border: 1px solid var(--ter-border);
+      min-height: 210px;
+      padding: 10px 8px 4px;
+    }
+
+    #trajectory-eval-demo .ter-chart {
+      display: block;
+      min-height: 190px;
+      width: 100%;
+    }
+
+    #trajectory-eval-demo .ter-chart text {
+      fill: var(--ter-muted);
+      font: inherit;
+      font-size: 11px;
+    }
+
+    #trajectory-eval-demo .ter-chart .ter-value-label {
+      fill: var(--ter-text);
+      font-weight: 500;
+    }
+
+    #trajectory-eval-demo .ter-chart .ter-axis-title {
+      fill: var(--ter-text);
+      font-size: 12px;
+    }
+
+    #trajectory-eval-demo .ter-chart .ter-grid-line {
+      stroke: var(--ter-border);
+      stroke-width: 1;
+    }
+
+    #trajectory-eval-demo .ter-chart .ter-series-line {
+      fill: none;
+      stroke: var(--ter-orange);
+      stroke-width: 2;
+    }
+
+    #trajectory-eval-demo .ter-chart .ter-series-point {
+      fill: var(--ter-panel);
+      stroke: var(--ter-orange);
+      stroke-width: 2;
+    }
+
+    #trajectory-eval-demo .ter-metric-table {
+      background: var(--ter-panel);
+      border-collapse: collapse;
+      border: 1px solid var(--ter-border);
+      width: 100%;
+    }
+
+    #trajectory-eval-demo .ter-table-scroll { overflow-x: auto; }
+
+    #trajectory-eval-demo .ter-metric-table th,
+    #trajectory-eval-demo .ter-metric-table td {
+      border-bottom: 1px solid var(--ter-border);
+      padding: 10px 11px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    #trajectory-eval-demo .ter-metric-table th {
+      color: var(--ter-muted);
+      font-weight: 400;
+    }
+
+    #trajectory-eval-demo .ter-metric-table td:last-child,
+    #trajectory-eval-demo .ter-metric-table th:last-child { text-align: right; }
+
+    #trajectory-eval-demo .ter-browser {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: minmax(220px, 0.7fr) minmax(0, 1.3fr);
+    }
+
+    #trajectory-eval-demo .ter-list,
+    #trajectory-eval-demo .ter-detail {
+      background: var(--ter-panel);
+      border: 1px solid var(--ter-border);
+      min-width: 0;
+    }
+
+    #trajectory-eval-demo .ter-list-head,
+    #trajectory-eval-demo .ter-detail-head {
+      border-bottom: 1px solid var(--ter-border);
+      padding: 13px 14px;
+    }
+
+    #trajectory-eval-demo .ter-trajectory-button {
+      align-items: center;
+      appearance: none;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--ter-border);
+      color: var(--ter-text);
+      cursor: pointer;
+      display: grid;
+      font: inherit;
+      gap: 5px;
+      grid-template-columns: 1fr auto;
+      padding: 12px 14px;
+      text-align: left;
+      width: 100%;
+    }
+
+    #trajectory-eval-demo .ter-trajectory-button:last-child { border-bottom: 0; }
+    #trajectory-eval-demo .ter-trajectory-button:hover { background: var(--ter-panel-strong); }
+    #trajectory-eval-demo .ter-trajectory-button[aria-pressed="true"] {
+      background: var(--ter-panel-strong);
+      box-shadow: inset 3px 0 0 var(--ter-blue);
+    }
+
+    #trajectory-eval-demo .ter-trajectory-button:focus-visible {
+      outline: 2px solid var(--ter-blue);
+      outline-offset: -3px;
+    }
+
+    #trajectory-eval-demo .ter-trajectory-id { font-weight: 500; }
+    #trajectory-eval-demo .ter-trajectory-context { color: var(--ter-muted); }
+
+    #trajectory-eval-demo .ter-status {
+      border: 1px solid currentColor;
+      padding: 2px 6px;
+      white-space: nowrap;
+    }
+
+    #trajectory-eval-demo .ter-status-good { color: var(--ter-green); }
+    #trajectory-eval-demo .ter-status-warn { color: var(--ter-orange); }
+    #trajectory-eval-demo .ter-status-bad { color: var(--ter-red); }
+
+    #trajectory-eval-demo .ter-detail-body {
+      display: grid;
+      gap: 18px;
+      padding: 15px;
+    }
+
+    #trajectory-eval-demo .ter-facts {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    #trajectory-eval-demo .ter-fact {
+      border-left: 2px solid var(--ter-border);
+      min-width: 0;
+      padding-left: 9px;
+    }
+
+    #trajectory-eval-demo .ter-fact span { color: var(--ter-muted); display: block; }
+    #trajectory-eval-demo .ter-fact strong { display: block; font-weight: 500; margin-top: 3px; }
+
+    #trajectory-eval-demo .ter-result {
+      border-top: 1px solid var(--ter-border);
+      display: grid;
+      gap: 9px;
+      padding-top: 13px;
+    }
+
+    #trajectory-eval-demo .ter-result:first-child { border-top: 0; padding-top: 0; }
+
+    #trajectory-eval-demo .ter-result-title {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    #trajectory-eval-demo .ter-result-title code { font-weight: 500; }
+
+    #trajectory-eval-demo .ter-signal {
+      background: var(--ter-panel-strong);
+      border-left: 3px solid var(--ter-orange);
+      display: grid;
+      gap: 9px;
+      padding: 11px 12px;
+    }
+
+    #trajectory-eval-demo .ter-signal-head {
+      align-items: baseline;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    #trajectory-eval-demo .ter-evidence {
+      color: var(--ter-purple);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    #trajectory-eval-demo .ter-hypotheses {
+      margin: 0;
+      padding-left: 19px;
+    }
+
+    #trajectory-eval-demo .ter-hypotheses li + li { margin-top: 5px; }
+
+    #trajectory-eval-demo .ter-empty {
+      color: var(--ter-muted);
+      padding: 6px 0;
+    }
+
+    @media (max-width: 860px) {
+      #trajectory-eval-demo .ter-header { display: grid; }
+      #trajectory-eval-demo .ter-run-meta { text-align: left; }
+      #trajectory-eval-demo .ter-overview,
+      #trajectory-eval-demo .ter-browser { grid-template-columns: 1fr; }
+      #trajectory-eval-demo .ter-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 420px) {
+      #trajectory-eval-demo .ter-stats { grid-template-columns: 1fr; }
+      #trajectory-eval-demo .ter-facts { grid-template-columns: 1fr; }
+      #trajectory-eval-demo .ter-content,
+      #trajectory-eval-demo .ter-header { padding-left: 14px; padding-right: 14px; }
+    }
+  </style>
+</head>
+<body>
+<div id="trajectory-eval-demo">
+
+  <section class="ter-shell" aria-labelledby="ter-title">
+    <header class="ter-header">
+      <div>
+        <h1 id="ter-title">Trajectory evaluation</h1>
+        <p class="ter-subtitle">Dataset <span class="ter-code">ccr-weekly/unit</span> · 48 trajectories · candidate run</p>
+      </div>
+      <div class="ter-run-meta">
+        <span><span class="ter-muted">Run</span> <code>eval-2026-08-16</code></span>
+        <span><span class="ter-muted">Compared with</span> <code>eval-2026-08-09</code></span>
+      </div>
+    </header>
+
+    <div class="ter-content">
+      <section class="ter-stats" aria-label="Run summary">
+        <div class="ter-stat">
+          <span class="ter-muted">Completion rate</span>
+          <strong>93.8%</strong>
+          <small>45 of 48 completed</small>
+        </div>
+        <div class="ter-stat">
+          <span class="ter-muted">Execution failures</span>
+          <strong>3</strong>
+          <small>2 LLM timeout · 1 tool permission</small>
+        </div>
+        <div class="ter-stat">
+          <span class="ter-muted">Diagnostic signals</span>
+          <strong>10</strong>
+          <small>8 trajectories affected</small>
+        </div>
+      </section>
+
+      <section class="ter-overview">
+        <div class="ter-section">
+          <div class="ter-section-head">
+            <h2>Repeated-tool-call signal rate</h2>
+            <span class="ter-muted">lower is better</span>
+          </div>
+          <div class="ter-chart-wrap" id="ter-chart-wrap">
+            <svg class="ter-chart" id="ter-signal-chart" role="img" aria-labelledby="ter-chart-title ter-chart-desc">
+              <title id="ter-chart-title">Repeated tool call signal rate by evaluation run</title>
+              <desc id="ter-chart-desc">The rate declines from 34 percent to 21 percent over four evaluation runs.</desc>
+            </svg>
+          </div>
+        </div>
+
+        <div class="ter-section">
+          <div class="ter-section-head">
+            <h2>Latest metrics</h2>
+            <span class="ter-muted">Metric snapshot</span>
+          </div>
+          <div class="ter-table-scroll">
+            <table class="ter-metric-table">
+              <thead>
+                <tr><th>Metric</th><th>Value</th></tr>
+              </thead>
+              <tbody>
+                <tr><td><code>execution.completion.rate</code></td><td>0.938</td></tr>
+                <tr><td><code>failure.rate{kind=llm,error_type=timeout}</code></td><td>0.042</td></tr>
+                <tr><td><code>signal.rate{code=repeated_tool_call}</code></td><td>0.208</td></tr>
+                <tr><td><code>evaluation.score.mean{evaluator_id=tool_success}</code></td><td>0.962</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="ter-section">
+        <div class="ter-section-head">
+          <h2>Trajectory evidence</h2>
+          <span class="ter-muted">Facts remain separate from evaluator judgments</span>
+        </div>
+        <div class="ter-browser">
+          <div class="ter-list">
+            <div class="ter-list-head"><h3>Scopes</h3></div>
+            <div id="ter-trajectory-list"></div>
+          </div>
+          <article class="ter-detail" aria-live="polite">
+            <div class="ter-detail-head"><h3 id="ter-detail-title">Trajectory</h3></div>
+            <div class="ter-detail-body" id="ter-detail-body"></div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <script>
+    (() => {
+      const root = document.getElementById("trajectory-eval-demo");
+      const trajectories = [
+        {
+          id: "unit-1042",
+          stage: "Review 1 · Unit",
+          outcome: "completed",
+          statusClass: "ter-status-warn",
+          score: "0.78",
+          duration: "184 s",
+          tokens: "42.8k",
+          failure: "none",
+          results: [
+            {
+              evaluator: "repeated_tool_call",
+              status: "evaluated",
+              verdict: "warning",
+              score: "—",
+              explanation: "2 of 9 tool calls repeat an earlier tool name and arguments.",
+              signal: {
+                code: "repeated_tool_call",
+                severity: "warning",
+                evidence: "step-18, step-21",
+                hypotheses: [
+                  "The tool may be missing a batch operation.",
+                  "The tool description may not encourage batching or result reuse.",
+                  "The agent loop may lack an effective repeat-call stopping strategy."
+                ]
+              }
+            },
+            {
+              evaluator: "tool_success",
+              status: "evaluated",
+              verdict: "pass",
+              score: "1.00",
+              explanation: "9 of 9 tool calls succeeded."
+            }
+          ]
+        },
+        {
+          id: "unit-1043",
+          stage: "Review 1 · Unit",
+          outcome: "timeout",
+          statusClass: "ter-status-bad",
+          score: "0.46",
+          duration: "300 s",
+          tokens: "51.2k",
+          failure: "llm.request.timeout",
+          results: [
+            {
+              evaluator: "review_completion",
+              status: "evaluated",
+              verdict: "fail",
+              score: "0.00",
+              explanation: "Review execution ended as timeout."
+            },
+            {
+              evaluator: "duration_efficiency",
+              status: "evaluated",
+              verdict: "fail",
+              score: "0.60",
+              explanation: "300s recorded duration; target is at most 180s."
+            }
+          ]
+        },
+        {
+          id: "lane-218",
+          stage: "Review 2 · Lane",
+          outcome: "completed",
+          statusClass: "ter-status-good",
+          score: "0.91",
+          duration: "112 s",
+          tokens: "29.4k",
+          failure: "none",
+          results: [
+            {
+              evaluator: "assessment_submission",
+              status: "evaluated",
+              verdict: "pass",
+              score: "1.00",
+              explanation: "2 of 2 Assessment submissions completed."
+            },
+            {
+              evaluator: "round_efficiency",
+              status: "evaluated",
+              verdict: "pass",
+              score: "0.82",
+              explanation: "19 inference rounds for 2 review items."
+            }
+          ]
+        }
+      ];
+
+      const list = root.querySelector("#ter-trajectory-list");
+      const detailTitle = root.querySelector("#ter-detail-title");
+      const detailBody = root.querySelector("#ter-detail-body");
+
+      function renderList(selectedId) {
+        list.innerHTML = trajectories.map((item) => `
+          <button class="ter-trajectory-button" type="button" data-trajectory-id="${item.id}" aria-pressed="${item.id === selectedId}">
+            <span>
+              <span class="ter-trajectory-id">${item.id}</span><br>
+              <span class="ter-trajectory-context">${item.stage}</span>
+            </span>
+            <span class="ter-status ${item.statusClass}">${item.outcome}</span>
+          </button>
+        `).join("");
+      }
+
+      function statusClass(value) {
+        if (value === "pass") return "ter-status-good";
+        if (value === "warning") return "ter-status-warn";
+        return "ter-status-bad";
+      }
+
+      function renderDetail(item) {
+        detailTitle.textContent = `${item.id} · ${item.stage}`;
+        const resultMarkup = item.results.map((result) => `
+          <section class="ter-result">
+            <div class="ter-result-title">
+              <code>${result.evaluator}</code>
+              <span class="ter-status ${statusClass(result.verdict)}">${result.verdict}</span>
+              <span class="ter-muted">status=${result.status} · score=${result.score}</span>
+            </div>
+            <p>${result.explanation}</p>
+            ${result.signal ? `
+              <div class="ter-signal">
+                <div class="ter-signal-head">
+                  <strong>DiagnosticSignal · ${result.signal.code}</strong>
+                  <span class="ter-status ter-status-warn">${result.signal.severity}</span>
+                </div>
+                <div><span class="ter-muted">Evidence</span> <span class="ter-evidence">${result.signal.evidence}</span></div>
+                <div>
+                  <span class="ter-muted">Hypotheses</span>
+                  <ul class="ter-hypotheses">${result.signal.hypotheses.map((hypothesis) => `<li>${hypothesis}</li>`).join("")}</ul>
+                </div>
+              </div>
+            ` : ""}
+          </section>
+        `).join("");
+
+        detailBody.innerHTML = `
+          <section>
+            <div class="ter-section-head"><h3>Trajectory facts</h3><span class="ter-muted">fixed before evaluation</span></div>
+            <div class="ter-facts">
+              <div class="ter-fact"><span>Outcome</span><strong>${item.outcome}</strong></div>
+              <div class="ter-fact"><span>Duration</span><strong>${item.duration}</strong></div>
+              <div class="ter-fact"><span>Token usage</span><strong>${item.tokens}</strong></div>
+              <div class="ter-fact"><span>Failure</span><strong class="${item.failure === "none" ? "" : "ter-status-bad"}">${item.failure}</strong></div>
+            </div>
+          </section>
+          <section>
+            <div class="ter-section-head"><h3>Evaluation results</h3><span class="ter-muted">post-hoc judgments</span></div>
+            ${resultMarkup || '<p class="ter-empty">No applicable evaluator result.</p>'}
+          </section>
+        `;
+      }
+
+      function selectTrajectory(id) {
+        const item = trajectories.find((candidate) => candidate.id === id) || trajectories[0];
+        renderList(item.id);
+        renderDetail(item);
+      }
+
+      list.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-trajectory-id]");
+        if (button) selectTrajectory(button.dataset.trajectoryId);
+      });
+
+      const trend = [
+        { date: "Aug 09", value: 0.34 },
+        { date: "Aug 12", value: 0.30 },
+        { date: "Aug 14", value: 0.27 },
+        { date: "Aug 16", value: 0.208 }
+      ];
+      const svg = root.querySelector("#ter-signal-chart");
+      const chartWrap = root.querySelector("#ter-chart-wrap");
+
+      function chartElement(name, attrs = {}, text = "") {
+        const element = document.createElementNS("http://www.w3.org/2000/svg", name);
+        Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
+        if (text) element.textContent = text;
+        return element;
+      }
+
+      function drawChart() {
+        const width = Math.max(320, Math.round(chartWrap.getBoundingClientRect().width - 16));
+        const height = 190;
+        const margin = { top: 22, right: 24, bottom: 42, left: 54 };
+        const innerWidth = width - margin.left - margin.right;
+        const innerHeight = height - margin.top - margin.bottom;
+        const values = trend.map((point) => point.value);
+        const minimum = Math.max(0, Math.min(...values) - 0.04);
+        const maximum = Math.min(1, Math.max(...values) + 0.04);
+        const x = (index) => margin.left + (innerWidth * index) / (trend.length - 1);
+        const y = (value) => margin.top + ((maximum - value) / (maximum - minimum)) * innerHeight;
+
+        Array.from(svg.children).forEach((child) => {
+          if (!child.matches("title, desc")) child.remove();
+        });
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+        svg.appendChild(chartElement("rect", {
+          x: margin.left,
+          y: margin.top,
+          width: innerWidth,
+          height: innerHeight,
+          fill: "none",
+          stroke: "var(--ter-border)",
+          "data-chart-frame": ""
+        }));
+
+        [minimum, (minimum + maximum) / 2, maximum].forEach((tick) => {
+          const tickY = y(tick);
+          svg.appendChild(chartElement("line", {
+            x1: margin.left,
+            x2: width - margin.right,
+            y1: tickY,
+            y2: tickY,
+            class: "ter-grid-line"
+          }));
+          svg.appendChild(chartElement("text", {
+            x: margin.left - 8,
+            y: tickY + 4,
+            "text-anchor": "end"
+          }, `${Math.round(tick * 100)}%`));
+        });
+
+        const path = trend.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.value)}`).join(" ");
+        svg.appendChild(chartElement("path", { d: path, class: "ter-series-line" }));
+
+        trend.forEach((point, index) => {
+          svg.appendChild(chartElement("circle", {
+            cx: x(index), cy: y(point.value), r: 4, class: "ter-series-point"
+          }));
+          svg.appendChild(chartElement("text", {
+            x: x(index), y: y(point.value) - 10, "text-anchor": "middle", class: "ter-value-label"
+          }, `${Math.round(point.value * 100)}%`));
+          svg.appendChild(chartElement("text", {
+            x: x(index), y: height - margin.bottom + 20, "text-anchor": "middle"
+          }, point.date));
+        });
+
+        svg.appendChild(chartElement("text", {
+          x: margin.left + innerWidth / 2,
+          y: height - 5,
+          "text-anchor": "middle",
+          class: "ter-axis-title",
+          "data-axis": "x"
+        }, "Evaluation run"));
+        svg.appendChild(chartElement("text", {
+          x: 14,
+          y: margin.top + innerHeight / 2,
+          transform: `rotate(-90 14 ${margin.top + innerHeight / 2})`,
+          "text-anchor": "middle",
+          class: "ter-axis-title",
+          "data-axis": "y"
+        }, "Affected trajectories"));
+      }
+
+      selectTrajectory(trajectories[0].id);
+      drawChart();
+      new ResizeObserver(drawChart).observe(chartWrap);
+    })();
+  </script>
+</div>
+</body>
+</html>

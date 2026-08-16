@@ -111,7 +111,6 @@ def objective_signals(trajectory: Trajectory) -> dict:
     both a cheap standalone report and the ASI handed to the LLM judge."""
     stage = review_stage(trajectory)
     report = evaluate(trajectory, _STAGE_EVALUATORS[stage])
-    evaluations = {result.name: result for result in report.evaluations}
     tool_fails = [
         {"tool": step.name, "error": _tool_result(step)[:120]}
         for step in trajectory.steps
@@ -119,8 +118,10 @@ def objective_signals(trajectory: Trajectory) -> dict:
     ]
     return {
         "stage": stage,
-        "score": report.score,
-        "evaluations": [result.to_dict() for result in report.evaluations],
+        # trajectory_harness intentionally does not invent a cross-Evaluator score;
+        # this unweighted mean is CCR's explicit summary policy.
+        "score": _mean_score(report.results),
+        "evaluations": [result.to_dict() for result in report.results],
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
         "tool_freq": tool_frequencies(trajectory),
@@ -136,6 +137,11 @@ def objective_signals(trajectory: Trajectory) -> dict:
     }
 
 
+def _mean_score(results) -> float | None:
+    scores = [result.score for result in results if result.score is not None]
+    return round(sum(scores) / len(scores), 3) if scores else None
+
+
 def main_deductions(signals: list[dict], limit: int = 3) -> list[dict]:
     """Rank the stage's recurring score losses without hiding raw Evaluations."""
 
@@ -143,9 +149,9 @@ def main_deductions(signals: list[dict], limit: int = 3) -> list[dict]:
     for signal in signals:
         for result in signal["evaluations"]:
             score = result.get("score")
-            if result.get("label") != "fail" or score is None:
+            if result.get("verdict") != "fail" or score is None:
                 continue
-            grouped.setdefault(result["name"], []).append(float(score))
+            grouped.setdefault(result["evaluator_id"], []).append(float(score))
     ranked = [
         {
             "name": name,
@@ -360,8 +366,18 @@ def main() -> int:
                         f"calls/round={searches['calls_per_round']}"
                     )
                 for result in sig["evaluations"]:
-                    if result["label"] == "fail":
-                        print(f"   ⚠ {result['name']}: {result['explanation']}")
+                    if result["verdict"] == "fail":
+                        print(
+                            f"   ⚠ {result['evaluator_id']}: "
+                            f"{result['explanation']}"
+                        )
+                    for diagnostic in result["signals"]:
+                        print(f"   ⚠ {diagnostic['code']}: {diagnostic['summary']}")
+                        if diagnostic["hypotheses"]:
+                            print(
+                                "      may indicate: "
+                                + "; ".join(diagnostic["hypotheses"])
+                            )
                 if sig["repeated_reads"]:
                     print(f"   ⚠ repeated reads: {sig['repeated_reads']}")
                 for failure in sig["tool_failures"]:
