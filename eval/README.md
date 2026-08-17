@@ -200,6 +200,7 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 相邻通常是逐步导航，不能反推前一次调用已经知道后续范围，因此只产生 `adjacent_file_reads` 诊断信号，不参与综合分。
 同一 inference turn 内发出多个 `read_files` 调用才产生 `unbatched_same_turn_reads` warning；较早的
 `search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计。
+每个 query 的自由字符串 `purpose` 同时按原值统计覆盖率和分布，用来发现尚未进入既有工具分类的搜索需求。
 这些模式的 count/rate 通过 Measurements 聚合进报告。重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告

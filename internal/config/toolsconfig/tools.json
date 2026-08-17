@@ -174,7 +174,7 @@
     "main_task": true,
     "definition": {
       "name": "search_code",
-      "description": "Search repository text with literal matching or Perl regular expressions. The input is always searches[], including for one query. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions.\n\nsyntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
+      "description": "Search repository text with literal matching or Perl regular expressions. The input is always searches[], including for one query. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions.\n\nState each query's purpose in your own words so trajectories reveal recurring search needs; common values include function, variable, type, keyword, and reference, but purpose is not a closed vocabulary. syntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. If an earlier file outline already gives the exact Lstart-Lend span, read that range directly instead of searching the declaration again. Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -189,6 +189,11 @@
                 "query": {
                   "type": "string",
                   "description": "Text or regular expression to search for."
+                },
+                "purpose": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Why this search is needed, in your own words. Suggested values include function, variable, type, keyword, and reference; use another concise value when those do not fit."
                 },
                 "syntax": {
                   "type": "string",
@@ -206,9 +211,16 @@
                 "case_sensitive": {
                   "type": "boolean",
                   "description": "Whether matching is case-sensitive. Defaults to false."
+                },
+                "context_lines": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 50,
+                  "default": 0,
+                  "description": "Optional source lines before and after each hit. Overlapping windows are merged; use this when local context may avoid a follow-up read_files call. The batch adds at most 400 context lines."
                 }
               },
-              "required": ["query"]
+              "required": ["query", "purpose"]
             }
           }
         },

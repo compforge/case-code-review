@@ -327,8 +327,8 @@ func safePatternAlias(pattern string, syntax any) bool {
 }
 
 func searchSharedArguments(args map[string]any) map[string]any {
-	shared := make(map[string]any, 3)
-	for _, key := range []string{"file_patterns", "case_sensitive", "use_perl_regexp", "syntax"} {
+	shared := make(map[string]any, 6)
+	for _, key := range []string{"file_patterns", "case_sensitive", "use_perl_regexp", "syntax", "context_lines", "purpose"} {
 		if value, ok := args[key]; ok {
 			shared[key] = value
 		}

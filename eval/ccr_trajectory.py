@@ -1016,7 +1016,7 @@ def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
     }
 
 
-def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
+def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
     """Describe query batching separately from tool-call frequency."""
 
     calls = [step for step in _tool_steps(trajectory) if step.name == "search_code"]
@@ -1034,10 +1034,17 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
             "scope_unknown": 0,
             "tool_failure": 0,
             "repeated_empty": 0,
+            "purpose_counts": {},
+            "purpose_coverage": 0.0,
         }
     batches = [max(len(_code_search_requests(step)), 1) for step in calls]
     rounds = len({step.parent_step_id for step in calls})
     requests = sum(batches)
+    purpose_counts: Counter[str] = Counter()
+    for step in calls:
+        for request in _code_search_requests(step) or [{}]:
+            purpose = str(request.get("purpose") or "").strip()
+            purpose_counts[purpose or "(unspecified)"] += 1
     observations = _code_search_observations(trajectory)
     outcomes = Counter(item["outcome"] for item in observations)
     repeated_empty = 0
@@ -1061,6 +1068,10 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, float | int]:
         "scope_unknown": outcomes["scope_unknown"],
         "tool_failure": outcomes["tool_failure"],
         "repeated_empty": repeated_empty,
+        "purpose_counts": dict(purpose_counts),
+        "purpose_coverage": round(
+            (requests - purpose_counts["(unspecified)"]) / requests, 3
+        ),
     }
 
 
@@ -1240,9 +1251,14 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                         if file_index + 1 < len(file_matches)
                         else len(result)
                     )
-                    for line_match in re.finditer(
-                        r"(?m)^(\d+)\|", result[match.end() : end]
-                    ):
+                    block = result[match.end() : end]
+                    count_match = re.search(r"(?m)^Match lines:\s*(\d+)\s*$", block)
+                    match_count = int(count_match.group(1)) if count_match else 0
+                    line_matches = list(re.finditer(r"(?m)^(\d+)\|", block))
+                    # context_lines appends numbered source windows after the
+                    # original hit list. Only those first Match lines entries
+                    # identify the search hits this evaluator links to reads.
+                    for line_match in line_matches[:match_count]:
                         hits_by_path.setdefault(match.group(1), []).append(
                             (
                                 int(line_match.group(1)),

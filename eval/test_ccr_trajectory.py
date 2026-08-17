@@ -646,14 +646,27 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     "function_name": "search_code",
                                     "arguments": {
                                         "searches": [
-                                            {"query": "Alpha", "syntax": "literal"},
-                                            {"query": "Missing", "syntax": "literal"},
+                                            {
+                                                "query": "Alpha",
+                                                "syntax": "literal",
+                                                "purpose": "function",
+                                            },
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                                "purpose": "keyword",
+                                            },
                                             {
                                                 "query": "Missing",
                                                 "syntax": "literal",
                                                 "file_patterns": ["missing/**"],
+                                                "purpose": "custom-domain-concept",
                                             },
-                                            {"query": "Missing", "syntax": "literal"},
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                                "purpose": "keyword",
+                                            },
                                         ]
                                     },
                                 }
@@ -685,6 +698,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "scope_unknown": 0,
                 "tool_failure": 0,
                 "repeated_empty": 1,
+                "purpose_counts": {
+                    "function": 1,
+                    "keyword": 2,
+                    "custom-domain-concept": 1,
+                },
+                "purpose_coverage": 1.0,
             },
         )
         evaluation = SearchScopeEvaluator().evaluate(trajectory)
@@ -713,7 +732,14 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 "results": [
                                     {
                                         "source_call_id": "search",
-                                        "content": "File: a.go\nMatch lines: 1\n40|func Alpha()\n",
+                                        "content": (
+                                            "File: a.go\nMatch lines: 1\n"
+                                            "40|func Alpha()\nContext:\n"
+                                            "LINE_RANGE: 39-41\n"
+                                            "39|// Alpha docs\n"
+                                            "40|func Alpha()\n"
+                                            "41|    return\n"
+                                        ),
                                     }
                                 ]
                             },
@@ -730,6 +756,11 @@ class CCRTrajectoryTest(unittest.TestCase):
                                             {
                                                 "file_path": "a.go",
                                                 "start_line": 30,
+                                                "end_line": 39,
+                                            },
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 40,
                                                 "end_line": 50,
                                             },
                                             {
@@ -746,10 +777,13 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     {
                                         "source_call_id": "read",
                                         "content": (
-                                            "===== FILE_READ RESULT 1/2 =====\n"
+                                            "===== FILE_READ RESULT 1/3 =====\n"
                                             "File: a.go (Total lines: 100)\n"
-                                            "LINE_RANGE: 30-50\n40|func Alpha()\n"
-                                            "===== FILE_READ RESULT 2/2 =====\n"
+                                            "LINE_RANGE: 30-39\n39|// Alpha docs\n"
+                                            "===== FILE_READ RESULT 2/3 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 40-50\n40|func Alpha()\n"
+                                            "===== FILE_READ RESULT 3/3 =====\n"
                                             "File: b.go (Total lines: 10)\n"
                                             "LINE_RANGE: 1-10\n1|package b\n"
                                         ),
@@ -767,11 +801,11 @@ class CCRTrajectoryTest(unittest.TestCase):
             search_then_read_stats(trajectory),
             {
                 "search_calls": 1,
-                "read_range_count": 2,
+                "read_range_count": 3,
                 "search_then_read_range_count": 1,
-                "search_then_read_rate": 0.5,
+                "search_then_read_rate": 0.333,
                 "identifier_search_then_read_range_count": 1,
-                "identifier_search_then_read_rate": 0.5,
+                "identifier_search_then_read_rate": 0.333,
                 "step_ids": ["1:tool:1", "2:tool:1"],
             },
         )
