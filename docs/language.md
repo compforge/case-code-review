@@ -90,7 +90,9 @@ attribute。FileOutline 统一消费它们的结构角色，但展示语言自�
 
 一次 review 的 diff、源码读取和索引查询必须指向同一份 review snapshot。工作区、range 和 commit
 模式可以使用不同 Git 读取方式，但不能让 definition 来自当前工作区、diff 却来自旧 commit。
-缓存只有在快照身份一致时才能复用。
+缓存只有在快照身份一致时才能复用。Analyzer 的缓存身份还包含内部 backend：同一源码快照可以分别
+由 Python 语义分析和 gotreesitter Outline 产生事实，这些结果不能互换；使用同一 backend 的 Analysis
+与 FileOutline 则应共享分析结果，避免为了不同上层投影重复解析源码。
 
 ### 3.4 复杂度边界
 

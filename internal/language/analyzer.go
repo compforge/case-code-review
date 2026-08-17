@@ -38,23 +38,29 @@ func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline,
 	}
 	// Go is CCR's native language backend. Other source outlines come from
 	// gotreesitter so language-specific outline knowledge stays upstream.
-	if lang != Go {
-		analysis, err := analyzeTreeSitter(ctx, lang, source)
-		if err != nil {
-			return FileOutline{}, err
-		}
-		return analysis.Outline(source.Path), nil
+	backend := analysisBackendTreeSitter
+	if lang == Go {
+		backend = analysisBackendGo
 	}
-	analysis, err := a.Analyze(ctx, source)
+	analysis, err := a.analyzeWithBackend(ctx, lang, source, backend)
 	if err != nil {
 		return FileOutline{}, err
 	}
 	return analysis.Outline(source.Path), nil
 }
 
+type analysisBackend string
+
+const (
+	analysisBackendGo         analysisBackend = "go"
+	analysisBackendPython     analysisBackend = "python"
+	analysisBackendTreeSitter analysisBackend = "treesitter"
+)
+
 type analysisKey struct {
-	path   string
-	digest [32]byte
+	path    string
+	digest  [32]byte
+	backend analysisBackend
 }
 
 func NewAnalyzer(repoDir string) *Analyzer {
@@ -67,7 +73,32 @@ func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error)
 	if !ok {
 		return Analysis{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
 	}
-	key := analysisKey{path: source.Path, digest: sha256.Sum256([]byte(source.Content))}
+	return a.analyzeWithBackend(ctx, lang, source, semanticAnalysisBackend(lang))
+}
+
+func semanticAnalysisBackend(lang Language) analysisBackend {
+	switch lang {
+	case Go:
+		return analysisBackendGo
+	case Python:
+		return analysisBackendPython
+	default:
+		return analysisBackendTreeSitter
+	}
+}
+
+func (a *Analyzer) analyzeWithBackend(
+	ctx context.Context,
+	lang Language,
+	source Source,
+	backend analysisBackend,
+) (Analysis, error) {
+	// Backend is part of the cache identity because one source snapshot may use
+	// different fact producers, such as Python AST analysis and a gotreesitter
+	// FileOutline. Results from those producers are not interchangeable.
+	key := analysisKey{
+		path: source.Path, digest: sha256.Sum256([]byte(source.Content)), backend: backend,
+	}
 	a.mu.Lock()
 	if a.cache == nil {
 		a.cache = map[analysisKey]Analysis{}
@@ -78,12 +109,12 @@ func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error)
 		return analysis, nil
 	}
 	var err error
-	switch lang {
-	case Go:
+	switch backend {
+	case analysisBackendGo:
 		analysis, err = analyzeGo(source)
-	case Python:
+	case analysisBackendPython:
 		analysis, err = analyzePython(ctx, source)
-	default:
+	case analysisBackendTreeSitter:
 		analysis, err = analyzeTreeSitter(ctx, lang, source)
 	}
 	if err != nil {

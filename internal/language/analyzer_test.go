@@ -95,6 +95,55 @@ class Service {
 	assertNames(t, analysis.CalleesOf("Service.run"), "helper", "load")
 }
 
+func TestAnalyzerSharesTreeSitterCacheAcrossOutlineAndAnalysis(t *testing.T) {
+	analyzer := NewAnalyzer("")
+	source := Source{Path: "app.ts", Content: `class Service {
+  run() {}
+}
+`}
+	if _, err := analyzer.FileOutline(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(analyzer.cache); got != 1 {
+		t.Fatalf("cache entries after FileOutline = %d, want 1", got)
+	}
+	if _, err := analyzer.Analyze(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(analyzer.cache); got != 1 {
+		t.Fatalf("cache entries after Analyze = %d, want shared entry", got)
+	}
+	for key := range analyzer.cache {
+		if key.backend != analysisBackendTreeSitter {
+			t.Fatalf("cached backend = %q, want %q", key.backend, analysisBackendTreeSitter)
+		}
+	}
+}
+
+func TestAnalyzerSeparatesPythonSemanticAndOutlineBackends(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not available")
+	}
+	analyzer := NewAnalyzer("")
+	source := Source{Path: "service.py", Content: `class Service:
+    def run(self):
+        pass
+`}
+	if _, err := analyzer.FileOutline(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := analyzer.Analyze(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+	backends := map[analysisBackend]bool{}
+	for key := range analyzer.cache {
+		backends[key.backend] = true
+	}
+	if len(analyzer.cache) != 2 || !backends[analysisBackendTreeSitter] || !backends[analysisBackendPython] {
+		t.Fatalf("cached backends = %v, want treesitter and python", backends)
+	}
+}
+
 func TestAnalyzeTypeScriptImportTypeQuery(t *testing.T) {
 	source := Source{Path: "app.ts", Content: `function load() {
   return factory<typeof import("./model").Result>();
