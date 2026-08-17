@@ -32,6 +32,10 @@ type outlineEntry struct {
 // Outline derives a file projection from facts already produced by Analyze.
 func (a Analysis) Outline(path string) FileOutline {
 	outline := FileOutline{Path: path, Language: a.Language}
+	if a.outlineProjected {
+		outline.entries = append(outline.entries, a.outlineEntries...)
+		return outline
+	}
 	for _, definition := range a.Definitions {
 		outline.entries = append(outline.entries, outlineEntry{
 			Name: definition.Name, Owner: definition.Owner, Label: string(definition.Kind),
@@ -78,9 +82,7 @@ func (o FileOutline) renderRange(start, end int) string {
 
 	byName := make(map[string]outlineEntry, len(entries))
 	for _, entry := range entries {
-		if outlineOwnerKind(entry.Label) {
-			byName[entry.Name] = entry
-		}
+		byName[entry.Name] = entry
 	}
 	children := make(map[string][]outlineEntry)
 	var roots []outlineEntry
@@ -118,9 +120,7 @@ func (o FileOutline) renderRange(start, end int) string {
 func outlineRange(entries []outlineEntry, start, end int) []outlineEntry {
 	allOwners := make(map[string]outlineEntry)
 	for _, entry := range entries {
-		if outlineOwnerKind(entry.Label) {
-			allOwners[entry.Name] = entry
-		}
+		allOwners[entry.Name] = entry
 	}
 	selected := make(map[string]bool)
 	for _, entry := range entries {
@@ -159,10 +159,6 @@ func sortOutlineEntries(entries []outlineEntry) {
 		}
 		return entries[i].Name < entries[j].Name
 	})
-}
-
-func outlineOwnerKind(label string) bool {
-	return label == string(KindType) || label == string(KindClass) || label == string(KindInterface)
 }
 
 func outlineSignature(entry outlineEntry) string {

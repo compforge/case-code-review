@@ -39,9 +39,14 @@ Analyzer 面向一份明确的源码快照，提供：
 这些事实支持 Fragment 切分、范围预载、评论定位和局部搜索。后端不能可靠识别时，应退化到文件
 级范围，不能制造虚假的函数边界。
 
-同一批事实也可以投影成 `FileOutline`：代码保留 type/callable 及语言原生的数据成员层级，JSON
-保留 key 结构，Markdown 保留标题层级。Outline 是源码消息在上下文收紧时的导航摘要，不是新的
-事实来源，也不能替代读取源码验证行为。
+`FileOutline` 是 CCR 定义的、与底层实现无关的文件结构导航投影。gotreesitter outline 是它的一个
+重要输入子集：提供代码的 type、callable、span 与嵌套关系；CCR FileOutline 概念上是其超集，
+还可以表达 JSON 的 key 结构和 Markdown 的标题层级。未来接入其它 outline 实现时，消费方仍只依赖
+FileOutline；不同实现既可以替换，也可以提供互补的结构事实。
+
+代码文件默认依赖 gotreesitter 的跨语言能力，CCR 只为 Go 补充自身能够可靠维护的结构事实。JSON、
+Markdown 等非代码格式由 CCR 直接投影。Outline 是源码消息在上下文收紧时的导航摘要，不是新的
+行为证据，也不能替代读取源码验证行为。
 
 ### 2.2 仓库级索引
 

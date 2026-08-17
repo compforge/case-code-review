@@ -23,14 +23,27 @@ type Analyzer struct {
 }
 
 // FileOutline returns a language/file-format-aware structural projection.
-// Source analyzers reuse their cached facts; data and document formats keep
-// their own lightweight shape without pretending to be code definitions.
+// Non-Go source files use gotreesitter's outline directly; data and document
+// formats keep their own shape without pretending to be code definitions.
 func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline, error) {
 	switch strings.ToLower(filepath.Ext(source.Path)) {
 	case ".json":
 		return jsonFileOutline(source)
 	case ".md", ".markdown":
 		return markdownFileOutline(source), nil
+	}
+	lang, ok := Detect(source.Path)
+	if !ok {
+		return FileOutline{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
+	}
+	// Go is CCR's native language backend. Other source outlines come from
+	// gotreesitter so language-specific outline knowledge stays upstream.
+	if lang != Go {
+		analysis, err := analyzeTreeSitter(ctx, lang, source)
+		if err != nil {
+			return FileOutline{}, err
+		}
+		return analysis.Outline(source.Path), nil
 	}
 	analysis, err := a.Analyze(ctx, source)
 	if err != nil {

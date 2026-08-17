@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestFileOutlineUsesLanguageNativeDataMembers(t *testing.T) {
+func TestFileOutlineUsesGoEnrichmentAndTreeSitterStructure(t *testing.T) {
 	tests := []struct {
 		path, source string
 		want         []string
@@ -33,8 +33,8 @@ func (s *Service) Run() error { return nil }
   void run() {}
 }
 `,
-			want:   []string{"- class class Service", "- field private final String token", "- field int retries", "- method void run()"},
-			reject: []string{"do-not-keep"},
+			want:   []string{"- class class Service", "- method void run()"},
+			reject: []string{"do-not-keep", "- field"},
 		},
 		{
 			path: "service.ts",
@@ -45,8 +45,8 @@ func (s *Service) Run() error { return nil }
 }
 interface Request { id: string; }
 `,
-			want:   []string{"- class class Service", "- property private token: string", "- property readonly retries: number", "- method run(): void", "- interface interface Request", "- property id: string"},
-			reject: []string{"do-not-keep"},
+			want:   []string{"- class class Service", "- method run(): void", "- interface interface Request"},
+			reject: []string{"do-not-keep", "- property"},
 		},
 		{
 			path: "service.py",
@@ -57,8 +57,8 @@ interface Request { id: string; }
     def run(self):
         local = "not-an-attribute"
 `,
-			want:   []string{"- class class Service:", "- attribute token: str", "- attribute retries", "- method def run(self):"},
-			reject: []string{"do-not-keep", "not-an-attribute", "local"},
+			want:   []string{"- class class Service:", "- function def run(self):"},
+			reject: []string{"do-not-keep", "not-an-attribute", "local", "- attribute"},
 		},
 	}
 
@@ -117,12 +117,46 @@ func TestJavaFileOutlinePreservesNestedOwners(t *testing.T) {
 	for _, want := range []string{
 		"- class class Outer",
 		"  - class class Inner",
-		"    - field int value",
 		"    - method void run()",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("nested Java outline missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestTreeSitterFileOutlinePreservesProviderKinds(t *testing.T) {
+	outline, err := NewAnalyzer("").FileOutline(context.Background(), Source{
+		Path: "status.ts",
+		Content: `enum Status {
+  Ready,
+}
+`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outline.Render(); !strings.Contains(got, "- enum enum Status — L1-3") {
+		t.Fatalf("gotreesitter kind or range missing:\n%s", got)
+	}
+}
+
+func TestPythonFileOutlineDoesNotRequirePythonRuntime(t *testing.T) {
+	t.Setenv("PATH", "")
+	outline, err := NewAnalyzer("").FileOutline(context.Background(), Source{
+		Path: "service.py",
+		Content: `class Service:
+    def run(self):
+        pass
+`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := outline.Render()
+	if !strings.Contains(got, "- class class Service:") ||
+		!strings.Contains(got, "  - function def run(self):") {
+		t.Fatalf("gotreesitter Python outline missing:\n%s", got)
 	}
 }
 
