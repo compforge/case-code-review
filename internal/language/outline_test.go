@@ -101,6 +101,33 @@ func helper() {}
 	}
 }
 
+func TestGoFileOutlineDoesNotTreatSameNamedFieldAsTypeOwner(t *testing.T) {
+	source := Source{Path: "collision.go", Content: `package collision
+
+type Foo struct {
+	Bar int
+}
+
+type Bar struct{}
+
+func (Bar) Run() {}
+`}
+	outline, err := NewAnalyzer("").FileOutline(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := outline.Render()
+	if strings.Count(got, "func (Bar) Run()") != 1 {
+		t.Fatalf("method duplicated under same-named field:\n%s", got)
+	}
+	fooStart := strings.Index(got, "- type type Foo")
+	barTypeStart := strings.Index(got, "- type type Bar")
+	runStart := strings.Index(got, "  - method func (Bar) Run()")
+	if fooStart < 0 || barTypeStart < 0 || runStart < 0 || runStart < barTypeStart || (barTypeStart > fooStart && runStart < barTypeStart) {
+		t.Fatalf("method is not nested under type Bar:\n%s", got)
+	}
+}
+
 func TestJavaFileOutlinePreservesNestedOwners(t *testing.T) {
 	source := Source{Path: "Nested.java", Content: `class Outer {
   class Inner {

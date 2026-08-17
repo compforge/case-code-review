@@ -61,7 +61,10 @@ func TestWriteDebrief(t *testing.T) {
 		ClueRefs:       []string{"b.go::Entry"},
 		ContextPaths:   map[string][]string{"caller": {"b.go"}},
 		SourcePreloads: []string{"whole a.go"},
-		UsageSites:     4,
+		InitialOutlineAttempts: []InitialOutlineAttempt{
+			{Path: "b.go", Language: "go", Outcome: "admitted", Bytes: 42},
+		},
+		UsageSites: 4,
 	})
 	sh.Finalize()
 
@@ -115,6 +118,11 @@ func TestWriteDebrief(t *testing.T) {
 	}
 	if preloads := deb["source_preloads"].([]any); len(preloads) != 1 || preloads[0] != "whole a.go" {
 		t.Fatalf("source preloads off: %v", deb["source_preloads"])
+	}
+	attempts := deb["initial_outline_attempts"].([]any)
+	attempt := attempts[0].(map[string]any)
+	if len(attempts) != 1 || attempt["path"] != "b.go" || attempt["outcome"] != "admitted" || attempt["bytes"].(float64) != 42 {
+		t.Fatalf("initial outline attempts off: %v", attempts)
 	}
 	contextPaths := deb["context_paths"].(map[string]any)
 	if callers := contextPaths["caller"].([]any); len(callers) != 1 || callers[0] != "b.go" {

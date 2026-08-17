@@ -299,6 +299,102 @@ def render_markdown(
         else ["No search requests in this week."]
     )
 
+    lines.extend(["", "### Search context effectiveness", ""])
+    search_effect_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        searches = current[stage]["code_searches"]
+        follow_up = current[stage].get("search_follow_up") or {}
+        search_effect_rows.append(
+            [
+                title,
+                f"{searches.get('context_requests', 0)}/{searches['requests']}",
+                _format_value(searches.get("context_request_rate"), "percent"),
+                str(searches.get("returned_context_lines", 0)),
+                _format_value(
+                    follow_up.get("context_follow_up_read_rate"), "percent"
+                ),
+                _format_value(
+                    follow_up.get("plain_follow_up_read_rate"), "percent"
+                ),
+            ]
+        )
+    lines.extend(
+        _markdown_table(
+            [
+                "Stage",
+                "Context requests",
+                "Context usage",
+                "Context lines returned",
+                "Follow-up with context",
+                "Follow-up without context",
+            ],
+            search_effect_rows,
+        )
+    )
+
+    lines.extend(["", "### Initial FileOutline availability", ""])
+    outline_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        outlines = current[stage].get("initial_outlines") or {}
+        for language, outcomes in (outlines.get("by_language") or {}).items():
+            attempts = sum(int(count) for count in outcomes.values())
+            admitted = int(outcomes.get("admitted") or 0)
+            fallback = ", ".join(
+                f"{outcome}={count}"
+                for outcome, count in outcomes.items()
+                if outcome != "admitted" and count
+            )
+            outline_rows.append(
+                [
+                    title,
+                    language,
+                    str(attempts),
+                    str(admitted),
+                    _format_value(admitted / attempts if attempts else None, "percent"),
+                    fallback or "-",
+                ]
+            )
+    lines.extend(
+        _markdown_table(
+            ["Stage", "Language", "Attempts", "Admitted", "Admission", "Fallbacks"],
+            outline_rows,
+        )
+        if outline_rows
+        else ["No Initial FileOutline attempts in this week."]
+    )
+
+    lines.extend(["", "### Execution cohorts", ""])
+    cohort_rows = [
+        [
+            cohort["stage"],
+            cohort["tool_version"],
+            cohort["model"],
+            cohort["repository"],
+            str(cohort["chains"]),
+            _format_value(cohort["completion_rate"], "percent"),
+            _format_value(cohort["duration_sec"]["average"]),
+            _format_value(cohort["search_follow_up"]["follow_up_read_rate"], "percent"),
+        ]
+        for cohort in current.get("cohorts") or []
+    ]
+    lines.extend(
+        _markdown_table(
+            [
+                "Stage",
+                "Tool version",
+                "Model",
+                "Repository",
+                "Chains",
+                "Completion",
+                "Average sec",
+                "Search follow-up",
+            ],
+            cohort_rows,
+        )
+        if cohort_rows
+        else ["No execution cohorts in this week."]
+    )
+
     lines.extend(["", "### Main deductions", ""])
     deductions = []
     for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):

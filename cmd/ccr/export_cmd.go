@@ -15,7 +15,7 @@ import (
 	"os"
 )
 
-const atifSchemaVersion = "ATIF-v1.7"
+const atifSchemaVersion = "ATIF-v1.8"
 
 // ── ATIF shapes (field names per the RFC; omitempty keeps output lean) ────────
 
@@ -83,42 +83,43 @@ type atifFinal struct {
 // exportEvent is the read-side of session records for export — richer than
 // statsEvent (full messages / tool calls / usage), still decode-what-we-need.
 type exportEvent struct {
-	Type         string           `json:"type"`
-	Timestamp    string           `json:"timestamp"`
-	SessionID    string           `json:"sessionId"`
-	Model        string           `json:"model"`
-	Cwd          string           `json:"cwd"`
-	GitBranch    string           `json:"gitBranch"`
-	ReviewMode   string           `json:"reviewMode"`
-	DiffFrom     string           `json:"diffFrom"`
-	DiffTo       string           `json:"diffTo"`
-	ToolVersion  string           `json:"tool_version"`
-	Features     map[string]bool  `json:"features"`
-	Params       map[string]any   `json:"params"`
-	GitHead      string           `json:"git_head"`
-	EvalTag      string           `json:"eval_tag"`
-	BizID        string           `json:"biz_id"`
-	ArtifactKind string           `json:"artifact_kind"`
-	Data         map[string]any   `json:"data"`
-	ScopeID      string           `json:"scope_id"`
-	FilePath     string           `json:"filePath"`
-	Kind         string           `json:"kind"`
-	Paths        []string         `json:"paths"`
-	TaskType     string           `json:"taskType"`
-	ExecutionID  string           `json:"execution_id"`
-	Outcome      string           `json:"outcome"`
-	Reason       string           `json:"reason"`
-	Turns        int              `json:"turns"`
-	ProjectionNo int              `json:"projection_no"`
-	Metadata     map[string]any   `json:"metadata"`
-	Items        []map[string]any `json:"items"`
-	RequestNo    int              `json:"request_no"`
-	Messages     []exportMessage  `json:"messages"`
-	Content      string           `json:"content"`
-	Reasoning    string           `json:"reasoning"`
-	ToolCalls    json.RawMessage  `json:"tool_calls"`
-	DurationMS   float64          `json:"duration_ms"`
-	Usage        struct {
+	Type                   string           `json:"type"`
+	Timestamp              string           `json:"timestamp"`
+	SessionID              string           `json:"sessionId"`
+	Model                  string           `json:"model"`
+	Cwd                    string           `json:"cwd"`
+	GitBranch              string           `json:"gitBranch"`
+	ReviewMode             string           `json:"reviewMode"`
+	DiffFrom               string           `json:"diffFrom"`
+	DiffTo                 string           `json:"diffTo"`
+	ToolVersion            string           `json:"tool_version"`
+	Features               map[string]bool  `json:"features"`
+	Params                 map[string]any   `json:"params"`
+	GitHead                string           `json:"git_head"`
+	EvalTag                string           `json:"eval_tag"`
+	BizID                  string           `json:"biz_id"`
+	ArtifactKind           string           `json:"artifact_kind"`
+	Data                   map[string]any   `json:"data"`
+	ScopeID                string           `json:"scope_id"`
+	FilePath               string           `json:"filePath"`
+	Kind                   string           `json:"kind"`
+	Paths                  []string         `json:"paths"`
+	TaskType               string           `json:"taskType"`
+	ExecutionID            string           `json:"execution_id"`
+	Outcome                string           `json:"outcome"`
+	Reason                 string           `json:"reason"`
+	Turns                  int              `json:"turns"`
+	ProjectionNo           int              `json:"projection_no"`
+	Metadata               map[string]any   `json:"metadata"`
+	Items                  []map[string]any `json:"items"`
+	InitialOutlineAttempts []map[string]any `json:"initial_outline_attempts"`
+	RequestNo              int              `json:"request_no"`
+	Messages               []exportMessage  `json:"messages"`
+	Content                string           `json:"content"`
+	Reasoning              string           `json:"reasoning"`
+	ToolCalls              json.RawMessage  `json:"tool_calls"`
+	DurationMS             float64          `json:"duration_ms"`
+	Usage                  struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		CacheReadTokens  int `json:"cache_read_tokens"`
@@ -386,6 +387,11 @@ func exportSession(path string) (*atifTrajectory, error) {
 			}
 			if e.Turns > 0 {
 				c.extra["execution_turns"] = e.Turns
+			}
+		case "debrief":
+			c := get(e)
+			if len(e.InitialOutlineAttempts) > 0 {
+				c.extra["initial_outline_attempts"] = e.InitialOutlineAttempts
 			}
 		}
 	}

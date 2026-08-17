@@ -406,7 +406,25 @@ def main() -> int:
                         f"max_batch={searches['max_batch']} "
                         f"calls/round={searches['calls_per_round']} "
                         f"purposes={searches['purpose_counts']} "
-                        f"purpose_coverage={searches['purpose_coverage']}"
+                        f"purpose_coverage={searches['purpose_coverage']} "
+                        f"context={searches['context_requests']}/{searches['requests']} "
+                        f"context_lines={searches['returned_context_lines']}"
+                    )
+                    follow_up = sig["search_then_read"]
+                    if follow_up["hit_search_request_count"]:
+                        print(
+                            "   search_follow_up "
+                            f"all={follow_up['follow_up_read_rate']} "
+                            f"with_context={follow_up['context_follow_up_read_rate']} "
+                            f"without_context={follow_up['plain_follow_up_read_rate']}"
+                        )
+                outlines = sig["initial_context"]["outlines"]
+                if outlines["attempts"]:
+                    print(
+                        "   initial_outlines "
+                        f"outcomes={outlines['outcomes']} "
+                        f"by_language={outlines['by_language']} "
+                        f"admitted_bytes={outlines['admitted_bytes']}"
                     )
                 for result in sig["evaluations"]:
                     if result["verdict"] == "fail":

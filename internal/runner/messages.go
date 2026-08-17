@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
@@ -214,9 +216,9 @@ func (a *Runner) initialFileContext(
 	u unit.Unit,
 	usagePaths []string,
 	own, related []*msg.File,
-) []msg.FileContextEntry {
+) ([]msg.FileContextEntry, []session.InitialOutlineAttempt) {
 	if a.fileReader() == nil {
-		return nil
+		return nil, nil
 	}
 	source := make(map[string]bool)
 	for _, file := range append(append([]*msg.File(nil), own...), related...) {
@@ -251,6 +253,7 @@ func (a *Runner) initialFileContext(
 	}
 
 	entries := make([]msg.FileContextEntry, 0, min(len(candidates), maxInitialReferences))
+	attempts := make([]session.InitialOutlineAttempt, 0, min(len(candidates), maxInitialOutlines))
 	outlineCount, outlineBytes := 0, 0
 	for _, candidate := range candidates {
 		if len(entries) >= maxInitialReferences {
@@ -260,22 +263,56 @@ func (a *Runner) initialFileContext(
 			Path: candidate.path, View: msg.ViewReference,
 			Reason: candidate.reason, Ref: candidate.ref,
 		}
-		if outlineCount < maxInitialOutlines && candidate.reason != string(unit.RelProject) {
-			content, err := a.fileReader().Read(ctx, candidate.path)
-			if err == nil {
-				outline, outlineErr := a.sourceAnalyzer().FileOutline(ctx, language.Source{Path: candidate.path, Content: content})
-				rendered := outline.Render()
-				if outlineErr == nil && rendered != "" && outlineBytes+len(rendered) <= initialOutlineBudget {
-					entry.View = msg.ViewOutline
-					entry.Content = rendered
-					outlineCount++
-					outlineBytes += len(rendered)
-				}
+		if candidate.reason != string(unit.RelProject) {
+			attempt := session.InitialOutlineAttempt{
+				Path: candidate.path, Language: outlineLanguage(candidate.path),
 			}
+			if outlineCount >= maxInitialOutlines {
+				attempt.Outcome = "capacity_rejected"
+				attempts = append(attempts, attempt)
+				entries = append(entries, entry)
+				continue
+			}
+			content, err := a.fileReader().Read(ctx, candidate.path)
+			if err != nil {
+				attempt.Outcome = "read_error"
+				attempts = append(attempts, attempt)
+				entries = append(entries, entry)
+				continue
+			}
+			outline, outlineErr := a.sourceAnalyzer().FileOutline(ctx, language.Source{Path: candidate.path, Content: content})
+			if outlineErr != nil {
+				attempt.Outcome = "analysis_error"
+				attempts = append(attempts, attempt)
+				entries = append(entries, entry)
+				continue
+			}
+			rendered := outline.Render()
+			attempt.Bytes = len(rendered)
+			switch {
+			case rendered == "":
+				attempt.Outcome = "empty"
+			case outlineBytes+len(rendered) > initialOutlineBudget:
+				attempt.Outcome = "budget_rejected"
+			default:
+				attempt.Outcome = "admitted"
+				entry.View = msg.ViewOutline
+				entry.Content = rendered
+				outlineCount++
+				outlineBytes += len(rendered)
+			}
+			attempts = append(attempts, attempt)
 		}
 		entries = append(entries, entry)
 	}
-	return entries
+	return entries, attempts
+}
+
+func outlineLanguage(filePath string) string {
+	if detected, ok := language.Detect(filePath); ok {
+		return string(detected)
+	}
+	return strings.TrimPrefix(strings.ToLower(filepath.Ext(filePath)), ".")
 }
 
 func (a *Runner) repositoryReferencePaths(u unit.Unit, limit int) []string {

@@ -526,6 +526,9 @@ func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
 	if len(d.SourcePreloads) > 0 {
 		rec["source_preloads"] = d.SourcePreloads
 	}
+	if len(d.InitialOutlineAttempts) > 0 {
+		rec["initial_outline_attempts"] = d.InitialOutlineAttempts
+	}
 	if len(d.ToolCalls) > 0 {
 		rec["tool_calls"] = d.ToolCalls
 	}
