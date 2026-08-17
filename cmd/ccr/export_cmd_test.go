@@ -16,8 +16,9 @@ func TestExportSessionATIF(t *testing.T) {
 {"type":"tool_call","scope_id":"u1","tool_name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"metadata":{"cache_status":"hit"},"timestamp":"2026-07-02T10:00:06Z"}
 {"type":"llm_request","scope_id":"u1","request_no":2,"messages":[{"role":"system","content":"be a reviewer"}],"timestamp":"2026-07-02T10:00:07Z"}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"looks fine","usage":{"prompt_tokens":200,"completion_tokens":20},"duration_ms":3000,"timestamp":"2026-07-02T10:00:10Z"}
-{"type":"execution_end","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","taskType":"main_task","outcome":"completed","turns":2,"tool_calls":1,"duration_ms":8000,"timestamp":"2026-07-02T10:00:10Z"}
-`
+	{"type":"execution_end","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","taskType":"main_task","outcome":"completed","turns":2,"tool_calls":1,"duration_ms":8000,"timestamp":"2026-07-02T10:00:10Z"}
+	{"type":"debrief","scope_id":"u1","filePath":"a.go","kind":"unit","initial_outline_attempts":[{"path":"b.go","language":"go","outcome":"admitted","bytes":42}],"timestamp":"2026-07-02T10:00:10Z"}
+	`
 	f := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(f, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
@@ -57,6 +58,10 @@ func TestExportSessionATIF(t *testing.T) {
 	}
 	if sub.Extra["execution_outcome"] != "completed" || sub.Extra["execution_id"] != "exec-1" || sub.Extra["execution_turns"] != 2 {
 		t.Fatalf("execution terminal fact missing: %v", sub.Extra)
+	}
+	outlineAttempts, ok := sub.Extra["initial_outline_attempts"].([]map[string]any)
+	if !ok || len(outlineAttempts) != 1 || outlineAttempts[0]["outcome"] != "admitted" {
+		t.Fatalf("initial outline attempts missing: %v", sub.Extra["initial_outline_attempts"])
 	}
 	// Steps: system + user (from request #1 only — request #2's replayed
 	// conversation must NOT duplicate them) + two agent responses.

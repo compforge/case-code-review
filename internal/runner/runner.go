@@ -1188,8 +1188,9 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// Hand the full domain messages to Harness. ContextManager performs the first
 	// projection, and each File owns its source/outline/path ratio decision.
 	ownFiles, relatedFiles, outcomes := a.preloadReviewFiles(ctx, u)
-	initialFiles := a.initialFileContext(ctx, u, usagePaths, ownFiles, relatedFiles)
+	initialFiles, outlineAttempts := a.initialFileContext(ctx, u, usagePaths, ownFiles, relatedFiles)
 	deb.SourcePreloads = outcomes
+	deb.InitialOutlineAttempts = outlineAttempts
 	domain := a.assembleReviewMessages(buildMessages, ownFiles, relatedFiles, initialFiles)
 
 	unitreview.AttachMessages(&u, domain)

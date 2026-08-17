@@ -107,6 +107,10 @@ class CCRTrajectoryTest(unittest.TestCase):
                             {"kind": "file", "identity": "b.go", "representation": "outline", "reason": "callee"},
                             {"kind": "file", "identity": "a.go", "representation": "reference", "reason": "repository_reference"},
                         ],
+                        "initial_outline_attempts": [
+                            {"path": "b.go", "language": "go", "outcome": "admitted", "bytes": 80},
+                            {"path": "README.md", "language": "markdown", "outcome": "empty"},
+                        ],
                     },
                 }
             ],
@@ -165,6 +169,15 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "by_reason": {
                     "unit": {"admitted": 1, "source_request": 2},
                     "callee": {"admitted": 1},
+                },
+                "outlines": {
+                    "attempts": 2,
+                    "outcomes": {"admitted": 1, "empty": 1},
+                    "by_language": {
+                        "go": {"admitted": 1},
+                        "markdown": {"empty": 1},
+                    },
+                    "admitted_bytes": 80,
                 },
             },
         )
@@ -620,6 +633,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         result = (
             "===== CODE_SEARCH RESULT 1/4 =====\n"
             "File: a.go\nMatch lines: 1\n10|func Alpha()\n"
+            "Context:\nLINE_RANGE: 9-11\n9|// Alpha\n10|func Alpha()\n11|}\n"
             "===== CODE_SEARCH RESULT 2/4 =====\n"
             'Search outcome: {"status":"no_matches","query_mode":"literal","searched_files":4}\n'
             "No matches found\n"
@@ -650,6 +664,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                                 "query": "Alpha",
                                                 "syntax": "literal",
                                                 "purpose": "function",
+                                                "context_lines": 1,
                                             },
                                             {
                                                 "query": "Missing",
@@ -704,6 +719,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                     "custom-domain-concept": 1,
                 },
                 "purpose_coverage": 1.0,
+                "context_requests": 1,
+                "context_request_rate": 0.25,
+                "requested_context_lines": 1,
+                "returned_context_lines": 3,
+                "context_truncated_requests": 0,
+                "context_unavailable_requests": 0,
             },
         )
         evaluation = SearchScopeEvaluator().evaluate(trajectory)
@@ -725,7 +746,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 {
                                     "tool_call_id": "search",
                                     "function_name": "search_code",
-                                    "arguments": {"query": "Alpha"},
+                                    "arguments": {"query": "Alpha", "context_lines": 1},
                                 }
                             ],
                             "observation": {
@@ -806,6 +827,15 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "search_then_read_rate": 0.333,
                 "identifier_search_then_read_range_count": 1,
                 "identifier_search_then_read_rate": 0.333,
+                "hit_search_request_count": 1,
+                "follow_up_read_request_count": 1,
+                "follow_up_read_rate": 1.0,
+                "context_hit_search_request_count": 1,
+                "context_follow_up_read_request_count": 1,
+                "context_follow_up_read_rate": 1.0,
+                "plain_hit_search_request_count": 0,
+                "plain_follow_up_read_request_count": 0,
+                "plain_follow_up_read_rate": None,
                 "step_ids": ["1:tool:1", "2:tool:1"],
             },
         )

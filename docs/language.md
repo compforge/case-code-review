@@ -48,6 +48,9 @@ FileOutline；不同实现既可以替换，也可以提供互补的结构事实
 Markdown 等非代码格式由 CCR 直接投影。Outline 是源码消息在上下文收紧时的导航摘要，不是新的
 行为证据，也不能替代读取源码验证行为。
 
+Runner 会把每次初始 FileOutline 生成与准入尝试的语言、结果和 fallback 原因保存为轨迹 Fact。这样评测可以
+区分 provider 无输出、读取/分析失败与 Harness 预算淘汰，而不把“最终只提供 path”误判成同一种问题。
+
 ### 2.2 仓库级索引
 
 RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition lookup、reference lookup、repo map

@@ -44,6 +44,7 @@ func treeSitterOutlineEntries(
 				Label:     symbol.Kind,
 				Signature: treeSitterSignature(source.Content, symbol.Range.StartByte, symbol.Range.EndByte),
 				Span:      byteSpan(source.Content, symbol.Range.StartByte, symbol.Range.EndByte),
+				CanOwn:    len(symbol.Children) > 0 || canOwnOutlineChildren(symbol.Kind),
 			})
 			appendSymbols(symbol.Children, name)
 		}

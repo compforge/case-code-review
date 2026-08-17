@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import subprocess
@@ -23,15 +22,16 @@ from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ccr_trajectory import ATIFTrajectoryLoader, REVIEW1, REVIEW2, UNKNOWN_STAGE
-from trajectory_judge import main_deductions, objective_signals
+from trajectory_judge import objective_signals
+from weekly_report_metrics import aggregate_cohorts, aggregate_stage
 from weekly_report_render import render_markdown
 
-DEFAULT_DATASETS = (
+DEFAULT_DATASET_PATHS = (
     Path("eval/data/datasets/review-comments-public.jsonl"),
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v5"
+REPORT_SCHEMA_VERSION = "weekly-report-v6"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +138,29 @@ def read_session(path: Path, zone: ZoneInfo) -> SessionRecord | None:
 
 def _resolved(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+def default_dataset_paths(repo_root: Path | None = None) -> list[Path]:
+    """Resolve ignored eval data from the main worktree when run in a worktree."""
+
+    root = (repo_root or Path.cwd()).resolve()
+    local = [root / path for path in DEFAULT_DATASET_PATHS]
+    if any(path.is_file() for path in local):
+        return local
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return local
+    common_root = Path(result.stdout.strip()).resolve().parent
+    shared = [common_root / path for path in DEFAULT_DATASET_PATHS]
+    return shared if any(path.is_file() for path in shared) else local
 
 
 def encode_repo_path(repository: str | Path) -> str:
@@ -254,6 +277,7 @@ def load_trajectory_rows(
                         "tool_version": str(
                             metadata.get("tool_version") or session.tool_version
                         ),
+                        "repository": repository_identity(session.cwd),
                         "signals": signals,
                     }
                 )
@@ -301,170 +325,6 @@ def unit_duration_records(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]
             str(record["unit"] or ""),
         ),
     )
-
-
-def _percentile(values: list[float], percentile: float) -> float | int | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = max(0, math.ceil(percentile * len(ordered)) - 1)
-    value = ordered[index]
-    return int(value) if float(value).is_integer() else round(value, 3)
-
-
-def distribution(values: list[float]) -> dict[str, float | int | None]:
-    if not values:
-        return {"total": 0, "average": None, "p50": None, "p95": None}
-    total = sum(values)
-    average = total / len(values)
-    return {
-        "total": int(total) if float(total).is_integer() else round(total, 3),
-        "average": round(average, 3),
-        "p50": _percentile(values, 0.50),
-        "p95": _percentile(values, 0.95),
-    }
-
-
-def average_per(values: list[float], count: int) -> float | None:
-    return round(sum(values) / count, 3) if count else None
-
-
-def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
-    selected = [row for row in rows if row["stage"] == stage]
-    outcomes = Counter(row["outcome"] for row in selected)
-    scores = [float(row["score"]) for row in selected if row["score"] is not None]
-    tools: Counter[str] = Counter()
-    failure_events: Counter[tuple[str, str]] = Counter()
-    failure_affected: dict[tuple[str, str], set[int]] = {}
-    diagnostic_events: Counter[tuple[str, str]] = Counter()
-    diagnostic_affected: dict[tuple[str, str], set[int]] = {}
-    search_purposes: Counter[str] = Counter()
-    search_calls = 0
-    search_requests = 0
-    for row_index, row in enumerate(selected):
-        tools.update(row["tool_freq"])
-        signals = row.get("signals") or {}
-        code_searches = signals.get("code_searches") or {}
-        search_calls += int(code_searches.get("calls") or 0)
-        search_requests += int(code_searches.get("requests") or 0)
-        search_purposes.update(
-            {
-                str(purpose): int(requests)
-                for purpose, requests in (
-                    code_searches.get("purpose_counts") or {}
-                ).items()
-            }
-        )
-        for failure in signals.get("failures") or []:
-            key = (
-                str(failure.get("impact") or "step"),
-                str(failure.get("key") or "unknown.unknown.unknown"),
-            )
-            failure_events[key] += 1
-            failure_affected.setdefault(key, set()).add(row_index)
-        for evaluation in signals.get("evaluations") or []:
-            for signal in evaluation.get("signals") or []:
-                key = (
-                    str(signal.get("severity") or "info"),
-                    str(signal.get("code") or "unknown"),
-                )
-                diagnostic_events[key] += 1
-                diagnostic_affected.setdefault(key, set()).add(row_index)
-    count = len(selected)
-    known_outcomes = count - outcomes["unknown"]
-    assessments = sum(
-        int((row.get("signals") or {}).get("assessment_count") or 0)
-        for row in selected
-    )
-    durations = [float(row["duration_sec"]) for row in selected]
-    prompt_tokens = [float(row["prompt_tokens"]) for row in selected]
-    completion_tokens = [float(row["completion_tokens"]) for row in selected]
-    cached_tokens = [float(row.get("cached_tokens", 0)) for row in selected]
-    failure_items = [
-        {
-            "impact": impact,
-            "failure": failure,
-            "count": event_count,
-            "affected_chains": len(failure_affected[(impact, failure)]),
-            "rate": round(len(failure_affected[(impact, failure)]) / count, 3),
-        }
-        for (impact, failure), event_count in sorted(
-            failure_events.items(),
-            key=lambda item: (-len(failure_affected[item[0]]), item[0]),
-        )
-    ]
-    execution_failure_rates = {
-        item["failure"]: item["rate"]
-        for item in failure_items
-        if item["impact"] == "execution"
-    }
-    diagnostic_items = [
-        {
-            "severity": severity,
-            "signal": signal,
-            "count": event_count,
-            "affected_chains": len(diagnostic_affected[(severity, signal)]),
-            "rate": round(len(diagnostic_affected[(severity, signal)]) / count, 3),
-        }
-        for (severity, signal), event_count in sorted(
-            diagnostic_events.items(),
-            key=lambda item: (-len(diagnostic_affected[item[0]]), item[0]),
-        )
-    ]
-    labeled_search_requests = sum(
-        requests
-        for purpose, requests in search_purposes.items()
-        if purpose != "(unspecified)"
-    )
-    return {
-        "chains": count,
-        "outcomes": dict(sorted(outcomes.items())),
-        "outcome_coverage": round(known_outcomes / count, 3) if count else None,
-        "completion_rate": round(outcomes["completed"] / known_outcomes, 3)
-        if known_outcomes
-        else None,
-        "workflow_timeout_rate": execution_failure_rates.get(
-            "workflow.timeout", 0.0 if count else None
-        ),
-        "llm_routing_timeout_rate": execution_failure_rates.get(
-            "llm.routing.timeout", 0.0 if count else None
-        ),
-        "average_score": round(sum(scores) / len(scores), 3) if scores else None,
-        "assessments": assessments,
-        "rounds": distribution([float(row["rounds"]) for row in selected]),
-        "duration_sec": distribution(durations),
-        "prompt_tokens": distribution(prompt_tokens),
-        "completion_tokens": distribution(completion_tokens),
-        "cached_tokens": distribution(cached_tokens),
-        "per_assessment": {
-            "duration_sec": average_per(durations, assessments),
-            "prompt_tokens": average_per(prompt_tokens, assessments),
-            "completion_tokens": average_per(completion_tokens, assessments),
-            "cached_tokens": average_per(cached_tokens, assessments),
-        },
-        "tool_freq": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))),
-        "code_searches": {
-            "calls": search_calls,
-            "requests": search_requests,
-            "purpose_counts": dict(
-                sorted(search_purposes.items(), key=lambda item: (-item[1], item[0]))
-            ),
-            "purpose_coverage": round(
-                labeled_search_requests / search_requests, 3
-            )
-            if search_requests
-            else None,
-        },
-        "failures": {
-            "events": sum(failure_events.values()),
-            "items": failure_items,
-        },
-        "diagnostic_signals": {
-            "events": sum(diagnostic_events.values()),
-            "items": diagnostic_items,
-        },
-        "main_deductions": main_deductions([row["signals"] for row in selected]),
-    }
 
 
 def aggregate_sessions(sessions: list[SessionRecord]) -> dict[str, Any]:
@@ -661,6 +521,7 @@ def build_week_metrics(
         REVIEW1: aggregate_stage(week_rows, REVIEW1),
         REVIEW2: aggregate_stage(week_rows, REVIEW2),
         UNKNOWN_STAGE: aggregate_stage(week_rows, UNKNOWN_STAGE),
+        "cohorts": aggregate_cohorts(week_rows),
         "quality": quality_metrics(
             datasets,
             sessions,
@@ -705,6 +566,16 @@ COMPARISON_METRICS = (
     ("Review 1 prompt/chain", (REVIEW1, "prompt_tokens", "average"), "number"),
     ("Review 1 search requests", (REVIEW1, "code_searches", "requests"), "number"),
     (
+        "Review 1 search context usage",
+        (REVIEW1, "code_searches", "context_request_rate"),
+        "percent",
+    ),
+    (
+        "Review 1 search follow-up reads",
+        (REVIEW1, "search_follow_up", "follow_up_read_rate"),
+        "percent",
+    ),
+    (
         "Review 1 search purpose coverage",
         (REVIEW1, "code_searches", "purpose_coverage"),
         "percent",
@@ -743,6 +614,16 @@ COMPARISON_METRICS = (
         "number",
     ),
     ("Review 2 search requests", (REVIEW2, "code_searches", "requests"), "number"),
+    (
+        "Review 2 search context usage",
+        (REVIEW2, "code_searches", "context_request_rate"),
+        "percent",
+    ),
+    (
+        "Review 2 search follow-up reads",
+        (REVIEW2, "search_follow_up", "follow_up_read_rate"),
+        "percent",
+    ),
     (
         "Review 2 search purpose coverage",
         (REVIEW2, "code_searches", "purpose_coverage"),
@@ -923,7 +804,7 @@ def main() -> int:
         or previous_window.contains(session.started_at)
     ]
     rows, failed_sessions = load_trajectory_rows(selected_sessions, args.ccr)
-    dataset_paths = args.dataset or list(DEFAULT_DATASETS)
+    dataset_paths = args.dataset or default_dataset_paths()
     datasets, missing_datasets, invalid_dataset_lines = load_datasets(dataset_paths)
 
     metric_args = {

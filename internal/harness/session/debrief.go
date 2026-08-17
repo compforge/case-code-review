@@ -48,6 +48,9 @@ type Debrief struct {
 	// SourcePreloads records each attempted preload's fate: "whole <path>",
 	// "ranged <path>", "budget_miss <path>", "dropped <label>".
 	SourcePreloads []string
+	// InitialOutlineAttempts records bounded initial-navigation attempts,
+	// including fallback reasons that admitted context cannot reveal.
+	InitialOutlineAttempts []InitialOutlineAttempt
 	// UsageSites is how many pre-grepped use sites the initial context carried.
 	UsageSites int
 
@@ -61,6 +64,16 @@ type Debrief struct {
 	ToolCalls  map[string]int // tool name -> calls
 	Tokens     TokenUsage
 	DurationMs int64
+}
+
+// InitialOutlineAttempt records one attempt to add a statically known file's
+// FileOutline to Initial Context. Outcome is admitted, read_error,
+// analysis_error, empty, budget_rejected, or capacity_rejected.
+type InitialOutlineAttempt struct {
+	Path     string `json:"path"`
+	Language string `json:"language"`
+	Outcome  string `json:"outcome"`
+	Bytes    int    `json:"bytes,omitempty"`
 }
 
 // CloseScope declares a scope's work DONE and hands over its debrief — the

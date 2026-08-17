@@ -199,7 +199,8 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 小范围可合并出的理论最少读取数。相邻读取按同一 tool call、同一 inference turn 和跨 turn 分层；跨 turn
 相邻通常是逐步导航，不能反推前一次调用已经知道后续范围，因此只产生 `adjacent_file_reads` 诊断信号，不参与综合分。
 同一 inference turn 内发出多个 `read_files` 调用才产生 `unbatched_same_turn_reads` warning；较早的
-`search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计。
+`search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计；
+有命中的 search request 另作为稳定分母，区分启用和未启用 `context_lines` 后的 follow-up read 比例。
 每个 query 的自由字符串 `purpose` 同时按原值统计覆盖率和分布，用来发现尚未进入既有工具分类的搜索需求。
 这些模式的 count/rate 通过 Measurements 聚合进报告。重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
@@ -219,6 +220,8 @@ ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval �
 一起判断是否重复；`outline→read` 表示关系判断正确但结构信息不足；`reference→read` 表示路径有用但
 需要原文；`missing→read` 则提示 Language/Project Knowledge 尚未覆盖该关系。后续没有 demand 保持中性，
 是否过量注入需要固定 corpus 的 A/B 成本与效果共同判断。
+初始 FileOutline 的每次生成与准入尝试另记录语言、结果和 fallback 原因；周报按语言展示 admission rate，
+用来区分 provider 能力缺口、读取/分析失败和上下文预算淘汰，不能只从最终 Prompt 反推未准入原因。
 
 ### 已知问题未交付的阶段归因
 
@@ -274,7 +277,8 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 ```
 
 `eval/data/` 是 gitignore 的本地事实源，不会随 git worktree 复制。在隔离 worktree 生成报告时，
-应显式传入主数据目录中的全部规范化数据集：
+周报会通过 Git common dir 自动读取主 worktree 的默认 datasets；需要使用其它事实源时，显式传入
+全部规范化数据集：
 
 ```bash
 uv run --project eval/reviewbench python eval/weekly_report.py \
@@ -300,12 +304,18 @@ Review 2 Lane 的完成率、`workflow.timeout`、`llm.routing.timeout`、score�
 工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
 不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。
 `search_code` 的 request purpose 按 Review stage 保留原始自由文本，报告展示 purpose 覆盖率和
-分布，用于观察真实搜索意图以及埋点完整度。
+分布，用于观察真实搜索意图以及埋点完整度。`context_lines` 同时记录请求数、实际返回行数、预算截断
+和不可用次数；有命中的 search request 作为分母，分别计算启用和未启用 context 后的 follow-up read
+比例，避免用“所有 read 中有多少来自 search”错误衡量工具优化收益。
+Initial FileOutline 可用情况同样按 stage 和 language 展示 admitted、empty、read/analysis error 以及预算/容量淘汰，
+使 gotreesitter 升级或 CCR fallback 的收益能由运行事实验证。
 Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周内承载的 Assessment 数量变化
 扭曲效果判断。平均、p50 和 p95 耗时同时进入本周与上周的对比表。
 `REPORT.md` 展示最慢的 20 个 Review 1 Unit，完整的逐 Unit 耗时记录保存在
 `unit-durations.jsonl`，可按 Unit、Session、执行结果、轮次、token、模型和工具版本继续分析。
-质量指标分为两个口径：`review_week` 按 dataset 中的 `engine.session_id` 回看本周产出的 finding，
+报告按 stage、工具版本、模型和仓库列出执行 cohort，窗口汇总不能替代 cohort 对比；验证工具或 loop
+改动时仍应在同一固定 corpus 上重放。质量指标分为两个口径：`review_week` 按 dataset 中的
+`engine.session_id` 回看本周产出的 finding，
 `labeled_this_week` 按人工标签时间统计本周新增标注。版本和模型分布始终单列，避免把一周内混跑的
 不同引擎直接当成同一 cohort。对已标注 Finding，报告分别展示 `important + minor` 的 accepted
 比例以及 `wrong`、`repeat`、`debatable` 比例，不把它们压成含义不清的“准确率”。`ccr:missed`

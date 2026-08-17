@@ -27,6 +27,7 @@ type outlineMember struct {
 type outlineEntry struct {
 	Name, Owner, Label, Signature string
 	Span                          Span
+	CanOwn                        bool
 }
 
 // Outline derives a file projection from facts already produced by Analyze.
@@ -40,6 +41,7 @@ func (a Analysis) Outline(path string) FileOutline {
 		outline.entries = append(outline.entries, outlineEntry{
 			Name: definition.Name, Owner: definition.Owner, Label: string(definition.Kind),
 			Signature: definition.Signature, Span: definition.Span,
+			CanOwn: canOwnOutlineChildren(string(definition.Kind)),
 		})
 	}
 	for _, member := range a.outlineMembers {
@@ -49,6 +51,15 @@ func (a Analysis) Outline(path string) FileOutline {
 		})
 	}
 	return outline
+}
+
+func canOwnOutlineChildren(kind string) bool {
+	switch kind {
+	case "class", "enum", "interface", "message", "module", "namespace", "record", "service", "struct", "trait", "type":
+		return true
+	default:
+		return false
+	}
 }
 
 func (o FileOutline) Empty() bool { return len(o.entries) == 0 && o.rendered == "" }
@@ -82,7 +93,9 @@ func (o FileOutline) renderRange(start, end int) string {
 
 	byName := make(map[string]outlineEntry, len(entries))
 	for _, entry := range entries {
-		byName[entry.Name] = entry
+		if entry.CanOwn {
+			byName[entry.Name] = entry
+		}
 	}
 	children := make(map[string][]outlineEntry)
 	var roots []outlineEntry
@@ -107,8 +120,10 @@ func (o FileOutline) renderRange(start, end int) string {
 			fmt.Fprintf(&b, "-%d", entry.Span.End)
 		}
 		b.WriteByte('\n')
-		for _, child := range children[entry.Name] {
-			write(child, depth+1)
+		if entry.CanOwn {
+			for _, child := range children[entry.Name] {
+				write(child, depth+1)
+			}
 		}
 	}
 	for _, root := range roots {
@@ -120,7 +135,9 @@ func (o FileOutline) renderRange(start, end int) string {
 func outlineRange(entries []outlineEntry, start, end int) []outlineEntry {
 	allOwners := make(map[string]outlineEntry)
 	for _, entry := range entries {
-		allOwners[entry.Name] = entry
+		if entry.CanOwn {
+			allOwners[entry.Name] = entry
+		}
 	}
 	selected := make(map[string]bool)
 	for _, entry := range entries {

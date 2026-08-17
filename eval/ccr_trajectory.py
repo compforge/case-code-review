@@ -605,6 +605,31 @@ class SearchThenReadEvaluator:
                 "ratio",
                 "Identifier search-linked ranges divided by observed read ranges.",
             ),
+            MeasurementSpec(
+                "hit_search_request_count",
+                "count",
+                "Search requests that returned at least one hit.",
+            ),
+            MeasurementSpec(
+                "follow_up_read_request_count",
+                "count",
+                "Hit-producing search requests followed by a covering source read.",
+            ),
+            MeasurementSpec(
+                "follow_up_read_rate",
+                "ratio",
+                "Hit-producing search requests followed by a covering source read.",
+            ),
+            MeasurementSpec(
+                "context_follow_up_read_rate",
+                "ratio",
+                "Follow-up read rate for hit-producing searches with context_lines.",
+            ),
+            MeasurementSpec(
+                "plain_follow_up_read_rate",
+                "ratio",
+                "Follow-up read rate for hit-producing searches without context_lines.",
+            ),
         ),
     )
 
@@ -613,10 +638,10 @@ class SearchThenReadEvaluator:
     ) -> EvaluationResult:
         del reference
         stats = search_then_read_stats(trajectory)
-        if not stats["search_calls"] or not stats["read_range_count"]:
+        if not stats["hit_search_request_count"]:
             return _not_evaluated(
                 self.spec.evaluator_id,
-                "Trajectory needs both successful search_code and ranged read_files output.",
+                "Trajectory needs a search_code request that returned at least one hit.",
             )
         linked = stats["search_then_read_range_count"]
         measurements = {
@@ -627,6 +652,11 @@ class SearchThenReadEvaluator:
                 "search_then_read_rate",
                 "identifier_search_then_read_range_count",
                 "identifier_search_then_read_rate",
+                "hit_search_request_count",
+                "follow_up_read_request_count",
+                "follow_up_read_rate",
+                "context_follow_up_read_rate",
+                "plain_follow_up_read_rate",
             )
         }
         signals = ()
@@ -652,8 +682,9 @@ class SearchThenReadEvaluator:
             status="evaluated",
             measurements=measurements,
             explanation=(
-                f"{linked} of {stats['read_range_count']} read range(s) cover an "
-                "earlier search hit."
+                f"{stats['follow_up_read_request_count']} of "
+                f"{stats['hit_search_request_count']} hit-producing search request(s) "
+                f"were followed by a covering read ({linked} read range(s))."
             ),
             step_ids=tuple(stats["step_ids"]),
             signals=signals,
@@ -963,6 +994,9 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
     admitted: Counter[str] = Counter()
     demand: dict[str, Counter[str]] = {}
     by_reason: dict[str, Counter[str]] = {}
+    outline_outcomes: Counter[str] = Counter()
+    outline_by_language: dict[str, Counter[str]] = {}
+    admitted_outline_bytes = 0
 
     def reason_counts(reason: str) -> Counter[str]:
         return by_reason.setdefault(reason, Counter())
@@ -983,10 +1017,29 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
         demand.setdefault(item.signal, Counter())[representation] += 1
         reason_counts(reason)[item.signal] += 1
 
+    for item in trajectory.metadata.get("initial_outline_attempts") or []:
+        if not isinstance(item, dict):
+            continue
+        outcome = str(item.get("outcome") or "unknown")
+        language = str(item.get("language") or "unknown")
+        outline_outcomes[outcome] += 1
+        outline_by_language.setdefault(language, Counter())[outcome] += 1
+        if outcome == "admitted":
+            admitted_outline_bytes += _non_negative_int(item.get("bytes"))
+
     return {
         "admitted": dict(admitted),
         "demand": {signal: dict(values) for signal, values in demand.items()},
         "by_reason": {reason: dict(values) for reason, values in by_reason.items()},
+        "outlines": {
+            "attempts": sum(outline_outcomes.values()),
+            "outcomes": dict(outline_outcomes),
+            "by_language": {
+                language: dict(outcomes)
+                for language, outcomes in outline_by_language.items()
+            },
+            "admitted_bytes": admitted_outline_bytes,
+        },
     }
 
 
@@ -1036,15 +1089,37 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
             "repeated_empty": 0,
             "purpose_counts": {},
             "purpose_coverage": 0.0,
+            "context_requests": 0,
+            "context_request_rate": 0.0,
+            "requested_context_lines": 0,
+            "returned_context_lines": 0,
+            "context_truncated_requests": 0,
+            "context_unavailable_requests": 0,
         }
     batches = [max(len(_code_search_requests(step)), 1) for step in calls]
     rounds = len({step.parent_step_id for step in calls})
     requests = sum(batches)
     purpose_counts: Counter[str] = Counter()
+    context_requests = 0
+    requested_context_lines = 0
+    returned_context_lines = 0
+    context_truncated_requests = 0
+    context_unavailable_requests = 0
     for step in calls:
-        for request in _code_search_requests(step) or [{}]:
+        step_requests = _code_search_requests(step) or [{}]
+        step_results = _code_search_result_parts(step)
+        for index, request in enumerate(step_requests):
             purpose = str(request.get("purpose") or "").strip()
             purpose_counts[purpose or "(unspecified)"] += 1
+            context_lines = _non_negative_int(request.get("context_lines"))
+            if not context_lines:
+                continue
+            context_requests += 1
+            requested_context_lines += context_lines
+            result = step_results[index] if index < len(step_results) else ""
+            returned_context_lines += _returned_search_context_lines(result)
+            context_truncated_requests += "Note: Context truncated" in result
+            context_unavailable_requests += "Context unavailable:" in result
     observations = _code_search_observations(trajectory)
     outcomes = Counter(item["outcome"] for item in observations)
     repeated_empty = 0
@@ -1072,6 +1147,12 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
         "purpose_coverage": round(
             (requests - purpose_counts["(unspecified)"]) / requests, 3
         ),
+        "context_requests": context_requests,
+        "context_request_rate": round(context_requests / requests, 3),
+        "requested_context_lines": requested_context_lines,
+        "returned_context_lines": returned_context_lines,
+        "context_truncated_requests": context_truncated_requests,
+        "context_unavailable_requests": context_unavailable_requests,
     }
 
 
@@ -1229,7 +1310,13 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
     linked_ranges = 0
     identifier_linked_ranges = 0
     linked_step_ids: list[str] = []
-    hits_by_path: dict[str, list[tuple[int, str, str, str]]] = {}
+    hits_by_path: dict[str, list[tuple[int, str, str, str, str, bool]]] = {}
+    hit_requests: set[str] = set()
+    context_hit_requests: set[str] = set()
+    plain_hit_requests: set[str] = set()
+    follow_up_requests: set[str] = set()
+    context_follow_up_requests: set[str] = set()
+    plain_follow_up_requests: set[str] = set()
     identifier = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$]*$")
 
     for step in _tool_steps(trajectory):
@@ -1239,11 +1326,11 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
             search_calls += 1
             requests = _code_search_requests(step) or [{}]
             for index, result in enumerate(_code_search_result_parts(step)):
-                query = str(
-                    requests[index].get("query")
-                    if index < len(requests)
-                    else ""
-                )
+                request = requests[index] if index < len(requests) else {}
+                query = str(request.get("query") if request else "")
+                request_id = f"{step.step_id}:{index + 1}"
+                has_context = _non_negative_int(request.get("context_lines")) > 0
+                request_has_hits = False
                 file_matches = list(re.finditer(r"(?m)^File:\s*(.+?)\s*$", result))
                 for file_index, match in enumerate(file_matches):
                     end = (
@@ -1259,14 +1346,22 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                     # original hit list. Only those first Match lines entries
                     # identify the search hits this evaluator links to reads.
                     for line_match in line_matches[:match_count]:
+                        request_has_hits = True
                         hits_by_path.setdefault(match.group(1), []).append(
                             (
                                 int(line_match.group(1)),
                                 query,
                                 step.step_id,
                                 step.parent_step_id,
+                                request_id,
+                                has_context,
                             )
                         )
+                if request_has_hits:
+                    hit_requests.add(request_id)
+                    (context_hit_requests if has_context else plain_hit_requests).add(
+                        request_id
+                    )
             continue
         if step.name != "read_files":
             continue
@@ -1282,6 +1377,13 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
             linked_ranges += 1
             linked_step_ids.extend(hit[2] for hit in hits)
             linked_step_ids.append(step.step_id)
+            for hit in hits:
+                follow_up_requests.add(hit[4])
+                (
+                    context_follow_up_requests
+                    if hit[5]
+                    else plain_follow_up_requests
+                ).add(hit[4])
             if any(identifier.fullmatch(hit[1]) for hit in hits):
                 identifier_linked_ranges += 1
 
@@ -1298,8 +1400,50 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
         )
         if read_range_count
         else 0.0,
+        "hit_search_request_count": len(hit_requests),
+        "follow_up_read_request_count": len(follow_up_requests),
+        "follow_up_read_rate": _ratio(len(follow_up_requests), len(hit_requests)),
+        "context_hit_search_request_count": len(context_hit_requests),
+        "context_follow_up_read_request_count": len(context_follow_up_requests),
+        "context_follow_up_read_rate": _ratio(
+            len(context_follow_up_requests), len(context_hit_requests)
+        ),
+        "plain_hit_search_request_count": len(plain_hit_requests),
+        "plain_follow_up_read_request_count": len(plain_follow_up_requests),
+        "plain_follow_up_read_rate": _ratio(
+            len(plain_follow_up_requests), len(plain_hit_requests)
+        ),
         "step_ids": list(dict.fromkeys(linked_step_ids)),
     }
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)) and value >= 0 and int(value) == value:
+        return int(value)
+    return 0
+
+
+def _returned_search_context_lines(result: str) -> int:
+    """Count numbered source lines emitted inside search Context sections."""
+
+    in_context = False
+    count = 0
+    for line in result.splitlines():
+        if line == "Context:":
+            in_context = True
+            continue
+        if line.startswith("File: "):
+            in_context = False
+            continue
+        if in_context and re.match(r"^\d+\|", line):
+            count += 1
+    return count
+
+
+def _ratio(numerator: int, denominator: int) -> float | None:
+    return round(numerator / denominator, 3) if denominator else None
 
 
 def tool_frequencies(trajectory: Trajectory) -> dict[str, int]:

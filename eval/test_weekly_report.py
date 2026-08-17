@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 import weekly_report as weekly
@@ -31,6 +32,31 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertFalse(
             self.window.contains(datetime.fromisoformat("2026-08-10T00:00:00+08:00"))
         )
+
+    def test_default_datasets_resolve_from_main_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            main = root / "main"
+            worktree = root / "worktree"
+            datasets = main / "eval/data/datasets"
+            datasets.mkdir(parents=True)
+            worktree.mkdir()
+            for name in (
+                "review-comments-public.jsonl",
+                "review-comments-private.jsonl",
+            ):
+                (datasets / name).write_text("", encoding="utf-8")
+            completed = mock.Mock(stdout=str(main / ".git") + "\n")
+            with mock.patch.object(weekly.subprocess, "run", return_value=completed):
+                paths = weekly.default_dataset_paths(worktree)
+
+            self.assertEqual(
+                paths,
+                [
+                    (datasets / "review-comments-public.jsonl").resolve(),
+                    (datasets / "review-comments-private.jsonl").resolve(),
+                ],
+            )
 
     def test_discovery_uses_session_timestamp_and_tracks_unclosed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -125,6 +151,25 @@ class WeeklyReportTest(unittest.TestCase):
                         "calls": 1,
                         "requests": 2,
                         "purpose_counts": {"function": 1, "keyword": 1},
+                        "context_requests": 1,
+                        "requested_context_lines": 4,
+                        "returned_context_lines": 5,
+                        "context_truncated_requests": 1,
+                    },
+                    "search_then_read": {
+                        "hit_search_request_count": 1,
+                        "context_hit_search_request_count": 1,
+                    },
+                    "initial_context": {
+                        "outlines": {
+                            "attempts": 2,
+                            "outcomes": {"admitted": 1, "empty": 1},
+                            "by_language": {
+                                "go": {"admitted": 1},
+                                "markdown": {"empty": 1},
+                            },
+                            "admitted_bytes": 80,
+                        }
                     },
                     "evaluations": [
                         {
@@ -155,6 +200,12 @@ class WeeklyReportTest(unittest.TestCase):
                             "custom-domain-concept": 2,
                             "(unspecified)": 1,
                         },
+                    },
+                    "search_then_read": {
+                        "hit_search_request_count": 2,
+                        "follow_up_read_request_count": 1,
+                        "plain_hit_search_request_count": 2,
+                        "plain_follow_up_read_request_count": 1,
                     },
                     "evaluations": [
                         {
@@ -228,6 +279,39 @@ class WeeklyReportTest(unittest.TestCase):
                     "keyword": 1,
                 },
                 "purpose_coverage": 0.8,
+                "context_requests": 1,
+                "context_request_rate": 0.2,
+                "requested_context_lines": 4,
+                "returned_context_lines": 5,
+                "context_truncated_requests": 1,
+                "context_unavailable_requests": 0,
+            },
+        )
+        self.assertEqual(
+            metrics["search_follow_up"],
+            {
+                "hit_search_requests": 3,
+                "follow_up_read_requests": 1,
+                "follow_up_read_rate": 0.333,
+                "context_hit_search_requests": 1,
+                "context_follow_up_read_requests": 0,
+                "context_follow_up_read_rate": 0.0,
+                "plain_hit_search_requests": 2,
+                "plain_follow_up_read_requests": 1,
+                "plain_follow_up_read_rate": 0.5,
+            },
+        )
+        self.assertEqual(
+            metrics["initial_outlines"],
+            {
+                "attempts": 2,
+                "admission_rate": 0.5,
+                "admitted_bytes": 80,
+                "outcomes": {"admitted": 1, "empty": 1},
+                "by_language": {
+                    "go": {"admitted": 1},
+                    "markdown": {"empty": 1},
+                },
             },
         )
         self.assertEqual(
@@ -332,8 +416,41 @@ class WeeklyReportTest(unittest.TestCase):
                 "requests": 0,
                 "purpose_counts": {},
                 "purpose_coverage": None,
+                "context_requests": 0,
+                "context_request_rate": None,
+                "requested_context_lines": 0,
+                "returned_context_lines": 0,
+                "context_truncated_requests": 0,
+                "context_unavailable_requests": 0,
             },
         )
+
+    def test_cohorts_keep_tool_model_and_repository_separate(self) -> None:
+        def row(tool_version: str, model: str, repository: str) -> dict:
+            return {
+                "stage": "review1",
+                "tool_version": tool_version,
+                "model": model,
+                "repository": repository,
+                "outcome": "completed",
+                "score": 1.0,
+                "rounds": 1,
+                "duration_sec": 10,
+                "prompt_tokens": 100,
+                "completion_tokens": 10,
+                "tool_freq": {},
+                "signals": {"evaluations": []},
+            }
+
+        cohorts = weekly.aggregate_cohorts(
+            [row("v1", "m1", "/repo"), row("v2", "m1", "/repo")]
+        )
+
+        self.assertEqual(
+            [(item["tool_version"], item["chains"]) for item in cohorts],
+            [("v1", 1), ("v2", 1)],
+        )
+        self.assertEqual(cohorts[0]["completion_rate"], 1.0)
 
     def test_unit_duration_records_keep_each_unit_and_sort_slowest_first(self) -> None:
         rows = [
@@ -652,7 +769,7 @@ class WeeklyReportTest(unittest.TestCase):
             metrics = json.loads(
                 (out / "metrics.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metrics["schema_version"], "weekly-report-v5")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v6")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -662,6 +779,9 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("Failures", report)
             self.assertIn("Diagnostic signals", report)
             self.assertIn("Search purposes", report)
+            self.assertIn("Search context effectiveness", report)
+            self.assertIn("Initial FileOutline availability", report)
+            self.assertIn("Execution cohorts", report)
             self.assertIn("custom-domain-concept", report)
             self.assertIn("Workflow timeout", report)
             self.assertIn("llm.routing.timeout", report)

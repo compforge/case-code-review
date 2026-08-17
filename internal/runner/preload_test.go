@@ -170,7 +170,7 @@ func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
 		{Relation: unit.RelProject, Ref: "pyproject.toml"},
 	}
 	own, related, _ := a.preloadReviewFiles(context.Background(), u)
-	entries := a.initialFileContext(context.Background(), u, nil, own, related)
+	entries, attempts := a.initialFileContext(context.Background(), u, nil, own, related)
 	byPath := make(map[string]msg.FileContextEntry)
 	for _, entry := range entries {
 		byPath[entry.Path] = entry
@@ -186,6 +186,10 @@ func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
 	}
 	if byPath["repository.go"].Reason != "repository_reference" {
 		t.Fatalf("repository context = %+v", byPath["repository.go"])
+	}
+	if len(attempts) != 2 || attempts[0].Path != "owner.go" || attempts[0].Outcome != "admitted" ||
+		attempts[1].Path != "repository.go" || attempts[1].Outcome != "admitted" {
+		t.Fatalf("initial outline attempts = %+v", attempts)
 	}
 }
 
