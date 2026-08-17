@@ -31,7 +31,7 @@ DEFAULT_DATASETS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v4"
+REPORT_SCHEMA_VERSION = "weekly-report-v5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,9 +338,23 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     failure_affected: dict[tuple[str, str], set[int]] = {}
     diagnostic_events: Counter[tuple[str, str]] = Counter()
     diagnostic_affected: dict[tuple[str, str], set[int]] = {}
+    search_purposes: Counter[str] = Counter()
+    search_calls = 0
+    search_requests = 0
     for row_index, row in enumerate(selected):
         tools.update(row["tool_freq"])
         signals = row.get("signals") or {}
+        code_searches = signals.get("code_searches") or {}
+        search_calls += int(code_searches.get("calls") or 0)
+        search_requests += int(code_searches.get("requests") or 0)
+        search_purposes.update(
+            {
+                str(purpose): int(requests)
+                for purpose, requests in (
+                    code_searches.get("purpose_counts") or {}
+                ).items()
+            }
+        )
         for failure in signals.get("failures") or []:
             key = (
                 str(failure.get("impact") or "step"),
@@ -397,6 +411,11 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             key=lambda item: (-len(diagnostic_affected[item[0]]), item[0]),
         )
     ]
+    labeled_search_requests = sum(
+        requests
+        for purpose, requests in search_purposes.items()
+        if purpose != "(unspecified)"
+    )
     return {
         "chains": count,
         "outcomes": dict(sorted(outcomes.items())),
@@ -424,6 +443,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "cached_tokens": average_per(cached_tokens, assessments),
         },
         "tool_freq": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))),
+        "code_searches": {
+            "calls": search_calls,
+            "requests": search_requests,
+            "purpose_counts": dict(
+                sorted(search_purposes.items(), key=lambda item: (-item[1], item[0]))
+            ),
+            "purpose_coverage": round(
+                labeled_search_requests / search_requests, 3
+            )
+            if search_requests
+            else None,
+        },
         "failures": {
             "events": sum(failure_events.values()),
             "items": failure_items,
@@ -672,6 +703,12 @@ COMPARISON_METRICS = (
     ("Review 1 p50 duration (sec)", (REVIEW1, "duration_sec", "p50"), "number"),
     ("Review 1 p95 duration (sec)", (REVIEW1, "duration_sec", "p95"), "number"),
     ("Review 1 prompt/chain", (REVIEW1, "prompt_tokens", "average"), "number"),
+    ("Review 1 search requests", (REVIEW1, "code_searches", "requests"), "number"),
+    (
+        "Review 1 search purpose coverage",
+        (REVIEW1, "code_searches", "purpose_coverage"),
+        "percent",
+    ),
     ("Review 2 chains", (REVIEW2, "chains"), "number"),
     ("Review 2 assessments", (REVIEW2, "assessments"), "number"),
     ("Review 2 outcome coverage", (REVIEW2, "outcome_coverage"), "percent"),
@@ -704,6 +741,12 @@ COMPARISON_METRICS = (
         "Review 2 prompt/Assessment",
         (REVIEW2, "per_assessment", "prompt_tokens"),
         "number",
+    ),
+    ("Review 2 search requests", (REVIEW2, "code_searches", "requests"), "number"),
+    (
+        "Review 2 search purpose coverage",
+        (REVIEW2, "code_searches", "purpose_coverage"),
+        "percent",
     ),
     (
         "Review-week labeled findings",

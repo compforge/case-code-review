@@ -145,6 +145,11 @@ type Analysis struct {
 	// They stay out of Definitions so repository ranking, call graphs, and Unit
 	// formation do not accidentally treat fields/properties as code symbols.
 	outlineMembers []outlineMember
+	// outlineEntries preserve a backend's direct structural projection. When
+	// present, FileOutline uses them instead of reconstructing structure from
+	// the flatter Definition facts.
+	outlineEntries   []outlineEntry
+	outlineProjected bool
 }
 
 // DefinitionAt returns the innermost callable definition containing line.

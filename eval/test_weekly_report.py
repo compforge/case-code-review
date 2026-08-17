@@ -121,6 +121,11 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 10,
                 "tool_freq": {"read_files": 1},
                 "signals": {
+                    "code_searches": {
+                        "calls": 1,
+                        "requests": 2,
+                        "purpose_counts": {"function": 1, "keyword": 1},
+                    },
                     "evaluations": [
                         {
                             "signals": [
@@ -143,6 +148,14 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 30,
                 "tool_freq": {"search_code": 2},
                 "signals": {
+                    "code_searches": {
+                        "calls": 2,
+                        "requests": 3,
+                        "purpose_counts": {
+                            "custom-domain-concept": 2,
+                            "(unspecified)": 1,
+                        },
+                    },
                     "evaluations": [
                         {
                             "signals": [
@@ -203,6 +216,20 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(metrics["duration_sec"]["p95"], 50)
         self.assertEqual(metrics["prompt_tokens"]["average"], 162.5)
         self.assertEqual(metrics["tool_freq"], {"search_code": 2, "read_files": 1})
+        self.assertEqual(
+            metrics["code_searches"],
+            {
+                "calls": 3,
+                "requests": 5,
+                "purpose_counts": {
+                    "custom-domain-concept": 2,
+                    "(unspecified)": 1,
+                    "function": 1,
+                    "keyword": 1,
+                },
+                "purpose_coverage": 0.8,
+            },
+        )
         self.assertEqual(
             metrics["failures"],
             {
@@ -296,6 +323,15 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 130.0,
                 "completion_tokens": 15.0,
                 "cached_tokens": 5.0,
+            },
+        )
+        self.assertEqual(
+            metrics["code_searches"],
+            {
+                "calls": 0,
+                "requests": 0,
+                "purpose_counts": {},
+                "purpose_coverage": None,
             },
         )
 
@@ -486,12 +522,24 @@ class WeeklyReportTest(unittest.TestCase):
 
     def test_comparison_includes_week_over_week_duration(self) -> None:
         current = {
-            "review1": {"duration_sec": {"average": 20, "p50": 15, "p95": 40}},
-            "review2": {"duration_sec": {"average": 30, "p50": 25, "p95": 50}},
+            "review1": {
+                "duration_sec": {"average": 20, "p50": 15, "p95": 40},
+                "code_searches": {"requests": 12, "purpose_coverage": 0.75},
+            },
+            "review2": {
+                "duration_sec": {"average": 30, "p50": 25, "p95": 50},
+                "code_searches": {"requests": 4, "purpose_coverage": 1.0},
+            },
         }
         previous = {
-            "review1": {"duration_sec": {"average": 10, "p50": 12, "p95": 30}},
-            "review2": {"duration_sec": {"average": 20, "p50": 20, "p95": 45}},
+            "review1": {
+                "duration_sec": {"average": 10, "p50": 12, "p95": 30},
+                "code_searches": {"requests": 8, "purpose_coverage": 0.5},
+            },
+            "review2": {
+                "duration_sec": {"average": 20, "p50": 20, "p95": 45},
+                "code_searches": {"requests": 0, "purpose_coverage": None},
+            },
         }
 
         comparison = {
@@ -505,6 +553,13 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(review1_average["delta"], 10)
         self.assertEqual(review1_average["change_pct"], 1.0)
         self.assertEqual(comparison["Review 2 p95 duration (sec)"]["delta"], 5)
+        self.assertEqual(comparison["Review 1 search requests"]["delta"], 4)
+        self.assertEqual(
+            comparison["Review 1 search purpose coverage"]["delta"], 0.25
+        )
+        self.assertIsNone(
+            comparison["Review 2 search purpose coverage"]["delta"]
+        )
 
     def test_writes_week_partition_with_machine_and_human_reports(self) -> None:
         empty = {
@@ -555,6 +610,12 @@ class WeeklyReportTest(unittest.TestCase):
                 "invalid_dataset_lines": 0,
             },
         }
+        empty["review1"]["code_searches"] = {
+            "calls": 1,
+            "requests": 2,
+            "purpose_counts": {"function": 1, "custom-domain-concept": 1},
+            "purpose_coverage": 1.0,
+        }
         previous = json.loads(json.dumps(empty))
         previous["week"] = "2026-W31"
         comparison = weekly.build_comparison(empty, previous)
@@ -591,7 +652,7 @@ class WeeklyReportTest(unittest.TestCase):
             metrics = json.loads(
                 (out / "metrics.json").read_text(encoding="utf-8")
             )
-            self.assertEqual(metrics["schema_version"], "weekly-report-v4")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v5")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -600,6 +661,8 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("Slowest Review 1 units", report)
             self.assertIn("Failures", report)
             self.assertIn("Diagnostic signals", report)
+            self.assertIn("Search purposes", report)
+            self.assertIn("custom-domain-concept", report)
             self.assertIn("Workflow timeout", report)
             self.assertIn("llm.routing.timeout", report)
             self.assertIn("Prompt/Assessment", report)

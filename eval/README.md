@@ -299,6 +299,8 @@ eval/data/reports/weekly/2026-W32/
 Review 2 Lane 的完成率、`workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
 工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
 不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。
+`search_code` 的 request purpose 按 Review stage 保留原始自由文本，报告展示 purpose 覆盖率和
+分布，用于观察真实搜索意图以及埋点完整度。
 Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周内承载的 Assessment 数量变化
 扭曲效果判断。平均、p50 和 p95 耗时同时进入本周与上周的对比表。
 `REPORT.md` 展示最慢的 20 个 Review 1 Unit，完整的逐 Unit 耗时记录保存在

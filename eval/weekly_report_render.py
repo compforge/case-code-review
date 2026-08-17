@@ -110,6 +110,9 @@ def render_markdown(
                 _format_value(metrics["completion_rate"], "percent"),
                 _format_value(metrics["workflow_timeout_rate"], "percent"),
                 _format_value(metrics["llm_routing_timeout_rate"], "percent"),
+                _format_value(
+                    metrics["code_searches"]["purpose_coverage"], "percent"
+                ),
                 _format_value(metrics["average_score"], "score"),
                 _format_value(metrics["assessments"] if stage == REVIEW2 else None),
                 _format_value(metrics["rounds"]["p50"]),
@@ -128,6 +131,7 @@ def render_markdown(
                 "Complete",
                 "Workflow timeout",
                 "llm.routing.timeout",
+                "Search purpose coverage",
                 "Score",
                 "Assessments",
                 "p50 rounds",
@@ -272,6 +276,27 @@ def render_markdown(
         )
         if ranked_tools
         else ["No tool calls in this week."]
+    )
+
+    lines.extend(["", "### Search purposes", ""])
+    purpose_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        searches = current[stage]["code_searches"]
+        for purpose, count in searches["purpose_counts"].items():
+            purpose_rows.append(
+                [
+                    title,
+                    purpose,
+                    str(count),
+                    _format_value(count / searches["requests"], "percent"),
+                ]
+            )
+    lines.extend(
+        _markdown_table(
+            ["Stage", "Purpose", "Requests", "Share within stage"], purpose_rows
+        )
+        if purpose_rows
+        else ["No search requests in this week."]
     )
 
     lines.extend(["", "### Main deductions", ""])
