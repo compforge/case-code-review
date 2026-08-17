@@ -62,7 +62,9 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 		args := canonicalResponseArgs(t, "search_code", `{
 			"queries":["thread_comment","resolve_thread"],
 			"file_patterns":["*.py"],
-			"syntax":"literal"
+			"syntax":"literal",
+			"context_lines":4,
+			"purpose":"reference"
 		}`)
 		searches := args["searches"].([]any)
 		if len(searches) != 2 {
@@ -70,7 +72,8 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 		}
 		for _, value := range searches {
 			item := value.(map[string]any)
-			if item["syntax"] != "literal" || item["file_patterns"] == nil {
+			if item["syntax"] != "literal" || item["file_patterns"] == nil ||
+				item["context_lines"] != float64(4) || item["purpose"] != "reference" {
 				t.Fatalf("canonical search = %#v", item)
 			}
 			if _, exists := item["use_perl_regexp"]; exists {

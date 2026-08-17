@@ -2,9 +2,11 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -12,9 +14,12 @@ import (
 
 func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
 	requests, err := ParseCodeSearchRequests(map[string]any{
-		"searches": []any{map[string]any{"query": "Hello"}},
+		"searches": []any{map[string]any{
+			"query": "Hello", "context_lines": float64(3), "purpose": "function",
+		}},
 	})
-	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral {
+	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral ||
+		requests[0].ContextLines != 3 || requests[0].Purpose != "function" {
 		t.Fatalf("default syntax = %#v, err=%v", requests, err)
 	}
 
@@ -34,6 +39,13 @@ func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
 		"searches": []any{map[string]any{"query": "Hello", "syntax": "glob"}},
 	}); err == nil || !strings.Contains(err.Error(), "syntax must be literal or regexp") {
 		t.Fatalf("invalid syntax error = %v", err)
+	}
+	for _, value := range []any{-1, 51, 1.5, "3"} {
+		if _, err := ParseCodeSearchRequests(map[string]any{
+			"searches": []any{map[string]any{"query": "Hello", "context_lines": value}},
+		}); err == nil || !strings.Contains(err.Error(), "context_lines") {
+			t.Fatalf("context_lines=%v error = %v", value, err)
+		}
 	}
 }
 
@@ -300,6 +312,65 @@ func TestCodeSearchExecuteHonorsRegexpSyntax(t *testing.T) {
 	}
 	if !strings.Contains(results[1], "hello.go") {
 		t.Fatalf("regexp query did not match: %q", results[1])
+	}
+}
+
+func TestCodeSearchExecuteAddsMergedContextWindows(t *testing.T) {
+	dir := setupTestRepo(t)
+	content := "one\ntwo\nthree\nneedle four\nfive\nneedle six\nseven\neight\n"
+	if err := os.WriteFile(filepath.Join(dir, "context.txt"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{
+			"query": "needle", "syntax": "literal", "context_lines": 2,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != 1 {
+		t.Fatalf("result = %q", out)
+	}
+	result := results[0]
+	if !strings.Contains(result, "Match lines: 2\n4|needle four\n6|needle six\nContext:\nLINE_RANGE: 2-8") {
+		t.Fatalf("merged context missing from result:\n%s", result)
+	}
+	if got := strings.Count(result, "LINE_RANGE:"); got != 1 {
+		t.Fatalf("context ranges = %d, want 1:\n%s", got, result)
+	}
+}
+
+func TestCodeSearchContextUsesBatchBudget(t *testing.T) {
+	dir := setupTestRepo(t)
+	lines := make([]string, 101)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	lines[50] = "needle"
+	for i := 0; i < 5; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("context-%d.txt", i))
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{
+			"query": "needle", "purpose": "keyword", "context_lines": 50,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := regexp.MustCompile(`(?m)^\d+\|`).FindAllString(out, -1)
+	if len(result) != codeSearchContextBudget+5 {
+		t.Fatalf("numbered output lines = %d, want %d context + 5 hits", len(result), codeSearchContextBudget)
+	}
+	if !strings.Contains(out, "Context truncated") {
+		t.Fatalf("missing context budget note:\n%s", out)
 	}
 }
 

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +20,8 @@ const (
 	gitGrepMaxCount         = 100
 	codeSearchMaxBatch      = 8
 	codeSearchMaxBatchCount = 200
+	codeSearchMaxContext    = 50
+	codeSearchContextBudget = 400
 	gitGrepTimeout          = 10 * time.Second
 )
 
@@ -29,6 +33,8 @@ type CodeSearchRequest struct {
 	FilePatterns  []string
 	CaseSensitive bool
 	Syntax        string
+	ContextLines  int
+	Purpose       string
 }
 
 const (
@@ -51,6 +57,11 @@ type CodeSearchOutcome struct {
 	Status        string `json:"status"`
 	QueryMode     string `json:"query_mode"`
 	SearchedFiles *int   `json:"searched_files,omitempty"`
+}
+
+type codeSearchMatch struct {
+	lineNum int
+	content string
 }
 
 // ParseCodeSearchOutcome decodes the stable metadata line prepended to empty
@@ -89,11 +100,17 @@ func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 		if syntax != CodeSearchLiteral && syntax != CodeSearchRegexp {
 			return nil, fmt.Errorf("searches[%d].syntax must be literal or regexp", i)
 		}
+		contextLines, err := codeSearchContextLines(item["context_lines"])
+		if err != nil {
+			return nil, fmt.Errorf("searches[%d].context_lines %w", i, err)
+		}
 		requests[i] = CodeSearchRequest{
 			SearchText:    stringValue(item["query"]),
 			FilePatterns:  stringValues(item["file_patterns"]),
 			CaseSensitive: boolValue(item["case_sensitive"]),
 			Syntax:        syntax,
+			ContextLines:  contextLines,
+			Purpose:       stringValue(item["purpose"]),
 		}
 	}
 	return requests, nil
@@ -182,13 +199,23 @@ func (p *CodeSearchProvider) Execute(ctx context.Context, args map[string]any) (
 		return "Error: " + err.Error(), nil
 	}
 	maxCount := min(gitGrepMaxCount, max(1, codeSearchMaxBatchCount/len(requests)))
+	contextRequests := 0
+	for _, request := range requests {
+		if request.ContextLines > 0 {
+			contextRequests++
+		}
+	}
+	contextBudget := 0
+	if contextRequests > 0 {
+		contextBudget = codeSearchContextBudget / contextRequests
+	}
 	results := make([]string, len(requests))
 	var wg sync.WaitGroup
 	for i, request := range requests {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, err := p.executeOne(ctx, request, maxCount)
+			result, err := p.executeOne(ctx, request, maxCount, contextBudget)
 			if err != nil {
 				result = "Error: " + err.Error()
 			}
@@ -203,6 +230,7 @@ func (p *CodeSearchProvider) executeOne(
 	ctx context.Context,
 	request CodeSearchRequest,
 	maxCount int,
+	contextBudget int,
 ) (string, error) {
 	if strings.TrimSpace(request.SearchText) == "" {
 		return "Error: query is blank", nil
@@ -213,13 +241,15 @@ func (p *CodeSearchProvider) executeOne(
 			return "Error: file_patterns must not contain ..", nil
 		}
 	}
-	result, err := p.gitGrepLimited(
+	result, err := p.gitGrepLimitedWithContext(
 		ctx,
 		request.SearchText,
 		request.CaseSensitive,
 		request.Syntax == CodeSearchRegexp,
 		request.FilePatterns,
 		maxCount,
+		request.ContextLines,
+		contextBudget,
 	)
 	if err != nil {
 		return "", fmt.Errorf("search_code failed: %w", err)
@@ -301,6 +331,19 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 }
 
 func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText string, caseSensitive bool, usePerlRegexp bool, pathspec []string, maxCount int) (string, error) {
+	return p.gitGrepLimitedWithContext(ctx, searchText, caseSensitive, usePerlRegexp, pathspec, maxCount, 0, 0)
+}
+
+func (p *CodeSearchProvider) gitGrepLimitedWithContext(
+	ctx context.Context,
+	searchText string,
+	caseSensitive bool,
+	usePerlRegexp bool,
+	pathspec []string,
+	maxCount int,
+	contextLines int,
+	contextBudget int,
+) (string, error) {
 	cmdArgs := p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, false, pathspec, maxCount)
 
 	outStr, errStr, err := p.runGitGrep(ctx, cmdArgs)
@@ -338,11 +381,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 		lines = lines[:maxCount]
 	}
 
-	type match struct {
-		lineNum int
-		content string
-	}
-	fileMatches := make(map[string][]match)
+	fileMatches := make(map[string][]codeSearchMatch)
 	var fileOrder []string
 	seen := make(map[string]bool)
 
@@ -368,7 +407,7 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 			continue
 		}
 		fname := parts[offset]
-		m := match{}
+		m := codeSearchMatch{}
 		ln, parseErr := strconv.Atoi(parts[offset+1])
 		if parseErr != nil {
 			continue
@@ -382,13 +421,49 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 		fileMatches[fname] = append(fileMatches[fname], m)
 	}
 
+	remainingContext := contextBudget
+	contextTruncated := false
 	for _, path := range fileOrder {
 		matches := fileMatches[path]
 		sb.WriteString(fmt.Sprintf("File: %s\nMatch lines: %d\n", path, len(matches)))
 		for _, m := range matches {
 			sb.WriteString(fmt.Sprintf("%d|%s\n", m.lineNum, m.content))
 		}
+		if contextLines > 0 && remainingContext > 0 {
+			content, readErr := p.FileReader.Read(ctx, path)
+			if readErr != nil {
+				sb.WriteString(fmt.Sprintf("Context unavailable: %v\n", readErr))
+			} else {
+				fileLines := strings.Split(content, "\n")
+				ranges := mergeSearchContextRanges(matches, contextLines, len(fileLines))
+				sb.WriteString("Context:\n")
+				for _, lineRange := range ranges {
+					if remainingContext == 0 {
+						contextTruncated = true
+						break
+					}
+					end := lineRange.end
+					if length := end - lineRange.start + 1; length > remainingContext {
+						end = lineRange.start + remainingContext - 1
+						contextTruncated = true
+					}
+					sb.WriteString(fmt.Sprintf("LINE_RANGE: %d-%d\n", lineRange.start, end))
+					for lineNum := lineRange.start; lineNum <= end; lineNum++ {
+						sb.WriteString(fmt.Sprintf("%d|%s\n", lineNum, fileLines[lineNum-1]))
+						remainingContext--
+					}
+					if end < lineRange.end {
+						break
+					}
+				}
+			}
+		} else if contextLines > 0 {
+			contextTruncated = true
+		}
 		sb.WriteString("\n")
+	}
+	if contextTruncated {
+		sb.WriteString(fmt.Sprintf("Note: Context truncated to keep this search within its %d-line share of the batch context budget.\n", contextBudget))
 	}
 
 	if err != nil && errStr != "" {
@@ -396,6 +471,53 @@ func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText stri
 	}
 
 	return sb.String(), nil
+}
+
+type searchLineRange struct {
+	start int
+	end   int
+}
+
+func mergeSearchContextRanges(matches []codeSearchMatch, contextLines, totalLines int) []searchLineRange {
+	ranges := make([]searchLineRange, 0, len(matches))
+	for _, match := range matches {
+		ranges = append(ranges, searchLineRange{
+			start: max(1, match.lineNum-contextLines),
+			end:   min(totalLines, match.lineNum+contextLines),
+		})
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+	merged := ranges[:0]
+	for _, lineRange := range ranges {
+		if len(merged) == 0 || lineRange.start > merged[len(merged)-1].end+1 {
+			merged = append(merged, lineRange)
+			continue
+		}
+		merged[len(merged)-1].end = max(merged[len(merged)-1].end, lineRange.end)
+	}
+	return merged
+}
+
+func codeSearchContextLines(value any) (int, error) {
+	if value == nil {
+		return 0, nil
+	}
+	var contextLines int
+	switch number := value.(type) {
+	case int:
+		contextLines = number
+	case float64:
+		if math.Trunc(number) != number {
+			return 0, fmt.Errorf("must be an integer")
+		}
+		contextLines = int(number)
+	default:
+		return 0, fmt.Errorf("must be an integer")
+	}
+	if contextLines < 0 || contextLines > codeSearchMaxContext {
+		return 0, fmt.Errorf("must be between 0 and %d", codeSearchMaxContext)
+	}
+	return contextLines, nil
 }
 
 func (p *CodeSearchProvider) emptySearchResult(

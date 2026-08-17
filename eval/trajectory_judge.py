@@ -404,7 +404,9 @@ def main() -> int:
                         f"requests={searches['requests']} rounds={searches['rounds']} "
                         f"avg_batch={searches['average_batch']} "
                         f"max_batch={searches['max_batch']} "
-                        f"calls/round={searches['calls_per_round']}"
+                        f"calls/round={searches['calls_per_round']} "
+                        f"purposes={searches['purpose_counts']} "
+                        f"purpose_coverage={searches['purpose_coverage']}"
                     )
                 for result in sig["evaluations"]:
                     if result["verdict"] == "fail":

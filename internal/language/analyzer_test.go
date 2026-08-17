@@ -119,6 +119,23 @@ func TestAnalyzeTypeScriptImportTypeQuery(t *testing.T) {
 	assertNames(t, analysis.CalleesOf("load"), "factory")
 }
 
+func TestAnalyzeTypeScriptSignedRightShift(t *testing.T) {
+	source := []byte(`function shift(a: number, b: number) {
+  return a >> (b);
+}
+`)
+	entry := grammars.DetectLanguageByName("typescript")
+	parser := gotreesitter.NewParser(entry.Language())
+	tree, err := parser.ParseStrict(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Release()
+	if tree.RootNode().HasError() {
+		t.Fatal("TypeScript signed right shift produced a syntax error")
+	}
+}
+
 func TestAnalyzeUnsupported(t *testing.T) {
 	if _, err := NewAnalyzer("").Analyze(context.Background(), Source{Path: "README.unknown-language", Content: "text"}); err == nil {
 		t.Fatal("unsupported source must return an error")

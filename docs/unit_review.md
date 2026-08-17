@@ -275,7 +275,14 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
   当前 lead 决定哪些目标值得补证。
 
 `search_code.searches[]` 的 `syntax` 默认为 `literal`；只有正则查询显式声明 `regexp`。相比布尔开关，
-它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。
+它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。若一次命中后通常只需
+查看附近源码，可为该成员设置 `context_lines`；Provider 合并重叠窗口，并以批次共享预算限制附带源码，
+避免为了局部上下文再增加一轮 `read_files`。若先前 outline 已给出声明的 `Lstart-Lend`，则直接按该
+精确范围调用 `read_files`，不再重复搜索声明。
+
+每个 search 成员还携带自由字符串 `purpose`，用于记录模型当下认为自己在寻找什么。Schema 提示
+`function`、`variable`、`type`、`keyword`、`reference` 等常见值，但不使用 enum；新出现的值本身就是
+工具需求信号，后续可结合 `search_then_read` 判断是否值得增加 `read_func` 一类更专门的能力。
 
 工具契约不能假设模型总能生成完全正确的参数。字段命名、schema 和示例应先提供清晰的
 affordance；Harness 边界再对单字符串变数组、单成员变批次等**无歧义、无损**漂移做归一化。
