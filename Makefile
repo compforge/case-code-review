@@ -1,4 +1,4 @@
-.PHONY: build install test clean run help fmt vet check \
+.PHONY: build install test clean run help fix fmt vet check \
 	build-all dist sha256sum version-info \
 	build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 \
 	build-windows-amd64 build-windows-arm64
@@ -7,6 +7,10 @@ BINARY_NAME := ccr
 GO          := go
 DIST_DIR    := ./dist
 INSTALL_DIR ?= $(HOME)/.local/bin
+TEST_FILES  ?=
+
+# Go tests compile at package scope, so focused test files select their packages.
+TEST_PACKAGES ?= $(if $(strip $(TEST_FILES)),$(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(patsubst ./%,%,$(file)))))),./...)
 
 # Version info — VERSION is the release source of truth; commits identify the
 # exact build within that release line.
@@ -40,7 +44,7 @@ install: build
 	@echo "installed $(BINARY_NAME) $(VERSION) -> $(INSTALL_DIR)/$(BINARY_NAME)"
 
 test:
-	LC_ALL=C $(GO) test -v -race -count=1 ./...
+	LC_ALL=C $(GO) test -v -race -count=1 $(TEST_PACKAGES)
 
 clean:
 	rm -rf $(DIST_DIR)
@@ -51,8 +55,10 @@ run: build
 help: build
 	$(DIST_DIR)/$(BINARY_NAME) -h
 
-fmt:
+fix:
 	$(GO) fmt ./...
+
+fmt: fix
 
 vet:
 	$(GO) vet ./...
