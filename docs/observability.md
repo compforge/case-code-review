@@ -108,7 +108,8 @@ prompt 和形成改进假设，不适合凭少量 session 断言整体效果提�
 
 ## 3. eval：主要效果判断
 
-主要效果问题由 eval 回答。它把 Session/ATIF 与人工标签、固定 corpus、阶段数据集和 Evaluator 连接，
+主要效果问题由 eval 回答。它通过 CCR `RecordingSource` 选择和读取 Session/ATIF，经 ATIF Loader
+投影为通用 Trajectory，再与人工标签、固定 corpus、阶段数据集和 Evaluator 连接，
 在相同输入和判定标准下比较 baseline 与 candidate，并同时观察：
 
 - **准确性**：Finding 真伪、重复交付、漏报，以及 Assessment/Trial 是否正确放行；
