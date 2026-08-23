@@ -22,6 +22,7 @@ from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ccr_trajectory import ATIFTrajectoryLoader, REVIEW1, REVIEW2, UNKNOWN_STAGE
+from eval_snapshot import artifacts_match
 from trajectory_judge import objective_analysis
 from weekly_report_metrics import aggregate_cohorts, aggregate_stage
 from weekly_report_render import render_markdown
@@ -31,8 +32,9 @@ DEFAULT_DATASET_PATHS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
+DEFAULT_LABEL_DATASET_MANIFEST = Path("eval/data/datasets/label-dataset.json")
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v8"
+REPORT_SCHEMA_VERSION = "weekly-report-v9"
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +186,30 @@ def default_github_label_manifest(repo_root: Path | None = None) -> Path:
         return local
     shared = (
         Path(result.stdout.strip()).resolve().parent / DEFAULT_GITHUB_LABEL_MANIFEST
+    )
+    return shared if shared.is_file() else local
+
+
+def default_label_dataset_manifest(repo_root: Path | None = None) -> Path:
+    """Resolve the ignored dataset manifest from the main worktree when needed."""
+
+    root = (repo_root or Path.cwd()).resolve()
+    local = root / DEFAULT_LABEL_DATASET_MANIFEST
+    if local.is_file():
+        return local
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return local
+    shared = (
+        Path(result.stdout.strip()).resolve().parent / DEFAULT_LABEL_DATASET_MANIFEST
     )
     return shared if shared.is_file() else local
 
@@ -526,81 +552,94 @@ def quality_metrics(
 
 
 def github_label_sync_metrics(
-    datasets: list[dict[str, Any]],
+    dataset_paths: list[Path],
     window: WeekWindow,
-    manifest: dict[str, Any] | None,
-    manifest_invalid: bool,
+    harvest_manifest: dict[str, Any] | None,
+    harvest_manifest_invalid: bool,
+    dataset_manifest: dict[str, Any] | None,
+    dataset_manifest_invalid: bool,
 ) -> dict[str, Any]:
-    """Expose harvest freshness so missing synchronization is not read as zero quality."""
+    """Prove that one normalized dataset consumed a complete harvest snapshot."""
 
-    latest_dataset: tuple[datetime, str] | None = None
-    for record in datasets:
-        if not str(record.get("source") or "").startswith("github:"):
-            continue
-        raw = record.get("at")
-        parsed = parse_timestamp(raw, cast(ZoneInfo, window.start.tzinfo))
-        if parsed is not None and (
-            latest_dataset is None or parsed > latest_dataset[0]
-        ):
-            latest_dataset = (parsed, str(raw))
+    result = {
+        "status": "missing",
+        "harvest_snapshot_id": None,
+        "dataset_harvest_snapshot_id": None,
+        "dataset_current": None,
+        "artifacts_current": None,
+        "dataset_unpaired": None,
+        "generated_at": None,
+        "pull_requests_discovered": None,
+        "pull_requests_harvested": None,
+        "pull_requests_failed": None,
+        "harvest_coverage": None,
+        "covers_report_window": None,
+    }
+    if harvest_manifest_invalid or dataset_manifest_invalid:
+        return {**result, "status": "invalid"}
+    if harvest_manifest is None or dataset_manifest is None:
+        return result
+    if (
+        harvest_manifest.get("schema_version") != "github-label-harvest-v2"
+        or dataset_manifest.get("schema_version") != "label-dataset-v1"
+    ):
+        return {**result, "status": "invalid"}
 
-    if manifest_invalid:
-        return {
-            "status": "invalid",
-            "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
-            "latest_harvested_label_at": None,
-            "dataset_current": None,
-            "generated_at": None,
-            "pull_requests_discovered": None,
-            "pull_requests_harvested": None,
-            "pull_requests_failed": None,
-            "harvest_coverage": None,
-            "covers_report_window": None,
-        }
-    if manifest is None:
-        return {
-            "status": "missing",
-            "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
-            "latest_harvested_label_at": None,
-            "dataset_current": None,
-            "generated_at": None,
-            "pull_requests_discovered": None,
-            "pull_requests_harvested": None,
-            "pull_requests_failed": None,
-            "harvest_coverage": None,
-            "covers_report_window": None,
-        }
+    dataset_inputs = dataset_manifest.get("inputs")
+    dataset_artifact_manifest = dataset_manifest.get("artifacts")
+    dataset_stats = dataset_manifest.get("stats")
+    if (
+        not isinstance(dataset_inputs, dict)
+        or not isinstance(dataset_artifact_manifest, list)
+        or not all(
+            isinstance(artifact, dict) for artifact in dataset_artifact_manifest
+        )
+        or not isinstance(dataset_stats, dict)
+    ):
+        return {**result, "status": "invalid"}
 
-    discovered = int(manifest.get("pull_requests_discovered") or 0)
-    harvested = int(manifest.get("pull_requests_harvested") or 0)
-    failed = int(manifest.get("pull_requests_failed") or 0)
-    latest_harvested_raw = manifest.get("latest_label_at")
-    latest_harvested = parse_timestamp(
-        latest_harvested_raw, cast(ZoneInfo, window.start.tzinfo)
+    discovered = int(harvest_manifest.get("pull_requests_discovered") or 0)
+    harvested = int(harvest_manifest.get("pull_requests_harvested") or 0)
+    failed = int(harvest_manifest.get("pull_requests_failed") or 0)
+    harvest_snapshot_id = str(harvest_manifest.get("snapshot_id") or "")
+    dataset_harvest_snapshot_id = str(
+        dataset_inputs.get("github_harvest_snapshot_id") or ""
     )
-    dataset_current = latest_harvested is None or (
-        latest_dataset is not None and latest_dataset[0] >= latest_harvested
+    artifacts_current = artifacts_match(dataset_paths, dataset_artifact_manifest)
+    dataset_current = bool(
+        harvest_snapshot_id
+        and dataset_harvest_snapshot_id == harvest_snapshot_id
+        and artifacts_current
     )
-    query = manifest.get("query") or {}
+    dataset_unpaired = int(dataset_stats.get("unpaired") or 0)
+    query = harvest_manifest.get("query") or {}
     covers_window = None
     try:
-        query_start = date.fromisoformat(str(query["since"]))
-        query_end = date.fromisoformat(str(query["until"]))
-        covers_window = (
-            query_start <= window.start.date()
-            and query_end >= (window.end - timedelta(days=1)).date()
+        query_start = datetime.fromisoformat(
+            str(query["start"]).replace("Z", "+00:00")
         )
+        query_end = datetime.fromisoformat(str(query["end"]).replace("Z", "+00:00"))
+        if query_start.tzinfo is None or query_end.tzinfo is None:
+            raise ValueError("harvest window must include timezone")
+        covers_window = query_start <= window.start and query_end >= window.end
     except (KeyError, TypeError, ValueError):
         pass
-    status = "partial" if failed or harvested < discovered else "ready"
-    if status == "ready" and not dataset_current:
-        status = "dataset_stale"
+
+    status = "ready"
+    if failed or harvested < discovered:
+        status = "partial"
+    elif covers_window is not True:
+        status = "window_mismatch"
+    elif not dataset_current:
+        status = "dataset_stale" if artifacts_current else "dataset_changed"
     return {
         "status": status,
-        "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
-        "latest_harvested_label_at": latest_harvested_raw,
+        "harvest_snapshot_id": harvest_snapshot_id or None,
+        "dataset_harvest_snapshot_id": dataset_harvest_snapshot_id or None,
         "dataset_current": dataset_current,
-        "generated_at": manifest.get("generated_at"),
+        "artifacts_current": artifacts_current,
+        "dataset_unpaired": dataset_unpaired,
+        "generated_at": harvest_manifest.get("generated_at"),
         "pull_requests_discovered": discovered,
         "pull_requests_harvested": harvested,
         "pull_requests_failed": failed,
@@ -652,6 +691,9 @@ def build_week_metrics(
     repositories_scoped: bool,
     github_label_manifest: dict[str, Any] | None = None,
     github_label_manifest_invalid: bool = False,
+    dataset_paths: list[Path] | None = None,
+    label_dataset_manifest: dict[str, Any] | None = None,
+    label_dataset_manifest_invalid: bool = False,
 ) -> dict[str, Any]:
     sessions = [
         session for session in all_sessions if window.contains(session.started_at)
@@ -659,12 +701,23 @@ def build_week_metrics(
     session_ids = {session.session_id for session in sessions}
     week_rows = [row for row in rows if row["session_id"] in session_ids]
     scoped_session_ids = {session.session_id for session in all_sessions}
-    dataset_status = (
+    file_status = (
         "missing"
         if missing_datasets
         else "invalid"
         if invalid_dataset_lines
         else "ready"
+    )
+    label_sync = github_label_sync_metrics(
+        dataset_paths or [],
+        window,
+        github_label_manifest,
+        github_label_manifest_invalid,
+        label_dataset_manifest,
+        label_dataset_manifest_invalid,
+    )
+    dataset_status = (
+        file_status if file_status != "ready" else str(label_sync["status"])
     )
     quality = quality_metrics(
         datasets,
@@ -687,12 +740,7 @@ def build_week_metrics(
         UNKNOWN_STAGE: aggregate_stage(week_rows, UNKNOWN_STAGE),
         "cohorts": aggregate_cohorts(week_rows),
         "quality": quality,
-        "label_sync": github_label_sync_metrics(
-            datasets,
-            window,
-            github_label_manifest,
-            github_label_manifest_invalid,
-        ),
+        "label_sync": label_sync,
         "cost_effect": cost_effect_metrics(week_rows, quality),
         "data_quality": {
             "invalid_session_files_in_scan": invalid_session_files,
@@ -953,6 +1001,14 @@ def main() -> int:
         help="GitHub bulk-harvest manifest; defaults to eval/data/labels/github-harvest.json",
     )
     parser.add_argument(
+        "--label-dataset-manifest",
+        type=Path,
+        help=(
+            "normalized label dataset manifest; defaults to "
+            "eval/data/datasets/label-dataset.json"
+        ),
+    )
+    parser.add_argument(
         "--out-root",
         type=Path,
         default=Path("eval/data/reports/weekly"),
@@ -987,6 +1043,12 @@ def main() -> int:
     github_label_manifest, github_label_manifest_invalid = load_json_object(
         github_label_manifest_path
     )
+    label_dataset_manifest_path = (
+        args.label_dataset_manifest or default_label_dataset_manifest()
+    )
+    label_dataset_manifest, label_dataset_manifest_invalid = load_json_object(
+        label_dataset_manifest_path
+    )
 
     metric_args = {
         "all_sessions": sessions,
@@ -999,6 +1061,9 @@ def main() -> int:
         "repositories_scoped": bool(args.repo),
         "github_label_manifest": github_label_manifest,
         "github_label_manifest_invalid": github_label_manifest_invalid,
+        "dataset_paths": dataset_paths,
+        "label_dataset_manifest": label_dataset_manifest,
+        "label_dataset_manifest_invalid": label_dataset_manifest_invalid,
     }
     current = build_week_metrics(current_window, **metric_args)
     previous = build_week_metrics(previous_window, **metric_args)
@@ -1021,6 +1086,7 @@ def main() -> int:
         "sessions_dir": str(args.sessions_dir),
         "datasets": [str(path) for path in dataset_paths],
         "github_label_manifest": str(github_label_manifest_path),
+        "label_dataset_manifest": str(label_dataset_manifest_path),
         "ccr": args.ccr,
         "session_files_scanned": len(sessions) + invalid_sessions,
         "session_files_valid": len(sessions),

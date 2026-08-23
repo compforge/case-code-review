@@ -403,9 +403,11 @@ def render_markdown(
     labeled_week = quality["labeled_this_week"]
     label_sync = current.get("label_sync") or {
         "status": "missing",
-        "latest_dataset_label_at": None,
-        "latest_harvested_label_at": None,
+        "harvest_snapshot_id": None,
+        "dataset_harvest_snapshot_id": None,
         "dataset_current": None,
+        "artifacts_current": None,
+        "dataset_unpaired": None,
         "pull_requests_discovered": None,
         "pull_requests_harvested": None,
         "pull_requests_failed": None,
@@ -466,12 +468,13 @@ def render_markdown(
     else:
         lines.append(
             f"Label dataset status=`{label_dataset['status']}`; coverage and "
-            "finding-quality rates are unavailable. Pass every normalized input with "
-            "`--dataset`."
+            "finding-quality rates are unavailable. Refresh the harvest snapshot, "
+            "rebuild the normalized dataset, or pass its complete snapshot inputs."
         )
     if label_sync["status"] == "missing":
         lines.append(
-            "GitHub label sync manifest is missing; zero labels may mean harvest has not run."
+            "Label snapshot manifest is missing; zero labels may mean harvest or "
+            "dataset build has not run."
         )
     else:
         lines.append(
@@ -482,10 +485,8 @@ def render_markdown(
             f"coverage={_format_value(label_sync['harvest_coverage'], 'percent')}, "
             f"covers report window={label_sync['covers_report_window']}, "
             f"dataset current={label_sync['dataset_current']}, "
-            f"latest harvested label="
-            f"{_format_value(label_sync['latest_harvested_label_at'])}, "
-            f"latest dataset label="
-            f"{_format_value(label_sync['latest_dataset_label_at'])}."
+            f"artifacts current={label_sync['artifacts_current']}, "
+            f"unpaired={_format_value(label_sync['dataset_unpaired'])}."
         )
     lines.extend(
         [

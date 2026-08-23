@@ -8,7 +8,8 @@ upsert one raw label file per repository.
 
 Usage:
     python3 eval/github_labels.py --owner example --author @me \
-        --since 2026-08-17 --until 2026-08-23
+        --since 2026-08-17T00:00:00+08:00 \
+        --until 2026-08-24T00:00:00+08:00
 """
 
 from __future__ import annotations
@@ -19,10 +20,11 @@ import subprocess
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
-from datetime import date, datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
+from eval_snapshot import canonical_sha256
 from labels import harvest_github, upsert_records
 
 
@@ -52,14 +54,16 @@ def _gh_json(*args: str) -> list[dict]:
 def discover_pull_requests(
     owners: list[str],
     author: str,
-    since: date,
-    until: date,
+    since: datetime,
+    until: datetime,
     limit: int,
 ) -> list[PullRequest]:
     """Discover merged pull requests without coupling harvesting to one repo."""
 
     found: dict[tuple[str, int], PullRequest] = {}
-    merged_at = f"{since.isoformat()}..{until.isoformat()}"
+    # GitHub search ranges are inclusive. Keep the CLI contract half-open so
+    # adjacent reporting windows cannot claim the same pull request.
+    merged_at = f"{since.isoformat()}..{(until - timedelta(seconds=1)).isoformat()}"
     for owner in owners:
         rows = _gh_json(
             "search",
@@ -145,6 +149,15 @@ def harvest_pull_requests(
         (str(record.get("at")) for record in records if record.get("at")),
         default=None,
     )
+    records_sha256 = canonical_sha256(
+        sorted(
+            records,
+            key=lambda record: (
+                str(record.get("source", "")),
+                str(record.get("reply_id", "")),
+            ),
+        )
+    )
     return {
         "pull_requests_discovered": len(pull_requests),
         "pull_requests_harvested": harvested,
@@ -153,6 +166,7 @@ def harvest_pull_requests(
         "new": fresh,
         "updated": updated,
         "latest_label_at": latest_label_at,
+        "records_sha256": records_sha256,
         "by_label": dict(sorted(labels.items())),
         "errors": sorted(
             errors, key=lambda item: (str(item["repository"]), int(item["number"]))
@@ -171,19 +185,34 @@ def write_manifest(path: Path, payload: dict) -> None:
     temporary.replace(path)
 
 
-def _date(value: str) -> date:
+def _timestamp(value: str) -> datetime:
     try:
-        return date.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
-        raise argparse.ArgumentTypeError("expected YYYY-MM-DD") from error
+        raise argparse.ArgumentTypeError(
+            "expected an ISO-8601 timestamp with timezone"
+        ) from error
+    if parsed.tzinfo is None:
+        raise argparse.ArgumentTypeError("timestamp must include a timezone")
+    return parsed
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owner", action="append", required=True)
     parser.add_argument("--author", default="@me")
-    parser.add_argument("--since", required=True, type=_date)
-    parser.add_argument("--until", required=True, type=_date)
+    parser.add_argument(
+        "--since",
+        required=True,
+        type=_timestamp,
+        help="inclusive ISO-8601 timestamp with timezone",
+    )
+    parser.add_argument(
+        "--until",
+        required=True,
+        type=_timestamp,
+        help="exclusive ISO-8601 timestamp with timezone",
+    )
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--out-dir", type=Path, default=Path("eval/data/labels"))
@@ -193,8 +222,8 @@ def main() -> int:
         default=Path("eval/data/labels/github-harvest.json"),
     )
     args = parser.parse_args()
-    if args.until < args.since:
-        parser.error("--until must be on or after --since")
+    if args.until <= args.since:
+        parser.error("--until must be after --since")
     if args.limit <= 0:
         parser.error("--limit must be positive")
     if args.workers <= 0:
@@ -204,16 +233,29 @@ def main() -> int:
         args.owner, args.author, args.since, args.until, args.limit
     )
     summary = harvest_pull_requests(pull_requests, args.out_dir, args.workers)
+    query = {
+        "owners": sorted(set(args.owner)),
+        "author": args.author,
+        "start": args.since.isoformat(),
+        "end": args.until.isoformat(),
+    }
+    snapshot = {
+        "query": query,
+        "pull_requests": [asdict(pull_request) for pull_request in pull_requests],
+        "pull_requests_harvested": summary["pull_requests_harvested"],
+        "pull_requests_failed": summary["pull_requests_failed"],
+        "labels": summary["labels"],
+        "latest_label_at": summary["latest_label_at"],
+        "records_sha256": summary["records_sha256"],
+        "by_label": summary["by_label"],
+        "errors": summary["errors"],
+    }
     manifest = {
-        "schema_version": "github-label-harvest-v1",
+        "schema_version": "github-label-harvest-v2",
+        "snapshot_id": canonical_sha256(snapshot),
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "query": {
-            "owners": sorted(set(args.owner)),
-            "author": args.author,
-            "since": args.since.isoformat(),
-            "until": args.until.isoformat(),
-        },
-        # REST review comments include replies from both resolved and unresolved threads.
+        "query": query,
+        # REST review comments include replies from resolved and unresolved threads.
         "includes_resolved_threads": True,
         "pull_requests": [asdict(pull_request) for pull_request in pull_requests],
         **summary,
@@ -223,6 +265,7 @@ def main() -> int:
         json.dumps(
             {
                 "schema_version": manifest["schema_version"],
+                "snapshot_id": manifest["snapshot_id"],
                 "generated_at": manifest["generated_at"],
                 "query": manifest["query"],
                 "includes_resolved_threads": manifest["includes_resolved_threads"],

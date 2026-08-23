@@ -8,7 +8,10 @@ import hashlib
 import json
 import re
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
+
+from eval_snapshot import canonical_sha256, dataset_artifacts
 
 HEADER_RE = re.compile(
     r"^\s*🤖\s+\*\*devloop code-review\*\*(?:\s*·\s*([^\n]+))?\n+"
@@ -200,6 +203,73 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
     temp.replace(path)
 
 
+def load_json_object(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temp.replace(path)
+
+
+def build_manifest(
+    public_out: Path,
+    private_out: Path,
+    public: list[dict],
+    private: list[dict],
+    harvested_labels: int,
+    github_harvest_manifest: dict | None,
+) -> dict:
+    artifacts = dataset_artifacts(
+        ((public_out, len(public)), (private_out, len(private)))
+    )
+    github_harvest_snapshot_id = (
+        str(github_harvest_manifest.get("snapshot_id") or "")
+        if github_harvest_manifest
+        else ""
+    )
+    stats = {
+        "harvested_labels": harvested_labels,
+        "examples": len(public) + len(private),
+        "unpaired": harvested_labels - len(public) - len(private),
+        "public": len(public),
+        "private": len(private),
+    }
+    snapshot = {
+        "github_harvest_snapshot_id": github_harvest_snapshot_id or None,
+        "artifacts": [
+            {
+                "name": artifact["name"],
+                "records": artifact["records"],
+                "sha256": artifact["sha256"],
+            }
+            for artifact in artifacts
+        ],
+        "stats": stats,
+    }
+    return {
+        "schema_version": "label-dataset-v1",
+        "snapshot_id": canonical_sha256(snapshot),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "inputs": {
+            "github_harvest_snapshot_id": github_harvest_snapshot_id or None,
+        },
+        "artifacts": artifacts,
+        "stats": stats,
+    }
+
+
 def distribution(records: list[dict]) -> dict[str, int]:
     return dict(sorted(Counter(record["label"] for record in records).items()))
 
@@ -222,6 +292,16 @@ def main() -> int:
         type=Path,
         default=Path("eval/data/datasets/review-comments-private.jsonl"),
     )
+    parser.add_argument(
+        "--github-harvest-manifest",
+        type=Path,
+        default=Path("eval/data/labels/github-harvest.json"),
+    )
+    parser.add_argument(
+        "--manifest-out",
+        type=Path,
+        default=Path("eval/data/datasets/label-dataset.json"),
+    )
     args = parser.parse_args()
 
     labels = load_labels(args.labels_dir)
@@ -233,15 +313,28 @@ def main() -> int:
     ]
     examples.sort(key=lambda record: (record.get("at") or "", record["id"]))
     public = [record for record in examples if record["source"].startswith("github:")]
-    private = [record for record in examples if not record["source"].startswith("github:")]
+    private = [
+        record for record in examples if not record["source"].startswith("github:")
+    ]
     write_jsonl(args.public_out, public)
     write_jsonl(args.private_out, private)
+    manifest = build_manifest(
+        args.public_out,
+        args.private_out,
+        public,
+        private,
+        len(labels),
+        load_json_object(args.github_harvest_manifest),
+    )
+    write_json(args.manifest_out, manifest)
     print(
         json.dumps(
             {
                 "harvested_labels": len(labels),
                 "examples": len(examples),
                 "unpaired": len(labels) - len(examples),
+                "snapshot_id": manifest["snapshot_id"],
+                "manifest": str(args.manifest_out),
                 "public": {
                     "count": len(public),
                     "by_label": distribution(public),

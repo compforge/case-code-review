@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,8 +54,8 @@ class GitHubLabelsTest(unittest.TestCase):
         pull_requests = github_labels.discover_pull_requests(
             ["example", "other"],
             "@me",
-            date(2026, 8, 17),
-            date(2026, 8, 23),
+            datetime.fromisoformat("2026-08-17T00:00:00+08:00"),
+            datetime.fromisoformat("2026-08-24T00:00:00+08:00"),
             100,
         )
 
@@ -63,7 +64,14 @@ class GitHubLabelsTest(unittest.TestCase):
             [("example/one", 7), ("other/two", 3)],
         )
         command = run.call_args_list[0].args[0]
-        self.assertIn("2026-08-17..2026-08-23", command)
+        self.assertIn(
+            "2026-08-17T00:00:00+08:00..2026-08-23T23:59:59+08:00",
+            command,
+        )
+
+    def test_timestamp_requires_timezone(self) -> None:
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "timezone"):
+            github_labels._timestamp("2026-08-17T00:00:00")
 
     def test_harvests_each_pr_and_upserts_by_repository(self) -> None:
         pull_requests = [
@@ -92,6 +100,7 @@ class GitHubLabelsTest(unittest.TestCase):
             self.assertEqual(summary["pull_requests_discovered"], 3)
             self.assertEqual(summary["pull_requests_harvested"], 3)
             self.assertEqual(summary["labels"], 3)
+            self.assertEqual(len(summary["records_sha256"]), 64)
             self.assertEqual(summary["new"], 3)
             self.assertEqual(summary["by_label"], {"important": 2, "minor": 1})
             self.assertEqual(len(first_repo.read_text().splitlines()), 2)

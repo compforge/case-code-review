@@ -77,12 +77,15 @@ ccr:missed — 这里在并发关闭后仍可能写入已关闭 channel
 python3 eval/github_labels.py \
   --owner <github-owner> \
   --author @me \
-  --since 2026-08-17 \
-  --until 2026-08-23
+  --since 2026-08-17T00:00:00+08:00 \
+  --until 2026-08-24T00:00:00+08:00
 ```
 
+时间窗是带时区的 `[since, until)`，与周报的本地周边界对齐；不接受无时区日期，避免本地周初、周末
+落到相邻 UTC 日期时漏采或重复采集。
+
 默认按仓库 upsert 到 `eval/data/labels/<owner>-<repo>.jsonl`，并写入
-`eval/data/labels/github-harvest.json`。manifest 记录发现、成功和失败的 PR 数；周报用它区分
+`eval/data/labels/github-harvest.json`。manifest 记录源快照身份以及发现、成功和失败的 PR 数；周报用它区分
 “确实没有 label”和“采集没有运行或只完成了一部分”。GitHub resolved thread 的 review comments
 仍能从 REST API 读取，批量采集不会过滤它们。
 
@@ -127,9 +130,12 @@ eval/data/labels/*.jsonl
 ```text
 eval/data/datasets/review-comments-public.jsonl
 eval/data/datasets/review-comments-private.jsonl
+eval/data/datasets/label-dataset.json
 ```
 
 这里的 `public/private` 是按 forge 来源分桶，两个文件都属于真实数据，都会被 gitignore。
+`label-dataset.json` 记录数据集快照、所消费的 GitHub harvest 快照和两个 JSONL 的内容摘要；周报据此
+确认自己读取的是本次采集生成的完整数据集，而不是用文件时间或最新 label 时间猜测新鲜度。
 session finding 只用于补齐早期没有在 forge comment 中保存正文、但仍有 fingerprint 的记录。
 新 session 还会按 fingerprint 与时间连接生成该 Finding 的 Hypothesis、Assessment 和执行身份；
 找不到对应旧 session 时这些字段为空，不影响历史标签入集。
@@ -332,18 +338,20 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 ```
 
 `eval/data/` 是 gitignore 的本地事实源，不会随 git worktree 复制。在隔离 worktree 生成报告时，
-周报会通过 Git common dir 自动读取主 worktree 的默认 datasets 和 GitHub harvest manifest；
+周报会通过 Git common dir 自动读取主 worktree 的默认 datasets、GitHub harvest manifest 和 label dataset manifest；
 需要使用其它事实源时，显式传入全部规范化数据集和 manifest：
 
 ```bash
 uv run --project eval/reviewbench python eval/weekly_report.py \
   --dataset <shared-eval-data>/datasets/review-comments-public.jsonl \
   --dataset <shared-eval-data>/datasets/review-comments-private.jsonl \
-  --github-label-manifest <shared-eval-data>/labels/github-harvest.json
+  --github-label-manifest <shared-eval-data>/labels/github-harvest.json \
+  --label-dataset-manifest <shared-eval-data>/datasets/label-dataset.json
 ```
 
-缺少任一输入或存在无效 JSONL 时，报告仍生成执行指标，但 label coverage 与 Finding 质量比例显示
-为不可用，不能把缺数据解释成 `0%`。
+缺少任一输入、存在无效 JSONL、harvest 未完整覆盖报告窗口、数据集未消费当前 harvest 快照或输出
+摘要不匹配时，报告仍生成执行指标，但 label coverage 与 Finding 质量比例显示为不可用，不能把缺数据
+解释成 `0%`。unpaired label 单独展示为数据质量信号，不会让其它已完整连接的 cohort 失效。
 
 默认输出：
 
@@ -381,7 +389,8 @@ Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周�
 成本与效果只在共同 cohort 上联合：周报给出 `tokens / labeled accepted Finding`，其中 accepted
 只包括人工标注的 `important + minor`，并始终同时展示 label coverage；标签不完整时，该单位成本
 只能作为上界信号，不能当作完整质量结论。周报同时展示 GitHub harvest 的生成时间、PR 采集覆盖率、
-失败数和时间窗覆盖状态；manifest 缺失时，不能把本周 `0 label` 解释为真实效果事实。
+失败数、精确时间窗覆盖状态和 dataset snapshot 一致性；任一 snapshot manifest 缺失或不一致时，
+不能把本周 `0 label` 解释为真实效果事实。
 
 ## 可选：建立固定 corpus 并重放
 

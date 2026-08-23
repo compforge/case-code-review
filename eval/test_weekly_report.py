@@ -9,6 +9,7 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 import weekly_report as weekly
+from eval_snapshot import dataset_artifacts
 
 
 class WeeklyReportTest(unittest.TestCase):
@@ -46,9 +47,12 @@ class WeeklyReportTest(unittest.TestCase):
                 "review-comments-private.jsonl",
             ):
                 (datasets / name).write_text("", encoding="utf-8")
+            dataset_manifest = datasets / "label-dataset.json"
+            dataset_manifest.write_text("{}\n", encoding="utf-8")
             completed = mock.Mock(stdout=str(main / ".git") + "\n")
             with mock.patch.object(weekly.subprocess, "run", return_value=completed):
                 paths = weekly.default_dataset_paths(worktree)
+                manifest = weekly.default_label_dataset_manifest(worktree)
 
             self.assertEqual(
                 paths,
@@ -57,54 +61,62 @@ class WeeklyReportTest(unittest.TestCase):
                     (datasets / "review-comments-private.jsonl").resolve(),
                 ],
             )
+            self.assertEqual(manifest, dataset_manifest.resolve())
 
     def test_github_label_sync_exposes_missing_and_complete_harvests(self) -> None:
-        datasets = [
-            {
-                "source": "github:example/project#12",
-                "at": "2026-08-08T10:00:00+08:00",
-            },
-            {
-                "source": "codebase:example/project!13",
-                "at": "2026-08-10T10:00:00+08:00",
-            },
-        ]
-
-        missing = weekly.github_label_sync_metrics(datasets, self.window, None, False)
-        ready = weekly.github_label_sync_metrics(
-            datasets,
-            self.window,
-            {
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            public = root / "review-comments-public.jsonl"
+            private = root / "review-comments-private.jsonl"
+            public.write_text('{"id":"one"}\n', encoding="utf-8")
+            private.write_text("", encoding="utf-8")
+            paths = [public, private]
+            harvest = {
+                "schema_version": "github-label-harvest-v2",
+                "snapshot_id": "harvest-1",
                 "generated_at": "2026-08-10T00:00:00Z",
-                "query": {"since": "2026-08-03", "until": "2026-08-09"},
+                "query": {
+                    "start": "2026-08-03T00:00:00+08:00",
+                    "end": "2026-08-10T00:00:00+08:00",
+                },
                 "pull_requests_discovered": 12,
                 "pull_requests_harvested": 12,
                 "pull_requests_failed": 0,
-            },
-            False,
-        )
+            }
+            dataset_manifest = {
+                "schema_version": "label-dataset-v1",
+                "inputs": {"github_harvest_snapshot_id": "harvest-1"},
+                "artifacts": dataset_artifacts(((public, 1), (private, 0))),
+                "stats": {"unpaired": 0},
+            }
+
+            missing = weekly.github_label_sync_metrics(
+                paths, self.window, None, False, None, False
+            )
+            ready = weekly.github_label_sync_metrics(
+                paths, self.window, harvest, False, dataset_manifest, False
+            )
+            stale_manifest = {
+                **dataset_manifest,
+                "inputs": {"github_harvest_snapshot_id": "harvest-0"},
+            }
+            stale = weekly.github_label_sync_metrics(
+                paths, self.window, harvest, False, stale_manifest, False
+            )
+            public.write_text('{"id":"changed"}\n', encoding="utf-8")
+            changed = weekly.github_label_sync_metrics(
+                paths, self.window, harvest, False, dataset_manifest, False
+            )
 
         self.assertEqual(missing["status"], "missing")
-        self.assertEqual(missing["latest_dataset_label_at"], datasets[0]["at"])
         self.assertEqual(ready["status"], "ready")
         self.assertEqual(ready["harvest_coverage"], 1.0)
         self.assertTrue(ready["covers_report_window"])
-
-        stale = weekly.github_label_sync_metrics(
-            datasets,
-            self.window,
-            {
-                "generated_at": "2026-08-10T00:00:00Z",
-                "latest_label_at": "2026-08-09T00:00:00+08:00",
-                "query": {"since": "2026-08-03", "until": "2026-08-09"},
-                "pull_requests_discovered": 12,
-                "pull_requests_harvested": 12,
-                "pull_requests_failed": 0,
-            },
-            False,
-        )
+        self.assertTrue(ready["dataset_current"])
         self.assertEqual(stale["status"], "dataset_stale")
         self.assertFalse(stale["dataset_current"])
+        self.assertEqual(changed["status"], "dataset_changed")
+        self.assertFalse(changed["artifacts_current"])
 
     def test_discovery_uses_session_timestamp_and_tracks_unclosed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
@@ -700,9 +712,14 @@ class WeeklyReportTest(unittest.TestCase):
         invalid = weekly.build_week_metrics(
             missing_datasets=0, invalid_dataset_lines=1, **common
         )
+        unsynced = weekly.build_week_metrics(
+            missing_datasets=0, invalid_dataset_lines=0, **common
+        )
 
         self.assertEqual(missing["quality"]["label_dataset"]["status"], "missing")
         self.assertEqual(invalid["quality"]["label_dataset"]["status"], "invalid")
+        self.assertEqual(unsynced["quality"]["label_dataset"]["status"], "missing")
+        self.assertIsNone(unsynced["quality"]["review_week"]["label_coverage"])
         self.assertIsNone(invalid["quality"]["review_week"]["accepted_rate"])
 
     def test_comparison_includes_week_over_week_duration(self) -> None:
@@ -832,7 +849,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
             metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["schema_version"], "weekly-report-v8")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v9")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -851,7 +868,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("Total/Assessment", report)
             self.assertIn("avg sec", report)
             self.assertIn("finding-quality rates are unavailable", report)
-            self.assertIn("GitHub label sync manifest is missing", report)
+            self.assertIn("Label snapshot manifest is missing", report)
             self.assertIn("Recall remains unavailable", report)
 
 

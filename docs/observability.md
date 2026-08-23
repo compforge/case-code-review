@@ -121,6 +121,10 @@ Evaluator 只形成 verdict、score 与可定位的 Finding；Measurer 只记录
 `tokens / labeled accepted Finding`。单位成本必须与人工 label coverage 一起解释，不能把低 token
 本身当作效果提升。
 
+Dataset snapshot 把带时区的采集窗口、源快照身份与规范化产物摘要绑定为一次可验证构建。只有采集
+完整覆盖目标窗口、规范化数据集消费了当前源快照且产物摘要一致时，周报才开放 Finding 质量指标；
+否则执行指标照常生成，质量指标保持不可用，不能把缺失数据解释成零质量或零 Finding。
+
 Viewer 中发现的重复 `read_files`、搜索空转或未完成 Unit，可以进一步沉淀为 Trajectory Evaluator；人工
 确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中确认问题具有普遍性、指标改善且没有召回
 或成本回退，才能认为优化有效。

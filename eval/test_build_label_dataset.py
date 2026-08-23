@@ -81,6 +81,36 @@ class BuildLabelDatasetTest(unittest.TestCase):
             self.assertEqual(engine["assessment"]["support"], "supported")
             self.assertTrue(engine["trial"]["passed_trial"])
 
+    def test_manifest_pins_harvest_snapshot_and_dataset_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            public_out = root / "review-comments-public.jsonl"
+            private_out = root / "review-comments-private.jsonl"
+            public = [{"id": "public"}]
+            private = [{"id": "private"}]
+            dataset.write_jsonl(public_out, public)
+            dataset.write_jsonl(private_out, private)
+
+            manifest = dataset.build_manifest(
+                public_out,
+                private_out,
+                public,
+                private,
+                2,
+                {"snapshot_id": "harvest-1"},
+            )
+
+            self.assertEqual(manifest["schema_version"], "label-dataset-v1")
+            self.assertEqual(
+                manifest["inputs"]["github_harvest_snapshot_id"], "harvest-1"
+            )
+            self.assertEqual(manifest["stats"]["unpaired"], 0)
+            self.assertEqual(
+                {item["name"] for item in manifest["artifacts"]},
+                {public_out.name, private_out.name},
+            )
+            self.assertTrue(all(item["sha256"] for item in manifest["artifacts"]))
+
 
 if __name__ == "__main__":
     unittest.main()
