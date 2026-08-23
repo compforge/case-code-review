@@ -110,9 +110,7 @@ def render_markdown(
                 _format_value(metrics["completion_rate"], "percent"),
                 _format_value(metrics["workflow_timeout_rate"], "percent"),
                 _format_value(metrics["llm_routing_timeout_rate"], "percent"),
-                _format_value(
-                    metrics["code_searches"]["purpose_coverage"], "percent"
-                ),
+                _format_value(metrics["code_searches"]["purpose_coverage"], "percent"),
                 _format_value(metrics["average_score"], "score"),
                 _format_value(metrics["assessments"] if stage == REVIEW2 else None),
                 _format_value(metrics["rounds"]["p50"]),
@@ -167,15 +165,15 @@ def render_markdown(
         else ["No structured failures in this week."]
     )
 
-    lines.extend(["", "### Diagnostic signals", ""])
+    lines.extend(["", "### Diagnostic findings", ""])
     diagnostic_rows = []
     for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
-        for item in current[stage]["diagnostic_signals"]["items"]:
+        for item in current[stage]["diagnostic_findings"]["items"]:
             diagnostic_rows.append(
                 [
                     title,
                     str(item["severity"]),
-                    str(item["signal"]),
+                    str(item["finding"]),
                     str(item["count"]),
                     str(item["affected_chains"]),
                     _format_value(item["rate"], "percent"),
@@ -183,11 +181,11 @@ def render_markdown(
             )
     lines.extend(
         _markdown_table(
-            ["Stage", "Severity", "Signal", "Events", "Affected chains", "Rate"],
+            ["Stage", "Severity", "Finding", "Events", "Affected chains", "Rate"],
             diagnostic_rows,
         )
         if diagnostic_rows
-        else ["No diagnostic signals in this week."]
+        else ["No diagnostic findings in this week."]
     )
 
     lines.extend(["", "### Slowest Review 1 units", ""])
@@ -221,28 +219,26 @@ def render_markdown(
         _markdown_table(
             [
                 "Stage",
-                "Prompt/Unit or Lane",
-                "Prompt/Assessment",
-                "Completion/Unit or Lane",
-                "Completion/Assessment",
-                "Cached/Unit or Lane",
-                "Cached/Assessment",
-                "Total prompt",
-                "Total completion",
+                "Input/Unit or Lane",
+                "Output/Unit or Lane",
+                "Total/Unit or Lane",
+                "Total/Assessment",
+                "Cached input/Unit or Lane",
+                "Uncached input/Unit or Lane",
+                "Model calls/Unit or Lane",
+                "Usage coverage",
             ],
             [
                 [
                     title,
                     _format_value(current[stage]["prompt_tokens"]["average"]),
-                    _format_value(current[stage]["per_assessment"]["prompt_tokens"]),
                     _format_value(current[stage]["completion_tokens"]["average"]),
-                    _format_value(
-                        current[stage]["per_assessment"]["completion_tokens"]
-                    ),
+                    _format_value(current[stage]["total_tokens"]["average"]),
+                    _format_value(current[stage]["per_assessment"]["total_tokens"]),
                     _format_value(current[stage]["cached_tokens"]["average"]),
-                    _format_value(current[stage]["per_assessment"]["cached_tokens"]),
-                    _format_value(current[stage]["prompt_tokens"]["total"]),
-                    _format_value(current[stage]["completion_tokens"]["total"]),
+                    _format_value(current[stage]["uncached_tokens"]["average"]),
+                    _format_value(current[stage]["model_calls"]["average"]),
+                    _format_value(current[stage]["usage_coverage"], "percent"),
                 ]
                 for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2"))
             ],
@@ -310,12 +306,8 @@ def render_markdown(
                 f"{searches.get('context_requests', 0)}/{searches['requests']}",
                 _format_value(searches.get("context_request_rate"), "percent"),
                 str(searches.get("returned_context_lines", 0)),
-                _format_value(
-                    follow_up.get("context_follow_up_read_rate"), "percent"
-                ),
-                _format_value(
-                    follow_up.get("plain_follow_up_read_rate"), "percent"
-                ),
+                _format_value(follow_up.get("context_follow_up_read_rate"), "percent"),
+                _format_value(follow_up.get("plain_follow_up_read_rate"), "percent"),
             ]
         )
     lines.extend(
@@ -409,6 +401,49 @@ def render_markdown(
     label_dataset = quality["label_dataset"]
     review_week = quality["review_week"]
     labeled_week = quality["labeled_this_week"]
+    cost_effect = current["cost_effect"]
+    lines.extend(
+        [
+            "",
+            "## Cost and effect",
+            "",
+            *_markdown_table(
+                ["Measurement", "Value"],
+                [
+                    ["Total model tokens", _format_value(cost_effect["total_tokens"])],
+                    ["Input tokens", _format_value(cost_effect["input_tokens"])],
+                    ["Output tokens", _format_value(cost_effect["output_tokens"])],
+                    [
+                        "Cached input tokens",
+                        _format_value(cost_effect["cached_input_tokens"]),
+                    ],
+                    ["Model calls", _format_value(cost_effect["model_calls"])],
+                    [
+                        "Usage coverage",
+                        _format_value(cost_effect["usage_coverage"], "percent"),
+                    ],
+                    [
+                        "Labeled accepted Findings",
+                        _format_value(cost_effect["labeled_accepted_findings"]),
+                    ],
+                    [
+                        "Tokens/labeled accepted Finding",
+                        _format_value(
+                            cost_effect["tokens_per_labeled_accepted_finding"]
+                        ),
+                    ],
+                    [
+                        "Finding label coverage",
+                        _format_value(cost_effect["label_coverage"], "percent"),
+                    ],
+                ],
+            ),
+            "",
+            "The unit-cost denominator includes only human-labeled important/minor "
+            "Findings. Interpret it together with label coverage; incomplete labels can "
+            "overstate cost per accepted Finding.",
+        ]
+    )
     lines.extend(["", "## Human labels", ""])
     if label_dataset["status"] == "ready":
         lines.append(

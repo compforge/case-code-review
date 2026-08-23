@@ -22,7 +22,7 @@ from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ccr_trajectory import ATIFTrajectoryLoader, REVIEW1, REVIEW2, UNKNOWN_STAGE
-from trajectory_judge import objective_signals
+from trajectory_judge import objective_analysis
 from weekly_report_metrics import aggregate_cohorts, aggregate_stage
 from weekly_report_render import render_markdown
 
@@ -31,7 +31,7 @@ DEFAULT_DATASET_PATHS = (
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v6"
+REPORT_SCHEMA_VERSION = "weekly-report-v7"
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,14 +223,6 @@ def discover_sessions(
     return sessions, invalid
 
 
-def _inference_tokens(trajectory: Any, key: str) -> int:
-    return sum(
-        int((step.attributes or {}).get(key) or 0)
-        for step in trajectory.steps
-        if step.operation == "inference"
-    )
-
-
 def load_trajectory_rows(
     sessions: Iterable[SessionRecord], ccr: str
 ) -> tuple[list[dict[str, Any]], set[str]]:
@@ -250,7 +242,9 @@ def load_trajectory_rows(
             )
             trajectories = loader.loads(result.stdout, source=str(session.path))
             for trajectory in trajectories:
-                signals = objective_signals(trajectory)
+                analysis = objective_analysis(trajectory)
+                usage_result = analysis["model_usage"]
+                usage = usage_result.get("measurements") or {}
                 metadata = trajectory.metadata or {}
                 agent = metadata.get("agent") or {}
                 rows.append(
@@ -261,24 +255,30 @@ def load_trajectory_rows(
                         "unit": str(
                             metadata.get("file_path") or trajectory.trajectory_id
                         ),
-                        "stage": signals["stage"],
+                        "stage": analysis["stage"],
                         "outcome": str(metadata.get("execution_outcome") or "unknown"),
                         "reason": str(metadata.get("execution_reason") or ""),
-                        "score": signals["score"],
-                        "rounds": signals["rounds"],
-                        "duration_sec": signals["duration_sec"],
-                        "prompt_tokens": _inference_tokens(trajectory, "prompt_tokens"),
-                        "completion_tokens": _inference_tokens(
-                            trajectory, "completion_tokens"
+                        "score": analysis["score"],
+                        "rounds": analysis["rounds"],
+                        "duration_sec": analysis["duration_sec"],
+                        "prompt_tokens": int(usage.get("input_tokens") or 0),
+                        "completion_tokens": int(usage.get("output_tokens") or 0),
+                        "cached_tokens": int(usage.get("cached_input_tokens") or 0),
+                        "uncached_tokens": int(usage.get("uncached_input_tokens") or 0),
+                        "total_tokens": int(usage.get("total_tokens") or 0),
+                        "model_calls": int(usage.get("model_call_count") or 0),
+                        "usage_reported_calls": int(
+                            usage.get("usage_reported_call_count") or 0
                         ),
-                        "cached_tokens": _inference_tokens(trajectory, "cached_tokens"),
-                        "tool_freq": signals["tool_freq"],
+                        "usage_coverage": usage.get("usage_coverage_ratio"),
+                        "usage_status": usage_result.get("status"),
+                        "tool_freq": analysis["tool_freq"],
                         "model": str(agent.get("model_name") or session.model),
                         "tool_version": str(
                             metadata.get("tool_version") or session.tool_version
                         ),
                         "repository": repository_identity(session.cwd),
-                        "signals": signals,
+                        "analysis": analysis,
                     }
                 )
         except (
@@ -431,6 +431,9 @@ def quality_metrics(
     ]
     labeled_findings = len(finding_records)
     review_distribution = _label_distribution(finding_records)
+    accepted_findings = sum(
+        review_distribution.get(label, 0) for label in ("important", "minor")
+    )
     label_distribution = _label_distribution(label_records)
     quality_available = dataset_status == "ready"
     return {
@@ -441,6 +444,7 @@ def quality_metrics(
         "review_week": {
             "examples": len(review_records) if quality_available else None,
             "labeled_findings": labeled_findings if quality_available else None,
+            "accepted_findings": accepted_findings if quality_available else None,
             "by_label": review_distribution if quality_available else {},
             "wrong_tags": _wrong_tags(review_records) if quality_available else {},
             "label_coverage": round(labeled_findings / finding_events, 3)
@@ -486,6 +490,37 @@ def quality_metrics(
     }
 
 
+def cost_effect_metrics(
+    rows: list[dict[str, Any]], quality: dict[str, Any]
+) -> dict[str, Any]:
+    """Join factual model usage with human-accepted review findings."""
+
+    total_tokens = sum(int(row.get("total_tokens") or 0) for row in rows)
+    model_calls = sum(int(row.get("model_calls") or 0) for row in rows)
+    usage_reported_calls = sum(
+        int(row.get("usage_reported_calls") or 0) for row in rows
+    )
+    accepted = quality["review_week"]["accepted_findings"]
+    return {
+        "total_tokens": total_tokens,
+        "input_tokens": sum(int(row.get("prompt_tokens") or 0) for row in rows),
+        "output_tokens": sum(int(row.get("completion_tokens") or 0) for row in rows),
+        "cached_input_tokens": sum(int(row.get("cached_tokens") or 0) for row in rows),
+        "uncached_input_tokens": sum(
+            int(row.get("uncached_tokens") or 0) for row in rows
+        ),
+        "model_calls": model_calls,
+        "usage_coverage": round(usage_reported_calls / model_calls, 3)
+        if model_calls
+        else None,
+        "labeled_accepted_findings": accepted,
+        "tokens_per_labeled_accepted_finding": round(total_tokens / accepted, 3)
+        if accepted
+        else None,
+        "label_coverage": quality["review_week"]["label_coverage"],
+    }
+
+
 def build_week_metrics(
     window: WeekWindow,
     all_sessions: list[SessionRecord],
@@ -510,6 +545,14 @@ def build_week_metrics(
         if invalid_dataset_lines
         else "ready"
     )
+    quality = quality_metrics(
+        datasets,
+        sessions,
+        window,
+        scoped_session_ids,
+        repositories_scoped,
+        dataset_status,
+    )
     return {
         "week": window.key,
         "window": {
@@ -522,14 +565,8 @@ def build_week_metrics(
         REVIEW2: aggregate_stage(week_rows, REVIEW2),
         UNKNOWN_STAGE: aggregate_stage(week_rows, UNKNOWN_STAGE),
         "cohorts": aggregate_cohorts(week_rows),
-        "quality": quality_metrics(
-            datasets,
-            sessions,
-            window,
-            scoped_session_ids,
-            repositories_scoped,
-            dataset_status,
-        ),
+        "quality": quality,
+        "cost_effect": cost_effect_metrics(week_rows, quality),
         "data_quality": {
             "invalid_session_files_in_scan": invalid_session_files,
             "trajectory_export_failures": len(failed_session_ids & session_ids),
@@ -542,6 +579,12 @@ def build_week_metrics(
 COMPARISON_METRICS = (
     ("Sessions", ("sessions", "total"), "number"),
     ("Finding events", ("sessions", "finding_events"), "number"),
+    ("Total model tokens", ("cost_effect", "total_tokens"), "number"),
+    (
+        "Tokens/labeled accepted Finding",
+        ("cost_effect", "tokens_per_labeled_accepted_finding"),
+        "number",
+    ),
     ("Review 1 chains", (REVIEW1, "chains"), "number"),
     ("Review 1 outcome coverage", (REVIEW1, "outcome_coverage"), "percent"),
     ("Review 1 completion", (REVIEW1, "completion_rate"), "percent"),

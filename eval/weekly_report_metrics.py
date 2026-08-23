@@ -70,17 +70,15 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
 
     for row_index, row in enumerate(selected):
         tools.update(row["tool_freq"])
-        signals = row.get("signals") or {}
-        code_searches = signals.get("code_searches") or {}
+        analysis = row.get("analysis") or {}
+        code_searches = analysis.get("code_searches") or {}
         search_calls += int(code_searches.get("calls") or 0)
         search_requests += int(code_searches.get("requests") or 0)
         context_requests += int(code_searches.get("context_requests") or 0)
         requested_context_lines += int(
             code_searches.get("requested_context_lines") or 0
         )
-        returned_context_lines += int(
-            code_searches.get("returned_context_lines") or 0
-        )
+        returned_context_lines += int(code_searches.get("returned_context_lines") or 0)
         context_truncated_requests += int(
             code_searches.get("context_truncated_requests") or 0
         )
@@ -88,7 +86,7 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             code_searches.get("context_unavailable_requests") or 0
         )
 
-        search_follow_up = signals.get("search_then_read") or {}
+        search_follow_up = analysis.get("search_then_read") or {}
         hit_search_requests += int(
             search_follow_up.get("hit_search_request_count") or 0
         )
@@ -108,20 +106,16 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             search_follow_up.get("plain_follow_up_read_request_count") or 0
         )
 
-        outlines = (signals.get("initial_context") or {}).get("outlines") or {}
+        outlines = (analysis.get("initial_context") or {}).get("outlines") or {}
         initial_outline_attempts += int(outlines.get("attempts") or 0)
         outline_admitted_bytes += int(outlines.get("admitted_bytes") or 0)
         outline_outcomes.update(
             {
                 str(outcome): int(count)
-                for outcome, count in (
-                    outlines.get("outcomes") or {}
-                ).items()
+                for outcome, count in (outlines.get("outcomes") or {}).items()
             }
         )
-        for language, language_outcomes in (
-            outlines.get("by_language") or {}
-        ).items():
+        for language, language_outcomes in (outlines.get("by_language") or {}).items():
             outline_by_language.setdefault(str(language), Counter()).update(
                 {
                     str(outcome): int(event_count)
@@ -137,18 +131,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
                 ).items()
             }
         )
-        for failure in signals.get("failures") or []:
+        for failure in analysis.get("failures") or []:
             key = (
                 str(failure.get("impact") or "step"),
                 str(failure.get("key") or "unknown.unknown.unknown"),
             )
             failure_events[key] += 1
             failure_affected.setdefault(key, set()).add(row_index)
-        for evaluation in signals.get("evaluations") or []:
-            for signal in evaluation.get("signals") or []:
+        for evaluation in analysis.get("evaluations") or []:
+            for finding in evaluation.get("findings") or []:
                 key = (
-                    str(signal.get("severity") or "info"),
-                    str(signal.get("code") or "unknown"),
+                    str(finding.get("severity") or "info"),
+                    str(finding.get("code") or "unknown"),
                 )
                 diagnostic_events[key] += 1
                 diagnostic_affected.setdefault(key, set()).add(row_index)
@@ -156,13 +150,39 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     count = len(selected)
     known_outcomes = count - outcomes["unknown"]
     assessments = sum(
-        int((row.get("signals") or {}).get("assessment_count") or 0)
+        int((row.get("analysis") or {}).get("assessment_count") or 0)
         for row in selected
     )
     durations = [float(row["duration_sec"]) for row in selected]
     prompt_tokens = [float(row["prompt_tokens"]) for row in selected]
     completion_tokens = [float(row["completion_tokens"]) for row in selected]
     cached_tokens = [float(row.get("cached_tokens", 0)) for row in selected]
+    uncached_tokens = [
+        float(
+            row.get("uncached_tokens")
+            if row.get("uncached_tokens") is not None
+            else max(
+                float(row.get("prompt_tokens") or 0)
+                - float(row.get("cached_tokens") or 0),
+                0,
+            )
+        )
+        for row in selected
+    ]
+    total_tokens = [
+        float(
+            row.get("total_tokens")
+            if row.get("total_tokens") is not None
+            else float(row.get("prompt_tokens") or 0)
+            + float(row.get("completion_tokens") or 0)
+        )
+        for row in selected
+    ]
+    model_calls = [float(row.get("model_calls", 0)) for row in selected]
+    model_call_count = sum(int(row.get("model_calls") or 0) for row in selected)
+    usage_reported_calls = sum(
+        int(row.get("usage_reported_calls") or 0) for row in selected
+    )
     failure_items = [
         {
             "impact": impact,
@@ -184,7 +204,7 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     diagnostic_items = [
         {
             "severity": severity,
-            "signal": signal,
+            "finding": signal,
             "count": event_count,
             "affected_chains": len(diagnostic_affected[(severity, signal)]),
             "rate": round(len(diagnostic_affected[(severity, signal)]) / count, 3),
@@ -220,11 +240,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         "prompt_tokens": distribution(prompt_tokens),
         "completion_tokens": distribution(completion_tokens),
         "cached_tokens": distribution(cached_tokens),
+        "uncached_tokens": distribution(uncached_tokens),
+        "total_tokens": distribution(total_tokens),
+        "model_calls": distribution(model_calls),
+        "usage_coverage": round(usage_reported_calls / model_call_count, 3)
+        if model_call_count
+        else None,
         "per_assessment": {
             "duration_sec": _average_per(durations, assessments),
             "prompt_tokens": _average_per(prompt_tokens, assessments),
             "completion_tokens": _average_per(completion_tokens, assessments),
             "cached_tokens": _average_per(cached_tokens, assessments),
+            "total_tokens": _average_per(total_tokens, assessments),
         },
         "tool_freq": dict(sorted(tools.items(), key=lambda item: (-item[1], item[0]))),
         "code_searches": {
@@ -233,9 +260,7 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "purpose_counts": dict(
                 sorted(search_purposes.items(), key=lambda item: (-item[1], item[0]))
             ),
-            "purpose_coverage": round(
-                labeled_search_requests / search_requests, 3
-            )
+            "purpose_coverage": round(labeled_search_requests / search_requests, 3)
             if search_requests
             else None,
             "context_requests": context_requests,
@@ -250,9 +275,7 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         "search_follow_up": {
             "hit_search_requests": hit_search_requests,
             "follow_up_read_requests": follow_up_read_requests,
-            "follow_up_read_rate": _ratio(
-                follow_up_read_requests, hit_search_requests
-            ),
+            "follow_up_read_rate": _ratio(follow_up_read_requests, hit_search_requests),
             "context_hit_search_requests": context_hit_search_requests,
             "context_follow_up_read_requests": context_follow_up_read_requests,
             "context_follow_up_read_rate": _ratio(
@@ -273,20 +296,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "outcomes": dict(sorted(outline_outcomes.items())),
             "by_language": {
                 language: dict(sorted(language_outcomes.items()))
-                for language, language_outcomes in sorted(
-                    outline_by_language.items()
-                )
+                for language, language_outcomes in sorted(outline_by_language.items())
             },
         },
         "failures": {
             "events": sum(failure_events.values()),
             "items": failure_items,
         },
-        "diagnostic_signals": {
+        "diagnostic_findings": {
             "events": sum(diagnostic_events.values()),
             "items": diagnostic_items,
         },
-        "main_deductions": main_deductions([row["signals"] for row in selected]),
+        "main_deductions": main_deductions([row["analysis"] for row in selected]),
     }
 
 
@@ -315,6 +336,7 @@ def aggregate_cohorts(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "completion_rate": metrics["completion_rate"],
                 "duration_sec": metrics["duration_sec"],
                 "prompt_tokens": metrics["prompt_tokens"],
+                "total_tokens": metrics["total_tokens"],
                 "code_searches": metrics["code_searches"],
                 "search_follow_up": metrics["search_follow_up"],
                 "initial_outlines": metrics["initial_outlines"],

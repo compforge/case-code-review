@@ -15,12 +15,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from trajectory_harness import (
-    DiagnosticSignal,
     EvaluationResult,
     EvaluatorSpec,
     ExecutionResult,
     Failure,
-    MeasurementSpec,
+    Finding,
     Step,
     Trajectory,
 )
@@ -34,7 +33,6 @@ def _evaluator_spec(
     evaluator_id: str,
     title: str,
     description: str,
-    measurements: tuple[MeasurementSpec, ...] = (),
 ) -> EvaluatorSpec:
     return EvaluatorSpec(
         evaluator_id=evaluator_id,
@@ -42,7 +40,6 @@ def _evaluator_spec(
         description=description,
         kind="domain",
         owner="case-code-review",
-        measurements=measurements,
     )
 
 
@@ -116,12 +113,15 @@ class ATIFTrajectoryLoader:
                 continue
 
             calls = raw.get("tool_calls") or []
-            attributes = {
-                **dict(raw.get("extra") or {}),
-                "prompt_tokens": metrics.get("prompt_tokens", 0),
-                "completion_tokens": metrics.get("completion_tokens", 0),
-                "cached_tokens": metrics.get("cached_tokens", 0),
-            }
+            attributes = dict(raw.get("extra") or {})
+            for token_name in (
+                "prompt_tokens",
+                "completion_tokens",
+                "cached_tokens",
+                "cache_read_tokens",
+            ):
+                if metrics.get(token_name) is not None:
+                    attributes[token_name] = metrics[token_name]
             if reasoning := raw.get("reasoning_content"):
                 attributes["reasoning_content"] = reasoning
             failure = _failure_from_value(attributes.get("failure"))
@@ -303,7 +303,9 @@ class SearchScopeEvaluator:
                 self.spec.evaluator_id,
                 "Trajectory contains no search_code calls.",
             )
-        evaluated = [item for item in observations if item["outcome"] != "scope_unknown"]
+        evaluated = [
+            item for item in observations if item["outcome"] != "scope_unknown"
+        ]
         if not evaluated:
             return _not_evaluated(
                 self.spec.evaluator_id,
@@ -416,30 +418,7 @@ class AdjacentFileReadsEvaluator:
     spec: EvaluatorSpec = _evaluator_spec(
         "adjacent_file_reads",
         "Adjacent file reads",
-        "Observe adjacent or overlapping file ranges and when they became available.",
-        (
-            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
-            MeasurementSpec(
-                "mergeable_range_count",
-                "count",
-                "Adjacent or overlapping ranges that fit in one 500-line range.",
-            ),
-            MeasurementSpec(
-                "cross_turn_mergeable_range_count",
-                "count",
-                "Mergeable ranges requested in different inference turns.",
-            ),
-            MeasurementSpec(
-                "same_turn_mergeable_range_count",
-                "count",
-                "Mergeable ranges requested by separate calls in one inference turn.",
-            ),
-            MeasurementSpec(
-                "same_call_mergeable_range_count",
-                "count",
-                "Mergeable ranges already batched in one tool call.",
-            ),
-        ),
+        "Identify adjacent or overlapping file ranges and when they became available.",
     )
 
     def evaluate(
@@ -454,20 +433,10 @@ class AdjacentFileReadsEvaluator:
                 "Trajectory contains no ranged read_files output.",
             )
         mergeable = stats["mergeable_range_count"]
-        measurements = {
-            name: stats[name]
-            for name in (
-                "read_range_count",
-                "mergeable_range_count",
-                "cross_turn_mergeable_range_count",
-                "same_turn_mergeable_range_count",
-                "same_call_mergeable_range_count",
-            )
-        }
-        signals = ()
+        findings = ()
         if mergeable:
-            signals = (
-                DiagnosticSignal(
+            findings = (
+                Finding(
                     code="adjacent_file_reads",
                     severity="info",
                     summary=(
@@ -485,7 +454,6 @@ class AdjacentFileReadsEvaluator:
         return EvaluationResult(
             evaluator_id=self.spec.evaluator_id,
             status="evaluated",
-            measurements=measurements,
             explanation=(
                 f"{range_count} observed file ranges contain {mergeable} adjacent or "
                 "overlapping range(s); "
@@ -493,7 +461,7 @@ class AdjacentFileReadsEvaluator:
                 "across different inference turns."
             ),
             step_ids=tuple(stats["adjacent_step_ids"]),
-            signals=signals,
+            findings=findings,
         )
 
 
@@ -504,26 +472,7 @@ class FileReadBatchingEvaluator:
     spec: EvaluatorSpec = _evaluator_spec(
         "file_read_batching",
         "File read batching",
-        "Measure read_files batching and detect same-turn calls that could share reads[].",
-        (
-            MeasurementSpec("read_call_count", "count", "Observed read_files calls."),
-            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
-            MeasurementSpec(
-                "average_batch_size", "count", "File ranges per read_files call."
-            ),
-            MeasurementSpec(
-                "same_turn_unbatched_call_count",
-                "count",
-                "Extra read_files calls emitted by the same inference response.",
-                "lower_is_better",
-            ),
-            MeasurementSpec(
-                "same_turn_unbatched_call_rate",
-                "ratio",
-                "Same-turn extra calls divided by read_files calls.",
-                "lower_is_better",
-            ),
-        ),
+        "Judge whether same-turn read_files calls could share one reads[] batch.",
     )
 
     def evaluate(
@@ -537,17 +486,10 @@ class FileReadBatchingEvaluator:
             )
         batching = same_turn_file_read_batching(trajectory)
         extra_calls = batching["extra_calls"]
-        measurements = {
-            "read_call_count": stats["calls"],
-            "read_range_count": stats["requests"],
-            "average_batch_size": stats["average_batch"],
-            "same_turn_unbatched_call_count": extra_calls,
-            "same_turn_unbatched_call_rate": round(extra_calls / stats["calls"], 3),
-        }
-        signals = ()
+        findings = ()
         if extra_calls:
-            signals = (
-                DiagnosticSignal(
+            findings = (
+                Finding(
                     code="unbatched_same_turn_reads",
                     severity="warning",
                     summary=(
@@ -565,13 +507,12 @@ class FileReadBatchingEvaluator:
             evaluator_id=self.spec.evaluator_id,
             status="evaluated",
             verdict="warning" if extra_calls else "pass",
-            measurements=measurements,
             explanation=(
                 f"{stats['requests']} ranges used {stats['calls']} read_files calls; "
                 f"{extra_calls} same-turn extra call(s) were observed."
             ),
             step_ids=tuple(batching["step_ids"]),
-            signals=signals,
+            findings=findings,
         )
 
 
@@ -582,55 +523,7 @@ class SearchThenReadEvaluator:
     spec: EvaluatorSpec = _evaluator_spec(
         "search_then_read",
         "Search then read",
-        "Measure source reads that follow and cover a search_code hit.",
-        (
-            MeasurementSpec("read_range_count", "count", "Observed file ranges."),
-            MeasurementSpec(
-                "search_then_read_range_count",
-                "count",
-                "Read ranges covering an earlier search hit.",
-            ),
-            MeasurementSpec(
-                "search_then_read_rate",
-                "ratio",
-                "Search-linked ranges divided by observed read ranges.",
-            ),
-            MeasurementSpec(
-                "identifier_search_then_read_range_count",
-                "count",
-                "Search-linked ranges reached through an identifier-shaped query.",
-            ),
-            MeasurementSpec(
-                "identifier_search_then_read_rate",
-                "ratio",
-                "Identifier search-linked ranges divided by observed read ranges.",
-            ),
-            MeasurementSpec(
-                "hit_search_request_count",
-                "count",
-                "Search requests that returned at least one hit.",
-            ),
-            MeasurementSpec(
-                "follow_up_read_request_count",
-                "count",
-                "Hit-producing search requests followed by a covering source read.",
-            ),
-            MeasurementSpec(
-                "follow_up_read_rate",
-                "ratio",
-                "Hit-producing search requests followed by a covering source read.",
-            ),
-            MeasurementSpec(
-                "context_follow_up_read_rate",
-                "ratio",
-                "Follow-up read rate for hit-producing searches with context_lines.",
-            ),
-            MeasurementSpec(
-                "plain_follow_up_read_rate",
-                "ratio",
-                "Follow-up read rate for hit-producing searches without context_lines.",
-            ),
-        ),
+        "Identify source reads that follow and cover a search_code hit.",
     )
 
     def evaluate(
@@ -644,25 +537,10 @@ class SearchThenReadEvaluator:
                 "Trajectory needs a search_code request that returned at least one hit.",
             )
         linked = stats["search_then_read_range_count"]
-        measurements = {
-            name: stats[name]
-            for name in (
-                "read_range_count",
-                "search_then_read_range_count",
-                "search_then_read_rate",
-                "identifier_search_then_read_range_count",
-                "identifier_search_then_read_rate",
-                "hit_search_request_count",
-                "follow_up_read_request_count",
-                "follow_up_read_rate",
-                "context_follow_up_read_rate",
-                "plain_follow_up_read_rate",
-            )
-        }
-        signals = ()
+        findings = ()
         if linked:
-            signals = (
-                DiagnosticSignal(
+            findings = (
+                Finding(
                     code="search_then_read",
                     severity="info",
                     summary=(
@@ -680,14 +558,13 @@ class SearchThenReadEvaluator:
         return EvaluationResult(
             evaluator_id=self.spec.evaluator_id,
             status="evaluated",
-            measurements=measurements,
             explanation=(
                 f"{stats['follow_up_read_request_count']} of "
                 f"{stats['hit_search_request_count']} hit-producing search request(s) "
                 f"were followed by a covering read ({linked} read range(s))."
             ),
             step_ids=tuple(stats["step_ids"]),
-            signals=signals,
+            findings=findings,
         )
 
 
@@ -741,7 +618,9 @@ class AssessmentCompletionEvaluator:
     ) -> EvaluationResult:
         del reference
         calls = _tool_steps(trajectory)
-        if not calls and not any(step.operation == "inference" for step in trajectory.steps):
+        if not calls and not any(
+            step.operation == "inference" for step in trajectory.steps
+        ):
             return _not_evaluated(
                 self.spec.evaluator_id, "Trajectory contains no model execution."
             )
@@ -928,7 +807,9 @@ def _current_file_demands(step: Step) -> list[ContextDemand]:
 @register_context_demand_extractor("read_base_files")
 def _baseline_file_demands(step: Step) -> list[ContextDemand]:
     return [
-        ContextDemand("baseline_file", str(request.get("file_path") or "?"), "baseline_request")
+        ContextDemand(
+            "baseline_file", str(request.get("file_path") or "?"), "baseline_request"
+        )
         for request in _file_read_requests(step)
     ]
 
@@ -950,7 +831,9 @@ def _file_discovery_demands(step: Step) -> list[ContextDemand]:
     paths = []
     for line in _tool_response(step).splitlines():
         value = line.strip()
-        if value and not value.lower().startswith(("error:", "no matching", "file was not found")):
+        if value and not value.lower().startswith(
+            ("error:", "no matching", "file was not found")
+        ):
             paths.append(ContextDemand("file", value, "file_discovery"))
     return paths
 
@@ -986,9 +869,9 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
             continue
         key = (kind, identity)
         current = inventory.get(key)
-        if current is None or view_rank.get(str(item.get("representation")), 0) > view_rank.get(
-            str(current.get("representation")), 0
-        ):
+        if current is None or view_rank.get(
+            str(item.get("representation")), 0
+        ) > view_rank.get(str(current.get("representation")), 0):
             inventory[key] = item
 
     admitted: Counter[str] = Counter()
@@ -1380,9 +1263,7 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
             for hit in hits:
                 follow_up_requests.add(hit[4])
                 (
-                    context_follow_up_requests
-                    if hit[5]
-                    else plain_follow_up_requests
+                    context_follow_up_requests if hit[5] else plain_follow_up_requests
                 ).add(hit[4])
             if any(identifier.fullmatch(hit[1]) for hit in hits):
                 identifier_linked_ranges += 1
@@ -1533,7 +1414,11 @@ def _code_search_result_parts(step: Step) -> list[str]:
     if not markers or markers[0].start() != 0:
         return [response]
     return [
-        response[marker.end() : markers[index + 1].start() if index + 1 < len(markers) else len(response)].strip()
+        response[
+            marker.end() : markers[index + 1].start()
+            if index + 1 < len(markers)
+            else len(response)
+        ].strip()
         for index, marker in enumerate(markers)
     ]
 
@@ -1555,8 +1440,10 @@ def _code_search_observations(trajectory: Trajectory) -> list[dict[str, str]]:
         for index, request in enumerate(requests):
             text = results[index].strip() if index < len(results) else ""
             outcome = "hit"
-            if step.status == "error" or not text or text.startswith(
-                ("Error:", "search_code timed out")
+            if (
+                step.status == "error"
+                or not text
+                or text.startswith(("Error:", "search_code timed out"))
             ):
                 outcome = "tool_failure"
             else:
@@ -1606,7 +1493,11 @@ def _file_read_result_parts(step: Step) -> list[str]:
     if not markers or markers[0].start() != 0:
         return [response]
     return [
-        response[marker.end() : markers[index + 1].start() if index + 1 < len(markers) else len(response)].strip()
+        response[
+            marker.end() : markers[index + 1].start()
+            if index + 1 < len(markers)
+            else len(response)
+        ].strip()
         for index, marker in enumerate(markers)
     ]
 
@@ -1619,7 +1510,9 @@ def _file_read_ranges(step: Step) -> list[tuple[str, int, int]]:
         range_match = re.search(r"(?m)^LINE_RANGE:\s*(\d+)-(\d+)\s*$", response)
         if not range_match:
             continue
-        requested_path = requests[index].get("file_path") if index < len(requests) else None
+        requested_path = (
+            requests[index].get("file_path") if index < len(requests) else None
+        )
         path = path_match.group(1) if path_match else requested_path
         if not path:
             continue
@@ -1631,7 +1524,9 @@ def _file_read_ranges(step: Step) -> list[tuple[str, int, int]]:
 
 def _file_read_observed_ranges(step: Step) -> list[tuple[str, int, int]]:
     ranges = _file_read_ranges(step)
-    ranges.extend((path, start, end) for _, path, start, end in _already_available_ranges(step))
+    ranges.extend(
+        (path, start, end) for _, path, start, end in _already_available_ranges(step)
+    )
     return ranges
 
 
@@ -1647,7 +1542,9 @@ def _already_available_ranges(step: Step) -> list[tuple[str, str, int, int]]:
         if not match:
             continue
         source = "initial" if match.group(1).startswith("the initial") else "runtime"
-        ranges.append((source, match.group(2), int(match.group(3)), int(match.group(4))))
+        ranges.append(
+            (source, match.group(2), int(match.group(3)), int(match.group(4)))
+        )
     return ranges
 
 
@@ -1664,7 +1561,9 @@ def _context_file_ranges(trajectory: Trajectory) -> dict[str, list[tuple[int, in
                 lines = content.splitlines()
                 if not lines:
                     continue
-                header = re.match(r"^File:\s*(.+?)\s+\(Total lines:\s*(\d+)\)$", lines[0])
+                header = re.match(
+                    r"^File:\s*(.+?)\s+\(Total lines:\s*(\d+)\)$", lines[0]
+                )
                 if not header:
                     continue
                 path, total = header.group(1), int(header.group(2))
@@ -1737,7 +1636,9 @@ def _timestamp_ms(value: Any) -> float:
     if not value:
         return 0
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp() * 1000
+        return (
+            datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp() * 1000
+        )
     except ValueError:
         return 0
 
@@ -1762,9 +1663,7 @@ def _assistant_message(content: Any, calls: list[dict[str, Any]]) -> dict[str, A
     return {"role": "assistant", "parts": parts}
 
 
-def _tool_call_message(
-    call_id: Any, name: str, arguments: Any
-) -> dict[str, Any]:
+def _tool_call_message(call_id: Any, name: str, arguments: Any) -> dict[str, Any]:
     return {
         "role": "assistant",
         "parts": [

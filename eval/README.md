@@ -239,18 +239,19 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 `search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计；
 有命中的 search request 另作为稳定分母，区分启用和未启用 `context_lines` 后的 follow-up read 比例。
 每个 query 的自由字符串 `purpose` 同时按原值统计覆盖率和分布，用来发现尚未进入既有工具分类的搜索需求。
-这些模式的 count/rate 通过 Measurements 聚合进报告。重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
+这些模式的原始 count/rate 保留在 objective analysis 中，Evaluator 只输出 verdict、score 和 Finding。
+重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
 average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内
 未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。确定性结果统一产生
 `EvaluationResult`，用 status、verdict、可选 0~1 score、explanation 与 step id 区分执行健康、
-判断和证据。重复工具调用只产生带 hypotheses 的 `DiagnosticSignal`，不伪装为执行 Failure 或低分；
+判断和证据。重复工具调用只产生带 hypotheses 的 `Finding`，不伪装为执行 Failure 或低分；
 CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
 judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
 [HTML 报告示例](examples/trajectory-evaluation-report.html)展示了 Trajectory facts、Failure、
-EvaluationResult、DiagnosticSignal 与聚合 Metric 在同一读模型中的分层关系。
+EvaluationResult、Finding 与聚合 Metric 在同一读模型中的分层关系。
 
 ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
 提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率
@@ -336,8 +337,10 @@ eval/data/reports/weekly/2026-W32/
 └── manifest.json         周区间、时区、输入范围与生成时间
 ```
 
-执行指标按 `session_start` 归周，而不是按 Session 文件 mtime；报告分别展示 Review 1 Unit 与
-Review 2 Lane 的完成率、`workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
+执行指标按 `session_start` 归周，而不是按 Session 文件 mtime。模型调用次数和
+input/output/cache token 统一由 trajectory_harness 的 `ModelUsageMeasurer` 从 Trajectory 测量，
+Evaluator 不携带这些成本事实。报告分别展示 Review 1 Unit 与 Review 2 Lane 的完成率、
+`workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
 工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
 不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。
 `search_code` 的 request purpose 按 Review stage 保留原始自由文本，报告展示 purpose 覆盖率和
@@ -357,6 +360,9 @@ Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周�
 不同引擎直接当成同一 cohort。对已标注 Finding，报告分别展示 `important + minor` 的 accepted
 比例以及 `wrong`、`repeat`、`debatable` 比例，不把它们压成含义不清的“准确率”。`ccr:missed`
 只作为漏报信号计数；在每个被评审变更都没有完整人工 ground truth 之前，recall 保持不可用。
+成本与效果只在共同 cohort 上联合：周报给出 `tokens / labeled accepted Finding`，其中 accepted
+只包括人工标注的 `important + minor`，并始终同时展示 label coverage；标签不完整时，该单位成本
+只能作为上界信号，不能当作完整质量结论。
 
 ## 可选：建立固定 corpus 并重放
 
