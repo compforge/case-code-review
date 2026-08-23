@@ -18,7 +18,7 @@ Two passes:
                   按分类法给出 categories + evidence + suggestion 的 JSON 结论。
 
 The per-chain labels are the raw material for prompt/tool-desc evolution
-(GEPA-style): objective signals double as Actionable Side Information.
+(GEPA-style): objective analysis doubles as Actionable Side Information.
 
 Usage:
   ccr export | uv run --project eval/reviewbench python eval/trajectory_judge.py
@@ -28,6 +28,7 @@ Usage:
 
 Dependencies are managed by eval/reviewbench/pyproject.toml.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -69,12 +70,25 @@ from ccr_trajectory import (
     search_then_read_stats,
     tool_frequencies,
 )
-from trajectory_harness import RepeatedToolCallEvaluator, Trajectory, evaluate
+from trajectory_harness import (
+    ModelUsageMeasurer,
+    RepeatedToolCallEvaluator,
+    Trajectory,
+    evaluate,
+    measure,
+)
 
-TAXONOMY = ["missing_tool", "bad_tool_description", "bad_prompt",
-            "missing_context", "model_limitation", "ok"]
+TAXONOMY = [
+    "missing_tool",
+    "bad_tool_description",
+    "bad_prompt",
+    "missing_context",
+    "model_limitation",
+    "ok",
+]
 
 # ── input ────────────────────────────────────────────────────────────────────
+
 
 def load_trajectories(path: str | None) -> list[Trajectory]:
     """Read ATIF trajectories: from stdin, an ATIF json/jsonl file, or a raw
@@ -85,8 +99,12 @@ def load_trajectories(path: str | None) -> list[Trajectory]:
         data = Path(path).read_text(encoding="utf-8")
         first = data.splitlines()[0] if data.strip() else ""
         if '"session_start"' in first:  # raw session transcript, not ATIF
-            data = subprocess.run(["ccr", "export", "--format", "atif", path],
-                                  capture_output=True, text=True, check=True).stdout
+            data = subprocess.run(
+                ["ccr", "export", "--format", "atif", path],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
     return ATIFTrajectoryLoader().loads(data, source=path or "stdin")
 
 
@@ -111,13 +129,14 @@ _STAGE_EVALUATORS = {
     REVIEW2: (*_COMMON_EVALUATORS, AssessmentCompletionEvaluator()),
     UNKNOWN_STAGE: _COMMON_EVALUATORS,
 }
+_MODEL_USAGE_MEASURER = ModelUsageMeasurer()
 
 
-def objective_signals(trajectory: Trajectory) -> dict:
-    """Local, deterministic waste/failure signals for one unit chain. These are
-    both a cheap standalone report and the ASI handed to the LLM judge."""
+def objective_analysis(trajectory: Trajectory) -> dict:
+    """Build deterministic evaluation, measurement, and failure data for one chain."""
     stage = review_stage(trajectory)
     report = evaluate(trajectory, _STAGE_EVALUATORS[stage])
+    model_usage = measure(trajectory, [_MODEL_USAGE_MEASURER]).results[0]
     tool_fails = [
         {"tool": step.name, "error": _tool_result(step)[:120]}
         for step in trajectory.steps
@@ -155,8 +174,11 @@ def objective_signals(trajectory: Trajectory) -> dict:
         # this unweighted mean is CCR's explicit summary policy.
         "score": _mean_score(report.results),
         "evaluations": [result.to_dict() for result in report.results],
+        "model_usage": model_usage.to_dict(),
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
-        "duration_sec": round(sum(step.duration_ms for step in trajectory.steps) / 1000),
+        "duration_sec": round(
+            sum(step.duration_ms for step in trajectory.steps) / 1000
+        ),
         "tool_freq": tool_frequencies(trajectory),
         "empty_args": empty_tool_argument_stats(trajectory),
         "code_searches": code_search_stats(trajectory),
@@ -179,12 +201,12 @@ def _mean_score(results) -> float | None:
     return round(sum(scores) / len(scores), 3) if scores else None
 
 
-def main_deductions(signals: list[dict], limit: int = 3) -> list[dict]:
+def main_deductions(analyses: list[dict], limit: int = 3) -> list[dict]:
     """Rank the stage's recurring score losses without hiding raw Evaluations."""
 
     grouped: dict[str, list[float]] = {}
-    for signal in signals:
-        for result in signal["evaluations"]:
+    for analysis in analyses:
+        for result in analysis["evaluations"]:
             score = result.get("score")
             if result.get("verdict") != "fail" or score is None:
                 continue
@@ -228,9 +250,9 @@ rule to add>","confidence":0.0}],"summary":"<one sentence>"}"""
 _TRUNC = 500  # per message/result — the judge needs shape, not full payloads
 
 
-def chain_digest(trajectory: Trajectory, signals: dict) -> str:
+def chain_digest(trajectory: Trajectory, analysis: dict) -> str:
     """Compact one chain for the judge: every step, messages/results truncated,
-    objective signals appended as ASI."""
+    objective analysis appended as ASI."""
     lines = [
         f"stage: {review_stage(trajectory)} scope: {trajectory.trajectory_id} "
         f"metadata={json.dumps(trajectory.metadata, ensure_ascii=False)}"
@@ -252,7 +274,7 @@ def chain_digest(trajectory: Trajectory, signals: dict) -> str:
                 f"{head} {step.name}{ok}({_tool_arguments(step)[:200]}) "
                 f"-> {_tool_result(step)[:_TRUNC]}"
             )
-    lines.append(f"objective signals: {json.dumps(signals, ensure_ascii=False)}")
+    lines.append(f"objective analysis: {json.dumps(analysis, ensure_ascii=False)}")
     return "\n".join(lines)
 
 
@@ -280,7 +302,11 @@ def _tool_result(step) -> str:
     for part in _parts(step.output_messages):
         if part.get("type") == "tool_call_response":
             value = part.get("response")
-            return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            return (
+                value
+                if isinstance(value, str)
+                else json.dumps(value, ensure_ascii=False)
+            )
     return ""
 
 
@@ -294,7 +320,10 @@ def load_llm(model_override: str | None):
         raise SystemExit("no custom_providers/routing in ~/.casecodereview/config.json")
     route = routing[0]
     if model_override:
-        route = next((m for m in routing if model_override in (m.get("alias"), m.get("model"))), route)
+        route = next(
+            (m for m in routing if model_override in (m.get("alias"), m.get("model"))),
+            route,
+        )
     prov = providers[route["provider"]]
     return prov["url"], prov["api_key"], route["model"]
 
@@ -302,35 +331,55 @@ def load_llm(model_override: str | None):
 def judge_chain(url: str, key: str, model: str, digest: str) -> dict:
     body = {
         "model": model,
-        "messages": [{"role": "system", "content": JUDGE_SYSTEM},
-                     {"role": "user", "content": digest}],
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": digest},
+        ],
         "temperature": 0,
         # Ark models default thinking to auto; a taxonomy classification doesn't
         # need it and it multiplies latency (see mem: review p50 12s vs 77s).
         "thinking": {"type": "disabled"},
     }
-    req = urllib.request.Request(url, data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": f"Bearer {key}"})
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+    )
     with urllib.request.urlopen(req, timeout=180) as resp:
         out = json.loads(resp.read())
     text = out["choices"][0]["message"]["content"]
     m = re.search(r"\{.*\}", text, re.S)  # tolerate prose around the JSON
     verdict = json.loads(m.group(0)) if m else {"categories": [], "summary": text[:200]}
-    verdict["categories"] = [c for c in verdict.get("categories") or []
-                             if c.get("type") in TAXONOMY]
+    verdict["categories"] = [
+        c for c in verdict.get("categories") or [] if c.get("type") in TAXONOMY
+    ]
     return verdict
 
 
 # ── report ───────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description="classify review-chain failures over ATIF trajectories")
-    ap.add_argument("path", nargs="?", help="ATIF json/jsonl (or raw session jsonl); stdin if omitted")
-    ap.add_argument("--no-llm", action="store_true", help="objective signals only")
-    ap.add_argument("--labels", help="also append per-chain JSONL labels here (fuel for prompt evolution)")
-    ap.add_argument("--model", help="routing alias/model for the judge (default: first routing entry)")
-    ap.add_argument("--max-chains", type=int, default=0, help="judge at most N chains (0 = all)")
+    ap = argparse.ArgumentParser(
+        description="classify review-chain failures over ATIF trajectories"
+    )
+    ap.add_argument(
+        "path",
+        nargs="?",
+        help="ATIF json/jsonl (or raw session jsonl); stdin if omitted",
+    )
+    ap.add_argument("--no-llm", action="store_true", help="objective analysis only")
+    ap.add_argument(
+        "--labels",
+        help="also append per-chain JSONL labels here (fuel for prompt evolution)",
+    )
+    ap.add_argument(
+        "--model",
+        help="routing alias/model for the judge (default: first routing entry)",
+    )
+    ap.add_argument(
+        "--max-chains", type=int, default=0, help="judge at most N chains (0 = all)"
+    )
     ns = ap.parse_args()
 
     trajectories = load_trajectories(ns.path)
@@ -345,29 +394,35 @@ def main() -> int:
 
     for session_id, session_trajectories in sessions.items():
         first = session_trajectories[0]
-        print(f"# session {session_id[:8]} "
-              f"repo={first.metadata.get('repo', '?')} "
-              f"branch={first.metadata.get('branch', '?')}")
+        print(
+            f"# session {session_id[:8]} "
+            f"repo={first.metadata.get('repo', '?')} "
+            f"branch={first.metadata.get('branch', '?')}"
+        )
         for stage, title in (
             (REVIEW1, "Review 1 · Unit"),
             (REVIEW2, "Review 2 · Lane"),
             (UNKNOWN_STAGE, "Other"),
         ):
-            staged = [item for item in session_trajectories if review_stage(item) == stage]
+            staged = [
+                item for item in session_trajectories if review_stage(item) == stage
+            ]
             if not staged:
                 continue
             print(f"\n## {title} ({len(staged)})")
-            stage_signals = []
+            stage_analyses = []
             for trajectory in staged:
-                sig = objective_signals(trajectory)
-                stage_signals.append(sig)
+                sig = objective_analysis(trajectory)
+                stage_analyses.append(sig)
                 print(f"\n### {trajectory.trajectory_id}")
                 searches = sig["code_searches"]
-                print(f"   score={sig['score']} rounds={sig['rounds']} "
-                      f"duration={sig['duration_sec']}s tools={sig['tool_freq']} "
-                      f"search_outcomes=hit:{searches['hits']}/valid_empty:{searches['valid_empty']}"
-                      f"/scope_miss:{searches['scope_miss']}/scope_unknown:{searches['scope_unknown']}"
-                      f"/failure:{searches['tool_failure']}/repeated_empty:{searches['repeated_empty']}")
+                print(
+                    f"   score={sig['score']} rounds={sig['rounds']} "
+                    f"duration={sig['duration_sec']}s tools={sig['tool_freq']} "
+                    f"search_outcomes=hit:{searches['hits']}/valid_empty:{searches['valid_empty']}"
+                    f"/scope_miss:{searches['scope_miss']}/scope_unknown:{searches['scope_unknown']}"
+                    f"/failure:{searches['tool_failure']}/repeated_empty:{searches['repeated_empty']}"
+                )
                 if sig["empty_args"]["count"]:
                     empty_args = sig["empty_args"]
                     print(
@@ -377,9 +432,11 @@ def main() -> int:
                     )
                 if sig["file_reads"]["calls"]:
                     reads = sig["file_reads"]
-                    print(f"   read_files calls={reads['calls']} requests={reads['requests']} "
-                          f"rounds={reads['rounds']} avg_batch={reads['average_batch']} "
-                          f"max_batch={reads['max_batch']} calls/round={reads['calls_per_round']}")
+                    print(
+                        f"   read_files calls={reads['calls']} requests={reads['requests']} "
+                        f"rounds={reads['rounds']} avg_batch={reads['average_batch']} "
+                        f"max_batch={reads['max_batch']} calls/round={reads['calls_per_round']}"
+                    )
                     overlap = sig["prompt_overlap"]
                     adjacent = sig["adjacent_file_reads"]
                     batching = sig["read_batching"]
@@ -432,7 +489,7 @@ def main() -> int:
                             f"   ⚠ {result['evaluator_id']}: "
                             f"{result['explanation']}"
                         )
-                    for diagnostic in result["signals"]:
+                    for diagnostic in result["findings"]:
                         print(f"   ⚠ {diagnostic['code']}: {diagnostic['summary']}")
                         if diagnostic["hypotheses"]:
                             print(
@@ -452,28 +509,40 @@ def main() -> int:
                         print(f"   (judge failed: {e})")
                 if verdict:
                     for category in verdict.get("categories", []):
-                        print(f"   [{category.get('type')}] ({category.get('confidence')}) "
-                              f"{category.get('evidence', '')[:160]}")
+                        print(
+                            f"   [{category.get('type')}] ({category.get('confidence')}) "
+                            f"{category.get('evidence', '')[:160]}"
+                        )
                         if category.get("suggestion"):
                             print(f"       fix: {category['suggestion'][:200]}")
                     print(f"   => {verdict.get('summary', '')}")
                 if labels_f:
-                    labels_f.write(json.dumps({
-                        "session_id": session_id,
-                        "stage": stage,
-                        "trajectory_id": trajectory.trajectory_id,
-                        "extra": trajectory.metadata,
-                        "signals": sig,
-                        "verdict": verdict,
-                    }, ensure_ascii=False) + "\n")
-            scores = [item["score"] for item in stage_signals if item["score"] is not None]
+                    labels_f.write(
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "stage": stage,
+                                "trajectory_id": trajectory.trajectory_id,
+                                "extra": trajectory.metadata,
+                                "analysis": sig,
+                                "verdict": verdict,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+            scores = [
+                item["score"] for item in stage_analyses if item["score"] is not None
+            ]
             average = round(sum(scores) / len(scores), 3) if scores else None
-            print(f"\n   {title} summary: score={average} "
-                  f"rounds={sum(item['rounds'] for item in stage_signals)} "
-                  f"duration={sum(item['duration_sec'] for item in stage_signals)}s")
+            print(
+                f"\n   {title} summary: score={average} "
+                f"rounds={sum(item['rounds'] for item in stage_analyses)} "
+                f"duration={sum(item['duration_sec'] for item in stage_analyses)}s"
+            )
             empty_by_tool: Counter[str] = Counter()
             empty_by_model: Counter[str] = Counter()
-            for item in stage_signals:
+            for item in stage_analyses:
                 empty_by_tool.update(item["empty_args"]["by_tool"])
                 empty_by_model.update(item["empty_args"]["by_model"])
             if empty_by_tool:
@@ -482,7 +551,7 @@ def main() -> int:
                     f"by_tool={dict(empty_by_tool)} "
                     f"by_model={dict(empty_by_model)}"
                 )
-            deductions = main_deductions(stage_signals)
+            deductions = main_deductions(stage_analyses)
             if deductions:
                 detail = ", ".join(
                     f"{item['name']}({item['count']} chain(s), avg={item['average_score']})"

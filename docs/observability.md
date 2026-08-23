@@ -109,12 +109,17 @@ prompt 和形成改进假设，不适合凭少量 session 断言整体效果提�
 ## 3. eval：主要效果判断
 
 主要效果问题由 eval 回答。它通过 CCR `RecordingSource` 选择和读取 Session/ATIF，经 ATIF Loader
-投影为通用 Trajectory，再与人工标签、固定 corpus、阶段数据集和 Evaluator 连接，
+投影为通用 Trajectory，再与人工标签、固定 corpus、阶段数据集、Evaluator 和 Measurer 连接，
 在相同输入和判定标准下比较 baseline 与 candidate，并同时观察：
 
 - **准确性**：Finding 真伪、重复交付、漏报，以及 Assessment/Trial 是否正确放行；
 - **健壮性**：Unit/Lane 是否完成、Hypothesis 是否全部 Assessment、超时、partial 和执行错误；
-- **成本**：token、时间、模型轮次、工具调用和 Unit 数量。
+- **成本**：Measurer 记录的 token、时间、模型轮次、工具调用和 Unit 数量。
+
+Evaluator 只形成 verdict、score 与可定位的 Finding；Measurer 只记录可计数、求和的事实，不判断
+质量。eval 在同一 Dataset/Cohort 上组合两者，例如比较 completion、人工接受率和
+`tokens / labeled accepted Finding`。单位成本必须与人工 label coverage 一起解释，不能把低 token
+本身当作效果提升。
 
 Viewer 中发现的重复 `read_files`、搜索空转或未完成 Unit，可以进一步沉淀为 Trajectory Evaluator；人工
 确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中确认问题具有普遍性、指标改善且没有召回

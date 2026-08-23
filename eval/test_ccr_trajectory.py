@@ -29,7 +29,7 @@ from ccr_trajectory import (
     search_then_read_stats,
 )
 from trajectory_harness import RepeatedToolCallEvaluator, evaluate
-from trajectory_judge import main_deductions, objective_signals
+from trajectory_judge import main_deductions, objective_analysis
 
 
 class CCRTrajectoryTest(unittest.TestCase):
@@ -103,13 +103,37 @@ class CCRTrajectoryTest(unittest.TestCase):
                         "scope_kind": "unit",
                         "execution_outcome": "completed",
                         "initial_context": [
-                            {"kind": "file", "identity": "a.go", "representation": "source", "reason": "unit"},
-                            {"kind": "file", "identity": "b.go", "representation": "outline", "reason": "callee"},
-                            {"kind": "file", "identity": "a.go", "representation": "reference", "reason": "repository_reference"},
+                            {
+                                "kind": "file",
+                                "identity": "a.go",
+                                "representation": "source",
+                                "reason": "unit",
+                            },
+                            {
+                                "kind": "file",
+                                "identity": "b.go",
+                                "representation": "outline",
+                                "reason": "callee",
+                            },
+                            {
+                                "kind": "file",
+                                "identity": "a.go",
+                                "representation": "reference",
+                                "reason": "repository_reference",
+                            },
                         ],
                         "initial_outline_attempts": [
-                            {"path": "b.go", "language": "go", "outcome": "admitted", "bytes": 80},
-                            {"path": "README.md", "language": "markdown", "outcome": "empty"},
+                            {
+                                "path": "b.go",
+                                "language": "go",
+                                "outcome": "admitted",
+                                "bytes": 80,
+                            },
+                            {
+                                "path": "README.md",
+                                "language": "markdown",
+                                "outcome": "empty",
+                            },
                         ],
                     },
                 }
@@ -145,21 +169,33 @@ class CCRTrajectoryTest(unittest.TestCase):
             inference.attributes["reasoning_content"],
             "The changed path needs more evidence.",
         )
-        self.assertEqual([step.operation for step in self.trajectory.steps].count("execute_tool"), 4)
+        self.assertEqual(
+            [step.operation for step in self.trajectory.steps].count("execute_tool"), 4
+        )
         self.assertEqual(report.results[0].verdict, "warning")
         self.assertIsNone(report.results[0].score)
-        self.assertEqual(report.results[0].signals[0].code, "repeated_tool_call")
-        self.assertTrue(report.results[0].signals[0].hypotheses)
+        self.assertEqual(report.results[0].findings[0].code, "repeated_tool_call")
+        self.assertTrue(report.results[0].findings[0].hypotheses)
         self.assertEqual(report.results[1].score, 0.75)
         self.assertEqual(report.results[2].score, 0)
         self.assertEqual(report.results[3].score, 0.5)
         self.assertEqual(report.results[4].score, 0.2)
         self.assertIsNone(report.results[5].score)
         self.assertIsNone(report.results[5].verdict)
-        self.assertEqual(report.results[5].signals[0].code, "adjacent_file_reads")
+        self.assertEqual(report.results[5].findings[0].code, "adjacent_file_reads")
         self.assertEqual(report.results[6].score, 1)
         self.assertEqual(report.results[7].score, 1)
         self.assertEqual(report.results[8].score, 1)
+        usage = objective_analysis(self.trajectory)["model_usage"]
+        self.assertEqual(usage["status"], "measured")
+        self.assertEqual(
+            usage["measurements"],
+            {
+                "model_call_count": 1,
+                "usage_reported_call_count": 0,
+                "usage_coverage_ratio": 0.0,
+            },
+        )
         self.assertEqual(hypothesis_yield(self.trajectory), 1)
         self.assertEqual(
             initial_context_stats(self.trajectory),
@@ -181,6 +217,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 },
             },
         )
+
         self.assertEqual(repeated_file_reads(self.trajectory), {"a.go": 2})
         self.assertEqual(
             file_read_stats(self.trajectory),
@@ -213,7 +250,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(
             [
                 item["evaluator_id"]
-                for item in objective_signals(self.trajectory)["evaluations"]
+                for item in objective_analysis(self.trajectory)["evaluations"]
             ],
             [
                 "repeated_tool_call",
@@ -229,6 +266,35 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "review_completion",
             ],
         )
+
+    def test_model_usage_preserves_cache_read_tokens(self):
+        root = {
+            "session_id": "usage",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-usage",
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "metrics": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 10,
+                                "cache_read_tokens": 80,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        usage = objective_analysis(trajectory)["model_usage"]["measurements"]
+
+        self.assertEqual(usage["total_tokens"], 110)
+        self.assertEqual(usage["cached_input_tokens"], 80)
+        self.assertEqual(usage["uncached_input_tokens"], 20)
+        self.assertEqual(usage["cache_hit_ratio"], 0.8)
 
     def test_review2_uses_assessment_completion_instead_of_task_done(self):
         root = {
@@ -274,7 +340,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(
             [
                 item["evaluator_id"]
-                for item in objective_signals(trajectory)["evaluations"]
+                for item in objective_analysis(trajectory)["evaluations"]
             ],
             [
                 "repeated_tool_call",
@@ -404,7 +470,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(rounds.score, 0.8)
         self.assertIn("2 review item(s)", rounds.explanation)
         self.assertEqual(duration.score, 0.8)
-        self.assertEqual(objective_signals(trajectory)["assessment_count"], 2)
+        self.assertEqual(objective_analysis(trajectory)["assessment_count"], 2)
 
     def test_main_deductions_rank_total_score_loss(self):
         deductions = main_deductions(
@@ -513,12 +579,10 @@ class CCRTrajectoryTest(unittest.TestCase):
         adjacency = AdjacentFileReadsEvaluator().evaluate(trajectory)
         self.assertIsNone(adjacency.score)
         self.assertIsNone(adjacency.verdict)
-        self.assertEqual(adjacency.measurements["mergeable_range_count"], 1)
+        self.assertEqual(adjacency.findings[0].code, "adjacent_file_reads")
         batching = FileReadBatchingEvaluator().evaluate(trajectory)
         self.assertEqual(batching.verdict, "warning")
-        self.assertEqual(
-            batching.measurements["same_turn_unbatched_call_count"], 1
-        )
+        self.assertEqual(batching.findings[0].code, "unbatched_same_turn_reads")
         self.assertEqual(
             same_turn_file_read_batching(trajectory)["step_ids"],
             ["1:tool:1", "1:tool:2"],
@@ -596,8 +660,16 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     "function_name": "read_files",
                                     "arguments": {
                                         "reads": [
-                                            {"file_path": "a.go", "start_line": 1, "end_line": 10},
-                                            {"file_path": "b.go", "start_line": 11, "end_line": 20},
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 1,
+                                                "end_line": 10,
+                                            },
+                                            {
+                                                "file_path": "b.go",
+                                                "start_line": 11,
+                                                "end_line": 20,
+                                            },
                                         ]
                                     },
                                 }
@@ -842,7 +914,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         evaluation = SearchThenReadEvaluator().evaluate(trajectory)
         self.assertIsNone(evaluation.score)
         self.assertIsNone(evaluation.verdict)
-        self.assertEqual(evaluation.signals[0].code, "search_then_read")
+        self.assertEqual(evaluation.findings[0].code, "search_then_read")
 
     def test_llm_failure_is_projected_with_transport_progress(self):
         root = {
@@ -886,7 +958,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(trajectory.execution.outcome, "failed")
         self.assertEqual(trajectory.execution.failure.key, "llm.routing.timeout")
         self.assertEqual(
-            objective_signals(trajectory)["failures"],
+            objective_analysis(trajectory)["failures"],
             [
                 {
                     "impact": "step",
@@ -927,7 +999,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(trajectory.execution.outcome, "timeout")
         self.assertEqual(trajectory.execution.failure.key, "workflow.timeout")
         self.assertEqual(
-            objective_signals(trajectory)["failures"],
+            objective_analysis(trajectory)["failures"],
             [
                 {
                     "impact": "execution",

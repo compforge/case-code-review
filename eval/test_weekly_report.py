@@ -146,7 +146,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 100,
                 "completion_tokens": 10,
                 "tool_freq": {"read_files": 1},
-                "signals": {
+                "analysis": {
                     "code_searches": {
                         "calls": 1,
                         "requests": 2,
@@ -173,14 +173,14 @@ class WeeklyReportTest(unittest.TestCase):
                     },
                     "evaluations": [
                         {
-                            "signals": [
+                            "findings": [
                                 {
                                     "severity": "info",
                                     "code": "search_then_read",
                                 }
                             ]
                         }
-                    ]
+                    ],
                 },
             },
             {
@@ -192,7 +192,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 300,
                 "completion_tokens": 30,
                 "tool_freq": {"search_code": 2},
-                "signals": {
+                "analysis": {
                     "code_searches": {
                         "calls": 2,
                         "requests": 3,
@@ -209,7 +209,7 @@ class WeeklyReportTest(unittest.TestCase):
                     },
                     "evaluations": [
                         {
-                            "signals": [
+                            "findings": [
                                 {
                                     "severity": "warning",
                                     "code": "unbatched_same_turn_reads",
@@ -234,7 +234,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 200,
                 "completion_tokens": 20,
                 "tool_freq": {},
-                "signals": {
+                "analysis": {
                     "evaluations": [],
                     "failures": [
                         {"impact": "step", "key": "llm.routing.timeout"},
@@ -251,7 +251,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 50,
                 "completion_tokens": 5,
                 "tool_freq": {},
-                "signals": {"evaluations": []},
+                "analysis": {"evaluations": []},
             },
         ]
 
@@ -344,20 +344,20 @@ class WeeklyReportTest(unittest.TestCase):
             },
         )
         self.assertEqual(
-            metrics["diagnostic_signals"],
+            metrics["diagnostic_findings"],
             {
                 "events": 2,
                 "items": [
                     {
                         "severity": "info",
-                        "signal": "search_then_read",
+                        "finding": "search_then_read",
                         "count": 1,
                         "affected_chains": 1,
                         "rate": 0.25,
                     },
                     {
                         "severity": "warning",
-                        "signal": "unbatched_same_turn_reads",
+                        "finding": "unbatched_same_turn_reads",
                         "count": 1,
                         "affected_chains": 1,
                         "rate": 0.25,
@@ -378,7 +378,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 30,
                 "cached_tokens": 15,
                 "tool_freq": {},
-                "signals": {"evaluations": [], "assessment_count": 2},
+                "analysis": {"evaluations": [], "assessment_count": 2},
             },
             {
                 "stage": "review2",
@@ -390,7 +390,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 15,
                 "cached_tokens": 0,
                 "tool_freq": {},
-                "signals": {"evaluations": [], "assessment_count": 1},
+                "analysis": {"evaluations": [], "assessment_count": 1},
             },
         ]
 
@@ -407,6 +407,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 130.0,
                 "completion_tokens": 15.0,
                 "cached_tokens": 5.0,
+                "total_tokens": 145.0,
             },
         )
         self.assertEqual(
@@ -439,7 +440,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 100,
                 "completion_tokens": 10,
                 "tool_freq": {},
-                "signals": {"evaluations": []},
+                "analysis": {"evaluations": []},
             }
 
         cohorts = weekly.aggregate_cohorts(
@@ -568,6 +569,7 @@ class WeeklyReportTest(unittest.TestCase):
             {"debatable": 1, "important": 1, "minor": 1, "repeat": 1, "wrong": 1},
         )
         self.assertEqual(metrics["review_week"]["label_coverage"], 1.0)
+        self.assertEqual(metrics["review_week"]["accepted_findings"], 2)
         self.assertEqual(metrics["review_week"]["accepted_rate"], 0.4)
         self.assertEqual(metrics["review_week"]["wrong_rate"], 0.2)
         self.assertEqual(metrics["review_week"]["repeat_rate"], 0.2)
@@ -579,6 +581,24 @@ class WeeklyReportTest(unittest.TestCase):
         )
         self.assertEqual(metrics["labeled_this_week"]["missed_findings_reported"], 1)
         self.assertEqual(metrics["review_week"]["wrong_tags"], {"cross-file": 1})
+
+        cost_effect = weekly.cost_effect_metrics(
+            [
+                {
+                    "total_tokens": 600,
+                    "prompt_tokens": 500,
+                    "completion_tokens": 100,
+                    "cached_tokens": 200,
+                    "uncached_tokens": 300,
+                    "model_calls": 4,
+                    "usage_reported_calls": 3,
+                }
+            ],
+            metrics,
+        )
+        self.assertEqual(cost_effect["labeled_accepted_findings"], 2)
+        self.assertEqual(cost_effect["tokens_per_labeled_accepted_finding"], 300)
+        self.assertEqual(cost_effect["usage_coverage"], 0.75)
 
     def test_missing_dataset_makes_label_quality_unavailable(self) -> None:
         session = weekly.SessionRecord(
@@ -660,8 +680,7 @@ class WeeklyReportTest(unittest.TestCase):
         }
 
         comparison = {
-            item["metric"]: item
-            for item in weekly.build_comparison(current, previous)
+            item["metric"]: item for item in weekly.build_comparison(current, previous)
         }
 
         review1_average = comparison["Review 1 average duration (sec)"]
@@ -671,12 +690,8 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(review1_average["change_pct"], 1.0)
         self.assertEqual(comparison["Review 2 p95 duration (sec)"]["delta"], 5)
         self.assertEqual(comparison["Review 1 search requests"]["delta"], 4)
-        self.assertEqual(
-            comparison["Review 1 search purpose coverage"]["delta"], 0.25
-        )
-        self.assertIsNone(
-            comparison["Review 2 search purpose coverage"]["delta"]
-        )
+        self.assertEqual(comparison["Review 1 search purpose coverage"]["delta"], 0.25)
+        self.assertIsNone(comparison["Review 2 search purpose coverage"]["delta"])
 
     def test_writes_week_partition_with_machine_and_human_reports(self) -> None:
         empty = {
@@ -703,6 +718,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "review_week": {
                     "examples": None,
                     "labeled_findings": None,
+                    "accepted_findings": None,
                     "by_label": {},
                     "wrong_tags": {},
                     "label_coverage": None,
@@ -727,6 +743,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "invalid_dataset_lines": 0,
             },
         }
+        empty["cost_effect"] = weekly.cost_effect_metrics([], empty["quality"])
         empty["review1"]["code_searches"] = {
             "calls": 1,
             "requests": 2,
@@ -766,10 +783,8 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "metrics.json").is_file())
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
-            metrics = json.loads(
-                (out / "metrics.json").read_text(encoding="utf-8")
-            )
-            self.assertEqual(metrics["schema_version"], "weekly-report-v6")
+            metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+            self.assertEqual(metrics["schema_version"], "weekly-report-v7")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -777,7 +792,7 @@ class WeeklyReportTest(unittest.TestCase):
             report = (out / "REPORT.md").read_text(encoding="utf-8")
             self.assertIn("Slowest Review 1 units", report)
             self.assertIn("Failures", report)
-            self.assertIn("Diagnostic signals", report)
+            self.assertIn("Diagnostic findings", report)
             self.assertIn("Search purposes", report)
             self.assertIn("Search context effectiveness", report)
             self.assertIn("Initial FileOutline availability", report)
@@ -785,7 +800,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("custom-domain-concept", report)
             self.assertIn("Workflow timeout", report)
             self.assertIn("llm.routing.timeout", report)
-            self.assertIn("Prompt/Assessment", report)
+            self.assertIn("Total/Assessment", report)
             self.assertIn("avg sec", report)
             self.assertIn("finding-quality rates are unavailable", report)
             self.assertIn("Recall remains unavailable", report)
