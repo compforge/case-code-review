@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -74,8 +75,12 @@ def build_dataset(
                 try:
                     recording = source.fetch(ref)
                     trajectories = loader.loads(recording.text, source=ref.uri)
-                except (OSError, RuntimeError, ValueError, json.JSONDecodeError):
+                except (OSError, RuntimeError, ValueError) as error:
                     export_failures += 1
+                    print(
+                        f"trajectory build failed for session {session_id}: {error}",
+                        file=sys.stderr,
+                    )
                     continue
                 available_ids = {
                     trajectory.trajectory_id for trajectory in trajectories
