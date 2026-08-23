@@ -63,7 +63,11 @@ CCR_HEAD = "devloop code-review"  # fp-less fallback: recognize ccr comments by 
 
 def _gh_json(path: str) -> list[dict]:
     out = subprocess.run(
-        ["gh", "api", path, "--paginate"], capture_output=True, text=True, check=True
+        ["gh", "api", path, "--paginate"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=120,
     ).stdout
     # --paginate concatenates arrays; gh emits them back-to-back
     items: list[dict] = []

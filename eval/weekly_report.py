@@ -30,8 +30,9 @@ DEFAULT_DATASET_PATHS = (
     Path("eval/data/datasets/review-comments-public.jsonl"),
     Path("eval/data/datasets/review-comments-private.jsonl"),
 )
+DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v7"
+REPORT_SCHEMA_VERSION = "weekly-report-v8"
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +162,40 @@ def default_dataset_paths(repo_root: Path | None = None) -> list[Path]:
     common_root = Path(result.stdout.strip()).resolve().parent
     shared = [common_root / path for path in DEFAULT_DATASET_PATHS]
     return shared if any(path.is_file() for path in shared) else local
+
+
+def default_github_label_manifest(repo_root: Path | None = None) -> Path:
+    """Resolve the ignored harvest manifest from the main worktree when needed."""
+
+    root = (repo_root or Path.cwd()).resolve()
+    local = root / DEFAULT_GITHUB_LABEL_MANIFEST
+    if local.is_file():
+        return local
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return local
+    shared = (
+        Path(result.stdout.strip()).resolve().parent / DEFAULT_GITHUB_LABEL_MANIFEST
+    )
+    return shared if shared.is_file() else local
+
+
+def load_json_object(path: Path) -> tuple[dict[str, Any] | None, bool]:
+    if not path.is_file():
+        return None, False
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, True
+    return (payload, False) if isinstance(payload, dict) else (None, True)
 
 
 def encode_repo_path(repository: str | Path) -> str:
@@ -490,6 +525,90 @@ def quality_metrics(
     }
 
 
+def github_label_sync_metrics(
+    datasets: list[dict[str, Any]],
+    window: WeekWindow,
+    manifest: dict[str, Any] | None,
+    manifest_invalid: bool,
+) -> dict[str, Any]:
+    """Expose harvest freshness so missing synchronization is not read as zero quality."""
+
+    latest_dataset: tuple[datetime, str] | None = None
+    for record in datasets:
+        if not str(record.get("source") or "").startswith("github:"):
+            continue
+        raw = record.get("at")
+        parsed = parse_timestamp(raw, cast(ZoneInfo, window.start.tzinfo))
+        if parsed is not None and (
+            latest_dataset is None or parsed > latest_dataset[0]
+        ):
+            latest_dataset = (parsed, str(raw))
+
+    if manifest_invalid:
+        return {
+            "status": "invalid",
+            "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
+            "latest_harvested_label_at": None,
+            "dataset_current": None,
+            "generated_at": None,
+            "pull_requests_discovered": None,
+            "pull_requests_harvested": None,
+            "pull_requests_failed": None,
+            "harvest_coverage": None,
+            "covers_report_window": None,
+        }
+    if manifest is None:
+        return {
+            "status": "missing",
+            "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
+            "latest_harvested_label_at": None,
+            "dataset_current": None,
+            "generated_at": None,
+            "pull_requests_discovered": None,
+            "pull_requests_harvested": None,
+            "pull_requests_failed": None,
+            "harvest_coverage": None,
+            "covers_report_window": None,
+        }
+
+    discovered = int(manifest.get("pull_requests_discovered") or 0)
+    harvested = int(manifest.get("pull_requests_harvested") or 0)
+    failed = int(manifest.get("pull_requests_failed") or 0)
+    latest_harvested_raw = manifest.get("latest_label_at")
+    latest_harvested = parse_timestamp(
+        latest_harvested_raw, cast(ZoneInfo, window.start.tzinfo)
+    )
+    dataset_current = latest_harvested is None or (
+        latest_dataset is not None and latest_dataset[0] >= latest_harvested
+    )
+    query = manifest.get("query") or {}
+    covers_window = None
+    try:
+        query_start = date.fromisoformat(str(query["since"]))
+        query_end = date.fromisoformat(str(query["until"]))
+        covers_window = (
+            query_start <= window.start.date()
+            and query_end >= (window.end - timedelta(days=1)).date()
+        )
+    except (KeyError, TypeError, ValueError):
+        pass
+    status = "partial" if failed or harvested < discovered else "ready"
+    if status == "ready" and not dataset_current:
+        status = "dataset_stale"
+    return {
+        "status": status,
+        "latest_dataset_label_at": latest_dataset[1] if latest_dataset else None,
+        "latest_harvested_label_at": latest_harvested_raw,
+        "dataset_current": dataset_current,
+        "generated_at": manifest.get("generated_at"),
+        "pull_requests_discovered": discovered,
+        "pull_requests_harvested": harvested,
+        "pull_requests_failed": failed,
+        "harvest_coverage": round(harvested / discovered, 3) if discovered else 1.0,
+        "covers_report_window": covers_window,
+    }
+
+
 def cost_effect_metrics(
     rows: list[dict[str, Any]], quality: dict[str, Any]
 ) -> dict[str, Any]:
@@ -531,6 +650,8 @@ def build_week_metrics(
     missing_datasets: int,
     invalid_dataset_lines: int,
     repositories_scoped: bool,
+    github_label_manifest: dict[str, Any] | None = None,
+    github_label_manifest_invalid: bool = False,
 ) -> dict[str, Any]:
     sessions = [
         session for session in all_sessions if window.contains(session.started_at)
@@ -566,6 +687,12 @@ def build_week_metrics(
         UNKNOWN_STAGE: aggregate_stage(week_rows, UNKNOWN_STAGE),
         "cohorts": aggregate_cohorts(week_rows),
         "quality": quality,
+        "label_sync": github_label_sync_metrics(
+            datasets,
+            window,
+            github_label_manifest,
+            github_label_manifest_invalid,
+        ),
         "cost_effect": cost_effect_metrics(week_rows, quality),
         "data_quality": {
             "invalid_session_files_in_scan": invalid_session_files,
@@ -821,6 +948,11 @@ def main() -> int:
         help="normalized label dataset; repeatable",
     )
     parser.add_argument(
+        "--github-label-manifest",
+        type=Path,
+        help="GitHub bulk-harvest manifest; defaults to eval/data/labels/github-harvest.json",
+    )
+    parser.add_argument(
         "--out-root",
         type=Path,
         default=Path("eval/data/reports/weekly"),
@@ -849,6 +981,12 @@ def main() -> int:
     rows, failed_sessions = load_trajectory_rows(selected_sessions, args.ccr)
     dataset_paths = args.dataset or default_dataset_paths()
     datasets, missing_datasets, invalid_dataset_lines = load_datasets(dataset_paths)
+    github_label_manifest_path = (
+        args.github_label_manifest or default_github_label_manifest()
+    )
+    github_label_manifest, github_label_manifest_invalid = load_json_object(
+        github_label_manifest_path
+    )
 
     metric_args = {
         "all_sessions": sessions,
@@ -859,6 +997,8 @@ def main() -> int:
         "missing_datasets": missing_datasets,
         "invalid_dataset_lines": invalid_dataset_lines,
         "repositories_scoped": bool(args.repo),
+        "github_label_manifest": github_label_manifest,
+        "github_label_manifest_invalid": github_label_manifest_invalid,
     }
     current = build_week_metrics(current_window, **metric_args)
     previous = build_week_metrics(previous_window, **metric_args)
@@ -880,6 +1020,7 @@ def main() -> int:
         "repositories": [_resolved(path) for path in args.repo] or ["*"],
         "sessions_dir": str(args.sessions_dir),
         "datasets": [str(path) for path in dataset_paths],
+        "github_label_manifest": str(github_label_manifest_path),
         "ccr": args.ccr,
         "session_files_scanned": len(sessions) + invalid_sessions,
         "session_files_valid": len(sessions),

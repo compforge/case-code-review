@@ -71,6 +71,23 @@ ccr:missed — 这里在并发关闭后仍可能写入已关闭 channel
 
 ### 3. 回收 GitHub 标签
 
+按时间窗批量发现并回收当前用户已合并的 PR：
+
+```bash
+python3 eval/github_labels.py \
+  --owner <github-owner> \
+  --author @me \
+  --since 2026-08-17 \
+  --until 2026-08-23
+```
+
+默认按仓库 upsert 到 `eval/data/labels/<owner>-<repo>.jsonl`，并写入
+`eval/data/labels/github-harvest.json`。manifest 记录发现、成功和失败的 PR 数；周报用它区分
+“确实没有 label”和“采集没有运行或只完成了一部分”。GitHub resolved thread 的 review comments
+仍能从 REST API 读取，批量采集不会过滤它们。
+
+需要只刷新一个 PR 时使用单 PR 入口：
+
 同一仓库的多个 PR 反复写入同一个文件即可；脚本按 `(source, reply_id)` upsert，重复执行安全。
 
 ```bash
@@ -315,13 +332,14 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 ```
 
 `eval/data/` 是 gitignore 的本地事实源，不会随 git worktree 复制。在隔离 worktree 生成报告时，
-周报会通过 Git common dir 自动读取主 worktree 的默认 datasets；需要使用其它事实源时，显式传入
-全部规范化数据集：
+周报会通过 Git common dir 自动读取主 worktree 的默认 datasets 和 GitHub harvest manifest；
+需要使用其它事实源时，显式传入全部规范化数据集和 manifest：
 
 ```bash
 uv run --project eval/reviewbench python eval/weekly_report.py \
   --dataset <shared-eval-data>/datasets/review-comments-public.jsonl \
-  --dataset <shared-eval-data>/datasets/review-comments-private.jsonl
+  --dataset <shared-eval-data>/datasets/review-comments-private.jsonl \
+  --github-label-manifest <shared-eval-data>/labels/github-harvest.json
 ```
 
 缺少任一输入或存在无效 JSONL 时，报告仍生成执行指标，但 label coverage 与 Finding 质量比例显示
@@ -362,7 +380,8 @@ Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周�
 只作为漏报信号计数；在每个被评审变更都没有完整人工 ground truth 之前，recall 保持不可用。
 成本与效果只在共同 cohort 上联合：周报给出 `tokens / labeled accepted Finding`，其中 accepted
 只包括人工标注的 `important + minor`，并始终同时展示 label coverage；标签不完整时，该单位成本
-只能作为上界信号，不能当作完整质量结论。
+只能作为上界信号，不能当作完整质量结论。周报同时展示 GitHub harvest 的生成时间、PR 采集覆盖率、
+失败数和时间窗覆盖状态；manifest 缺失时，不能把本周 `0 label` 解释为真实效果事实。
 
 ## 可选：建立固定 corpus 并重放
 
@@ -400,7 +419,7 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
 2. 不打印、记录或提交 token；认证缺失时停下并告诉我缺什么。
 3. 对每条 finding 查真实 diff/代码后再打 ccr:label，五类都收集；wrong 给具体反证，
    repeat 指向本 MR 更早的同问题 comment。
-4. 使用 eval/labels.py 回收，每个仓库持续 upsert 到 eval/data/labels/。
+4. 使用 eval/github_labels.py 按时间窗批量回收 GitHub PR；单个 PR 再用 eval/labels.py 补采。
 5. 运行 eval/build_label_dataset.py，报告总数、label 分布和 unpaired 数。
 6. 需要轨迹样本时再运行 eval/build_trajectory_dataset.py，报告 linked/missing/export 计数。
 7. 最后确认 git ls-files eval/data 和
@@ -416,6 +435,7 @@ uv run --project eval/reviewbench python -m unittest discover \
 
 python3 -m py_compile \
   eval/labels.py \
+  eval/github_labels.py \
   eval/build_label_dataset.py \
   eval/build_trajectory_dataset.py \
   eval/build_hypothesis_dataset.py \
@@ -439,7 +459,8 @@ git status --short
 
 ## 常见问题
 
-- **采集为 0**：确认 label 是 finding 线程的回复，父 comment 带 `ccr:fp=` 或 CCR header。
+- **采集为 0**：先检查 `github-harvest.json` 的时间窗与 PR 覆盖率；再确认 label 是 finding 线程的
+  回复，父 comment 带 `ccr:fp=` 或 CCR header。resolved thread 不会阻止 GitHub REST 拉取评论。
 - **GitLab 401/403**：确认 token 有读取 MR discussions 的权限，host 没带协议前缀。
 - **出现 unpaired**：优先重新采集带 finding 正文的 forge thread；早期记录可由本地 session
   fingerprint 回填。

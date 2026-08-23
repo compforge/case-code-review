@@ -401,6 +401,17 @@ def render_markdown(
     label_dataset = quality["label_dataset"]
     review_week = quality["review_week"]
     labeled_week = quality["labeled_this_week"]
+    label_sync = current.get("label_sync") or {
+        "status": "missing",
+        "latest_dataset_label_at": None,
+        "latest_harvested_label_at": None,
+        "dataset_current": None,
+        "pull_requests_discovered": None,
+        "pull_requests_harvested": None,
+        "pull_requests_failed": None,
+        "harvest_coverage": None,
+        "covers_report_window": None,
+    }
     cost_effect = current["cost_effect"]
     lines.extend(
         [
@@ -457,6 +468,24 @@ def render_markdown(
             f"Label dataset status=`{label_dataset['status']}`; coverage and "
             "finding-quality rates are unavailable. Pass every normalized input with "
             "`--dataset`."
+        )
+    if label_sync["status"] == "missing":
+        lines.append(
+            "GitHub label sync manifest is missing; zero labels may mean harvest has not run."
+        )
+    else:
+        lines.append(
+            "GitHub label sync "
+            f"status=`{label_sync['status']}`, "
+            f"PRs={_format_value(label_sync['pull_requests_harvested'])}/"
+            f"{_format_value(label_sync['pull_requests_discovered'])}, "
+            f"coverage={_format_value(label_sync['harvest_coverage'], 'percent')}, "
+            f"covers report window={label_sync['covers_report_window']}, "
+            f"dataset current={label_sync['dataset_current']}, "
+            f"latest harvested label="
+            f"{_format_value(label_sync['latest_harvested_label_at'])}, "
+            f"latest dataset label="
+            f"{_format_value(label_sync['latest_dataset_label_at'])}."
         )
     lines.extend(
         [
@@ -526,6 +555,9 @@ def render_markdown(
             f"- Trajectory export failures: {data_quality['trajectory_export_failures']}",
             f"- Missing dataset files: {data_quality['missing_dataset_files']}",
             f"- Invalid dataset lines: {data_quality['invalid_dataset_lines']}",
+            f"- GitHub label sync status: {label_sync['status']}",
+            f"- GitHub PR harvest failures: "
+            f"{_format_value(label_sync['pull_requests_failed'])}",
             f"- Labels added without a matched session: "
             f"{_format_value(labeled_week['without_session'])}",
             "",
