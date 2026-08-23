@@ -58,6 +58,54 @@ class WeeklyReportTest(unittest.TestCase):
                 ],
             )
 
+    def test_github_label_sync_exposes_missing_and_complete_harvests(self) -> None:
+        datasets = [
+            {
+                "source": "github:example/project#12",
+                "at": "2026-08-08T10:00:00+08:00",
+            },
+            {
+                "source": "codebase:example/project!13",
+                "at": "2026-08-10T10:00:00+08:00",
+            },
+        ]
+
+        missing = weekly.github_label_sync_metrics(datasets, self.window, None, False)
+        ready = weekly.github_label_sync_metrics(
+            datasets,
+            self.window,
+            {
+                "generated_at": "2026-08-10T00:00:00Z",
+                "query": {"since": "2026-08-03", "until": "2026-08-09"},
+                "pull_requests_discovered": 12,
+                "pull_requests_harvested": 12,
+                "pull_requests_failed": 0,
+            },
+            False,
+        )
+
+        self.assertEqual(missing["status"], "missing")
+        self.assertEqual(missing["latest_dataset_label_at"], datasets[0]["at"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["harvest_coverage"], 1.0)
+        self.assertTrue(ready["covers_report_window"])
+
+        stale = weekly.github_label_sync_metrics(
+            datasets,
+            self.window,
+            {
+                "generated_at": "2026-08-10T00:00:00Z",
+                "latest_label_at": "2026-08-09T00:00:00+08:00",
+                "query": {"since": "2026-08-03", "until": "2026-08-09"},
+                "pull_requests_discovered": 12,
+                "pull_requests_harvested": 12,
+                "pull_requests_failed": 0,
+            },
+            False,
+        )
+        self.assertEqual(stale["status"], "dataset_stale")
+        self.assertFalse(stale["dataset_current"])
+
     def test_discovery_uses_session_timestamp_and_tracks_unclosed(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -784,7 +832,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
             metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["schema_version"], "weekly-report-v7")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v8")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -803,6 +851,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("Total/Assessment", report)
             self.assertIn("avg sec", report)
             self.assertIn("finding-quality rates are unavailable", report)
+            self.assertIn("GitHub label sync manifest is missing", report)
             self.assertIn("Recall remains unavailable", report)
 
 
