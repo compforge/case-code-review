@@ -170,6 +170,43 @@ python3 eval/build_hypothesis_dataset.py
 `important/minor` 应通过，其余标签应被拦截；后续 reviewer/Trial 实验必须消费同一批 Hypothesis，
 才能把收敛精度变化与 Unit Review 的召回变化分开。
 
+### 6. 生成带人工标注的 trajectory 样本
+
+规范化 finding 数据集含 `engine.session_id` 时，可以把本地 Session 轨迹与 forge comment label
+汇成可直接消费的样本：
+
+```bash
+uv run --project eval/reviewbench python eval/build_trajectory_dataset.py
+```
+
+处理链路为：
+
+```text
+CCRSessionSource.select/fetch
+  → ATIF Recording
+  → ATIFTrajectoryLoader
+  → Trajectory bundle
+  + normalized forge label annotation
+  → labeled sample
+```
+
+`CCRSessionSource` 是 CCR 对 `trajectory_harness.RecordingSource` 的领域实现：它只发现已关闭的
+`~/.casecodereview/sessions` 记录并通过 `ccr export --format atif` 读取原始 ATIF；ATIF 格式投影仍由
+Loader 负责，人工 label 则在 Dataset builder 中组合，不进入 Source。可用 `--repo` 限定仓库，
+`--labels` 重复指定输入文件。
+
+默认生成：
+
+```text
+eval/data/datasets/ccr-trajectories/
+├── trajectories.jsonl  每个 Session 一个 recording + canonical trajectories bundle
+├── samples.jsonl       每个 label 一个样本，引用 recording_id 与 Unit/Lane trajectory_ids
+└── manifest.json       只含构建计数和缺失统计
+```
+
+这些文件包含 prompt、源码上下文和评论内容，继续属于被忽略的本地真实数据；不要提交。没有阶段身份的
+旧 label 仍可连接到 Session 级 bundle，其 `trajectory_ids` 为空，并计入 manifest。
+
 ## 可选：采集本地 review trajectory
 
 `collect.py` 从 CCR session 导出 ATIF、comments 和按 unit 汇总：
@@ -359,9 +396,10 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
    repeat 指向本 MR 更早的同问题 comment。
 4. 使用 eval/labels.py 回收，每个仓库持续 upsert 到 eval/data/labels/。
 5. 运行 eval/build_label_dataset.py，报告总数、label 分布和 unpaired 数。
-6. 最后确认 git ls-files eval/data 和
+6. 需要轨迹样本时再运行 eval/build_trajectory_dataset.py，报告 linked/missing/export 计数。
+7. 最后确认 git ls-files eval/data 和
    git ls-files --others --exclude-standard eval/data 都没有输出。
-7. 不执行 git add/commit/push，除非我明确要求。
+8. 不执行 git add/commit/push，除非我明确要求。
 ```
 
 ## 收口检查
@@ -373,8 +411,10 @@ uv run --project eval/reviewbench python -m unittest discover \
 python3 -m py_compile \
   eval/labels.py \
   eval/build_label_dataset.py \
+  eval/build_trajectory_dataset.py \
   eval/build_hypothesis_dataset.py \
   eval/collect.py \
+  eval/ccr_source.py \
   eval/ccr_trajectory.py \
   eval/attribute_failures.py \
   eval/posterior.py \
