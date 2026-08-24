@@ -208,27 +208,37 @@ uv run --project eval/reviewbench python eval/build_trajectory_dataset.py
 CCRSessionSource.select/fetch
   → ATIF Recording
   → ATIFTrajectoryLoader
-  → Trajectory bundle
+  → canonical Trajectory
   + normalized forge label annotation
-  → labeled sample
+  → versioned TrajectoryDataset
 ```
 
 `CCRSessionSource` 是 CCR 对 `trajectory_harness.RecordingSource` 的领域实现：它只发现已关闭的
 `~/.casecodereview/sessions` 记录并通过 `ccr export --format atif` 读取原始 ATIF；ATIF 格式投影仍由
-Loader 负责，人工 label 则在 Dataset builder 中组合，不进入 Source。可用 `--repo` 限定仓库，
-`--labels` 重复指定输入文件。
+Loader 负责，人工 label 则由 CCR 的 `TrajectoryDatasetBuilder` 子类组合，不进入 Source。可用
+`--repo` 限定仓库，`--labels` 重复指定输入文件。
 
 默认生成：
 
 ```text
 eval/data/datasets/ccr-trajectories/
-├── trajectories.jsonl  每个 Session 一个 recording + canonical trajectories bundle
-├── samples.jsonl       每个 label 一个样本，引用 recording_id 与 Unit/Lane trajectory_ids
-└── manifest.json       只含构建计数和缺失统计
+└── dataset.json         固定 Dataset、label annotations、provenance 与构建健康信息
 ```
 
-这些文件包含 prompt、源码上下文和评论内容，继续属于被忽略的本地真实数据；不要提交。没有阶段身份的
-旧 label 仍可连接到 Session 级 bundle，其 `trajectory_ids` 为空，并计入 manifest。
+该文件包含 prompt、源码上下文和评论内容，继续属于被忽略的本地真实数据；不要提交。没有阶段身份的
+旧 label 仍可连接到 Session，其 `trajectory_ids` 为空，并计入 Dataset build health。
+
+一键生成指定周的固定 Dataset、评价结果、成本 Measurement、HTML 报告和 Verdict：
+
+```bash
+uv run --project eval/reviewbench python eval/ccr_trajectory_report.py \
+  --week 2026-W34
+```
+
+控制流和标准报告章节由 `trajectory_harness` 提供；CCR 只定义 label join、作为评估 target 的
+Review 1/2、领域 Evaluator 套件和 label coverage 视图。质量与成本由 Evaluator / Measurer
+各自的 category 区分。产物统一落在
+`eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/`，上周产物存在时自动加入趋势对比。
 
 ## 可选：采集本地 review trajectory
 
@@ -447,6 +457,7 @@ python3 -m py_compile \
   eval/github_labels.py \
   eval/build_label_dataset.py \
   eval/build_trajectory_dataset.py \
+  eval/ccr_trajectory_report.py \
   eval/build_hypothesis_dataset.py \
   eval/collect.py \
   eval/ccr_source.py \

@@ -66,16 +66,33 @@ class BuildTrajectoryDatasetTest(unittest.TestCase):
 
             summary = build_dataset([labels], source, root / "out")
 
-            self.assertEqual(summary["samples"], 1)
-            self.assertEqual(summary["trajectory_bundles"], 1)
-            sample = json.loads((root / "out" / "samples.jsonl").read_text())
+            self.assertEqual(summary["annotations"], 1)
+            self.assertEqual(summary["trajectories"], 2)
+            artifact = json.loads((root / "out" / "dataset.json").read_text())
+            dataset = artifact["dataset"]
+            annotation = dataset["annotations"][0]
             self.assertEqual(
-                sample["trajectory_ids"],
-                ["unit-1", "hypothesis_review:lane-1"],
+                annotation["trajectory_ids"],
+                [
+                    "session-1/unit-1",
+                    "session-1/hypothesis_review:lane-1",
+                ],
             )
-            bundle = json.loads((root / "out" / "trajectories.jsonl").read_text())
-            self.assertEqual(len(bundle["trajectories"]), 2)
-            self.assertEqual(bundle["recording"]["recording_id"], "session-1")
+            self.assertEqual(annotation["annotation_id"], "sample-1")
+            self.assertEqual(len(dataset["trajectories"]), 2)
+            self.assertEqual(
+                dataset["trajectories"][0]["trajectory_id"],
+                "session-1/unit-1",
+            )
+            self.assertEqual(
+                dataset["trajectories"][0]["metadata"]["ccr_scope_id"],
+                "unit-1",
+            )
+            self.assertEqual(
+                dataset["trajectories"][0]["recording_id"], "session-1"
+            )
+            self.assertEqual(dataset["dataset_id"], "ccr-reviews")
+            self.assertEqual(dataset["version"], "local")
 
     def test_reports_session_and_error_when_trajectory_build_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
