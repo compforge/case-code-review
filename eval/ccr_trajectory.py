@@ -255,7 +255,11 @@ def _execution_result(
                 message=reason,
             ),
         )
-    return ExecutionResult(outcome=outcome, failure=failure)
+    return ExecutionResult(
+        outcome=outcome,
+        duration_ms=sum(step.duration_ms for step in steps),
+        failure=failure,
+    )
 
 
 @dataclass(frozen=True, slots=True)

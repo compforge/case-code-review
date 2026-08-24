@@ -161,6 +161,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(self.trajectory.metadata["file_path"], "a.go")
         self.assertIsNotNone(self.trajectory.execution)
         self.assertEqual(self.trajectory.execution.outcome, "completed")
+        self.assertEqual(self.trajectory.execution.duration_ms, 1200)
         self.assertEqual(review_stage(self.trajectory), REVIEW1)
         inference = next(
             step for step in self.trajectory.steps if step.operation == "inference"
