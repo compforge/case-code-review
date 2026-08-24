@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""Join normalized forge labels to local CCR trajectories."""
+"""Build a versioned CCR trajectory dataset from local sessions and labels."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from ccr_source import CCRSessionSource
 from ccr_trajectory import ATIFTrajectoryLoader
-from trajectory_harness import RecordingSource
+from trajectory_harness import (
+    RecordingQuery,
+    RecordingRef,
+    RecordingSource,
+    Trajectory,
+    TrajectoryAnnotation,
+    TrajectoryDataset,
+    TrajectoryDatasetBuilder,
+    write_dataset_artifact,
+)
 
 
 def read_examples(paths: Iterable[Path]) -> list[dict]:
@@ -31,100 +40,141 @@ def read_examples(paths: Iterable[Path]) -> list[dict]:
     )
 
 
+class CCRTrajectoryDatasetBuilder(TrajectoryDatasetBuilder):
+    """Join normalized forge labels to canonical trajectories by Session identity."""
+
+    def __init__(
+        self,
+        *,
+        label_paths: Sequence[Path],
+        source: RecordingSource,
+        dataset_id: str = "ccr-reviews",
+        version: str = "local",
+        loader: ATIFTrajectoryLoader | None = None,
+    ) -> None:
+        super().__init__(source=source, loader=loader or ATIFTrajectoryLoader())
+        self.examples = read_examples(label_paths)
+        self.dataset_id = dataset_id
+        self.version = version
+
+    def assemble(
+        self,
+        recordings: Sequence[RecordingRef],
+        trajectories: Sequence[Trajectory],
+        query: RecordingQuery | None,
+    ) -> TrajectoryDataset:
+        recording_ids = {recording.recording_id for recording in recordings}
+        trajectory_ids_by_recording: dict[str, dict[str, str]] = {
+            recording_id: {} for recording_id in recording_ids
+        }
+        dataset_trajectories = []
+        for trajectory in trajectories:
+            scope_id = trajectory.trajectory_id
+            dataset_id = f"{trajectory.recording_id}/{scope_id}"
+            trajectory_ids_by_recording[trajectory.recording_id][scope_id] = dataset_id
+            dataset_trajectories.append(
+                replace(
+                    trajectory,
+                    trajectory_id=dataset_id,
+                    metadata={**trajectory.metadata, "ccr_scope_id": scope_id},
+                )
+            )
+
+        examples = self.examples
+        if query is not None:
+            # A time-bounded Dataset is scoped by selected Session identity, not by
+            # the later forge-comment timestamp of its labels.
+            examples = [
+                example
+                for example in examples
+                if str((example.get("engine") or {}).get("session_id") or "")
+                in recording_ids
+            ]
+
+        annotations: list[TrajectoryAnnotation] = []
+        label_session_ids = set()
+        labels_without_session = 0
+        for example in examples:
+            session_id = str((example.get("engine") or {}).get("session_id") or "")
+            if not session_id:
+                labels_without_session += 1
+                continue
+            label_session_ids.add(session_id)
+            if session_id not in recording_ids:
+                continue
+            annotations.append(
+                TrajectoryAnnotation(
+                    annotation_id=str(example["id"]),
+                    recording_id=session_id,
+                    trajectory_ids=tuple(
+                        trajectory_ids_by_recording[session_id][scope_id]
+                        for scope_id in _trajectory_ids(
+                            example,
+                            set(trajectory_ids_by_recording[session_id]),
+                        )
+                    ),
+                    annotation=_annotation(example),
+                    dimensions={
+                        "kind": str(example.get("kind") or "unknown"),
+                        "label": str(example.get("label") or "unknown"),
+                    },
+                    metadata={"engine": example.get("engine") or {}},
+                )
+            )
+
+        return TrajectoryDataset(
+            dataset_id=self.dataset_id,
+            version=self.version,
+            trajectories=tuple(dataset_trajectories),
+            annotations=tuple(annotations),
+            metadata={
+                "domain": "case-code-review",
+                "labels": len(examples),
+                "labels_without_session": labels_without_session,
+                "label_sessions": len(label_session_ids),
+                "matched_label_sessions": len(label_session_ids & recording_ids),
+                "missing_label_sessions": len(label_session_ids - recording_ids),
+            },
+        )
+
+
 def build_dataset(
     label_paths: Sequence[Path],
     source: RecordingSource,
     output_dir: Path,
     *,
     loader: ATIFTrajectoryLoader | None = None,
+    dataset_id: str = "ccr-reviews",
+    version: str = "local",
+    query: RecordingQuery | None = None,
 ) -> dict[str, int]:
-    """Write one trajectory bundle per session and one sample per joined label."""
+    """Build and persist the canonical trajectory-harness dataset artifact."""
 
-    loader = loader or ATIFTrajectoryLoader()
-    examples = read_examples(label_paths)
-    by_session: dict[str, list[dict]] = defaultdict(list)
-    without_session = 0
-    for example in examples:
-        session_id = str((example.get("engine") or {}).get("session_id") or "")
-        if not session_id:
-            without_session += 1
-            continue
-        by_session[session_id].append(example)
+    result = CCRTrajectoryDatasetBuilder(
+        label_paths=label_paths,
+        source=source,
+        dataset_id=dataset_id,
+        version=version,
+        loader=loader,
+    ).build(query)
+    write_dataset_artifact(output_dir, result)
+    for issue in result.summary.issues:
+        print(
+            f"trajectory build failed for session {issue.recording_id}: {issue.error}",
+            file=sys.stderr,
+        )
 
-    refs = {ref.recording_id: ref for ref in source.select()}
-    output_dir.mkdir(parents=True, exist_ok=True)
-    trajectories_path = output_dir / "trajectories.jsonl"
-    samples_path = output_dir / "samples.jsonl"
-    trajectory_temp = trajectories_path.with_suffix(".jsonl.tmp")
-    sample_temp = samples_path.with_suffix(".jsonl.tmp")
-    bundles = 0
-    samples = 0
-    missing_sessions = 0
-    export_failures = 0
-    samples_without_trajectory = 0
-    try:
-        with (
-            trajectory_temp.open("w", encoding="utf-8") as trajectory_output,
-            sample_temp.open("w", encoding="utf-8") as sample_output,
-        ):
-            for session_id in sorted(by_session):
-                ref = refs.get(session_id)
-                if ref is None:
-                    missing_sessions += 1
-                    continue
-                try:
-                    recording = source.fetch(ref)
-                    trajectories = loader.loads(recording.text, source=ref.uri)
-                except (OSError, RuntimeError, ValueError) as error:
-                    export_failures += 1
-                    print(
-                        f"trajectory build failed for session {session_id}: {error}",
-                        file=sys.stderr,
-                    )
-                    continue
-                available_ids = {
-                    trajectory.trajectory_id for trajectory in trajectories
-                }
-                bundle = {
-                    "recording": ref.to_dict(),
-                    "trajectories": [
-                        trajectory.to_dict() for trajectory in trajectories
-                    ],
-                }
-                trajectory_output.write(json.dumps(bundle, ensure_ascii=False) + "\n")
-                bundles += 1
-                for example in by_session[session_id]:
-                    trajectory_ids = _trajectory_ids(example, available_ids)
-                    if not trajectory_ids:
-                        samples_without_trajectory += 1
-                    sample = {
-                        "sample_id": example["id"],
-                        "recording_id": session_id,
-                        "trajectory_ids": trajectory_ids,
-                        "annotation": _annotation(example),
-                        "engine": example.get("engine") or {},
-                    }
-                    sample_output.write(json.dumps(sample, ensure_ascii=False) + "\n")
-                    samples += 1
-        trajectory_temp.replace(trajectories_path)
-        sample_temp.replace(samples_path)
-    except BaseException:
-        trajectory_temp.unlink(missing_ok=True)
-        sample_temp.unlink(missing_ok=True)
-        raise
-
-    summary = {
-        "labels": len(examples),
-        "labels_without_session": without_session,
-        "linked_sessions": len(by_session),
-        "trajectory_bundles": bundles,
-        "samples": samples,
-        "samples_without_trajectory": samples_without_trajectory,
-        "missing_sessions": missing_sessions,
-        "export_failures": export_failures,
+    metadata = result.dataset.metadata
+    return {
+        "labels": int(metadata["labels"]),
+        "labels_without_session": int(metadata["labels_without_session"]),
+        "linked_sessions": int(metadata["matched_label_sessions"]),
+        "trajectories": len(result.dataset.trajectories),
+        "annotations": len(result.dataset.annotations),
+        "annotations_without_trajectory": result.summary.unmatched_annotations,
+        "missing_sessions": int(metadata["missing_label_sessions"]),
+        "export_failures": len(result.summary.issues),
     }
-    _write_json(output_dir / "manifest.json", summary)
-    return summary
 
 
 def _trajectory_ids(example: dict, available_ids: set[str]) -> list[str]:
@@ -159,14 +209,6 @@ def _annotation(example: dict) -> dict:
     return {key: example.get(key) for key in keys}
 
 
-def _write_json(path: Path, value: object) -> None:
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    temp.replace(path)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -186,6 +228,8 @@ def main() -> int:
         type=Path,
         default=Path("eval/data/datasets/ccr-trajectories"),
     )
+    parser.add_argument("--dataset-id", default="ccr-reviews")
+    parser.add_argument("--dataset-version", default="local")
     parser.add_argument("--repo", type=Path, action="append", default=[])
     args = parser.parse_args()
     labels = args.labels or [
@@ -193,7 +237,13 @@ def main() -> int:
         Path("eval/data/datasets/review-comments-private.jsonl"),
     ]
     source = CCRSessionSource(args.sessions_dir, repositories=args.repo)
-    summary = build_dataset(labels, source, args.out)
+    summary = build_dataset(
+        labels,
+        source,
+        args.out,
+        dataset_id=args.dataset_id,
+        version=args.dataset_version,
+    )
     print(json.dumps(summary, ensure_ascii=False))
     return 1 if summary["export_failures"] else 0
 

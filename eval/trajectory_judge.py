@@ -41,25 +41,15 @@ from collections import Counter
 from pathlib import Path
 
 from ccr_trajectory import (
-    AdjacentFileReadsEvaluator,
     ATIFTrajectoryLoader,
-    AssessmentCompletionEvaluator,
-    DurationEfficiencyEvaluator,
-    FileReadBatchingEvaluator,
-    FileReadCoverageEvaluator,
     REVIEW1,
     REVIEW2,
-    ReviewCompletionEvaluator,
-    PromptFileCoverageEvaluator,
-    RoundEfficiencyEvaluator,
-    SearchThenReadEvaluator,
-    SearchScopeEvaluator,
-    ToolFailureEvaluator,
     UNKNOWN_STAGE,
     adjacent_file_read_stats,
     assessment_count,
     code_search_stats,
     empty_tool_argument_stats,
+    evaluators_for_stage,
     file_read_stats,
     hypothesis_yield,
     initial_context_stats,
@@ -72,7 +62,6 @@ from ccr_trajectory import (
 )
 from trajectory_harness import (
     ModelUsageMeasurer,
-    RepeatedToolCallEvaluator,
     Trajectory,
     evaluate,
     measure,
@@ -110,24 +99,9 @@ def load_trajectories(path: str | None) -> list[Trajectory]:
 
 # ── objective pass (deterministic, free) ─────────────────────────────────────
 
-_COMMON_EVALUATORS = (
-    RepeatedToolCallEvaluator(),
-    ToolFailureEvaluator(),
-    SearchScopeEvaluator(),
-    FileReadCoverageEvaluator(),
-    PromptFileCoverageEvaluator(),
-    AdjacentFileReadsEvaluator(),
-    FileReadBatchingEvaluator(),
-    SearchThenReadEvaluator(),
-    RoundEfficiencyEvaluator(),
-    DurationEfficiencyEvaluator(),
-    ReviewCompletionEvaluator(),
-)
-
 _STAGE_EVALUATORS = {
-    REVIEW1: _COMMON_EVALUATORS,
-    REVIEW2: (*_COMMON_EVALUATORS, AssessmentCompletionEvaluator()),
-    UNKNOWN_STAGE: _COMMON_EVALUATORS,
+    stage: evaluators_for_stage(stage)
+    for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
 }
 _MODEL_USAGE_MEASURER = ModelUsageMeasurer()
 

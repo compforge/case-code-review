@@ -16,10 +16,12 @@ from typing import Any, Callable
 
 from trajectory_harness import (
     EvaluationResult,
+    Evaluator,
     EvaluatorSpec,
     ExecutionResult,
     Failure,
     Finding,
+    RepeatedToolCallEvaluator,
     Step,
     Trajectory,
 )
@@ -735,6 +737,27 @@ def review_stage(trajectory: Trajectory) -> str:
     ):
         return REVIEW2
     return UNKNOWN_STAGE
+
+
+def evaluators_for_stage(stage: str) -> tuple[Evaluator, ...]:
+    """Return CCR's deterministic evaluator suite for one review stage."""
+
+    common = (
+        RepeatedToolCallEvaluator(),
+        ToolFailureEvaluator(),
+        SearchScopeEvaluator(),
+        FileReadCoverageEvaluator(),
+        PromptFileCoverageEvaluator(),
+        AdjacentFileReadsEvaluator(),
+        FileReadBatchingEvaluator(),
+        SearchThenReadEvaluator(),
+        RoundEfficiencyEvaluator(),
+        DurationEfficiencyEvaluator(),
+        ReviewCompletionEvaluator(),
+    )
+    if stage == REVIEW2:
+        return (*common, AssessmentCompletionEvaluator())
+    return common
 
 
 def _review_work_items(trajectory: Trajectory) -> int:
