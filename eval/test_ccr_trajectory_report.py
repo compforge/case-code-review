@@ -109,9 +109,12 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 "cost",
             )
             html = result.report_path.read_text(encoding="utf-8")
-            self.assertIn("CCR trajectory evaluation", html)
-            self.assertIn("Dataset build health", html)
-            self.assertIn("CCR label coverage", html)
+            self.assertIn("CCR weekly trajectory eval", html)
+            self.assertIn("Weekly overview", html)
+            self.assertIn("Labeled finding quality", html)
+            self.assertIn("Cost and latency", html)
+            self.assertIn("Data health", html)
+            self.assertNotIn("Evaluation evidence", html)
             self.assertIn("wrong", html)
 
 
