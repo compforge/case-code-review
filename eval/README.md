@@ -235,8 +235,9 @@ uv run --project eval/reviewbench python eval/ccr_trajectory_report.py \
   --week 2026-W34
 ```
 
-控制流和标准报告章节由 `trajectory_harness` 提供；CCR 只定义 label join、Review 1/2 分片、领域
-Evaluator 套件和 label coverage 视图。产物统一落在
+控制流和标准报告章节由 `trajectory_harness` 提供；CCR 只定义 label join、作为评估 target 的
+Review 1/2、领域 Evaluator 套件和 label coverage 视图。质量与成本由 Evaluator / Measurer
+各自的 category 区分。产物统一落在
 `eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/`，上周产物存在时自动加入趋势对比。
 
 ## 可选：采集本地 review trajectory

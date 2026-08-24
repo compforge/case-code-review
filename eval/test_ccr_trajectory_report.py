@@ -93,8 +93,20 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 "session-1",
             )
             self.assertEqual(
-                result.artifact.run.slices[0].slice_id,
+                result.artifact.run.target_for("session-1/unit-1"),
                 "review1",
+            )
+            self.assertEqual(
+                result.artifact.run.evaluations[0].target,
+                "review1",
+            )
+            self.assertEqual(
+                result.artifact.run.evaluations[0].category,
+                "quality",
+            )
+            self.assertEqual(
+                result.artifact.run.measurements[0].category,
+                "cost",
             )
             html = result.report_path.read_text(encoding="utf-8")
             self.assertIn("CCR trajectory evaluation", html)

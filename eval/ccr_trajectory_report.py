@@ -37,17 +37,17 @@ class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):
     def __init__(self) -> None:
         super().__init__(measurers=(ModelUsageMeasurer(),))
 
-    def slice_for(
+    def target_for(
         self, trajectory: Trajectory, dataset: TrajectoryDataset
     ) -> str:
         del dataset
         return review_stage(trajectory)
 
     def evaluators_for(
-        self, slice_id: str, dataset: TrajectoryDataset
+        self, target: str, dataset: TrajectoryDataset
     ) -> Sequence[Evaluator]:
         del dataset
-        return evaluators_for_stage(slice_id)
+        return evaluators_for_stage(target)
 
 
 class CCRTrajectoryReportBuilder(TrajectoryReportBuilder):
