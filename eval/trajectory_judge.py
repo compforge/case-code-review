@@ -48,6 +48,7 @@ from ccr_trajectory import (
     adjacent_file_read_stats,
     assessment_count,
     code_search_stats,
+    detectors_for_stage,
     empty_tool_argument_stats,
     evaluators_for_stage,
     file_read_stats,
@@ -61,10 +62,13 @@ from ccr_trajectory import (
     tool_frequencies,
 )
 from trajectory_harness import (
+    ContextUsageMeasurer,
     ModelUsageMeasurer,
     Trajectory,
+    detect,
     evaluate,
     measure,
+    ToolUsageMeasurer,
 )
 
 TAXONOMY = [
@@ -100,17 +104,27 @@ def load_trajectories(path: str | None) -> list[Trajectory]:
 # ── objective pass (deterministic, free) ─────────────────────────────────────
 
 _STAGE_EVALUATORS = {
-    stage: evaluators_for_stage(stage)
-    for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
+    stage: evaluators_for_stage(stage) for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
 }
-_MODEL_USAGE_MEASURER = ModelUsageMeasurer()
+_STAGE_DETECTORS = {
+    stage: detectors_for_stage(stage) for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
+}
+_MEASURERS = (
+    ModelUsageMeasurer(),
+    ToolUsageMeasurer(),
+    ContextUsageMeasurer(),
+)
 
 
 def objective_analysis(trajectory: Trajectory) -> dict:
-    """Build deterministic evaluation, measurement, and failure data for one chain."""
+    """Build deterministic detection, evaluation, and measurement data for one chain."""
     stage = review_stage(trajectory)
-    report = evaluate(trajectory, _STAGE_EVALUATORS[stage])
-    model_usage = measure(trajectory, [_MODEL_USAGE_MEASURER]).results[0]
+    detection = detect(trajectory, _STAGE_DETECTORS[stage])
+    evaluation = evaluate(trajectory, _STAGE_EVALUATORS[stage])
+    measurements = measure(trajectory, _MEASURERS).results
+    model_usage = next(
+        result for result in measurements if result.measurer_id == "model_usage"
+    )
     tool_fails = [
         {"tool": step.name, "error": _tool_result(step)[:120]}
         for step in trajectory.steps
@@ -146,8 +160,10 @@ def objective_analysis(trajectory: Trajectory) -> dict:
         "stage": stage,
         # trajectory_harness intentionally does not invent a cross-Evaluator score;
         # this unweighted mean is CCR's explicit summary policy.
-        "score": _mean_score(report.results),
-        "evaluations": [result.to_dict() for result in report.results],
+        "score": _mean_score(evaluation.results),
+        "detections": [result.to_dict() for result in detection.results],
+        "evaluations": [result.to_dict() for result in evaluation.results],
+        "measurements": [result.to_dict() for result in measurements],
         "model_usage": model_usage.to_dict(),
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(
@@ -463,6 +479,7 @@ def main() -> int:
                             f"   ⚠ {result['evaluator_id']}: "
                             f"{result['explanation']}"
                         )
+                for result in sig["detections"]:
                     for diagnostic in result["findings"]:
                         print(f"   ⚠ {diagnostic['code']}: {diagnostic['summary']}")
                         if diagnostic["hypotheses"]:

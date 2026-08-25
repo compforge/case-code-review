@@ -63,14 +63,34 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                         {
                             "trajectory_id": "unit-1",
                             "extra": {"scope_kind": "unit"},
-                            "steps": [],
+                            "steps": [
+                                {
+                                    "step_id": str(index),
+                                    "source": "agent",
+                                    "tool_calls": [
+                                        {
+                                            "tool_call_id": f"call-{index}",
+                                            "function_name": "custom_tool",
+                                            "arguments": {"path": "a.go"},
+                                        }
+                                    ],
+                                    "observation": {
+                                        "results": [
+                                            {
+                                                "source_call_id": f"call-{index}",
+                                                "content": "ok",
+                                                "extra": {"ok": True},
+                                            }
+                                        ]
+                                    },
+                                }
+                                for index in (1, 2)
+                            ],
                         }
                     ],
                 }
             )
-            source = CCRSessionSource(
-                root / "sessions", exporter=lambda _: atif
-            )
+            source = CCRSessionSource(root / "sessions", exporter=lambda _: atif)
 
             result = run_weekly_report(
                 window=WeekWindow.from_key("2026-W34", ZoneInfo("UTC")),
@@ -97,6 +117,10 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 "review1",
             )
             self.assertEqual(
+                result.artifact.run.detections[0].category,
+                "behavior",
+            )
+            self.assertEqual(
                 result.artifact.run.evaluations[0].target,
                 "review1",
             )
@@ -108,11 +132,24 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 result.artifact.run.measurements[0].category,
                 "cost",
             )
+            self.assertEqual(
+                {spec.measurer_id for spec in result.artifact.run.measurer_specs},
+                {"model_usage", "tool_usage", "context_usage"},
+            )
+            self.assertTrue(
+                any(
+                    metric.name == "finding"
+                    and dict(metric.dimensions).get("code") == "repeated_tool_call"
+                    for metric in result.artifact.run.metrics
+                )
+            )
             html = result.report_path.read_text(encoding="utf-8")
             self.assertIn("CCR weekly trajectory eval", html)
             self.assertIn("Weekly overview", html)
             self.assertIn("Labeled finding quality", html)
             self.assertIn("Cost and latency", html)
+            self.assertIn("Trajectory findings", html)
+            self.assertIn("repeated_tool_call", html)
             self.assertIn("Data health", html)
             self.assertNotIn("Evaluation evidence", html)
             self.assertIn("wrong", html)

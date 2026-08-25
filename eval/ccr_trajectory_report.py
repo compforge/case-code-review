@@ -13,9 +13,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from build_trajectory_dataset import CCRTrajectoryDatasetBuilder
 from ccr_source import CCRSessionSource
-from ccr_trajectory import evaluators_for_stage, review_stage
+from ccr_trajectory import detectors_for_stage, evaluators_for_stage, review_stage
 from harness_common.report_kit import KV, Report, Section, Table
 from trajectory_harness import (
+    ContextUsageMeasurer,
+    Detector,
     Evaluator,
     ModelUsageMeasurer,
     RecordingQuery,
@@ -27,6 +29,7 @@ from trajectory_harness import (
     TrajectoryHarnessResult,
     TrajectoryReportBuilder,
     TrajectoryRunArtifact,
+    ToolUsageMeasurer,
 )
 from weekly_report import WeekWindow, default_dataset_paths
 
@@ -35,11 +38,15 @@ class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):
     """Evaluate CCR scopes with stage-specific checks and common cost measures."""
 
     def __init__(self) -> None:
-        super().__init__(measurers=(ModelUsageMeasurer(),))
+        super().__init__(
+            measurers=(
+                ModelUsageMeasurer(),
+                ToolUsageMeasurer(),
+                ContextUsageMeasurer(),
+            )
+        )
 
-    def target_for(
-        self, trajectory: Trajectory, dataset: TrajectoryDataset
-    ) -> str:
+    def target_for(self, trajectory: Trajectory, dataset: TrajectoryDataset) -> str:
         del dataset
         return review_stage(trajectory)
 
@@ -48,6 +55,12 @@ class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):
     ) -> Sequence[Evaluator]:
         del dataset
         return evaluators_for_stage(target)
+
+    def detectors_for(
+        self, target: str, dataset: TrajectoryDataset
+    ) -> Sequence[Detector]:
+        del dataset
+        return detectors_for_stage(target)
 
 
 class CCRTrajectoryReportBuilder(TrajectoryReportBuilder):
@@ -75,6 +88,7 @@ class CCRTrajectoryReportBuilder(TrajectoryReportBuilder):
                 _overview_section(current, previous),
                 _label_section(current, previous),
                 _cost_and_latency_section(current, previous),
+                _trajectory_findings_section(current),
                 _data_health_section(current),
             ],
         )
@@ -89,9 +103,7 @@ def _overview_section(
     current_total = sum(current_labels.values())
     previous_total = sum(previous_labels.values())
     current_accepted = sum(current_labels[label] for label in ("important", "minor"))
-    previous_accepted = sum(
-        previous_labels[label] for label in ("important", "minor")
-    )
+    previous_accepted = sum(previous_labels[label] for label in ("important", "minor"))
     return Section(
         heading="Weekly overview",
         blocks=[
@@ -248,6 +260,42 @@ def _comparison_rows(
             "number",
         ),
         (
+            f"{title} average tool calls / trajectory",
+            _measurement(
+                current,
+                target,
+                "tool_usage",
+                "tool_call_count",
+                "mean",
+            ),
+            _measurement(
+                previous,
+                target,
+                "tool_usage",
+                "tool_call_count",
+                "mean",
+            ),
+            "number",
+        ),
+        (
+            f"{title} average peak input tokens",
+            _measurement(
+                current,
+                target,
+                "context_usage",
+                "peak_input_tokens",
+                "mean",
+            ),
+            _measurement(
+                previous,
+                target,
+                "context_usage",
+                "peak_input_tokens",
+                "mean",
+            ),
+            "number",
+        ),
+        (
             f"{title} average duration",
             _duration_seconds(current, target, "mean"),
             _duration_seconds(previous, target, "mean"),
@@ -271,6 +319,47 @@ def _comparison_rows(
     ]
 
 
+def _trajectory_findings_section(current: TrajectoryRunArtifact) -> Section:
+    rows = []
+    for metric in current.run.metrics:
+        if metric.name != "finding" or metric.aggregation != "count":
+            continue
+        dimensions = dict(metric.dimensions)
+        rate = _metric_value(
+            current,
+            name="finding",
+            aggregation="rate",
+            dimensions=dimensions,
+        )
+        rows.append(
+            [
+                dimensions.get("target", "—"),
+                dimensions.get("detector_id", "—"),
+                dimensions.get("code", "—"),
+                dimensions.get("severity", "—"),
+                _format_value(metric.value, "number"),
+                _format_value(rate, "percent"),
+            ]
+        )
+    rows.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
+    return Section(
+        heading="Trajectory findings",
+        blocks=[
+            Table(
+                columns=[
+                    "Target",
+                    "Detector",
+                    "Finding",
+                    "Severity",
+                    "Count",
+                    "Affected trajectories",
+                ],
+                rows=rows,
+            )
+        ],
+    )
+
+
 def _data_health_section(current: TrajectoryRunArtifact) -> Section:
     summary = current.build.summary
     metadata = current.dataset.metadata
@@ -282,7 +371,10 @@ def _data_health_section(current: TrajectoryRunArtifact) -> Section:
                     ("Selected recordings", str(summary.selected_recordings)),
                     ("Included trajectories", str(summary.included_trajectories)),
                     ("Label annotations", str(summary.included_annotations)),
-                    ("Annotations without trajectory", str(summary.unmatched_annotations)),
+                    (
+                        "Annotations without trajectory",
+                        str(summary.unmatched_annotations),
+                    ),
                     (
                         "Matched label Sessions",
                         str(metadata.get("matched_label_sessions", 0)),
@@ -349,6 +441,22 @@ def _model_usage(
     measurement: str,
     aggregation: str,
 ) -> float | None:
+    return _measurement(
+        artifact,
+        target,
+        "model_usage",
+        measurement,
+        aggregation,
+    )
+
+
+def _measurement(
+    artifact: TrajectoryRunArtifact | None,
+    target: str,
+    measurer_id: str,
+    measurement: str,
+    aggregation: str,
+) -> float | None:
     return _metric_value(
         artifact,
         name="measurement.value",
@@ -356,7 +464,7 @@ def _model_usage(
         dimensions={
             "target": target,
             "category": "cost",
-            "measurer_id": "model_usage",
+            "measurer_id": measurer_id,
             "measurement": measurement,
         },
     )

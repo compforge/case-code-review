@@ -2,18 +2,18 @@ import json
 import unittest
 
 from ccr_trajectory import (
-    AdjacentFileReadsEvaluator,
+    AdjacentFileReadsDetector,
     ATIFTrajectoryLoader,
     AssessmentCompletionEvaluator,
     DurationEfficiencyEvaluator,
-    FileReadBatchingEvaluator,
+    FileReadBatchingDetector,
     FileReadCoverageEvaluator,
     ReviewCompletionEvaluator,
     PromptFileCoverageEvaluator,
     REVIEW1,
     REVIEW2,
     RoundEfficiencyEvaluator,
-    SearchThenReadEvaluator,
+    SearchThenReadDetector,
     SearchScopeEvaluator,
     ToolFailureEvaluator,
     adjacent_file_read_stats,
@@ -28,7 +28,7 @@ from ccr_trajectory import (
     same_turn_file_read_batching,
     search_then_read_stats,
 )
-from trajectory_harness import RepeatedToolCallEvaluator, evaluate
+from trajectory_harness import RepeatedToolCallDetector, detect, evaluate
 from trajectory_judge import main_deductions, objective_analysis
 
 
@@ -36,7 +36,16 @@ class CCRTrajectoryTest(unittest.TestCase):
     def setUp(self):
         root = {
             "session_id": "s1",
-            "extra": {"repo": "/repo", "branch": "feature"},
+            "agent": {
+                "name": "case-code-review",
+                "version": "v1.2.3",
+                "model_name": "review-model",
+            },
+            "extra": {
+                "repo": "/repo",
+                "branch": "feature",
+                "features": {"callchain": True},
+            },
             "subagent_trajectories": [
                 {
                     "trajectory_id": "unit-1",
@@ -142,15 +151,20 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
     def test_projects_atif_and_runs_harness_evaluators(self):
-        report = evaluate(
+        detection = detect(
             self.trajectory,
             [
-                RepeatedToolCallEvaluator(),
+                RepeatedToolCallDetector(),
+                AdjacentFileReadsDetector(),
+            ],
+        )
+        evaluation = evaluate(
+            self.trajectory,
+            [
                 ToolFailureEvaluator(),
                 SearchScopeEvaluator(),
                 FileReadCoverageEvaluator(),
                 PromptFileCoverageEvaluator(),
-                AdjacentFileReadsEvaluator(),
                 RoundEfficiencyEvaluator(),
                 DurationEfficiencyEvaluator(),
                 ReviewCompletionEvaluator(),
@@ -159,6 +173,14 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         self.assertEqual(self.trajectory.metadata["session_id"], "s1")
         self.assertEqual(self.trajectory.metadata["file_path"], "a.go")
+        self.assertEqual(
+            self.trajectory.generation,
+            {
+                "agent_revision": "case-code-review@v1.2.3",
+                "model": "review-model",
+                "loop_config": '{"features":{"callchain":true}}',
+            },
+        )
         self.assertIsNotNone(self.trajectory.execution)
         self.assertEqual(self.trajectory.execution.outcome, "completed")
         self.assertEqual(self.trajectory.execution.duration_ms, 1200)
@@ -173,20 +195,22 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(
             [step.operation for step in self.trajectory.steps].count("execute_tool"), 4
         )
-        self.assertEqual(report.results[0].verdict, "warning")
-        self.assertIsNone(report.results[0].score)
-        self.assertEqual(report.results[0].findings[0].code, "repeated_tool_call")
-        self.assertTrue(report.results[0].findings[0].hypotheses)
-        self.assertEqual(report.results[1].score, 0.75)
-        self.assertEqual(report.results[2].score, 0)
-        self.assertEqual(report.results[3].score, 0.5)
-        self.assertEqual(report.results[4].score, 0.2)
-        self.assertIsNone(report.results[5].score)
-        self.assertIsNone(report.results[5].verdict)
-        self.assertEqual(report.results[5].findings[0].code, "adjacent_file_reads")
-        self.assertEqual(report.results[6].score, 1)
-        self.assertEqual(report.results[7].score, 1)
-        self.assertEqual(report.results[8].score, 1)
+        failed_tool = next(
+            step
+            for step in self.trajectory.steps
+            if step.operation == "execute_tool" and step.status == "error"
+        )
+        self.assertEqual(failed_tool.failure.key, "tool.execute.execution_error")
+        self.assertEqual(detection.results[0].findings[0].code, "repeated_tool_call")
+        self.assertTrue(detection.results[0].findings[0].hypotheses)
+        self.assertEqual(detection.results[1].findings[0].code, "adjacent_file_reads")
+        self.assertEqual(evaluation.results[0].score, 0.75)
+        self.assertEqual(evaluation.results[1].score, 0)
+        self.assertEqual(evaluation.results[2].score, 0.5)
+        self.assertEqual(evaluation.results[3].score, 0.2)
+        self.assertEqual(evaluation.results[4].score, 1)
+        self.assertEqual(evaluation.results[5].score, 1)
+        self.assertEqual(evaluation.results[6].score, 1)
         usage = objective_analysis(self.trajectory)["model_usage"]
         self.assertEqual(usage["status"], "measured")
         self.assertEqual(
@@ -196,6 +220,18 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "usage_reported_call_count": 0,
                 "usage_coverage_ratio": 0.0,
             },
+        )
+        measurements = {
+            item["measurer_id"]: item
+            for item in objective_analysis(self.trajectory)["measurements"]
+        }
+        self.assertEqual(
+            measurements["tool_usage"]["measurements"]["failed_tool_call_count"],
+            1,
+        )
+        self.assertEqual(
+            measurements["context_usage"]["measurements"]["model_call_count"],
+            1,
         )
         self.assertEqual(hypothesis_yield(self.trajectory), 1)
         self.assertEqual(
@@ -254,17 +290,26 @@ class CCRTrajectoryTest(unittest.TestCase):
                 for item in objective_analysis(self.trajectory)["evaluations"]
             ],
             [
-                "repeated_tool_call",
                 "tool_success",
                 "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
-                "adjacent_file_reads",
-                "file_read_batching",
-                "search_then_read",
                 "round_efficiency",
                 "duration_efficiency",
                 "review_completion",
+            ],
+        )
+        self.assertEqual(
+            [
+                item["detector_id"]
+                for item in objective_analysis(self.trajectory)["detections"]
+            ],
+            [
+                "repeated_tool_call",
+                "retry_loop",
+                "adjacent_file_reads",
+                "file_read_batching",
+                "search_then_read",
             ],
         )
 
@@ -344,14 +389,10 @@ class CCRTrajectoryTest(unittest.TestCase):
                 for item in objective_analysis(trajectory)["evaluations"]
             ],
             [
-                "repeated_tool_call",
                 "tool_success",
                 "search_scope_validity",
                 "file_read_coverage",
                 "file_read_prompt_novelty",
-                "adjacent_file_reads",
-                "file_read_batching",
-                "search_then_read",
                 "round_efficiency",
                 "duration_efficiency",
                 "review_completion",
@@ -577,12 +618,9 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "adjacent_step_ids": ["1:tool:2"],
             },
         )
-        adjacency = AdjacentFileReadsEvaluator().evaluate(trajectory)
-        self.assertIsNone(adjacency.score)
-        self.assertIsNone(adjacency.verdict)
+        adjacency = AdjacentFileReadsDetector().detect(trajectory)
         self.assertEqual(adjacency.findings[0].code, "adjacent_file_reads")
-        batching = FileReadBatchingEvaluator().evaluate(trajectory)
-        self.assertEqual(batching.verdict, "warning")
+        batching = FileReadBatchingDetector().detect(trajectory)
         self.assertEqual(batching.findings[0].code, "unbatched_same_turn_reads")
         self.assertEqual(
             same_turn_file_read_batching(trajectory)["step_ids"],
@@ -912,10 +950,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "step_ids": ["1:tool:1", "2:tool:1"],
             },
         )
-        evaluation = SearchThenReadEvaluator().evaluate(trajectory)
-        self.assertIsNone(evaluation.score)
-        self.assertIsNone(evaluation.verdict)
-        self.assertEqual(evaluation.findings[0].code, "search_then_read")
+        detection = SearchThenReadDetector().detect(trajectory)
+        self.assertEqual(detection.findings[0].code, "search_then_read")
 
     def test_llm_failure_is_projected_with_transport_progress(self):
         root = {
