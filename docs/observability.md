@@ -109,15 +109,16 @@ prompt 和形成改进假设，不适合凭少量 session 断言整体效果提�
 ## 3. eval：主要效果判断
 
 主要效果问题由 eval 回答。它通过 CCR `RecordingSource` 选择和读取 Session/ATIF，经 ATIF Loader
-投影为通用 Trajectory，再与人工标签、固定 corpus、阶段数据集、Evaluator 和 Measurer 连接，
-在相同输入和判定标准下比较 baseline 与 candidate，并同时观察：
+投影为通用 Trajectory，再与人工标签、固定 corpus、阶段数据集、Detector、Evaluator 和
+Measurer 连接，在相同输入和判定标准下比较 baseline 与 candidate，并同时观察：
 
 - **准确性**：Finding 真伪、重复交付、漏报，以及 Assessment/Trial 是否正确放行；
 - **健壮性**：Unit/Lane 是否完成、Hypothesis 是否全部 Assessment、超时、partial 和执行错误；
 - **成本**：Measurer 记录的 token、时间、模型轮次、工具调用和 Unit 数量。
 
-Evaluator 只形成 verdict、score 与可定位的 Finding；Measurer 只记录可计数、求和的事实，不判断
-质量。eval 在同一 Dataset/Cohort 上组合两者，例如比较 completion、人工接受率和
+Detector 只形成可定位的 Finding，Evaluator 按明确契约形成可选 verdict 和/或 score；Measurer
+只记录可计数、求和的事实，不判断质量。eval 在同一 Dataset/Cohort 上组合三者，例如比较
+completion、人工接受率和
 `tokens / labeled accepted Finding`。单位成本必须与人工 label coverage 一起解释，不能把低 token
 本身当作效果提升。
 
@@ -125,9 +126,9 @@ Dataset snapshot 把带时区的采集窗口、源快照身份与规范化产物
 完整覆盖目标窗口、规范化数据集消费了当前源快照且产物摘要一致时，周报才开放 Finding 质量指标；
 否则执行指标照常生成，质量指标保持不可用，不能把缺失数据解释成零质量或零 Finding。
 
-Viewer 中发现的重复 `read_files`、搜索空转或未完成 Unit，可以进一步沉淀为 Trajectory Evaluator；人工
-确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中确认问题具有普遍性、指标改善且没有召回
-或成本回退，才能认为优化有效。
+Viewer 中发现的重复 `read_files` 或搜索空转可以进一步沉淀为 Trajectory Detector；未完成 Unit
+等明确契约由 Evaluator 判断，人工确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中
+确认问题具有普遍性、指标改善且没有召回或成本回退，才能认为优化有效。
 
 ### 3.1 已知问题的阶段归因
 

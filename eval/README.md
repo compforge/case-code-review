@@ -236,9 +236,9 @@ uv run --project eval/reviewbench python eval/ccr_trajectory_report.py \
 ```
 
 Dataset、Worksheet、Metric、HTML 渲染和运行产物由 `trajectory_harness` 提供；CCR 定义 label
-join、作为评估 target 的 Review 1/2、领域 Evaluator 套件，以及面向周报的摘要投影。HTML 只展示
-人工 label 占比、token、耗时、周环比和数据健康，逐轨迹评价与 Measurement 明细保留在 Dataset / Run
-JSON 中。质量与成本由 Evaluator / Measurer 各自的 category 区分。产物统一落在
+join、作为评估 target 的 Review 1/2、领域 Detector/Evaluator 套件，以及面向周报的摘要投影。
+HTML 展示人工 label 占比、Detector Finding、token、工具调用、耗时、周环比和数据健康；逐轨迹
+Detection、Evaluation 与 Measurement 明细保留在 Dataset / Run JSON 中。产物统一落在
 `eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/`，上周产物存在时自动加入趋势对比。
 
 ## 可选：采集本地 review trajectory
@@ -261,9 +261,9 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 ```
 
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
-`trajectory_harness` 的通用重复工具调用 Evaluator，以及 CCR 自己的工具失败、失败空参数、空搜索、
-`read_files` 行覆盖率和 Unit
-完成度 Evaluator。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
+`trajectory_harness` 的通用重复调用/失败重试 Detector，以及 CCR 自己的相邻读取、同轮未批量读取
+和 search 后 read Detector；工具成功率、搜索范围、`read_files` 行覆盖率和 Unit 完成度仍由
+Evaluator 按明确契约判定。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
 `execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
 尚未提交的 Assessment，避免把“自然 clean”误判为未完成，也避免把“产出过结果”误判为完整执行。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
@@ -273,19 +273,20 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 `search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计；
 有命中的 search request 另作为稳定分母，区分启用和未启用 `context_lines` 后的 follow-up read 比例。
 每个 query 的自由字符串 `purpose` 同时按原值统计覆盖率和分布，用来发现尚未进入既有工具分类的搜索需求。
-这些模式的原始 count/rate 保留在 objective analysis 中，Evaluator 只输出 verdict、score 和 Finding。
+这些模式由 Detector 输出 Finding，并在 Dataset 上聚合 count/rate；Evaluator 只输出可选 verdict
+和/或 score，Model/Tool/Context Measurer 记录可计数、求和的事实。
 重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
 average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内
-未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。确定性结果统一产生
-`EvaluationResult`，用 status、verdict、可选 0~1 score、explanation 与 step id 区分执行健康、
-判断和证据。重复工具调用只产生带 hypotheses 的 `Finding`，不伪装为执行 Failure 或低分；
+未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。Detector 产生
+`DetectionResult + Finding`，Evaluator 产生 `EvaluationResult`；两者分别表达模式发现与契约判断。
+重复工具调用只产生带 hypotheses 的 `Finding`，不伪装为执行 Failure 或低分；
 CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
 judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
 [HTML 报告示例](examples/trajectory-evaluation-report.html)展示了 Trajectory facts、Failure、
-EvaluationResult、Finding 与聚合 Metric 在同一读模型中的分层关系。
+DetectionResult/Finding、EvaluationResult、Measurement 与聚合 Metric 在同一读模型中的分层关系。
 
 ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
 提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率

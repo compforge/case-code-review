@@ -15,13 +15,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 from trajectory_harness import (
+    DetectionResult,
+    Detector,
+    DetectorSpec,
     EvaluationResult,
     Evaluator,
     EvaluatorSpec,
     ExecutionResult,
     Failure,
     Finding,
-    RepeatedToolCallEvaluator,
+    RepeatedToolCallDetector,
+    RetryLoopDetector,
     Step,
     Trajectory,
 )
@@ -38,6 +42,20 @@ def _evaluator_spec(
 ) -> EvaluatorSpec:
     return EvaluatorSpec(
         evaluator_id=evaluator_id,
+        title=title,
+        description=description,
+        kind="domain",
+        owner="case-code-review",
+    )
+
+
+def _detector_spec(
+    detector_id: str,
+    title: str,
+    description: str,
+) -> DetectorSpec:
+    return DetectorSpec(
+        detector_id=detector_id,
         title=title,
         description=description,
         kind="domain",
@@ -162,6 +180,7 @@ class ATIFTrajectoryLoader:
                 if arguments is None:
                     arguments = _json_value(extra.get("arguments"))
                 call_id = call.get("tool_call_id") or result.get("source_call_id")
+                tool_failure = _tool_failure(extra, result)
                 steps.append(
                     Step(
                         step_id=f"{step_id}:tool:{index}",
@@ -170,7 +189,8 @@ class ATIFTrajectoryLoader:
                         name=name,
                         start_ms=start_ms + duration_ms,
                         duration_ms=0,
-                        status="error" if extra.get("ok") is False else "",
+                        status="error" if tool_failure is not None else "",
+                        failure=tool_failure,
                         input_messages=(_tool_call_message(call_id, name, arguments),),
                         output_messages=(
                             _tool_result_message(call_id, result.get("content")),
@@ -190,6 +210,7 @@ class ATIFTrajectoryLoader:
             steps=tuple(steps),
             execution=_execution_result(metadata, steps),
             source=source,
+            generation=_generation_provenance(root_meta, steps),
             metadata=metadata,
         )
 
@@ -209,6 +230,57 @@ def _failure_from_value(value: Any) -> Failure | None:
         code=str(value.get("code") or ""),
         message=str(value.get("message") or ""),
     )
+
+
+def _tool_failure(extra: dict[str, Any], result: dict[str, Any]) -> Failure | None:
+    if extra.get("ok") is not False:
+        return None
+    if failure := _failure_from_value(extra.get("failure")):
+        return failure
+    message = str(extra.get("error") or result.get("content") or "")
+    return Failure(
+        kind="tool",
+        phase="execute",
+        error_type=str(extra.get("error_type") or "execution_error"),
+        code=str(extra.get("error_code") or extra.get("code") or ""),
+        message=message[:500],
+    )
+
+
+def _generation_provenance(
+    root_meta: dict[str, Any], steps: list[Step]
+) -> dict[str, str]:
+    agent = root_meta.get("agent") or {}
+    name = str(agent.get("name") or "")
+    version = str(agent.get("version") or "")
+    generation = {}
+    if name:
+        generation["agent_revision"] = (
+            f"{name}@{version}" if version and version != "unknown" else name
+        )
+    models = sorted(
+        {
+            step.name
+            for step in steps
+            if step.operation == "inference" and step.name and step.name != "model"
+        }
+    )
+    configured_model = str(agent.get("model_name") or "")
+    if models:
+        generation["model"] = ",".join(models)
+    elif configured_model:
+        generation["model"] = configured_model
+    loop_config = {
+        key: root_meta[key] for key in ("features", "params") if root_meta.get(key)
+    }
+    if loop_config:
+        generation["loop_config"] = json.dumps(
+            loop_config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    return generation
 
 
 def _legacy_llm_failure(message: str) -> Failure | None:
@@ -418,24 +490,21 @@ class PromptFileCoverageEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class AdjacentFileReadsEvaluator:
+class AdjacentFileReadsDetector:
     """Describe adjacent reads without assuming they were knowable upfront."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: DetectorSpec = _detector_spec(
         "adjacent_file_reads",
         "Adjacent file reads",
         "Identify adjacent or overlapping file ranges and when they became available.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def detect(self, trajectory: Trajectory) -> DetectionResult:
         stats = adjacent_file_read_stats(trajectory)
         range_count = stats["read_range_count"]
         if range_count == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_detected(
+                self.spec.detector_id,
                 "Trajectory contains no ranged read_files output.",
             )
         mergeable = stats["mergeable_range_count"]
@@ -457,38 +526,34 @@ class AdjacentFileReadsEvaluator:
                     ),
                 ),
             )
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return DetectionResult(
+            detector_id=self.spec.detector_id,
+            status="analyzed",
             explanation=(
                 f"{range_count} observed file ranges contain {mergeable} adjacent or "
                 "overlapping range(s); "
                 f"{stats['cross_turn_mergeable_range_count']} were requested "
                 "across different inference turns."
             ),
-            step_ids=tuple(stats["adjacent_step_ids"]),
             findings=findings,
         )
 
 
 @dataclass(frozen=True, slots=True)
-class FileReadBatchingEvaluator:
+class FileReadBatchingDetector:
     """Detect read_files calls that the model emitted in the same response."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: DetectorSpec = _detector_spec(
         "file_read_batching",
         "File read batching",
-        "Judge whether same-turn read_files calls could share one reads[] batch.",
+        "Identify same-turn read_files calls that could share one reads[] batch.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def detect(self, trajectory: Trajectory) -> DetectionResult:
         stats = file_read_stats(trajectory)
         if stats["calls"] == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id, "Trajectory contains no read_files calls."
+            return _not_detected(
+                self.spec.detector_id, "Trajectory contains no read_files calls."
             )
         batching = same_turn_file_read_batching(trajectory)
         extra_calls = batching["extra_calls"]
@@ -509,37 +574,32 @@ class FileReadBatchingEvaluator:
                     ),
                 ),
             )
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
-            verdict="warning" if extra_calls else "pass",
+        return DetectionResult(
+            detector_id=self.spec.detector_id,
+            status="analyzed",
             explanation=(
                 f"{stats['requests']} ranges used {stats['calls']} read_files calls; "
                 f"{extra_calls} same-turn extra call(s) were observed."
             ),
-            step_ids=tuple(batching["step_ids"]),
             findings=findings,
         )
 
 
 @dataclass(frozen=True, slots=True)
-class SearchThenReadEvaluator:
+class SearchThenReadDetector:
     """Observe later reads that cover an earlier search hit."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: DetectorSpec = _detector_spec(
         "search_then_read",
         "Search then read",
         "Identify source reads that follow and cover a search_code hit.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def detect(self, trajectory: Trajectory) -> DetectionResult:
         stats = search_then_read_stats(trajectory)
         if not stats["hit_search_request_count"]:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_detected(
+                self.spec.detector_id,
                 "Trajectory needs a search_code request that returned at least one hit.",
             )
         linked = stats["search_then_read_range_count"]
@@ -561,15 +621,14 @@ class SearchThenReadEvaluator:
                     ),
                 ),
             )
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return DetectionResult(
+            detector_id=self.spec.detector_id,
+            status="analyzed",
             explanation=(
                 f"{stats['follow_up_read_request_count']} of "
                 f"{stats['hit_search_request_count']} hit-producing search request(s) "
                 f"were followed by a covering read ({linked} read range(s))."
             ),
-            step_ids=tuple(stats["step_ids"]),
             findings=findings,
         )
 
@@ -747,14 +806,10 @@ def evaluators_for_stage(stage: str) -> tuple[Evaluator, ...]:
     """Return CCR's deterministic evaluator suite for one review stage."""
 
     common = (
-        RepeatedToolCallEvaluator(),
         ToolFailureEvaluator(),
         SearchScopeEvaluator(),
         FileReadCoverageEvaluator(),
         PromptFileCoverageEvaluator(),
-        AdjacentFileReadsEvaluator(),
-        FileReadBatchingEvaluator(),
-        SearchThenReadEvaluator(),
         RoundEfficiencyEvaluator(),
         DurationEfficiencyEvaluator(),
         ReviewCompletionEvaluator(),
@@ -762,6 +817,19 @@ def evaluators_for_stage(stage: str) -> tuple[Evaluator, ...]:
     if stage == REVIEW2:
         return (*common, AssessmentCompletionEvaluator())
     return common
+
+
+def detectors_for_stage(stage: str) -> tuple[Detector, ...]:
+    """Return reusable trajectory-pattern detectors for one review stage."""
+
+    del stage
+    return (
+        RepeatedToolCallDetector(),
+        RetryLoopDetector(),
+        AdjacentFileReadsDetector(),
+        FileReadBatchingDetector(),
+        SearchThenReadDetector(),
+    )
 
 
 def _review_work_items(trajectory: Trajectory) -> int:
@@ -1636,6 +1704,14 @@ def _hypotheses_accepted(step: Step) -> bool:
 def _not_evaluated(evaluator_id: str, explanation: str) -> EvaluationResult:
     return EvaluationResult(
         evaluator_id=evaluator_id,
+        status="not_applicable",
+        explanation=explanation,
+    )
+
+
+def _not_detected(detector_id: str, explanation: str) -> DetectionResult:
+    return DetectionResult(
+        detector_id=detector_id,
         status="not_applicable",
         explanation=explanation,
     )
