@@ -232,10 +232,10 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		CommitContext:            e.replaceContext,
 		CommitMessage:            e.appendContext,
 		BeforeTurn:               e.turns.BeforeTurn,
-		BeforeModelCall:          e.beforeModelCall,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
-		Middlewares:              []agentgo.ToolMiddleware{e.toolMiddleware()},
+		ModelMiddlewares:         []agentgo.ModelMiddleware{e.modelMiddleware()},
+		ToolMiddlewares:          []agentgo.ToolMiddleware{e.toolMiddleware()},
 	}
 
 	history := e.continuationContext()
@@ -273,16 +273,33 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	return result, err
 }
 
-func (e *Execution) beforeModelCall(
-	context.Context,
-	agentgo.BeforeModelCallContext,
-) ([]agentgo.CallOption, error) {
+func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
+	return func(
+		ctx context.Context,
+		execution agentgo.ModelExecution,
+		next agentgo.ModelExecuteFunc,
+	) (agentgo.ModelResult, error) {
+		if execution.Kind != agentgo.ExecutionKindModel {
+			return next(ctx, execution)
+		}
+		execution.Options = append(execution.Options, e.modelCallOptions(execution)...)
+		return next(ctx, execution)
+	}
+}
+
+func (e *Execution) modelCallOptions(execution agentgo.ModelExecution) []agentgo.CallOption {
 	if !e.turns.WrapUpIssued() {
-		return nil, nil
+		return nil
 	}
 	wrapUpRequest := int32(0)
 	if len(e.wrapUpAllowed) > 0 {
-		wrapUpRequest = e.wrapUpRequestCount.Add(1)
+		// Model middleware runs for every physical retry. Advance the wrap-up
+		// request only on the first attempt so retries preserve the logical call.
+		if execution.Attempt <= 1 {
+			wrapUpRequest = e.wrapUpRequestCount.Add(1)
+		} else {
+			wrapUpRequest = e.wrapUpRequestCount.Load()
+		}
 		if wrapUpRequest > 1 {
 			// A result-only first response may naturally continue without consulting
 			// StopGuard. Mark this request as the one final correction either way.
@@ -290,7 +307,7 @@ func (e *Execution) beforeModelCall(
 		}
 	}
 	if e.naturalCompletion {
-		return nil, nil
+		return nil
 	}
 	// The first wrap-up request must still be able to flush result tools before
 	// completion. Only the single corrective turn targets the terminal tool
@@ -299,9 +316,9 @@ func (e *Execution) beforeModelCall(
 		return []agentgo.CallOption{agentgo.WithToolChoice(map[string]any{
 			"type": "tool",
 			"name": e.completionTool,
-		})}, nil
+		})}
 	}
-	return []agentgo.CallOption{agentgo.WithToolChoice("required")}, nil
+	return []agentgo.CallOption{agentgo.WithToolChoice("required")}
 }
 
 func (e *Execution) projectWrapUpTools(tools []agentgo.ToolSpec) []agentgo.ToolSpec {
@@ -402,17 +419,18 @@ func (e *Execution) contextSnapshot() []agentgo.AgentMessage {
 func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 	return func(
 		ctx context.Context,
-		call agentgo.ToolCall,
+		execution agentgo.ToolExecution,
 		next agentgo.ToolExecuteFunc,
-	) (json.RawMessage, error) {
+	) (agentgo.ToolResult, error) {
+		call := execution.Call
 		started := time.Now()
 		defer func() {
 			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
 		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
-			return json.RawMessage(
+			return handledToolResult(call, json.RawMessage(
 				"Investigation is closed. Do not repeat results already accepted. Submit only supported results that have not yet been accepted; if none remain, finish without another tool call.",
-			), nil
+			)), nil
 		}
 		if call.Name == e.completionTool && e.spec.CompletionCheck != nil {
 			complete, guidance := e.spec.CompletionCheck(ctx)
@@ -420,16 +438,17 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 				if guidance == "" {
 					guidance = e.completionPrompt
 				}
-				return json.RawMessage(guidance), nil
+				return handledToolResult(call, json.RawMessage(guidance)), nil
 			}
 		}
 		var args map[string]any
 		if err := json.Unmarshal(call.Args, &args); err != nil {
-			return next(ctx, call.Args)
+			return next(ctx, execution)
 		}
-		execute := func(raw json.RawMessage, parsed map[string]any) (json.RawMessage, error) {
+		execute := func(raw json.RawMessage, parsed map[string]any) (agentgo.ToolResult, error) {
 			if e.spec.ToolHandler == nil {
-				return next(ctx, raw)
+				execution.Call.Args = raw
+				return next(ctx, execution)
 			}
 			recorded := e.recorder.call(call.ID)
 			checkpoint, handled := e.spec.ToolHandler.HandleTool(ctx, ToolRequest{
@@ -447,7 +466,8 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 				Alias: recorded.alias,
 			})
 			if !handled {
-				return next(ctx, raw)
+				execution.Call.Args = raw
+				return next(ctx, execution)
 			}
 			if checkpoint.Completed {
 				if call.Name == e.completionTool {
@@ -457,11 +477,11 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 					e.wrapUpResultAccepted.Store(true)
 				}
 				if checkpoint.Data != "" {
-					return json.RawMessage(checkpoint.Data), nil
+					return handledToolResult(call, json.RawMessage(checkpoint.Data)), nil
 				}
-				return json.RawMessage("Task completed successfully."), nil
+				return handledToolResult(call, json.RawMessage("Task completed successfully.")), nil
 			}
-			return json.RawMessage(checkpoint.Data), nil
+			return handledToolResult(call, json.RawMessage(checkpoint.Data)), nil
 		}
 
 		if call.Name != tool.FileRead.Name() {
@@ -483,7 +503,7 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 			positions = append(positions, i)
 		}
 		if len(remaining) == 0 {
-			return json.RawMessage(tool.EncodeFileReadResults(results)), nil
+			return handledToolResult(call, json.RawMessage(tool.EncodeFileReadResults(results))), nil
 		}
 		subset := tool.FileReadArgs(remaining)
 		raw, _ := json.Marshal(subset)
@@ -491,14 +511,23 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		if err != nil || len(remaining) == len(requests) {
 			return response, err
 		}
-		fresh, ok := tool.DecodeFileReadResults(string(response))
+		fresh, ok := tool.DecodeFileReadResults(string(response.Content))
 		if !ok || len(fresh) != len(remaining) {
 			return response, nil
 		}
 		for i, result := range fresh {
 			results[positions[i]] = result
 		}
-		return json.RawMessage(tool.EncodeFileReadResults(results)), nil
+		response.Content = json.RawMessage(tool.EncodeFileReadResults(results))
+		return response, nil
+	}
+}
+
+func handledToolResult(call agentgo.ToolCall, content json.RawMessage) agentgo.ToolResult {
+	return agentgo.ToolResult{
+		ToolCallID: call.ID,
+		ToolName:   call.Name,
+		Content:    content,
 	}
 }
 
