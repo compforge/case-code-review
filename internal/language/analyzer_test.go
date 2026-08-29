@@ -222,6 +222,40 @@ func TestAnalyzeRustWithTreeSitterTags(t *testing.T) {
 	assertNames(t, analysis.CalleesOf("run"), "validate")
 }
 
+func TestTreeSitterFactProgramReusesDefinitionAndCallExtractor(t *testing.T) {
+	entry := grammars.DetectLanguageByName("java")
+	first, err := treeSitterFactProgram(entry.Language())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := treeSitterFactProgram(entry.Language())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("treeSitterFactProgram did not reuse the compiled program")
+	}
+	wantKinds := gotreesitter.FactDefinitions | gotreesitter.FactCalls
+	if got := first.Kinds(); got != wantKinds {
+		t.Fatalf("fact kinds = %v, want %v", got, wantKinds)
+	}
+
+	tree, err := gotreesitter.NewParser(entry.Language()).ParseStrict([]byte(`class Service {
+  void run() { validate(); }
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Release()
+	facts := first.Extract(tree)
+	if len(facts.Definitions) != 2 || len(facts.Calls) != 1 {
+		t.Fatalf("facts = %#v, want two definitions and one call", facts)
+	}
+	if facts.Heritage != nil || facts.Imports != nil {
+		t.Fatalf("unrequested facts were extracted: %#v", facts)
+	}
+}
+
 func TestStructuredExtensionsIncludeTreeSitterLanguages(t *testing.T) {
 	extensions := StructuredExtensions()
 	for _, extension := range []string{".go", ".py", ".ts", ".java", ".rs"} {
