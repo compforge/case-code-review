@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -20,6 +21,8 @@ type treeSitterDefinition struct {
 	startByte uint32
 	endByte   uint32
 }
+
+var treeSitterFactPrograms sync.Map // map[*gotreesitter.Language]*gotreesitter.FactProgram
 
 // analyzeTreeSitter is the common fallback for languages without a
 // higher-fidelity ccr backend. It intentionally returns only the stable facts
@@ -61,8 +64,13 @@ func analyzeTreeSitter(ctx context.Context, language Language, source Source) (A
 		return Analysis{}, fmt.Errorf("parse %s with gotreesitter: empty syntax tree", source.Path)
 	}
 
+	factProgram, err := treeSitterFactProgram(lang)
+	if err != nil {
+		return Analysis{}, fmt.Errorf("prepare facts for %s with gotreesitter: %w", source.Path, err)
+	}
+	facts := factProgram.Extract(tree)
 	tags := treeSitterTags(*entry, tree)
-	definitions := treeSitterDefinitions(source, tree, tags)
+	definitions := treeSitterDefinitions(source, facts.Definitions, tags)
 	references := treeSitterReferences(tags)
 	quality := QualityPartial
 	if isTypeScriptFamily(language) {
@@ -75,11 +83,30 @@ func analyzeTreeSitter(ctx context.Context, language Language, source Source) (A
 		Language:         language,
 		Quality:          quality,
 		Definitions:      flattenTreeSitterDefinitions(definitions),
-		Calls:            treeSitterCalls(tree, tags, definitions),
+		Calls:            treeSitterCalls(facts.Calls, tags, definitions),
 		References:       references,
 		outlineEntries:   outlineEntries,
 		outlineProjected: outlineProjected,
 	}, nil
+}
+
+// treeSitterFactProgram reuses gotreesitter's compiled definition/call
+// extractor for every tree built by the same immutable language registry
+// entry. Tags remain a separate source because they also carry references and
+// language-query coverage beyond the generic fact extractor.
+func treeSitterFactProgram(lang *gotreesitter.Language) (*gotreesitter.FactProgram, error) {
+	if cached, ok := treeSitterFactPrograms.Load(lang); ok {
+		return cached.(*gotreesitter.FactProgram), nil
+	}
+	program, err := gotreesitter.NewFactProgram(
+		lang,
+		gotreesitter.FactDefinitions|gotreesitter.FactCalls,
+	)
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := treeSitterFactPrograms.LoadOrStore(lang, program)
+	return actual.(*gotreesitter.FactProgram), nil
 }
 
 func treeSitterTags(entry grammars.LangEntry, tree *gotreesitter.Tree) []gotreesitter.Tag {
@@ -94,8 +121,7 @@ func treeSitterTags(entry grammars.LangEntry, tree *gotreesitter.Tree) []gotrees
 	return tagger.TagTree(tree)
 }
 
-func treeSitterDefinitions(source Source, tree *gotreesitter.Tree, tags []gotreesitter.Tag) []treeSitterDefinition {
-	spans := gotreesitter.ExtractDefinitionSpans(tree)
+func treeSitterDefinitions(source Source, spans []gotreesitter.DefinitionSpan, tags []gotreesitter.Tag) []treeSitterDefinition {
 	definitions := make([]treeSitterDefinition, 0, len(spans)+len(tags))
 	seen := map[string]bool{}
 	for _, span := range spans {
@@ -188,14 +214,14 @@ func flattenTreeSitterDefinitions(definitions []treeSitterDefinition) []Definiti
 	return out
 }
 
-func treeSitterCalls(tree *gotreesitter.Tree, tags []gotreesitter.Tag, definitions []treeSitterDefinition) []Call {
+func treeSitterCalls(extracted []gotreesitter.CallRef, tags []gotreesitter.Tag, definitions []treeSitterDefinition) []Call {
 	type callSite struct {
 		name      string
 		startByte uint32
 	}
 	var sites []callSite
 	seen := map[string]bool{}
-	for _, call := range gotreesitter.ExtractCalls(tree) {
+	for _, call := range extracted {
 		key := fmt.Sprintf("%d:%s", call.StartByte, call.Name)
 		seen[key] = true
 		sites = append(sites, callSite{name: call.Name, startByte: call.StartByte})
