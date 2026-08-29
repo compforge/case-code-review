@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"strconv"
 	"strings"
 )
 
@@ -66,6 +67,26 @@ func analyzeGo(source Source) (Analysis, error) {
 					goTypeMembers([]byte(source.Content), fset, ts)...)
 			}
 		}
+	}
+	for _, spec := range f.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path == "" {
+			continue
+		}
+		alias := ""
+		if spec.Name != nil {
+			alias = spec.Name.Name
+		}
+		analysis.Imports = append(analysis.Imports, Import{
+			Kind:  ImportModule,
+			Path:  path,
+			Name:  goPackageName(path),
+			Alias: alias,
+			Span: Span{
+				Start: fset.Position(spec.Pos()).Line,
+				End:   fset.Position(spec.End()).Line,
+			},
+		})
 	}
 	ast.Inspect(f, func(n ast.Node) bool {
 		switch n := n.(type) {

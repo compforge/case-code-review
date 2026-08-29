@@ -123,6 +123,51 @@ type Call struct {
 	Name     string
 }
 
+// SupertypeReference is one explicit source-level reference from a declared
+// subtype to a supertype. Supertype remains unresolved: syntax backends can
+// prove the declaration but not necessarily which repository symbol the name
+// denotes. Span locates the referenced supertype, not the whole declaration.
+// A graph resolver can combine this fact with imports and repository definitions
+// while preserving the precise extends, implements, or base relation.
+type SupertypeReference struct {
+	SubtypeID string
+	Kind      SupertypeKind
+	Supertype string
+	Span      Span
+}
+
+type SupertypeKind string
+
+const (
+	SupertypeExtends    SupertypeKind = "extends"
+	SupertypeImplements SupertypeKind = "implements"
+	SupertypeBase       SupertypeKind = "base"
+)
+
+// Import is one explicit dependency declaration. Path is the best available
+// module/package address; From and Relative preserve Python-style import
+// structure without leaking a parser-specific representation. Span locates the
+// source import entry. Imports are name-resolution facts, not Unit relations.
+type Import struct {
+	Kind     ImportKind
+	Path     string
+	From     string
+	Name     string
+	Alias    string
+	Static   bool
+	Wildcard bool
+	Relative int
+	Span     Span
+}
+
+type ImportKind string
+
+const (
+	ImportModule ImportKind = "import"
+	ImportFrom   ImportKind = "from_import"
+	ImportLoad   ImportKind = "load"
+)
+
 // Quality describes how trustworthy the returned language facts are.
 type Quality string
 
@@ -135,12 +180,14 @@ const (
 // Analysis is the parser-independent fact model consumed by ccr. Parser trees,
 // query captures, and backend-specific nodes must never cross this boundary.
 type Analysis struct {
-	Language    Language
-	Quality     Quality
-	Definitions []Definition
-	Calls       []Call
-	Decorators  []string
-	References  map[string]int
+	Language            Language
+	Quality             Quality
+	Definitions         []Definition
+	Calls               []Call
+	SupertypeReferences []SupertypeReference
+	Imports             []Import
+	Decorators          []string
+	References          map[string]int
 	// outlineMembers are type-owned data declarations used only by FileOutline.
 	// They stay out of Definitions so repository ranking, call graphs, and Unit
 	// formation do not accidentally treat fields/properties as code symbols.

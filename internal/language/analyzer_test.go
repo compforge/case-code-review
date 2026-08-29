@@ -15,10 +15,13 @@ import (
 func TestAnalyzeGo(t *testing.T) {
 	source := Source{Path: "p.go", Content: `package p
 
+import store "example.com/dependency/v2"
+
 type S struct{}
 
 func Alpha() {
 	helper()
+	store.Load()
 }
 
 func (s *S) Beta() int {
@@ -29,13 +32,19 @@ func (s *S) Beta() int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertDefinition(t, analysis, "p.go::Alpha", Span{Start: 5, End: 7})
-	assertDefinition(t, analysis, "p.go::S.Beta", Span{Start: 9, End: 11})
-	if definition, ok := analysis.DefinitionAt(10); !ok || definition.SymbolID != "p.go::S.Beta" {
-		t.Fatalf("DefinitionAt(10) = (%+v, %v)", definition, ok)
+	assertDefinition(t, analysis, "p.go::Alpha", Span{Start: 7, End: 10})
+	assertDefinition(t, analysis, "p.go::S.Beta", Span{Start: 12, End: 14})
+	if definition, ok := analysis.DefinitionAt(13); !ok || definition.SymbolID != "p.go::S.Beta" {
+		t.Fatalf("DefinitionAt(13) = (%+v, %v)", definition, ok)
 	}
 	assertNames(t, analysis.CalleesOf("S.Beta"), "load")
-	assertNames(t, analysis.CalleesOf("p.go::Alpha"), "helper")
+	assertNames(t, analysis.CalleesOf("p.go::Alpha"), "helper", "Load")
+	if len(analysis.SupertypeReferences) != 0 {
+		t.Fatalf("supertype references = %#v, Go syntax must not invent inheritance", analysis.SupertypeReferences)
+	}
+	if len(analysis.Imports) != 1 || analysis.Imports[0].Kind != ImportModule || analysis.Imports[0].Path != "example.com/dependency/v2" || analysis.Imports[0].Alias != "store" || analysis.Imports[0].Span != (Span{Start: 3, End: 3}) {
+		t.Fatalf("imports = %#v, want aliased Go dependency", analysis.Imports)
+	}
 }
 
 func TestAnalyzePython(t *testing.T) {
@@ -45,7 +54,9 @@ func TestAnalyzePython(t *testing.T) {
 	source := Source{Path: "p.py", Content: `def alpha():
     helper()
 
-class Svc:
+from framework import Base as FrameworkBase
+
+class Svc(FrameworkBase):
     def create(self, req):
         validate(req)
         return self.store(req)
@@ -55,8 +66,14 @@ class Svc:
 		t.Fatal(err)
 	}
 	assertDefinition(t, analysis, "p.py::alpha", Span{Start: 1, End: 2})
-	assertDefinition(t, analysis, "p.py::Svc.create", Span{Start: 5, End: 7})
+	assertDefinition(t, analysis, "p.py::Svc.create", Span{Start: 7, End: 9})
 	assertNames(t, analysis.CalleesOf("Svc.create"), "validate", "store")
+	if len(analysis.SupertypeReferences) != 1 || analysis.SupertypeReferences[0].SubtypeID != "p.py::Svc" || analysis.SupertypeReferences[0].Kind != SupertypeBase || analysis.SupertypeReferences[0].Supertype != "FrameworkBase" || analysis.SupertypeReferences[0].Span != (Span{Start: 6, End: 6}) {
+		t.Fatalf("supertype references = %#v, want Svc -> FrameworkBase", analysis.SupertypeReferences)
+	}
+	if len(analysis.Imports) != 1 || analysis.Imports[0].Kind != ImportFrom || analysis.Imports[0].Path != "framework.Base" || analysis.Imports[0].Alias != "FrameworkBase" || analysis.Imports[0].Span != (Span{Start: 4, End: 4}) {
+		t.Fatalf("imports = %#v, want Python from-import", analysis.Imports)
+	}
 }
 
 func TestAnalyzePythonCapturesRouteDecorators(t *testing.T) {
@@ -80,7 +97,7 @@ async def create_item():
 func TestAnalyzeTypeScript(t *testing.T) {
 	source := Source{Path: "app.ts", Content: `const helper = () => 1;
 
-class Service {
+class Service extends Base {
   run() {
     return helper() + this.load();
   }
@@ -93,6 +110,9 @@ class Service {
 	assertDefinition(t, analysis, "app.ts::helper", Span{Start: 1, End: 1})
 	assertDefinition(t, analysis, "app.ts::Service.run", Span{Start: 4, End: 6})
 	assertNames(t, analysis.CalleesOf("Service.run"), "helper", "load")
+	if len(analysis.SupertypeReferences) != 1 || analysis.SupertypeReferences[0].SubtypeID != "app.ts::Service" || analysis.SupertypeReferences[0].Kind != SupertypeExtends || analysis.SupertypeReferences[0].Supertype != "Base" || analysis.SupertypeReferences[0].Span != (Span{Start: 3, End: 3}) {
+		t.Fatalf("supertype references = %#v, want Service extends Base", analysis.SupertypeReferences)
+	}
 }
 
 func TestAnalyzerSharesTreeSitterCacheAcrossOutlineAndAnalysis(t *testing.T) {
@@ -192,7 +212,9 @@ func TestAnalyzeUnsupported(t *testing.T) {
 }
 
 func TestAnalyzeJavaWithTreeSitter(t *testing.T) {
-	source := Source{Path: "Service.java", Content: `class Service {
+	source := Source{Path: "Service.java", Content: `import framework.Base;
+
+class Service extends Base implements Runnable, AutoCloseable {
   void run() {
     validate();
   }
@@ -205,8 +227,17 @@ func TestAnalyzeJavaWithTreeSitter(t *testing.T) {
 	if analysis.Language != Language("java") || analysis.Quality != QualityPartial {
 		t.Fatalf("analysis metadata = (%q, %q)", analysis.Language, analysis.Quality)
 	}
-	assertDefinition(t, analysis, "Service.java::Service.run", Span{Start: 2, End: 4})
+	assertDefinition(t, analysis, "Service.java::Service.run", Span{Start: 4, End: 6})
 	assertNames(t, analysis.CalleesOf("Service.run"), "validate")
+	if len(analysis.SupertypeReferences) != 3 {
+		t.Fatalf("supertype references = %#v, want extends plus two implements", analysis.SupertypeReferences)
+	}
+	if analysis.SupertypeReferences[0].SubtypeID != "Service.java::Service" || analysis.SupertypeReferences[0].Kind != SupertypeExtends || analysis.SupertypeReferences[0].Supertype != "Base" {
+		t.Fatalf("first supertype reference = %#v, want Service extends Base", analysis.SupertypeReferences[0])
+	}
+	if len(analysis.Imports) != 1 || analysis.Imports[0].Kind != ImportModule || analysis.Imports[0].Path != "framework.Base" || analysis.Imports[0].Span != (Span{Start: 1, End: 1}) {
+		t.Fatalf("imports = %#v, want framework.Base", analysis.Imports)
+	}
 }
 
 func TestAnalyzeRustWithTreeSitterTags(t *testing.T) {
@@ -222,7 +253,7 @@ func TestAnalyzeRustWithTreeSitterTags(t *testing.T) {
 	assertNames(t, analysis.CalleesOf("run"), "validate")
 }
 
-func TestTreeSitterFactProgramReusesDefinitionAndCallExtractor(t *testing.T) {
+func TestTreeSitterFactProgramReusesCompiledExtractor(t *testing.T) {
 	entry := grammars.DetectLanguageByName("java")
 	first, err := treeSitterFactProgram(entry.Language())
 	if err != nil {
@@ -235,12 +266,13 @@ func TestTreeSitterFactProgramReusesDefinitionAndCallExtractor(t *testing.T) {
 	if first != second {
 		t.Fatal("treeSitterFactProgram did not reuse the compiled program")
 	}
-	wantKinds := gotreesitter.FactDefinitions | gotreesitter.FactCalls
+	wantKinds := gotreesitter.FactAll
 	if got := first.Kinds(); got != wantKinds {
 		t.Fatalf("fact kinds = %v, want %v", got, wantKinds)
 	}
 
-	tree, err := gotreesitter.NewParser(entry.Language()).ParseStrict([]byte(`class Service {
+	tree, err := gotreesitter.NewParser(entry.Language()).ParseStrict([]byte(`import example.Base;
+class Service extends Base {
   void run() { validate(); }
 }`))
 	if err != nil {
@@ -248,11 +280,8 @@ func TestTreeSitterFactProgramReusesDefinitionAndCallExtractor(t *testing.T) {
 	}
 	defer tree.Release()
 	facts := first.Extract(tree)
-	if len(facts.Definitions) != 2 || len(facts.Calls) != 1 {
-		t.Fatalf("facts = %#v, want two definitions and one call", facts)
-	}
-	if facts.Heritage != nil || facts.Imports != nil {
-		t.Fatalf("unrequested facts were extracted: %#v", facts)
+	if len(facts.Definitions) != 2 || len(facts.Calls) != 1 || len(facts.Heritage) != 1 || len(facts.Imports) != 1 {
+		t.Fatalf("facts = %#v, want definitions, call, heritage, and import", facts)
 	}
 }
 
