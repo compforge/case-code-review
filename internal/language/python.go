@@ -16,7 +16,7 @@ try:
 except SyntaxError:
     sys.exit(2)
 lines = source.splitlines()
-definitions, members, calls, decorators, references = [], [], [], [], {}
+definitions, members, calls, supertype_references, imports, decorators, references = [], [], [], [], [], [], {}
 def dotted_name(node):
     if isinstance(node, ast.Call):
         return dotted_name(node.func)
@@ -55,6 +55,12 @@ def visit_scope(node, owners):
             name = ".".join(owners + [child.name])
             definitions.append({"name": name, "owner": ".".join(owners), "kind": "class",
                                 "start": start(child), "end": child.end_lineno, "signature": signature(child)})
+            for base in child.bases:
+                target = annotation_text(base)
+                if target:
+                    supertype_references.append({"subtype": name, "kind": "base", "supertype": target,
+                                                 "start": base.lineno,
+                                                 "end": getattr(base, "end_lineno", base.lineno)})
             add_class_members(child, name)
             visit_scope(child, owners + [child.name])
         elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -71,6 +77,19 @@ def visit_scope(node, owners):
                         seen.add(called); calls.append({"caller": name, "name": called})
 visit_scope(tree, [])
 for node in ast.walk(tree):
+    if isinstance(node, ast.Import):
+        for imported in node.names:
+            imports.append({"kind": "import", "path": imported.name,
+                            "name": imported.name.rsplit(".", 1)[-1], "alias": imported.asname or "",
+                            "start": node.lineno, "end": getattr(node, "end_lineno", node.lineno)})
+    elif isinstance(node, ast.ImportFrom):
+        module = node.module or ""
+        for imported in node.names:
+            path = module if imported.name == "*" else ".".join(filter(None, [module, imported.name]))
+            imports.append({"kind": "from_import", "path": path, "from": module,
+                            "name": imported.name, "alias": imported.asname or "",
+                            "wildcard": imported.name == "*", "relative": node.level,
+                            "start": node.lineno, "end": getattr(node, "end_lineno", node.lineno)})
     if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
         for decorator in node.decorator_list:
             name = dotted_name(decorator)
@@ -83,7 +102,9 @@ for node in ast.walk(tree):
         name = node.attr
     if name:
         references[name] = references.get(name, 0) + 1
-json.dump({"definitions": definitions, "members": members, "calls": calls, "decorators": decorators, "references": references}, sys.stdout)
+json.dump({"definitions": definitions, "members": members, "calls": calls,
+           "supertype_references": supertype_references, "imports": imports,
+           "decorators": decorators, "references": references}, sys.stdout)
 `
 
 func analyzePython(parent context.Context, source Source) (Analysis, error) {
@@ -116,6 +137,24 @@ func analyzePython(parent context.Context, source Source) (Analysis, error) {
 			Caller string `json:"caller"`
 			Name   string `json:"name"`
 		} `json:"calls"`
+		SupertypeReferences []struct {
+			Subtype   string        `json:"subtype"`
+			Kind      SupertypeKind `json:"kind"`
+			Supertype string        `json:"supertype"`
+			Start     int           `json:"start"`
+			End       int           `json:"end"`
+		} `json:"supertype_references"`
+		Imports []struct {
+			Kind     ImportKind `json:"kind"`
+			Path     string     `json:"path"`
+			From     string     `json:"from"`
+			Name     string     `json:"name"`
+			Alias    string     `json:"alias"`
+			Wildcard bool       `json:"wildcard"`
+			Relative int        `json:"relative"`
+			Start    int        `json:"start"`
+			End      int        `json:"end"`
+		} `json:"imports"`
 		Decorators []string       `json:"decorators"`
 		References map[string]int `json:"references"`
 	}
@@ -141,6 +180,21 @@ func analyzePython(parent context.Context, source Source) (Analysis, error) {
 	for _, call := range payload.Calls {
 		analysis.Calls = append(analysis.Calls, Call{
 			CallerID: SymbolID(source.Path, "", call.Caller), Name: call.Name,
+		})
+	}
+	for _, reference := range payload.SupertypeReferences {
+		analysis.SupertypeReferences = append(analysis.SupertypeReferences, SupertypeReference{
+			SubtypeID: SymbolID(source.Path, "", reference.Subtype),
+			Kind:      reference.Kind,
+			Supertype: reference.Supertype,
+			Span:      Span{Start: reference.Start, End: reference.End},
+		})
+	}
+	for _, imported := range payload.Imports {
+		analysis.Imports = append(analysis.Imports, Import{
+			Kind: imported.Kind, Path: imported.Path, From: imported.From,
+			Name: imported.Name, Alias: imported.Alias, Wildcard: imported.Wildcard,
+			Relative: imported.Relative, Span: Span{Start: imported.Start, End: imported.End},
 		})
 	}
 	return analysis, nil

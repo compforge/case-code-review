@@ -13,6 +13,7 @@ source files
        ├─ reference / call edge
        ├─ symbol / file proximity
        ├─ doc binding / import / dependency root
+       ├─ supertype reference (extends / implements / base)
        └─ stable identity
             └─ Unit / Clue / tools
 ```
@@ -33,6 +34,7 @@ Analyzer 面向一份明确的源码快照，提供：
 - 可定位的定义及其 span；
 - 文件结构的 Outline 与 containment；
 - 文件内可识别的符号、文档和依赖；
+- 源码显式声明的 import 与未解析 supertype reference；
 - 从 diff hunk 到所属定义的归属；
 - 在给定语言能力内可证明的引用关系。
 
@@ -83,6 +85,13 @@ RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition l
 attribute。FileOutline 统一消费它们的结构角色，但展示语言自身的术语；不支持该能力的 backend
 只输出已有 type/callable，不影响分析主链路。
 
+跨语言的类型血缘事实统一称为 **supertype reference**：Java / JavaScript / TypeScript 的 `extends`、
+Java 的 `implements` 与 Python 的 base class 都表示 subtype 对 supertype 名称的源码引用。Language 只保证
+声明与本地 subtype symbol-id，不猜测目标名对应哪个仓库符号；import 是帮助解析该名称的源码事实，
+不是面向 Unit 的 Relation。CodeGraph 解析成功后仍保留 `extends`、`implements` 或 `base` 的方向与
+语义。Go 的隐式 interface implementation 必须由类型检查证明，struct embedding 则是独立的
+`embeds` 关系，不能为了统一术语冒充继承。
+
 ### 3.2 图是事实投影，不是第二套语言模型
 
 代码图由 definition、reference 和 call edge 投影而来。Language 负责边的来源与置信度，Unit 层负责
@@ -113,8 +122,14 @@ Language 解决“代码事实是什么”，不解决：
 
 File Outline 提供 type、function、field 等结构节点；再通过作用域、import、类型和继承解析连接定义、
 引用与调用，便可以形成表达 file / symbol 关系的 `CodeGraph`。`CallGraph` 只是其中
-callable-to-callable 的一个投影，完整关系还包括 containment、dependency、reference、inheritance
-和 implementation。
+callable-to-callable 的一个投影，完整关系还包括 containment、dependency、reference 与 type
+hierarchy。类型层级的具体 edge kind 可以是 `extends`、`implements` 或 `base`，而不是把所有语言都
+解释成 inheritance。
+
+CodeGraph 可以把一个 symbol 周围已解析的稳定结构关系聚合成面向 Reviewer 的 `clan` 查询入口。
+`clan` 与 `caller`、`callee`、`used` 一样回答“上下文如何与 Unit 相关”，但它不替代底层有方向、
+有来源与置信度的 `extends`、`implements`、`base`、`embeds`、`contains` 等具体 edge。类型血缘来自
+supertype reference；组合、嵌入和 containment 需要各语言独立证明，不能从普通引用或 import 推断。
 
 CodeGraph 的目的不是追求一张尽可能完整的仓库图，而是为 Review 提供统一、可查询的源码关系事实。
 同一份事实可以有三种消费方式：
@@ -133,7 +148,7 @@ Unit
 ├─ changed symbols
 ├─ containing type / file / component
 ├─ callers / callees
-├─ implementations / inheritance
+├─ type hierarchy / implementations
 ├─ related entrypoints / handlers
 └─ related tests
 ```

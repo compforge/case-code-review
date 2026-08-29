@@ -80,13 +80,15 @@ func analyzeTreeSitter(ctx context.Context, language Language, source Source) (A
 	}
 	outlineEntries, outlineProjected := treeSitterOutlineEntries(source, tree, *entry)
 	return Analysis{
-		Language:         language,
-		Quality:          quality,
-		Definitions:      flattenTreeSitterDefinitions(definitions),
-		Calls:            treeSitterCalls(facts.Calls, tags, definitions),
-		References:       references,
-		outlineEntries:   outlineEntries,
-		outlineProjected: outlineProjected,
+		Language:            language,
+		Quality:             quality,
+		Definitions:         flattenTreeSitterDefinitions(definitions),
+		Calls:               treeSitterCalls(facts.Calls, tags, definitions),
+		SupertypeReferences: treeSitterSupertypeReferences(source, facts.Heritage, definitions),
+		Imports:             treeSitterImports(source, facts.Imports),
+		References:          references,
+		outlineEntries:      outlineEntries,
+		outlineProjected:    outlineProjected,
 	}, nil
 }
 
@@ -100,13 +102,92 @@ func treeSitterFactProgram(lang *gotreesitter.Language) (*gotreesitter.FactProgr
 	}
 	program, err := gotreesitter.NewFactProgram(
 		lang,
-		gotreesitter.FactDefinitions|gotreesitter.FactCalls,
+		gotreesitter.FactAll,
 	)
 	if err != nil {
 		return nil, err
 	}
 	actual, _ := treeSitterFactPrograms.LoadOrStore(lang, program)
 	return actual.(*gotreesitter.FactProgram), nil
+}
+
+func treeSitterSupertypeReferences(
+	source Source,
+	heritage []gotreesitter.HeritageRef,
+	definitions []treeSitterDefinition,
+) []SupertypeReference {
+	var references []SupertypeReference
+	for _, ref := range heritage {
+		kind, ok := treeSitterSupertypeKind(ref.Kind)
+		if !ok || ref.Parent == "" {
+			continue
+		}
+		subjectID := ""
+		for _, definition := range definitions {
+			if definition.startByte == ref.StartByte && definition.endByte == ref.EndByte {
+				subjectID = definition.SymbolID
+				break
+			}
+		}
+		if subjectID == "" {
+			continue
+		}
+		references = append(references, SupertypeReference{
+			SubtypeID: subjectID,
+			Kind:      kind,
+			Supertype: ref.Parent,
+			Span:      byteSpan(source.Content, ref.ParentStartByte, ref.ParentEndByte),
+		})
+	}
+	return references
+}
+
+func treeSitterSupertypeKind(kind string) (SupertypeKind, bool) {
+	switch kind {
+	case string(SupertypeExtends):
+		return SupertypeExtends, true
+	case string(SupertypeImplements):
+		return SupertypeImplements, true
+	case string(SupertypeBase):
+		return SupertypeBase, true
+	default:
+		return "", false
+	}
+}
+
+func treeSitterImports(source Source, extracted []gotreesitter.ImportRef) []Import {
+	var imports []Import
+	for _, ref := range extracted {
+		kind, ok := treeSitterImportKind(ref.Kind)
+		if !ok || ref.Path == "" {
+			continue
+		}
+		imports = append(imports, Import{
+			Kind:     kind,
+			Path:     ref.Path,
+			From:     ref.From,
+			Name:     ref.Name,
+			Alias:    ref.Alias,
+			Static:   ref.Static,
+			Wildcard: ref.Wildcard,
+			Relative: ref.Relative,
+			Span:     byteSpan(source.Content, ref.StartByte, ref.EndByte),
+		})
+	}
+	return imports
+}
+
+func treeSitterImportKind(kind string) (ImportKind, bool) {
+	switch kind {
+	case string(ImportModule):
+		return ImportModule, true
+	case string(ImportFrom):
+		return ImportFrom, true
+	case string(ImportLoad):
+		return ImportLoad, true
+	default:
+		return "", false
+	}
 }
 
 func treeSitterTags(entry grammars.LangEntry, tree *gotreesitter.Tree) []gotreesitter.Tag {
