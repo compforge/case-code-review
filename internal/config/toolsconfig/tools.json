@@ -133,7 +133,7 @@
     "main_task": true,
     "definition": {
       "name": "read_files",
-      "description": "Read one or more file ranges from the modified version under review. Always pass reads, including for a single range. Put all independent paths or ranges already known into the same reads array; the tool reads them in parallel and returns results in request order. Use separate calls only when an earlier result determines what to read next.\n\nGit diff hunk headers guide focused ranges: @@ -x,y +m,n @@ means the new hunk starts at m and spans n lines. Each requested range is capped at 500 lines.",
+      "description": "Required argument shape: {\"reads\":[{\"file_path\":\"pkg/file.go\",\"start_line\":1,\"end_line\":80}]}. Never call with empty arguments; always pass reads, including for a single range.\n\nRead one or more file ranges from the modified version under review. Put all independent paths or ranges already known into the same reads array; the tool reads them in parallel and returns results in request order. Use separate calls only when an earlier result determines what to read next. Git diff hunk headers guide focused ranges: @@ -x,y +m,n @@ means the new hunk starts at m and spans n lines. Each requested range is capped at 500 lines.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -174,7 +174,7 @@
     "main_task": true,
     "definition": {
       "name": "search_code",
-      "description": "Search repository text with literal matching or Perl regular expressions. The input is always searches[], including for one query. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions.\n\nState each query's purpose in your own words so trajectories reveal recurring search needs; common values include function, variable, type, keyword, and reference, but purpose is not a closed vocabulary. syntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. If an earlier file outline already gives the exact Lstart-Lend span, read that range directly instead of searching the declaration again. Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
+      "description": "Required argument shape: {\"searches\":[{\"query\":\"Symbol\",\"purpose\":\"reference\",\"syntax\":\"literal\",\"file_patterns\":[\"*.go\"],\"context_lines\":4}]}. Never call with empty arguments; always pass searches, including for one query.\n\nSearch repository text with literal matching or Perl regular expressions. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions. State each query's purpose in your own words so trajectories reveal recurring search needs; common values include function, variable, type, keyword, and reference, but purpose is not a closed vocabulary. syntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. If an earlier file outline already gives the exact Lstart-Lend span, read that range directly instead of searching the declaration again. Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -258,7 +258,7 @@
     "main_task": true,
     "definition": {
       "name": "read_base_files",
-      "description": "Read one or more repository file ranges as they existed immediately before the reviewed change. Always pass reads, including for a single range. Batch all independent baseline reads already known; they run in parallel and return in request order. Use this to distinguish a caused issue from pre-existing behavior.",
+      "description": "Required argument shape: {\"reads\":[{\"file_path\":\"pkg/file.go\",\"start_line\":1,\"end_line\":80}]}. Never call with empty arguments; always pass reads, including for a single range.\n\nRead one or more repository file ranges as they existed immediately before the reviewed change. Batch all independent baseline reads already known; they run in parallel and return in request order. Use this to distinguish a caused issue from pre-existing behavior.",
       "parameters": {
         "type": "object",
         "properties": {

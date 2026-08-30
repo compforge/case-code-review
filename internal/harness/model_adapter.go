@@ -57,7 +57,7 @@ func (m *chatModel) Generate(
 	if err != nil {
 		return nil, err
 	}
-	message, err := toAgentGoResponse(resp)
+	message, err := toAgentGoResponse(resp, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +153,7 @@ func toLLMToolDefs(tools []agentgo.ToolSpec) []llm.ToolDef {
 	return out
 }
 
-func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
+func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentgo.Message, error) {
 	if resp == nil || len(resp.Choices) == 0 {
 		return agentgo.Message{}, fmt.Errorf("harness: LLM returned no choices")
 	}
@@ -165,7 +165,7 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 	}
 	for _, call := range choice.Message.ToolCalls {
 		rawArgs := json.RawMessage(call.Function.Arguments)
-		args := canonicalToolArguments(call.Function.Name, rawArgs)
+		args := canonicalToolArguments(call.Function.Name, rawArgs, toolParameters(tools, call.Function.Name))
 		toolCall := agentgo.ToolCall{
 			ID:   call.ID,
 			Name: call.Function.Name,
@@ -200,22 +200,21 @@ func toAgentGoResponse(resp *llm.ChatResponse) (agentgo.Message, error) {
 	return message, nil
 }
 
-// canonicalToolArguments repairs only lossless, CCR-owned schema drift before
-// AgentGo validates the call. Empty, malformed, or semantically incomplete
-// arguments remain errors for the model to correct on its next turn.
-func canonicalToolArguments(name string, raw json.RawMessage) json.RawMessage {
+// canonicalToolArguments repairs only lossless schema drift before AgentGo
+// validates the call. Empty, malformed, or semantically incomplete arguments
+// remain errors for the model to correct on its next turn.
+func canonicalToolArguments(name string, raw json.RawMessage, parameters map[string]any) json.RawMessage {
 	var args map[string]any
 	if json.Unmarshal(raw, &args) != nil {
 		return raw
 	}
+	unwrapToolArgumentObject(args, parameters)
 
 	switch name {
 	case tool.FileRead.Name(), tool.FileReadBase.Name():
 		canonicalizeReadArguments(args)
 	case tool.CodeSearch.Name():
 		canonicalizeSearchArguments(args)
-	default:
-		return raw
 	}
 
 	canonical, err := json.Marshal(args)
@@ -223,6 +222,51 @@ func canonicalToolArguments(name string, raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return canonical
+}
+
+// unwrapToolArgumentObject removes one redundant model-produced wrapper when
+// the nested object visibly matches the tool's declared root properties. The
+// schema, rather than a domain tool-name list, owns the decision so Harness
+// remains independent of domain result tools. Unknown, empty, and ambiguous
+// wrappers stay untouched and fail normal validation.
+func unwrapToolArgumentObject(args, parameters map[string]any) {
+	if len(args) != 1 || len(parameters) == 0 {
+		return
+	}
+	properties, _ := parameters["properties"].(map[string]any)
+	if len(properties) == 0 {
+		return
+	}
+	for wrapper, value := range args {
+		if _, declared := properties[wrapper]; declared {
+			return
+		}
+		nested, ok := value.(map[string]any)
+		if !ok || len(nested) == 0 || !sharesDeclaredProperty(nested, properties) {
+			return
+		}
+		clear(args)
+		maps.Copy(args, nested)
+	}
+}
+
+func sharesDeclaredProperty(args, properties map[string]any) bool {
+	for name := range args {
+		if _, ok := properties[name]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func toolParameters(tools []agentgo.ToolSpec, name string) map[string]any {
+	for _, spec := range tools {
+		if spec.Name == name {
+			parameters, _ := spec.Parameters.(map[string]any)
+			return parameters
+		}
+	}
+	return nil
 }
 
 func canonicalizeReadArguments(args map[string]any) {

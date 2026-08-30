@@ -9,6 +9,8 @@ import (
 
 var SubmitHypothesis = tool.Named("submit_hypothesis")
 
+const hypothesisArgumentsExample = `{"path":"path/to/changed_file.go","content":"<developer-facing issue>","existing_code":"<exact added lines>","trigger":"<concrete input, state, or path>","impact":"<observable incorrect behavior>","change_attribution":"<how this diff caused it>","evidence":["path/to/source.go:L10-L12 <supporting fact>"],"uncertainty":"<specific fact Review 2 must verify>","category":"bug","severity":"high"}`
+
 const (
 	HypothesisSubmitted       = "Hypothesis accepted for independent review. Do not resubmit it. Continue with the next material lead, or finish naturally when none remains."
 	InvestigationWrapUpPrompt = "BUDGET NEARLY EXHAUSTED — stop investigating now. " +
@@ -23,7 +25,8 @@ func HypothesisToolDef() llm.ToolDef {
 		Type: "function",
 		Function: llm.FunctionDef{
 			Name: SubmitHypothesis.Name(),
-			Description: "Submit one mature, falsifiable issue hypothesis as soon as its shortest evidence chain is complete. " +
+			Description: "Required argument shape; replace every <...> placeholder: " + hypothesisArgumentsExample + ". Never call with empty arguments or wrap these fields in hypothesis/payload. " +
+				"Submit one mature, falsifiable issue hypothesis as soon as its shortest evidence chain is complete. " +
 				"This tool may be called multiple times and does not end normal investigation; after a successful call, continue with the next material lead or finish naturally. " +
 				"A separate reviewer will verify each hypothesis before any comment is published. Report plausible, " +
 				"diff-caused defects with a concrete trigger and impact; state uncertainty instead of hiding it. " +
