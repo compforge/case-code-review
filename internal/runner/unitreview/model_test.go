@@ -1,6 +1,8 @@
 package unitreview
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -52,11 +54,22 @@ func TestInvestigationToolDefsReplacePublicCommentTool(t *testing.T) {
 }
 
 func TestHypothesisToolSchemaIsOneClaimWithoutBatchWrapper(t *testing.T) {
-	properties := HypothesisToolDef().Function.Parameters["properties"].(map[string]any)
+	def := HypothesisToolDef().Function
+	properties := def.Parameters["properties"].(map[string]any)
 	if _, ok := properties["hypotheses"]; ok {
 		t.Fatal("submit_hypothesis must not expose a batch wrapper")
 	}
 	if _, ok := properties["path"]; !ok {
 		t.Fatal("single hypothesis fields must be direct tool arguments")
+	}
+	if !strings.HasPrefix(def.Description, "Required argument shape; replace every <...> placeholder: "+hypothesisArgumentsExample) {
+		t.Fatalf("description does not lead with canonical arguments: %q", def.Description)
+	}
+	var example map[string]any
+	if err := json.Unmarshal([]byte(hypothesisArgumentsExample), &example); err != nil {
+		t.Fatal(err)
+	}
+	if _, errMsg := ParseHypothesis(example); errMsg != "" {
+		t.Fatalf("canonical arguments do not satisfy the domain contract: %s", errMsg)
 	}
 }

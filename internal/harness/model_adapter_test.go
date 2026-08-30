@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -29,7 +31,7 @@ func TestToAgentGoResponseCanonicalizesSingletonBatchTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			message, err := toAgentGoResponse(toolResponse(tt.tool, tt.arguments))
+			message, err := toAgentGoResponse(toolResponse(tt.tool, tt.arguments), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,9 +142,51 @@ func TestToAgentGoResponseCanonicalizesKnownToolArgumentDrift(t *testing.T) {
 	})
 }
 
+func TestCanonicalToolArgumentsUnwrapsSchemaShapedObject(t *testing.T) {
+	parameters := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":    map[string]any{"type": "string"},
+			"content": map[string]any{"type": "string"},
+		},
+	}
+	message, err := toAgentGoResponse(
+		toolResponse("submit_hypothesis", `{"hypothesis":{"path":"a.go","content":"issue"}}`),
+		[]agentgo.ToolSpec{{Name: "submit_hypothesis", Parameters: parameters}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := message.ToolCalls()[0].Args
+	var decoded map[string]any
+	if err := json.Unmarshal(args, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["path"] != "a.go" || decoded["content"] != "issue" || decoded["hypothesis"] != nil {
+		t.Fatalf("canonical args = %#v", decoded)
+	}
+}
+
+func TestCanonicalToolArgumentsLeavesAmbiguousWrappersObservable(t *testing.T) {
+	parameters := map[string]any{
+		"type":       "object",
+		"properties": map[string]any{"path": map[string]any{"type": "string"}},
+	}
+	tests := []string{
+		`{"payload":{}}`,
+		`{"metadata":{"trace_id":"t1"}}`,
+		`{"path":{"value":"a.go"}}`,
+	}
+	for _, raw := range tests {
+		if got := string(canonicalToolArguments("custom", json.RawMessage(raw), parameters)); got != raw {
+			t.Fatalf("canonical args = %s, want %s", got, raw)
+		}
+	}
+}
+
 func TestToAgentGoResponseLeavesMalformedArgumentsObservable(t *testing.T) {
 	raw := `{"searches":[{"query":"Target","syntax":"literal"}]` // missing closing brace
-	message, err := toAgentGoResponse(toolResponse("search_code", raw))
+	message, err := toAgentGoResponse(toolResponse("search_code", raw), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +207,7 @@ func toolResponse(name, arguments string) *llm.ChatResponse {
 
 func canonicalResponseArgs(t *testing.T, name, arguments string) map[string]any {
 	t.Helper()
-	message, err := toAgentGoResponse(toolResponse(name, arguments))
+	message, err := toAgentGoResponse(toolResponse(name, arguments), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
