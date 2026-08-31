@@ -1496,15 +1496,35 @@ func BuildToolDefs(entries []toolsconfig.ToolConfigEntry, planOnly bool) []llm.T
 	return defs
 }
 
-// ConfigureSearchSymbolContext keeps an ablation honest: when the experimental
-// capability is off, remove its optional argument from the model-visible schema
-// as well as withholding the provider hook at the composition root.
+const (
+	searchCodeArgumentPrefix  = "Required argument shape: "
+	searchCodeArgumentSuffix  = ". Never call"
+	searchCodeSymbolExample   = `{"searches":[{"query":"Symbol","purpose":"definition","syntax":"literal","file_patterns":["src/file"],"symbol_context":true,"context_lines":4}]}`
+	searchCodeContextGuidance = "Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call."
+	searchCodeSymbolGuidance  = "Otherwise set symbol_context=true when the query and file scope are intended to resolve to one function, method, or type whose complete definition or implementation you need. Keep context_lines as its fallback; for broad reference or usage searches, omit symbol_context and use context_lines only when nearby source is useful."
+)
+
+// ConfigureSearchSymbolContext keeps an ablation honest: the enabled contract
+// makes the composed operation discoverable in the canonical example and usage
+// guidance. When disabled, remove the optional argument and retain the ordinary
+// context_lines contract as well as withholding the provider hook at the
+// composition root.
 func ConfigureSearchSymbolContext(defs []llm.ToolDef, enabled bool) {
-	if enabled {
-		return
-	}
 	for i := range defs {
 		if defs[i].Function.Name != tool.CodeSearch.Name() {
+			continue
+		}
+		if enabled {
+			defs[i].Function.Description = replaceSearchCodeCanonicalExample(
+				defs[i].Function.Description,
+				searchCodeSymbolExample,
+			)
+			defs[i].Function.Description = strings.Replace(
+				defs[i].Function.Description,
+				searchCodeContextGuidance,
+				searchCodeSymbolGuidance,
+				1,
+			)
 			continue
 		}
 		rootProperties, _ := defs[i].Function.Parameters["properties"].(map[string]any)
@@ -1513,4 +1533,15 @@ func ConfigureSearchSymbolContext(defs []llm.ToolDef, enabled bool) {
 		itemProperties, _ := items["properties"].(map[string]any)
 		delete(itemProperties, "symbol_context")
 	}
+}
+
+func replaceSearchCodeCanonicalExample(description, example string) string {
+	if !strings.HasPrefix(description, searchCodeArgumentPrefix) {
+		return description
+	}
+	end := strings.Index(description, searchCodeArgumentSuffix)
+	if end < len(searchCodeArgumentPrefix) {
+		return description
+	}
+	return searchCodeArgumentPrefix + example + description[end:]
 }
