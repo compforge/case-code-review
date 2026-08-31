@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
@@ -19,11 +20,26 @@ func TestConfigureSearchSymbolContextMatchesFeatureGate(t *testing.T) {
 	if !searchToolHasProperty(enabled, "symbol_context") {
 		t.Fatal("enabled symbol context was removed from search_code schema")
 	}
+	enabledDescription := searchToolDescription(enabled)
+	if !strings.HasPrefix(enabledDescription, "Required argument shape: "+searchCodeSymbolExample) {
+		t.Fatalf("enabled search description does not lead with symbol context: %q", enabledDescription)
+	}
+	if !strings.Contains(enabledDescription, searchCodeSymbolGuidance) {
+		t.Fatalf("enabled search description lacks symbol-context decision guidance: %q", enabledDescription)
+	}
 
 	disabled := BuildToolDefs(entries, false)
+	originalDescription := searchToolDescription(disabled)
 	ConfigureSearchSymbolContext(disabled, false)
 	if searchToolHasProperty(disabled, "symbol_context") {
 		t.Fatal("disabled symbol context remained in search_code schema")
+	}
+	disabledDescription := searchToolDescription(disabled)
+	if disabledDescription != originalDescription {
+		t.Fatalf("disabled search description changed: %q", disabledDescription)
+	}
+	if strings.Contains(disabledDescription, "symbol_context") {
+		t.Fatalf("disabled search description advertises hidden symbol context: %q", disabledDescription)
 	}
 }
 
@@ -40,4 +56,13 @@ func searchToolHasProperty(defs []llm.ToolDef, property string) bool {
 		return ok
 	}
 	return false
+}
+
+func searchToolDescription(defs []llm.ToolDef) string {
+	for _, definition := range defs {
+		if definition.Function.Name == tool.CodeSearch.Name() {
+			return definition.Function.Description
+		}
+	}
+	return ""
 }
