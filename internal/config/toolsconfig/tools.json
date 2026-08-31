@@ -174,7 +174,7 @@
     "main_task": true,
     "definition": {
       "name": "search_code",
-      "description": "Required argument shape: {\"searches\":[{\"query\":\"Symbol\",\"purpose\":\"reference\",\"syntax\":\"literal\",\"file_patterns\":[\"*.go\"],\"context_lines\":4}]}. Never call with empty arguments; always pass searches, including for one query.\n\nSearch repository text with literal matching or Perl regular expressions. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions. State each query's purpose in your own words so trajectories reveal recurring search needs; common values include function, variable, type, keyword, and reference, but purpose is not a closed vocabulary. syntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. If an earlier file outline already gives the exact Lstart-Lend span, read that range directly instead of searching the declaration again. Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call. A batch returns at most 200 matches in total, with at most 100 for one query. This tool searches the current file version.",
+      "description": "Required argument shape: {\"searches\":[{\"query\":\"Symbol\",\"purpose\":\"reference\",\"syntax\":\"literal\",\"file_patterns\":[\"*.go\"],\"context_lines\":4}]}. Never call with empty arguments; always pass searches, including for one query.\n\nSearch repository text with literal matching or Perl regular expressions. When several independent targets are already known (for example multiple imported symbols), put them in one call so they run in parallel and consume one agent turn; only issue a later call when an earlier result determines the next query. Results preserve request order and failures are isolated per item. Identifier-like misses may include similar real definitions. State each query's purpose in your own words so trajectories reveal recurring search needs; common values include function, variable, type, keyword, and reference, but purpose is not a closed vocabulary. syntax defaults to literal; set regexp explicitly for expressions such as 'error|exception|fail'. file_patterns uses Git pathspecs, for example ['src/main.go'], ['*.go'], ['src/'], or ['*.go', ':(exclude)vendor/']. If an earlier file outline already gives the exact Lstart-Lend span, read that range directly instead of searching the declaration again. Otherwise use context_lines when nearby source may answer the question without a follow-up read_files call. A batch returns at most 200 matches in total, with at most 100 for one query; all optional source context shares a 400-line budget. This tool searches the current file version.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -218,6 +218,11 @@
                   "maximum": 50,
                   "default": 0,
                   "description": "Optional source lines before and after each hit. Overlapping windows are merged; use this when local context may avoid a follow-up read_files call. The batch adds at most 400 context lines."
+                },
+                "symbol_context": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Request the complete enclosing symbol only when all hits resolve to one symbol of at most 100 lines. Ambiguous or oversized results return compact symbol anchors instead; context_lines is used as fallback."
                 }
               },
               "required": ["query", "purpose"]

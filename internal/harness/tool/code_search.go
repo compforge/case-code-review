@@ -34,6 +34,7 @@ type CodeSearchRequest struct {
 	CaseSensitive bool
 	Syntax        string
 	ContextLines  int
+	SymbolContext bool
 	Purpose       string
 }
 
@@ -110,6 +111,7 @@ func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 			CaseSensitive: boolValue(item["case_sensitive"]),
 			Syntax:        syntax,
 			ContextLines:  contextLines,
+			SymbolContext: boolValue(item["symbol_context"]),
 			Purpose:       stringValue(item["purpose"]),
 		}
 	}
@@ -179,6 +181,7 @@ func CodeSearchResultPaths(result string) []string {
 type CodeSearchProvider struct {
 	FileReader       *FileReader
 	definitionSource CodeSearchDefinitionSource
+	symbolSource     CodeSearchSymbolSource
 	scopeFileCounts  sync.Map
 }
 
@@ -188,6 +191,13 @@ func NewCodeSearch(fr *FileReader) *CodeSearchProvider { return &CodeSearchProvi
 // recovery without making the generic Harness depend on a source parser.
 func (p *CodeSearchProvider) WithDefinitionSource(source CodeSearchDefinitionSource) *CodeSearchProvider {
 	p.definitionSource = source
+	return p
+}
+
+// WithSymbolSource adds Language-owned enclosing symbols without making the
+// generic Harness depend on a source parser.
+func (p *CodeSearchProvider) WithSymbolSource(source CodeSearchSymbolSource) *CodeSearchProvider {
+	p.symbolSource = source
 	return p
 }
 
@@ -201,7 +211,7 @@ func (p *CodeSearchProvider) Execute(ctx context.Context, args map[string]any) (
 	maxCount := min(gitGrepMaxCount, max(1, codeSearchMaxBatchCount/len(requests)))
 	contextRequests := 0
 	for _, request := range requests {
-		if request.ContextLines > 0 {
+		if request.ContextLines > 0 || request.SymbolContext {
 			contextRequests++
 		}
 	}
@@ -249,6 +259,7 @@ func (p *CodeSearchProvider) executeOne(
 		request.FilePatterns,
 		maxCount,
 		request.ContextLines,
+		request.SymbolContext,
 		contextBudget,
 	)
 	if err != nil {
@@ -331,7 +342,7 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 }
 
 func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText string, caseSensitive bool, usePerlRegexp bool, pathspec []string, maxCount int) (string, error) {
-	return p.gitGrepLimitedWithContext(ctx, searchText, caseSensitive, usePerlRegexp, pathspec, maxCount, 0, 0)
+	return p.gitGrepLimitedWithContext(ctx, searchText, caseSensitive, usePerlRegexp, pathspec, maxCount, 0, false, 0)
 }
 
 func (p *CodeSearchProvider) gitGrepLimitedWithContext(
@@ -342,6 +353,7 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 	pathspec []string,
 	maxCount int,
 	contextLines int,
+	symbolContext bool,
 	contextBudget int,
 ) (string, error) {
 	cmdArgs := p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, false, pathspec, maxCount)
@@ -421,6 +433,11 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 		fileMatches[fname] = append(fileMatches[fname], m)
 	}
 
+	symbolResult := codeSearchSymbolRender{}
+	if symbolContext {
+		symbolResult = p.renderSymbolContext(ctx, fileOrder, fileMatches, contextBudget)
+	}
+
 	remainingContext := contextBudget
 	contextTruncated := false
 	for _, path := range fileOrder {
@@ -429,7 +446,7 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 		for _, m := range matches {
 			sb.WriteString(fmt.Sprintf("%d|%s\n", m.lineNum, m.content))
 		}
-		if contextLines > 0 && remainingContext > 0 {
+		if !symbolResult.expanded && contextLines > 0 && remainingContext > 0 {
 			content, readErr := p.FileReader.Read(ctx, path)
 			if readErr != nil {
 				sb.WriteString(fmt.Sprintf("Context unavailable: %v\n", readErr))
@@ -457,10 +474,14 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 					}
 				}
 			}
-		} else if contextLines > 0 {
+		} else if !symbolResult.expanded && contextLines > 0 {
 			contextTruncated = true
 		}
 		sb.WriteString("\n")
+	}
+	if symbolResult.text != "" {
+		sb.WriteString(symbolResult.text)
+		sb.WriteByte('\n')
 	}
 	if contextTruncated {
 		sb.WriteString(fmt.Sprintf("Note: Context truncated to keep this search within its %d-line share of the batch context budget.\n", contextBudget))

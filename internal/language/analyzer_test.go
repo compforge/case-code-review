@@ -37,6 +37,12 @@ func (s *S) Beta() int {
 	if definition, ok := analysis.DefinitionAt(13); !ok || definition.SymbolID != "p.go::S.Beta" {
 		t.Fatalf("DefinitionAt(13) = (%+v, %v)", definition, ok)
 	}
+	if symbol, ok := analysis.SymbolAt(5); !ok || symbol.SymbolID != "p.go::S" {
+		t.Fatalf("SymbolAt(5) = (%+v, %v)", symbol, ok)
+	}
+	if symbol, ok := analysis.SymbolAt(13); !ok || symbol.SymbolID != "p.go::S.Beta" {
+		t.Fatalf("SymbolAt(13) = (%+v, %v)", symbol, ok)
+	}
 	assertNames(t, analysis.CalleesOf("S.Beta"), "load")
 	assertNames(t, analysis.CalleesOf("p.go::Alpha"), "helper", "Load")
 	if len(analysis.SupertypeReferences) != 0 {

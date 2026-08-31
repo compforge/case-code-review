@@ -58,7 +58,13 @@ func runReview(args []string) error {
 	if err != nil {
 		return err
 	}
-	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, opts.model, features.Enabled(feature.Routing))
+	rt, err := loadLLMRuntime(
+		cc.Template, opts.toolConfigPath, opts.model,
+		llmRuntimeOptions{
+			routingEnabled:             features.Enabled(feature.Routing),
+			searchSymbolContextEnabled: features.Enabled(feature.SearchSymbolContext),
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -72,7 +78,9 @@ func runReview(args []string) error {
 		Runner:  cc.GitRunner,
 	}
 	baseReader := &tool.FileReader{RepoDir: cc.RepoDir, Mode: tool.ModeCommit, Runner: cc.GitRunner}
-	tools := buildToolRegistry(rt.Findings, fileReader, baseReader)
+	tools := buildToolRegistry(
+		rt.Findings, fileReader, baseReader, features.Enabled(feature.SearchSymbolContext),
+	)
 
 	// Loads the --spec path plus auto-discovered .casecodereview/spec.json layers, mirroring
 	// how rules are resolved. Nil when no layer exists.
@@ -279,6 +287,7 @@ func buildToolRegistry(
 	findings *finding.Collector,
 	fr *tool.FileReader,
 	base *tool.FileReader,
+	searchSymbolContextEnabled bool,
 ) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewFileRead(fr))
@@ -287,7 +296,12 @@ func buildToolRegistry(
 	}
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
-	reg.Register(tool.NewCodeSearch(fr).WithDefinitionSource(runner.CodeSearchDefinitions(fr)))
+	codeSearchLanguage := runner.NewCodeSearchLanguageSource(fr)
+	codeSearch := tool.NewCodeSearch(fr).WithDefinitionSource(codeSearchLanguage.Definitions)
+	if searchSymbolContextEnabled {
+		codeSearch.WithSymbolSource(codeSearchLanguage.Symbols)
+	}
+	reg.Register(codeSearch)
 	reg.Register(&finding.ToolProvider{Collector: findings})
 	return reg
 }

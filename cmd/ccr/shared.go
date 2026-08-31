@@ -146,16 +146,27 @@ func resolveFeatures(cliFeatures []string) (feature.Set, error) {
 // loadLLMRuntime loads tool defs from toolConfigPath, reads the app config
 // from the user's default config path (applying the configured language to
 // tpl — defaulting when the config file is absent), resolves the LLM
-// endpoint (honoring modelOverride from --model when non-empty; routingEnabled
+// endpoint (honoring modelOverride from --model when non-empty; disabled routing
 // off collapses a multi-model pool to a single deterministic model), and
 // returns the runtime bundle. tpl is mutated in place.
-func loadLLMRuntime(tpl *template.Template, toolConfigPath, modelOverride string, routingEnabled bool) (*llmRuntime, error) {
+type llmRuntimeOptions struct {
+	routingEnabled             bool
+	searchSymbolContextEnabled bool
+}
+
+func loadLLMRuntime(
+	tpl *template.Template,
+	toolConfigPath, modelOverride string,
+	options llmRuntimeOptions,
+) (*llmRuntime, error) {
 	toolEntries, err := toolsconfig.Load(toolConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("load tools: %w", err)
 	}
 	planToolDefs := runner.BuildToolDefs(toolEntries, true)
 	mainToolDefs := runner.BuildToolDefs(toolEntries, false)
+	runner.ConfigureSearchSymbolContext(planToolDefs, options.searchSymbolContextEnabled)
+	runner.ConfigureSearchSymbolContext(mainToolDefs, options.searchSymbolContextEnabled)
 
 	cfgPath, err := defaultConfigPath()
 	if err != nil {
@@ -177,7 +188,7 @@ func loadLLMRuntime(tpl *template.Template, toolConfigPath, modelOverride string
 	if err != nil {
 		return nil, fmt.Errorf("resolve LLM endpoint: %w", err)
 	}
-	if !routingEnabled && len(eps) > 1 {
+	if !options.routingEnabled && len(eps) > 1 {
 		// routing gate off: collapse to a single model (deterministic — no
 		// round-robin variance). NewLLMRouter with a 1-pool returns a plain client.
 		eps, routing = eps[:1], llm.RoutingOptions{}

@@ -371,6 +371,14 @@ func visibleFilesIn(messages []agentgo.AgentMessage) []visibleFile {
 					total: file.Total, source: source, label: file.Label, snapshot: file.Snapshot,
 				})
 			}
+		case *msg.SearchBatch:
+			for _, source := range tool.CodeSearchSourceRanges(value.TextContent()) {
+				out = append(out, visibleFile{
+					path: path.Clean(source.Path), start: source.StartLine, end: source.EndLine,
+					total: source.TotalLines, source: fileFromTool,
+					label: "search symbol context", snapshot: msg.SnapshotCurrent,
+				})
+			}
 		case agentgo.Message:
 			parts, batch := tool.DecodeFileReadResults(value.TextContent())
 			if !batch {

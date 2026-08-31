@@ -384,7 +384,9 @@ Evaluator 不携带这些成本事实。报告分别展示 Review 1 Unit 与 Rev
 `search_code` 的 request purpose 按 Review stage 保留原始自由文本，报告展示 purpose 覆盖率和
 分布，用于观察真实搜索意图以及埋点完整度。`context_lines` 同时记录请求数、实际返回行数、预算截断
 和不可用次数；有命中的 search request 作为分母，分别计算启用和未启用 context 后的 follow-up read
-比例，避免用“所有 read 中有多少来自 search”错误衡量工具优化收益。
+比例，避免用“所有 read 中有多少来自 search”错误衡量工具优化收益。`symbol_context` 另行记录
+请求数、`expanded / ambiguous / oversized / unsupported / budget_rejected` outcome、实际返回源码行数，
+并分别计算请求及成功展开后的 follow-up read，防止 fallback 与真实 symbol 展开混成同一效果口径。
 Initial FileOutline 可用情况同样按 stage 和 language 展示 admitted、empty、read/analysis error 以及预算/容量淘汰，
 使 gotreesitter 升级或 CCR fallback 的收益能由运行事实验证。
 Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周内承载的 Assessment 数量变化
