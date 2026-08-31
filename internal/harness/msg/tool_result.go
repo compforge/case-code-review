@@ -8,6 +8,7 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -182,6 +183,21 @@ func (r SearchResult) condensed() string {
 			entry += " (" + strings.TrimSpace(strings.TrimPrefix(lines[i+1], "Match lines: ")) + " hits)"
 		}
 		hits = append(hits, entry)
+	}
+	if anchors := tool.CodeSearchSymbolAnchors(r.Content); len(anchors) > 0 {
+		var symbols []string
+		for _, anchor := range anchors {
+			label := anchor.SymbolID
+			if anchor.Signature != "" {
+				label = anchor.Signature
+			}
+			symbols = append(symbols, fmt.Sprintf("%s — %s:L%d-L%d", label, anchor.Path, anchor.StartLine, anchor.EndLine))
+		}
+		text := fmt.Sprintf("Search %q matched symbol candidates:\n- %s", r.Query, strings.Join(symbols, "\n- "))
+		if len(hits) > 0 {
+			text += "\nHit files:\n- " + strings.Join(hits, "\n- ")
+		}
+		return text
 	}
 	if len(hits) == 0 {
 		return r.Content

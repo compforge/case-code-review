@@ -345,6 +345,9 @@ class WeeklyReportTest(unittest.TestCase):
                 "returned_context_lines": 5,
                 "context_truncated_requests": 1,
                 "context_unavailable_requests": 0,
+                "symbol_context_requests": 0,
+                "symbol_context_outcomes": {},
+                "returned_symbol_context_lines": 0,
             },
         )
         self.assertEqual(
@@ -359,6 +362,12 @@ class WeeklyReportTest(unittest.TestCase):
                 "plain_hit_search_requests": 2,
                 "plain_follow_up_read_requests": 1,
                 "plain_follow_up_read_rate": 0.5,
+                "symbol_hit_search_requests": 0,
+                "symbol_follow_up_read_requests": 0,
+                "symbol_follow_up_read_rate": None,
+                "symbol_expanded_hit_search_requests": 0,
+                "symbol_expanded_follow_up_read_requests": 0,
+                "symbol_expanded_follow_up_read_rate": None,
             },
         )
         self.assertEqual(
@@ -483,6 +492,9 @@ class WeeklyReportTest(unittest.TestCase):
                 "returned_context_lines": 0,
                 "context_truncated_requests": 0,
                 "context_unavailable_requests": 0,
+                "symbol_context_requests": 0,
+                "symbol_context_outcomes": {},
+                "returned_symbol_context_lines": 0,
             },
         )
 

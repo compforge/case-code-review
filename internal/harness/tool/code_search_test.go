@@ -19,8 +19,14 @@ func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
 		}},
 	})
 	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral ||
-		requests[0].ContextLines != 3 || requests[0].Purpose != "function" {
+		requests[0].ContextLines != 3 || requests[0].Purpose != "function" || requests[0].SymbolContext {
 		t.Fatalf("default syntax = %#v, err=%v", requests, err)
+	}
+	requests, err = ParseCodeSearchRequests(map[string]any{
+		"searches": []any{map[string]any{"query": "Hello", "symbol_context": true}},
+	})
+	if err != nil || !requests[0].SymbolContext {
+		t.Fatalf("symbol context = %#v, err=%v", requests, err)
 	}
 
 	requests, err = ParseCodeSearchRequests(map[string]any{
@@ -340,6 +346,126 @@ func TestCodeSearchExecuteAddsMergedContextWindows(t *testing.T) {
 	}
 	if got := strings.Count(result, "LINE_RANGE:"); got != 1 {
 		t.Fatalf("context ranges = %d, want 1:\n%s", got, result)
+	}
+}
+
+func TestCodeSearchExpandsOneBoundedSymbol(t *testing.T) {
+	dir := setupTestRepo(t)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace}).
+		WithSymbolSource(func(_ context.Context, hits []CodeSearchHit) []CodeSearchSymbol {
+			if len(hits) != 1 || hits[0] != (CodeSearchHit{Path: "hello.go", Line: 3}) {
+				t.Fatalf("hits = %#v", hits)
+			}
+			return []CodeSearchSymbol{{
+				SymbolID: "hello.go::Hello", Name: "Hello", Kind: "function",
+				Signature: "func Hello()", Path: "hello.go", StartLine: 3, EndLine: 3,
+				TotalLines: 4, HitLines: []int{3}, SourceLines: []string{"func Hello() {}"},
+			}}
+		})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{
+			"query": "Hello", "purpose": "function", "symbol_context": true, "context_lines": 2,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := ParseCodeSearchSymbolContextOutcome(out)
+	if !ok || outcome.Status != CodeSearchSymbolExpanded || outcome.CandidateCount != 1 {
+		t.Fatalf("symbol outcome = %+v parsed=%t\n%s", outcome, ok, out)
+	}
+	ranges := CodeSearchSourceRanges(out)
+	if len(ranges) != 1 || ranges[0].Path != "hello.go" || ranges[0].StartLine != 3 || ranges[0].EndLine != 3 {
+		t.Fatalf("source ranges = %#v\n%s", ranges, out)
+	}
+	if !strings.Contains(out, "3|func Hello() {}") || strings.Contains(out, "Context:\n") {
+		t.Fatalf("unique symbol did not replace line fallback:\n%s", out)
+	}
+}
+
+func TestCodeSearchKeepsAmbiguousSymbolsAsAnchors(t *testing.T) {
+	dir := setupTestRepo(t)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace}).
+		WithSymbolSource(func(_ context.Context, hits []CodeSearchHit) []CodeSearchSymbol {
+			if len(hits) != 2 {
+				t.Fatalf("hits = %#v", hits)
+			}
+			return []CodeSearchSymbol{
+				{SymbolID: "hello.go::Hello", Path: "hello.go", StartLine: 3, EndLine: 3, TotalLines: 4, HitLines: []int{3}, SourceLines: []string{"func Hello() {}"}},
+				{SymbolID: "pkg/util.go::Util", Path: "pkg/util.go", StartLine: 3, EndLine: 3, TotalLines: 4, HitLines: []int{3}, SourceLines: []string{"func Util() {}"}},
+			}
+		})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{
+			"query": "func", "purpose": "function", "symbol_context": true, "context_lines": 1,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := ParseCodeSearchSymbolContextOutcome(out)
+	if !ok || outcome.Status != CodeSearchSymbolAmbiguous || outcome.CandidateCount != 2 {
+		t.Fatalf("symbol outcome = %+v parsed=%t\n%s", outcome, ok, out)
+	}
+	if ranges := CodeSearchSourceRanges(out); len(ranges) != 0 {
+		t.Fatalf("ambiguous search exposed source ranges = %#v", ranges)
+	}
+	if got := strings.Count(out, "Symbol: {"); got != 2 || !strings.Contains(out, "Context:\n") {
+		t.Fatalf("ambiguous anchors/fallback = %d:\n%s", got, out)
+	}
+}
+
+func TestCodeSearchRejectsOversizedSymbolBody(t *testing.T) {
+	dir := setupTestRepo(t)
+	source := make([]string, codeSearchSymbolMaxLines+1)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace}).
+		WithSymbolSource(func(_ context.Context, _ []CodeSearchHit) []CodeSearchSymbol {
+			return []CodeSearchSymbol{{
+				SymbolID: "hello.go::Hello", Path: "hello.go", StartLine: 1,
+				EndLine: len(source), TotalLines: len(source), HitLines: []int{3}, SourceLines: source,
+			}}
+		})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{"query": "Hello", "purpose": "function", "symbol_context": true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := ParseCodeSearchSymbolContextOutcome(out)
+	if !ok || outcome.Status != CodeSearchSymbolOversized || len(CodeSearchSourceRanges(out)) != 0 {
+		t.Fatalf("oversized outcome = %+v parsed=%t\n%s", outcome, ok, out)
+	}
+}
+
+func TestCodeSearchSymbolContextSharesBatchBudget(t *testing.T) {
+	dir := setupTestRepo(t)
+	source := make([]string, 60)
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace}).
+		WithSymbolSource(func(_ context.Context, _ []CodeSearchHit) []CodeSearchSymbol {
+			return []CodeSearchSymbol{{
+				SymbolID: "hello.go::Hello", Path: "hello.go", StartLine: 1,
+				EndLine: len(source), TotalLines: len(source), HitLines: []int{3}, SourceLines: source,
+			}}
+		})
+	searches := make([]any, codeSearchMaxBatch)
+	for i := range searches {
+		searches[i] = map[string]any{
+			"query": "Hello", "purpose": "function", "symbol_context": true,
+		}
+	}
+	out, err := p.Execute(context.Background(), map[string]any{"searches": searches})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != codeSearchMaxBatch {
+		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
+	}
+	for i, result := range results {
+		outcome, parsed := ParseCodeSearchSymbolContextOutcome(result)
+		if !parsed || outcome.Status != CodeSearchSymbolBudgetRejected || len(CodeSearchSourceRanges(result)) != 0 {
+			t.Fatalf("result %d outcome=%+v parsed=%t\n%s", i, outcome, parsed, result)
+		}
 	}
 }
 

@@ -57,12 +57,19 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     returned_context_lines = 0
     context_truncated_requests = 0
     context_unavailable_requests = 0
+    symbol_context_requests = 0
+    returned_symbol_context_lines = 0
+    symbol_context_outcomes: Counter[str] = Counter()
     hit_search_requests = 0
     follow_up_read_requests = 0
     context_hit_search_requests = 0
     context_follow_up_read_requests = 0
     plain_hit_search_requests = 0
     plain_follow_up_read_requests = 0
+    symbol_hit_search_requests = 0
+    symbol_follow_up_read_requests = 0
+    symbol_expanded_hit_search_requests = 0
+    symbol_expanded_follow_up_read_requests = 0
     initial_outline_attempts = 0
     outline_admitted_bytes = 0
     outline_outcomes: Counter[str] = Counter()
@@ -85,6 +92,20 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         context_unavailable_requests += int(
             code_searches.get("context_unavailable_requests") or 0
         )
+        symbol_context_requests += int(
+            code_searches.get("symbol_context_requests") or 0
+        )
+        returned_symbol_context_lines += int(
+            code_searches.get("returned_symbol_context_lines") or 0
+        )
+        symbol_context_outcomes.update(
+            {
+                str(outcome): int(count)
+                for outcome, count in (
+                    code_searches.get("symbol_context_outcomes") or {}
+                ).items()
+            }
+        )
 
         search_follow_up = analysis.get("search_then_read") or {}
         hit_search_requests += int(
@@ -104,6 +125,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         )
         plain_follow_up_read_requests += int(
             search_follow_up.get("plain_follow_up_read_request_count") or 0
+        )
+        symbol_hit_search_requests += int(
+            search_follow_up.get("symbol_hit_search_request_count") or 0
+        )
+        symbol_follow_up_read_requests += int(
+            search_follow_up.get("symbol_follow_up_read_request_count") or 0
+        )
+        symbol_expanded_hit_search_requests += int(
+            search_follow_up.get("symbol_expanded_hit_search_request_count") or 0
+        )
+        symbol_expanded_follow_up_read_requests += int(
+            search_follow_up.get("symbol_expanded_follow_up_read_request_count") or 0
         )
 
         outlines = (analysis.get("initial_context") or {}).get("outlines") or {}
@@ -271,6 +304,9 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "returned_context_lines": returned_context_lines,
             "context_truncated_requests": context_truncated_requests,
             "context_unavailable_requests": context_unavailable_requests,
+            "symbol_context_requests": symbol_context_requests,
+            "symbol_context_outcomes": dict(sorted(symbol_context_outcomes.items())),
+            "returned_symbol_context_lines": returned_symbol_context_lines,
         },
         "search_follow_up": {
             "hit_search_requests": hit_search_requests,
@@ -285,6 +321,17 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "plain_follow_up_read_requests": plain_follow_up_read_requests,
             "plain_follow_up_read_rate": _ratio(
                 plain_follow_up_read_requests, plain_hit_search_requests
+            ),
+            "symbol_hit_search_requests": symbol_hit_search_requests,
+            "symbol_follow_up_read_requests": symbol_follow_up_read_requests,
+            "symbol_follow_up_read_rate": _ratio(
+                symbol_follow_up_read_requests, symbol_hit_search_requests
+            ),
+            "symbol_expanded_hit_search_requests": symbol_expanded_hit_search_requests,
+            "symbol_expanded_follow_up_read_requests": symbol_expanded_follow_up_read_requests,
+            "symbol_expanded_follow_up_read_rate": _ratio(
+                symbol_expanded_follow_up_read_requests,
+                symbol_expanded_hit_search_requests,
             ),
         },
         "initial_outlines": {

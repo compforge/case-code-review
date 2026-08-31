@@ -324,6 +324,41 @@ def render_markdown(
         )
     )
 
+    lines.extend(["", "### Search symbol context", ""])
+    symbol_context_rows = []
+    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
+        searches = current[stage]["code_searches"]
+        follow_up = current[stage].get("search_follow_up") or {}
+        outcomes = searches.get("symbol_context_outcomes") or {}
+        symbol_context_rows.append(
+            [
+                title,
+                str(searches.get("symbol_context_requests", 0)),
+                ", ".join(f"{name}={count}" for name, count in outcomes.items())
+                or "-",
+                str(searches.get("returned_symbol_context_lines", 0)),
+                _format_value(
+                    follow_up.get("symbol_follow_up_read_rate"), "percent"
+                ),
+                _format_value(
+                    follow_up.get("symbol_expanded_follow_up_read_rate"), "percent"
+                ),
+            ]
+        )
+    lines.extend(
+        _markdown_table(
+            [
+                "Stage",
+                "Requests",
+                "Outcomes",
+                "Source lines",
+                "Follow-up requested",
+                "Follow-up expanded",
+            ],
+            symbol_context_rows,
+        )
+    )
+
     lines.extend(["", "### Initial FileOutline availability", ""])
     outline_rows = []
     for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):

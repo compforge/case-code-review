@@ -836,11 +836,101 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "returned_context_lines": 3,
                 "context_truncated_requests": 0,
                 "context_unavailable_requests": 0,
+                "symbol_context_requests": 0,
+                "symbol_context_outcomes": {},
+                "returned_symbol_context_lines": 0,
             },
         )
         evaluation = SearchScopeEvaluator().evaluate(trajectory)
         self.assertEqual(evaluation.score, 0.75)
         self.assertEqual(evaluation.step_ids, ("1:tool:1:3",))
+
+    def test_symbol_context_tracks_outcome_lines_and_follow_up(self):
+        root = {
+            "session_id": "search-symbol-context",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-symbol-context",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search",
+                                    "function_name": "search_code",
+                                    "arguments": {
+                                        "searches": [
+                                            {
+                                                "query": "Alpha",
+                                                "purpose": "function",
+                                                "symbol_context": True,
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "search",
+                                        "content": (
+                                            "===== CODE_SEARCH RESULT 1/1 =====\n"
+                                            "File: a.go\nMatch lines: 1\n40|func Alpha()\n"
+                                            'Symbol context: {"status":"expanded","hit_count":1,'
+                                            '"resolved_hits":1,"candidate_count":1}\n'
+                                            'Symbol source: {"path":"a.go","start_line":39,'
+                                            '"end_line":41,"total_lines":100}\n'
+                                            "39|// Alpha\n40|func Alpha()\n41|}\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "reads": [
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 35,
+                                                "end_line": 45,
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read",
+                                        "content": (
+                                            "===== FILE_READ RESULT 1/1 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 35-45\n40|func Alpha()\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        searches = code_search_stats(trajectory)
+        self.assertEqual(searches["symbol_context_requests"], 1)
+        self.assertEqual(searches["symbol_context_outcomes"], {"expanded": 1})
+        self.assertEqual(searches["returned_symbol_context_lines"], 3)
+        follow_up = search_then_read_stats(trajectory)
+        self.assertEqual(follow_up["symbol_expanded_hit_search_request_count"], 1)
+        self.assertEqual(follow_up["symbol_expanded_follow_up_read_rate"], 1.0)
 
     def test_search_then_read_links_only_later_ranges_covering_hits(self):
         root = {
@@ -947,6 +1037,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "plain_hit_search_request_count": 0,
                 "plain_follow_up_read_request_count": 0,
                 "plain_follow_up_read_rate": None,
+                "symbol_hit_search_request_count": 0,
+                "symbol_follow_up_read_request_count": 0,
+                "symbol_follow_up_read_rate": None,
+                "symbol_expanded_hit_search_request_count": 0,
+                "symbol_expanded_follow_up_read_request_count": 0,
+                "symbol_expanded_follow_up_read_rate": None,
                 "step_ids": ["1:tool:1", "2:tool:1"],
             },
         )

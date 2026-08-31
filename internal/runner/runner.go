@@ -1495,3 +1495,22 @@ func BuildToolDefs(entries []toolsconfig.ToolConfigEntry, planOnly bool) []llm.T
 	}
 	return defs
 }
+
+// ConfigureSearchSymbolContext keeps an ablation honest: when the experimental
+// capability is off, remove its optional argument from the model-visible schema
+// as well as withholding the provider hook at the composition root.
+func ConfigureSearchSymbolContext(defs []llm.ToolDef, enabled bool) {
+	if enabled {
+		return
+	}
+	for i := range defs {
+		if defs[i].Function.Name != tool.CodeSearch.Name() {
+			continue
+		}
+		rootProperties, _ := defs[i].Function.Parameters["properties"].(map[string]any)
+		searches, _ := rootProperties["searches"].(map[string]any)
+		items, _ := searches["items"].(map[string]any)
+		itemProperties, _ := items["properties"].(map[string]any)
+		delete(itemProperties, "symbol_context")
+	}
+}

@@ -280,6 +280,16 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
 避免为了局部上下文再增加一轮 `read_files`。若先前 outline 已给出声明的 `Lstart-Lend`，则直接按该
 精确范围调用 `read_files`，不再重复搜索声明。
 
+当命中后需要的是完整 enclosing function/type，而不是固定行窗口时，成员可以显式设置
+`symbol_context=true`；该字段只在默认关闭的实验 gate `search_symbol_context` 开启时暴露给模型。
+Language 只提供 symbol/span 事实，Runner 用当前 review snapshot 适配源码，
+Harness 执行有界投影：只有全部命中落入同一个且不超过 100 行的 symbol 才返回完整 body；多候选、
+部分解析或超限只返回至多 8 个 symbol anchor，并继续以 `context_lines` 作为 fallback。两种 source
+共用每批 400 行预算，避免一次多 query 调用隐式放大上下文。已展开源码在仍完整可见时参与
+`read_files` 覆盖判断，压缩成 search 摘要后则不再冒充可见源码。
+实验运行通过 `--features search_symbol_context=on` 开启，resolved feature map 与每次请求的 outcome
+共同进入 Session，供同版本 corpus 做开关对照。
+
 每个 search 成员还携带自由字符串 `purpose`，用于记录模型当下认为自己在寻找什么。Schema 提示
 `function`、`variable`、`type`、`keyword`、`reference` 等常见值，但不使用 enum；新出现的值本身就是
 工具需求信号，后续可结合 `search_then_read` 判断是否值得增加 `read_func` 一类更专门的能力。

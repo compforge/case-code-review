@@ -135,6 +135,16 @@ func (a *Analyzer) DefinitionAt(ctx context.Context, source Source, line int) (D
 	return analysis.DefinitionAt(line)
 }
 
+// SymbolAt resolves a source line to its innermost named definition, including
+// non-callable types and classes.
+func (a *Analyzer) SymbolAt(ctx context.Context, source Source, line int) (Definition, bool) {
+	analysis, err := a.Analyze(ctx, source)
+	if err != nil {
+		return Definition{}, false
+	}
+	return analysis.SymbolAt(line)
+}
+
 // DefinitionByID resolves a canonical symbol id in a source file.
 func (a *Analyzer) DefinitionByID(ctx context.Context, source Source, id string) (Definition, bool) {
 	analysis, err := a.Analyze(ctx, source)

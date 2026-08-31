@@ -70,3 +70,28 @@ func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
 		t.Fatalf("compacted result lost scope warning: %s", text)
 	}
 }
+
+func TestSearchBatchCondensesSymbolSourceToAnchors(t *testing.T) {
+	message := FromLLM(LLMToolResult{
+		Tool: CodeSearchToolName, ToolCallID: "search-1",
+		Arguments: map[string]any{"searches": []any{map[string]any{
+			"query": "Alpha", "purpose": "function", "symbol_context": true,
+		}}},
+		Content: tool.EncodeCodeSearchResults([]string{
+			"File: a.go\nMatch lines: 1\n10|func Alpha()\n" +
+				`Symbol context: {"status":"expanded","hit_count":1,"resolved_hits":1,"candidate_count":1}` + "\n" +
+				`Symbol: {"symbol_id":"a.go::Alpha","signature":"func Alpha()","path":"a.go","start_line":9,"end_line":11}` + "\n" +
+				`Symbol source: {"path":"a.go","start_line":9,"end_line":11,"total_lines":20}` + "\n" +
+				"9|// Alpha\n10|func Alpha()\n11|}\n",
+		}),
+	}).(*SearchBatch)
+
+	projected, _ := message.Compact(0.8)
+	wire := projected.(*SearchBatch).ToLLM()
+	text := wire.ExtractText()
+	if !strings.Contains(text, "matched symbol candidates") ||
+		!strings.Contains(text, "func Alpha() — a.go:L9-L11") ||
+		strings.Contains(text, "Symbol source:") {
+		t.Fatalf("condensed symbol search = %q", text)
+	}
+}

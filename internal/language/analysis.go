@@ -201,13 +201,27 @@ type Analysis struct {
 
 // DefinitionAt returns the innermost callable definition containing line.
 func (a Analysis) DefinitionAt(line int) (Definition, bool) {
+	return a.definitionAt(line, true)
+}
+
+// SymbolAt returns the innermost named definition containing line. Unlike
+// DefinitionAt it includes types and classes, which makes it suitable for
+// bounded source navigation without changing callable-based Unit formation.
+func (a Analysis) SymbolAt(line int) (Definition, bool) {
+	return a.definitionAt(line, false)
+}
+
+func (a Analysis) definitionAt(line int, callableOnly bool) (Definition, bool) {
 	var best Definition
 	found := false
 	for _, d := range a.Definitions {
-		if !d.Callable() || line < d.Span.Start || line > d.Span.End {
+		if (callableOnly && !d.Callable()) || line < d.Span.Start || line > d.Span.End {
 			continue
 		}
-		if !found || d.Span.End-d.Span.Start < best.Span.End-best.Span.Start {
+		spanLines := d.Span.End - d.Span.Start
+		bestSpanLines := best.Span.End - best.Span.Start
+		if !found || spanLines < bestSpanLines ||
+			(spanLines == bestSpanLines && d.Callable() && !best.Callable()) {
 			best, found = d, true
 		}
 	}

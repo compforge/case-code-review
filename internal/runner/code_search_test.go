@@ -38,7 +38,8 @@ func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
 		Ref:     ref,
 		Runner:  gitcmd.New(0),
 	}
-	provider := tool.NewCodeSearch(reader).WithDefinitionSource(CodeSearchDefinitions(reader))
+	source := NewCodeSearchLanguageSource(reader)
+	provider := tool.NewCodeSearch(reader).WithDefinitionSource(source.Definitions)
 	result, err := provider.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{"query": "HandleName", "syntax": "literal"}},
 	})
@@ -47,6 +48,43 @@ func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
 	}
 	if !strings.Contains(result, "OldName — sample.go:3") || strings.Contains(result, "NewName") {
 		t.Fatalf("result = %q, want OldName from reviewed ref only", result)
+	}
+}
+
+func TestCodeSearchSymbolsReadReviewedRef(t *testing.T) {
+	repo := t.TempDir()
+	runCodeSearchGit(t, repo, "init", "-q")
+	runCodeSearchGit(t, repo, "config", "user.email", "test@example.com")
+	runCodeSearchGit(t, repo, "config", "user.name", "Test User")
+	runCodeSearchGit(t, repo, "config", "commit.gpgsign", "false")
+
+	path := filepath.Join(repo, "sample.go")
+	oldSource := "package sample\n\nfunc OldName() {\n\tprintln(\"old\")\n}\n"
+	if err := os.WriteFile(path, []byte(oldSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runCodeSearchGit(t, repo, "add", "sample.go")
+	runCodeSearchGit(t, repo, "commit", "-q", "-m", "initial")
+	ref := runCodeSearchGit(t, repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(path, []byte("package sample\n\nfunc NewName() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reader := &tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Ref: ref, Runner: gitcmd.New(0)}
+	source := NewCodeSearchLanguageSource(reader)
+	provider := tool.NewCodeSearch(reader).WithSymbolSource(source.Symbols)
+	result, err := provider.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{
+			"query": "old", "purpose": "function body", "symbol_context": true,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok := tool.ParseCodeSearchSymbolContextOutcome(result)
+	if !ok || outcome.Status != tool.CodeSearchSymbolExpanded ||
+		!strings.Contains(result, "OldName") || strings.Contains(result, "NewName") {
+		t.Fatalf("result = %q, outcome=%+v parsed=%t", result, outcome, ok)
 	}
 }
 

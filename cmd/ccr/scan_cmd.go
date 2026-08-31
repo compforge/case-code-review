@@ -157,7 +157,9 @@ func runScan(args []string) error {
 	}
 
 	// TODO: wire --feature gates into scan (routing hardcoded on for now; review has them).
-	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, opts.model, true)
+	rt, err := loadLLMRuntime(cc.Template, opts.toolConfigPath, opts.model, llmRuntimeOptions{
+		routingEnabled: true,
+	})
 	if err != nil {
 		return err
 	}
@@ -178,7 +180,7 @@ func runScan(args []string) error {
 		Mode:    tool.ModeWorkspace,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Findings, fileReader, nil)
+	tools := buildToolRegistry(rt.Findings, fileReader, nil, false)
 
 	ag := scan.New(scan.Args{
 		RepoDir:               cc.RepoDir,

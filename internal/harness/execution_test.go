@@ -680,6 +680,36 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	}
 }
 
+func TestSearchSymbolContextIsVisibleToFileReadDedup(t *testing.T) {
+	content := tool.EncodeCodeSearchResults([]string{
+		"File: pkg/a.go\nMatch lines: 1\n4|func A() {}\n" +
+			`Symbol context: {"status":"expanded","hit_count":1,"resolved_hits":1,"candidate_count":1}` + "\n" +
+			`Symbol: {"symbol_id":"pkg/a.go::A","kind":"function","path":"pkg/a.go","start_line":3,"end_line":5,"hit_lines":[4]}` + "\n" +
+			`Symbol source: {"path":"pkg/a.go","start_line":3,"end_line":5,"total_lines":20}` + "\n" +
+			"3|func A() {\n4|\twork()\n5|}\n",
+	})
+	search := msg.FromLLM(msg.LLMToolResult{
+		Tool: msg.CodeSearchToolName, ToolCallID: "search-1",
+		Arguments: map[string]any{"searches": []any{map[string]any{
+			"query": "A", "purpose": "function", "symbol_context": true,
+		}}},
+		Content: content,
+	})
+	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
+	manager.visibleFiles = visibleFilesIn([]agentgo.AgentMessage{search})
+	result, covered := manager.coveredFileRead(tool.FileReadRequest{
+		FilePath: "pkg/a.go", StartLine: 3, EndLine: 5,
+	})
+	if !covered || !strings.Contains(result, "search symbol context") {
+		t.Fatalf("covered=%t result=%q visible=%#v", covered, result, manager.visibleFiles)
+	}
+
+	compacted, _ := search.Compact(0)
+	if files := visibleFilesIn([]agentgo.AgentMessage{compacted}); len(files) != 0 {
+		t.Fatalf("compacted search still exposed source ranges: %#v", files)
+	}
+}
+
 func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	preload := "File: pkg/a.go (Total lines: 3)\n1|package a\n2|\n3|func A() {}\n"
 	body := "File: pkg/b.go (Total lines: 2)\nIS_TRUNCATED: false\nLINE_RANGE: 1-2\n1|package b\n2|func B() {}\n"

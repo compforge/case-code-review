@@ -37,6 +37,10 @@ const (
 	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
+	// SearchSymbolContext lets search_code expand one unambiguous enclosing
+	// symbol body under a shared hard budget. Default off until trajectory A/B
+	// demonstrates lower follow-up reads without effect or token regression.
+	SearchSymbolContext Gate = "search_symbol_context"
 	// ReviewTeam is the Review Team v0 (docs/unit_review.md): concurrent unit
 	// loops share an in-memory case board — auto-published facts, directed
 	// incremental injection at turn boundaries. Default OFF (experimental)
@@ -78,13 +82,14 @@ var registry = map[Gate]def{
 	RepoMap:          {true, "ranked symbol map injected per run (anti guessed-name searches)", false},
 	TypedGraph:       {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
 
-	UsageSites:     {true, "pre-grepped use sites of the changed symbols in the initial context", false},
-	RangedPreload:  {true, "deprecated compatibility gate; File preloads are now full-fidelity", false},
-	NeighborSource: {true, "callchain context: inline caller/callee neighbor bodies", false},
-	FileDedup:      {true, "stub earlier read_files results superseded by a later covering read", false},
-	FileEvict:      {true, "under token pressure, shed re-derivable file content before LLM compression", false},
-	ReviewTeam:     {false, "Review Team v0: units share an in-memory case board (auto facts + directed injection)", true},
-	PostBulletin:   {false, "post_bulletin tool: the model posts observation-level suspicions to the team board (needs review_team)", true},
+	UsageSites:          {true, "pre-grepped use sites of the changed symbols in the initial context", false},
+	RangedPreload:       {true, "deprecated compatibility gate; File preloads are now full-fidelity", false},
+	NeighborSource:      {true, "callchain context: inline caller/callee neighbor bodies", false},
+	FileDedup:           {true, "stub earlier read_files results superseded by a later covering read", false},
+	FileEvict:           {true, "under token pressure, shed re-derivable file content before LLM compression", false},
+	SearchSymbolContext: {false, "bounded enclosing-symbol source in search_code results", true},
+	ReviewTeam:          {false, "Review Team v0: units share an in-memory case board (auto facts + directed injection)", true},
+	PostBulletin:        {false, "post_bulletin tool: the model posts observation-level suspicions to the team board (needs review_team)", true},
 }
 
 // Set is a resolved gate configuration. nil is valid and means "all defaults".
