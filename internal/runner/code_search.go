@@ -52,7 +52,7 @@ func (s *CodeSearchLanguageSource) Definitions(ctx context.Context, paths []stri
 }
 
 // Symbols adapts Language's enclosing-definition facts and source
-// spans to Harness' optional symbol_context hook. FileReader and Analyzer use
+// spans to Harness' optional automatic symbol projection. FileReader and Analyzer use
 // the same reviewed snapshot as the preceding text search.
 func (s *CodeSearchLanguageSource) Symbols(ctx context.Context, hits []tool.CodeSearchHit) []tool.CodeSearchSymbol {
 	hitsByPath := make(map[string][]int)

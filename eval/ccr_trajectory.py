@@ -1065,49 +1065,42 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
             "scope_unknown": 0,
             "tool_failure": 0,
             "repeated_empty": 0,
-            "purpose_counts": {},
-            "purpose_coverage": 0.0,
-            "context_requests": 0,
-            "context_request_rate": 0.0,
-            "requested_context_lines": 0,
+            "context_projections": 0,
+            "context_projection_rate": 0.0,
             "returned_context_lines": 0,
-            "context_truncated_requests": 0,
-            "context_unavailable_requests": 0,
-            "symbol_context_requests": 0,
+            "context_truncated_results": 0,
+            "context_unavailable_results": 0,
+            "symbol_context_attempts": 0,
             "symbol_context_outcomes": {},
             "returned_symbol_context_lines": 0,
         }
     batches = [max(len(_code_search_requests(step)), 1) for step in calls]
     rounds = len({step.parent_step_id for step in calls})
     requests = sum(batches)
-    purpose_counts: Counter[str] = Counter()
-    context_requests = 0
-    requested_context_lines = 0
+    context_projections = 0
     returned_context_lines = 0
-    context_truncated_requests = 0
-    context_unavailable_requests = 0
-    symbol_context_requests = 0
+    context_truncated_results = 0
+    context_unavailable_results = 0
+    symbol_context_attempts = 0
     symbol_context_outcomes: Counter[str] = Counter()
     returned_symbol_context_lines = 0
     for step in calls:
         step_requests = _code_search_requests(step) or [{}]
         step_results = _code_search_result_parts(step)
         for index, request in enumerate(step_requests):
-            purpose = str(request.get("purpose") or "").strip()
-            purpose_counts[purpose or "(unspecified)"] += 1
-            context_lines = _non_negative_int(request.get("context_lines"))
             result = step_results[index] if index < len(step_results) else ""
-            if context_lines:
-                context_requests += 1
-                requested_context_lines += context_lines
-                returned_context_lines += _returned_search_context_lines(result)
-                context_truncated_requests += "Note: Context truncated" in result
-                context_unavailable_requests += "Context unavailable:" in result
-            if request.get("symbol_context") is True:
-                symbol_context_requests += 1
-                outcome = _search_symbol_context_outcome(result)
-                symbol_context_outcomes[outcome or "missing"] += 1
-                returned_symbol_context_lines += _returned_search_symbol_lines(result)
+            context_lines = _returned_search_context_lines(result)
+            symbol_lines = _returned_search_symbol_lines(result)
+            if context_lines or symbol_lines:
+                context_projections += 1
+            returned_context_lines += context_lines
+            context_truncated_results += "Note: Context truncated" in result
+            context_unavailable_results += "Context unavailable:" in result
+            outcome = _search_symbol_context_outcome(result)
+            if outcome:
+                symbol_context_attempts += 1
+                symbol_context_outcomes[outcome] += 1
+                returned_symbol_context_lines += symbol_lines
     observations = _code_search_observations(trajectory)
     outcomes = Counter(item["outcome"] for item in observations)
     repeated_empty = 0
@@ -1131,17 +1124,12 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
         "scope_unknown": outcomes["scope_unknown"],
         "tool_failure": outcomes["tool_failure"],
         "repeated_empty": repeated_empty,
-        "purpose_counts": dict(purpose_counts),
-        "purpose_coverage": round(
-            (requests - purpose_counts["(unspecified)"]) / requests, 3
-        ),
-        "context_requests": context_requests,
-        "context_request_rate": round(context_requests / requests, 3),
-        "requested_context_lines": requested_context_lines,
+        "context_projections": context_projections,
+        "context_projection_rate": round(context_projections / requests, 3),
         "returned_context_lines": returned_context_lines,
-        "context_truncated_requests": context_truncated_requests,
-        "context_unavailable_requests": context_unavailable_requests,
-        "symbol_context_requests": symbol_context_requests,
+        "context_truncated_results": context_truncated_results,
+        "context_unavailable_results": context_unavailable_results,
+        "symbol_context_attempts": symbol_context_attempts,
         "symbol_context_outcomes": dict(symbol_context_outcomes),
         "returned_symbol_context_lines": returned_symbol_context_lines,
     }
@@ -1312,6 +1300,9 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
     symbol_expanded_hit_requests: set[str] = set()
     symbol_follow_up_requests: set[str] = set()
     symbol_expanded_follow_up_requests: set[str] = set()
+    symbol_expanded_within_span_follow_up_requests: set[str] = set()
+    symbol_expanded_extending_follow_up_requests: set[str] = set()
+    symbol_source_ranges_by_request: dict[str, list[tuple[str, int, int]]] = {}
     identifier = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$]*$")
 
     for step in _tool_steps(trajectory):
@@ -1324,13 +1315,15 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                 request = requests[index] if index < len(requests) else {}
                 query = str(request.get("query") if request else "")
                 request_id = f"{step.step_id}:{index + 1}"
-                has_symbol_context = request.get("symbol_context") is True
-                symbol_expanded = (
-                    _search_symbol_context_outcome(result) == "expanded"
-                )
+                symbol_outcome = _search_symbol_context_outcome(result)
+                has_symbol_context = bool(symbol_outcome)
+                symbol_expanded = symbol_outcome == "expanded"
+                if symbol_expanded:
+                    symbol_source_ranges_by_request[request_id] = (
+                        _search_symbol_source_ranges(result)
+                    )
                 has_context = (
-                    _non_negative_int(request.get("context_lines")) > 0
-                    or has_symbol_context
+                    _returned_search_context_lines(result) > 0 or symbol_expanded
                 )
                 request_has_hits = False
                 file_matches = list(re.finditer(r"(?m)^File:\s*(.+?)\s*$", result))
@@ -1344,8 +1337,8 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                     count_match = re.search(r"(?m)^Match lines:\s*(\d+)\s*$", block)
                     match_count = int(count_match.group(1)) if count_match else 0
                     line_matches = list(re.finditer(r"(?m)^(\d+)\|", block))
-                    # context_lines appends numbered source windows after the
-                    # original hit list. Only those first Match lines entries
+                    # Automatic nearby-source projection appends numbered windows
+                    # after the original hit list. Only those first Match lines entries
                     # identify the search hits this evaluator links to reads.
                     for line_match in line_matches[:match_count]:
                         request_has_hits = True
@@ -1392,6 +1385,19 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                     symbol_follow_up_requests.add(hit[4])
                 if hit[4] in symbol_expanded_hit_requests:
                     symbol_expanded_follow_up_requests.add(hit[4])
+                    source_ranges = symbol_source_ranges_by_request.get(hit[4], [])
+                    if any(
+                        source_path == path
+                        and source_start <= start
+                        and end <= source_end
+                        for source_path, source_start, source_end in source_ranges
+                    ):
+                        symbol_expanded_within_span_follow_up_requests.add(hit[4])
+                    elif any(
+                        source_path == path
+                        for source_path, _, _ in source_ranges
+                    ):
+                        symbol_expanded_extending_follow_up_requests.add(hit[4])
             if any(identifier.fullmatch(hit[1]) for hit in hits):
                 identifier_linked_ranges += 1
 
@@ -1434,6 +1440,20 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
             len(symbol_expanded_follow_up_requests),
             len(symbol_expanded_hit_requests),
         ),
+        "symbol_expanded_within_span_follow_up_read_request_count": len(
+            symbol_expanded_within_span_follow_up_requests
+        ),
+        "symbol_expanded_within_span_follow_up_read_rate": _ratio(
+            len(symbol_expanded_within_span_follow_up_requests),
+            len(symbol_expanded_hit_requests),
+        ),
+        "symbol_expanded_extending_follow_up_read_request_count": len(
+            symbol_expanded_extending_follow_up_requests
+        ),
+        "symbol_expanded_extending_follow_up_read_rate": _ratio(
+            len(symbol_expanded_extending_follow_up_requests),
+            len(symbol_expanded_hit_requests),
+        ),
         "step_ids": list(dict.fromkeys(linked_step_ids)),
     }
 
@@ -1473,6 +1493,25 @@ def _search_symbol_context_outcome(result: str) -> str:
             return ""
         return str(value.get("status") or "") if isinstance(value, dict) else ""
     return ""
+
+
+def _search_symbol_source_ranges(result: str) -> list[tuple[str, int, int]]:
+    ranges: list[tuple[str, int, int]] = []
+    for line in result.splitlines():
+        if not line.startswith("Symbol source: "):
+            continue
+        try:
+            value = json.loads(line.removeprefix("Symbol source: "))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(value, dict):
+            continue
+        path = str(value.get("path") or "")
+        start = _non_negative_int(value.get("start_line"))
+        end = _non_negative_int(value.get("end_line"))
+        if path and start > 0 and end >= start:
+            ranges.append((path, start, end))
+    return ranges
 
 
 def _returned_search_symbol_lines(result: str) -> int:

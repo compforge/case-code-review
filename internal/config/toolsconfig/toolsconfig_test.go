@@ -16,7 +16,7 @@ func TestBatchToolDescriptionsLeadWithCanonicalArguments(t *testing.T) {
 	want := map[string]string{
 		"read_files":      `{"reads":[{"file_path":"pkg/file.go","start_line":1,"end_line":80}]}`,
 		"read_base_files": `{"reads":[{"file_path":"pkg/file.go","start_line":1,"end_line":80}]}`,
-		"search_code":     `{"searches":[{"query":"Symbol","purpose":"reference","syntax":"literal","file_patterns":["*.go"],"context_lines":4}]}`,
+		"search_code":     `{"searches":[{"query":"Symbol","syntax":"literal","file_patterns":["*.go"]}]}`,
 	}
 	seen := make(map[string]bool, len(want))
 	for _, entry := range entries {

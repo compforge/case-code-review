@@ -110,7 +110,9 @@ def render_markdown(
                 _format_value(metrics["completion_rate"], "percent"),
                 _format_value(metrics["workflow_timeout_rate"], "percent"),
                 _format_value(metrics["llm_routing_timeout_rate"], "percent"),
-                _format_value(metrics["code_searches"]["purpose_coverage"], "percent"),
+                _format_value(
+                    metrics["code_searches"]["context_projection_rate"], "percent"
+                ),
                 _format_value(metrics["average_score"], "score"),
                 _format_value(metrics["assessments"] if stage == REVIEW2 else None),
                 _format_value(metrics["rounds"]["p50"]),
@@ -129,7 +131,7 @@ def render_markdown(
                 "Complete",
                 "Workflow timeout",
                 "llm.routing.timeout",
-                "Search purpose coverage",
+                "Search context projection",
                 "Score",
                 "Assessments",
                 "p50 rounds",
@@ -274,27 +276,6 @@ def render_markdown(
         else ["No tool calls in this week."]
     )
 
-    lines.extend(["", "### Search purposes", ""])
-    purpose_rows = []
-    for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
-        searches = current[stage]["code_searches"]
-        for purpose, count in searches["purpose_counts"].items():
-            purpose_rows.append(
-                [
-                    title,
-                    purpose,
-                    str(count),
-                    _format_value(count / searches["requests"], "percent"),
-                ]
-            )
-    lines.extend(
-        _markdown_table(
-            ["Stage", "Purpose", "Requests", "Share within stage"], purpose_rows
-        )
-        if purpose_rows
-        else ["No search requests in this week."]
-    )
-
     lines.extend(["", "### Search context effectiveness", ""])
     search_effect_rows = []
     for stage, title in ((REVIEW1, "Review 1"), (REVIEW2, "Review 2")):
@@ -303,8 +284,8 @@ def render_markdown(
         search_effect_rows.append(
             [
                 title,
-                f"{searches.get('context_requests', 0)}/{searches['requests']}",
-                _format_value(searches.get("context_request_rate"), "percent"),
+                f"{searches.get('context_projections', 0)}/{searches['requests']}",
+                _format_value(searches.get("context_projection_rate"), "percent"),
                 str(searches.get("returned_context_lines", 0)),
                 _format_value(follow_up.get("context_follow_up_read_rate"), "percent"),
                 _format_value(follow_up.get("plain_follow_up_read_rate"), "percent"),
@@ -314,8 +295,8 @@ def render_markdown(
         _markdown_table(
             [
                 "Stage",
-                "Context requests",
-                "Context usage",
+                "Context projections",
+                "Projection rate",
                 "Context lines returned",
                 "Follow-up with context",
                 "Follow-up without context",
@@ -333,7 +314,7 @@ def render_markdown(
         symbol_context_rows.append(
             [
                 title,
-                str(searches.get("symbol_context_requests", 0)),
+                str(searches.get("symbol_context_attempts", 0)),
                 ", ".join(f"{name}={count}" for name, count in outcomes.items())
                 or "-",
                 str(searches.get("returned_symbol_context_lines", 0)),
@@ -343,17 +324,31 @@ def render_markdown(
                 _format_value(
                     follow_up.get("symbol_expanded_follow_up_read_rate"), "percent"
                 ),
+                _format_value(
+                    follow_up.get(
+                        "symbol_expanded_within_span_follow_up_read_rate"
+                    ),
+                    "percent",
+                ),
+                _format_value(
+                    follow_up.get(
+                        "symbol_expanded_extending_follow_up_read_rate"
+                    ),
+                    "percent",
+                ),
             ]
         )
     lines.extend(
         _markdown_table(
             [
                 "Stage",
-                "Requests",
+                "Attempts",
                 "Outcomes",
                 "Source lines",
                 "Follow-up requested",
                 "Follow-up expanded",
+                "Within expanded span",
+                "Extending outside span",
             ],
             symbol_context_rows,
         )

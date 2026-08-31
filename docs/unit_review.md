@@ -275,24 +275,19 @@ Agent loop 虽然允许模型在一次响应里并行发出多个 tool call，�
   当前 lead 决定哪些目标值得补证。
 
 `search_code.searches[]` 的 `syntax` 默认为 `literal`；只有正则查询显式声明 `regexp`。相比布尔开关，
-它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。若一次命中后通常只需
-查看附近源码，可为该成员设置 `context_lines`；Provider 合并重叠窗口，并以批次共享预算限制附带源码，
-避免为了局部上下文再增加一轮 `read_files`。若先前 outline 已给出声明的 `Lstart-Lend`，则直接按该
-精确范围调用 `read_files`，不再重复搜索声明。
+它既保持普通标识符搜索简洁，也让轨迹能直接解释模型何时主动选择了正则检索。若先前 outline 已给出
+声明的 `Lstart-Lend`，则直接按该精确范围调用 `read_files`，不再重复搜索声明。
 
-当命中后需要的是完整 enclosing function/type，而不是固定行窗口时，成员可以显式设置
-`symbol_context=true`；该字段只在默认关闭的实验 gate `search_symbol_context` 开启时暴露给模型。
-Language 只提供 symbol/span 事实，Runner 用当前 review snapshot 适配源码，
-Harness 执行有界投影：只有全部命中落入同一个且不超过 100 行的 symbol 才返回完整 body；多候选、
-部分解析或超限只返回至多 8 个 symbol anchor，并继续以 `context_lines` 作为 fallback。两种 source
-共用每批 400 行预算，避免一次多 query 调用隐式放大上下文。已展开源码在仍完整可见时参与
+源码如何随命中返回由 Provider 决定，不要求模型猜测行数或选择展开方式。每个 query 平分批次 400 行
+预算；不超过 8 个命中时自动合并并返回每个命中附近 4 行。默认关闭的实验 gate
+`search_symbol_context` 开启后，Provider 再用 Language 的 symbol/span 事实尝试结构化投影：只有全部
+命中落入同一个且不超过 100 行的 symbol 才用完整 body 替代附近窗口；多候选、部分解析或超限返回
+至多 8 个 symbol anchor，并保留附近窗口 fallback。两种 source 共用同一预算，避免一次多 query
+调用隐式放大上下文。已展开源码在仍完整可见时参与
 `read_files` 覆盖判断，压缩成 search 摘要后则不再冒充可见源码。
-实验运行通过 `--features search_symbol_context=on` 开启，resolved feature map 与每次请求的 outcome
-共同进入 Session，供同版本 corpus 做开关对照。
-
-每个 search 成员还携带自由字符串 `purpose`，用于记录模型当下认为自己在寻找什么。Schema 提示
-`function`、`variable`、`type`、`keyword`、`reference` 等常见值，但不使用 enum；新出现的值本身就是
-工具需求信号，后续可结合 `search_then_read` 判断是否值得增加 `read_func` 一类更专门的能力。
+实验运行通过 `--features search_symbol_context=on` 开启；开关两臂共享完全相同的 tool schema 和
+prompt，只由 Provider 是否注入 symbol source 不同。resolved feature map 与每次自动投影的 outcome
+共同进入 Session，供同版本 corpus 做 gate-only 对照。
 
 工具契约不能假设模型总能生成完全正确的参数。字段命名、schema 和示例应先提供清晰的
 affordance；Harness 边界再对单字符串变数组、单成员变批次等**无歧义、无损**漂移做归一化。

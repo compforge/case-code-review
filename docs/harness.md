@@ -160,6 +160,17 @@ partial/incomplete，不把空输出包装成成功；此前已被领域层接�
 这允许同一个 `read_files` 被多个流程复用，也允许 Review 2 只暴露只读证据工具而不暴露发布 Finding
 的能力。Runner 适配可以依赖 Harness，Harness 不依赖 Runner。
 
+模型可见的 tool argument 是行动语言，不是面向确定性调用方的通用 API。Harness 可以持续增加解析、
+投影、预算、降级和观测能力，但只有同时满足以下条件的选择才进入 tool schema：它表达模型要完成的
+最小行动意图；模型从当前上下文拥有充分信息；不同取值代表真实语义差异；Provider 又无法安全、
+确定性地选择默认值。输出行数、展开策略、候选上限、预算和 timeout 等执行参数由 Provider、Config
+或 gate 持有，不能为了暴露能力而转嫁成模型每次调用的生成负担。观测需要的标签优先从实际请求、
+结果和 Session event 推导，不要求模型替 telemetry 填字段。
+
+因此能力面与模型决策面独立演进：能力可以丰富，模型参数应保持最小。实验 gate 应尽量只改变
+Provider 执行策略，使开关两臂共享相同 prompt 和 tool schema，避免把模型是否会选择新参数混入
+能力效果。
+
 ### 3.5 AgentGo 定义统一运行时消息协议
 
 AgentGo 负责模型循环、`AgentMessage` 和通用上下文机制。CCR 的 Runner 可直接组装

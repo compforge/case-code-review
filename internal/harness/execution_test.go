@@ -690,10 +690,8 @@ func TestSearchSymbolContextIsVisibleToFileReadDedup(t *testing.T) {
 	})
 	search := msg.FromLLM(msg.LLMToolResult{
 		Tool: msg.CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{
-			"query": "A", "purpose": "function", "symbol_context": true,
-		}}},
-		Content: content,
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "A"}}},
+		Content:   content,
 	})
 	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
 	manager.visibleFiles = visibleFilesIn([]agentgo.AgentMessage{search})

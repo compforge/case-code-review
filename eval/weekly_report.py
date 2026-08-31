@@ -34,7 +34,7 @@ DEFAULT_DATASET_PATHS = (
 DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
 DEFAULT_LABEL_DATASET_MANIFEST = Path("eval/data/datasets/label-dataset.json")
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v9"
+REPORT_SCHEMA_VERSION = "weekly-report-v10"
 
 
 @dataclass(frozen=True, slots=True)
@@ -784,18 +784,13 @@ COMPARISON_METRICS = (
     ("Review 1 prompt/chain", (REVIEW1, "prompt_tokens", "average"), "number"),
     ("Review 1 search requests", (REVIEW1, "code_searches", "requests"), "number"),
     (
-        "Review 1 search context usage",
-        (REVIEW1, "code_searches", "context_request_rate"),
+        "Review 1 search context projection",
+        (REVIEW1, "code_searches", "context_projection_rate"),
         "percent",
     ),
     (
         "Review 1 search follow-up reads",
         (REVIEW1, "search_follow_up", "follow_up_read_rate"),
-        "percent",
-    ),
-    (
-        "Review 1 search purpose coverage",
-        (REVIEW1, "code_searches", "purpose_coverage"),
         "percent",
     ),
     ("Review 2 chains", (REVIEW2, "chains"), "number"),
@@ -833,18 +828,13 @@ COMPARISON_METRICS = (
     ),
     ("Review 2 search requests", (REVIEW2, "code_searches", "requests"), "number"),
     (
-        "Review 2 search context usage",
-        (REVIEW2, "code_searches", "context_request_rate"),
+        "Review 2 search context projection",
+        (REVIEW2, "code_searches", "context_projection_rate"),
         "percent",
     ),
     (
         "Review 2 search follow-up reads",
         (REVIEW2, "search_follow_up", "follow_up_read_rate"),
-        "percent",
-    ),
-    (
-        "Review 2 search purpose coverage",
-        (REVIEW2, "code_searches", "purpose_coverage"),
         "percent",
     ),
     (

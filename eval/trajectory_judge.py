@@ -452,9 +452,7 @@ def main() -> int:
                         f"avg_batch={searches['average_batch']} "
                         f"max_batch={searches['max_batch']} "
                         f"calls/round={searches['calls_per_round']} "
-                        f"purposes={searches['purpose_counts']} "
-                        f"purpose_coverage={searches['purpose_coverage']} "
-                        f"context={searches['context_requests']}/{searches['requests']} "
+                        f"context={searches['context_projections']}/{searches['requests']} "
                         f"context_lines={searches['returned_context_lines']}"
                     )
                     follow_up = sig["search_then_read"]

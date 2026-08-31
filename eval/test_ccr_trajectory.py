@@ -774,24 +774,19 @@ class CCRTrajectoryTest(unittest.TestCase):
                                             {
                                                 "query": "Alpha",
                                                 "syntax": "literal",
-                                                "purpose": "function",
-                                                "context_lines": 1,
                                             },
                                             {
                                                 "query": "Missing",
                                                 "syntax": "literal",
-                                                "purpose": "keyword",
                                             },
                                             {
                                                 "query": "Missing",
                                                 "syntax": "literal",
                                                 "file_patterns": ["missing/**"],
-                                                "purpose": "custom-domain-concept",
                                             },
                                             {
                                                 "query": "Missing",
                                                 "syntax": "literal",
-                                                "purpose": "keyword",
                                             },
                                         ]
                                     },
@@ -824,19 +819,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "scope_unknown": 0,
                 "tool_failure": 0,
                 "repeated_empty": 1,
-                "purpose_counts": {
-                    "function": 1,
-                    "keyword": 2,
-                    "custom-domain-concept": 1,
-                },
-                "purpose_coverage": 1.0,
-                "context_requests": 1,
-                "context_request_rate": 0.25,
-                "requested_context_lines": 1,
+                "context_projections": 1,
+                "context_projection_rate": 0.25,
                 "returned_context_lines": 3,
-                "context_truncated_requests": 0,
-                "context_unavailable_requests": 0,
-                "symbol_context_requests": 0,
+                "context_truncated_results": 0,
+                "context_unavailable_results": 0,
+                "symbol_context_attempts": 0,
                 "symbol_context_outcomes": {},
                 "returned_symbol_context_lines": 0,
             },
@@ -862,11 +850,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                     "function_name": "search_code",
                                     "arguments": {
                                         "searches": [
-                                            {
-                                                "query": "Alpha",
-                                                "purpose": "function",
-                                                "symbol_context": True,
-                                            }
+                                            {"query": "Alpha"}
                                         ]
                                     },
                                 }
@@ -925,12 +909,19 @@ class CCRTrajectoryTest(unittest.TestCase):
         }
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
         searches = code_search_stats(trajectory)
-        self.assertEqual(searches["symbol_context_requests"], 1)
+        self.assertEqual(searches["context_projections"], 1)
+        self.assertEqual(searches["symbol_context_attempts"], 1)
         self.assertEqual(searches["symbol_context_outcomes"], {"expanded": 1})
         self.assertEqual(searches["returned_symbol_context_lines"], 3)
         follow_up = search_then_read_stats(trajectory)
         self.assertEqual(follow_up["symbol_expanded_hit_search_request_count"], 1)
         self.assertEqual(follow_up["symbol_expanded_follow_up_read_rate"], 1.0)
+        self.assertEqual(
+            follow_up["symbol_expanded_within_span_follow_up_read_rate"], 0.0
+        )
+        self.assertEqual(
+            follow_up["symbol_expanded_extending_follow_up_read_rate"], 1.0
+        )
 
     def test_search_then_read_links_only_later_ranges_covering_hits(self):
         root = {
@@ -947,7 +938,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                                 {
                                     "tool_call_id": "search",
                                     "function_name": "search_code",
-                                    "arguments": {"query": "Alpha", "context_lines": 1},
+                                    "arguments": {"query": "Alpha"},
                                 }
                             ],
                             "observation": {
@@ -1043,6 +1034,10 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "symbol_expanded_hit_search_request_count": 0,
                 "symbol_expanded_follow_up_read_request_count": 0,
                 "symbol_expanded_follow_up_read_rate": None,
+                "symbol_expanded_within_span_follow_up_read_request_count": 0,
+                "symbol_expanded_within_span_follow_up_read_rate": None,
+                "symbol_expanded_extending_follow_up_read_request_count": 0,
+                "symbol_expanded_extending_follow_up_read_rate": None,
                 "step_ids": ["1:tool:1", "2:tool:1"],
             },
         )

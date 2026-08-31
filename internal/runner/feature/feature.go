@@ -37,7 +37,7 @@ const (
 	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
-	// SearchSymbolContext lets search_code expand one unambiguous enclosing
+	// SearchSymbolContext lets search_code automatically expand one unambiguous enclosing
 	// symbol body under a shared hard budget. Default off until trajectory A/B
 	// demonstrates lower follow-up reads without effect or token regression.
 	SearchSymbolContext Gate = "search_symbol_context"
