@@ -74,9 +74,7 @@ func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
 func TestSearchBatchCondensesSymbolSourceToAnchors(t *testing.T) {
 	message := FromLLM(LLMToolResult{
 		Tool: CodeSearchToolName, ToolCallID: "search-1",
-		Arguments: map[string]any{"searches": []any{map[string]any{
-			"query": "Alpha", "purpose": "function", "symbol_context": true,
-		}}},
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha"}}},
 		Content: tool.EncodeCodeSearchResults([]string{
 			"File: a.go\nMatch lines: 1\n10|func Alpha()\n" +
 				`Symbol context: {"status":"expanded","hit_count":1,"resolved_hits":1,"candidate_count":1}` + "\n" +

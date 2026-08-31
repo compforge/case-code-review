@@ -74,9 +74,7 @@ func TestCodeSearchSymbolsReadReviewedRef(t *testing.T) {
 	source := NewCodeSearchLanguageSource(reader)
 	provider := tool.NewCodeSearch(reader).WithSymbolSource(source.Symbols)
 	result, err := provider.Execute(context.Background(), map[string]any{
-		"searches": []any{map[string]any{
-			"query": "old", "purpose": "function body", "symbol_context": true,
-		}},
+		"searches": []any{map[string]any{"query": "old"}},
 	})
 	if err != nil {
 		t.Fatal(err)

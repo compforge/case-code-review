@@ -49,15 +49,13 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     failure_affected: dict[tuple[str, str], set[int]] = {}
     diagnostic_events: Counter[tuple[str, str]] = Counter()
     diagnostic_affected: dict[tuple[str, str], set[int]] = {}
-    search_purposes: Counter[str] = Counter()
     search_calls = 0
     search_requests = 0
-    context_requests = 0
-    requested_context_lines = 0
+    context_projections = 0
     returned_context_lines = 0
-    context_truncated_requests = 0
-    context_unavailable_requests = 0
-    symbol_context_requests = 0
+    context_truncated_results = 0
+    context_unavailable_results = 0
+    symbol_context_attempts = 0
     returned_symbol_context_lines = 0
     symbol_context_outcomes: Counter[str] = Counter()
     hit_search_requests = 0
@@ -70,6 +68,8 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
     symbol_follow_up_read_requests = 0
     symbol_expanded_hit_search_requests = 0
     symbol_expanded_follow_up_read_requests = 0
+    symbol_expanded_within_span_follow_up_read_requests = 0
+    symbol_expanded_extending_follow_up_read_requests = 0
     initial_outline_attempts = 0
     outline_admitted_bytes = 0
     outline_outcomes: Counter[str] = Counter()
@@ -81,19 +81,16 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         code_searches = analysis.get("code_searches") or {}
         search_calls += int(code_searches.get("calls") or 0)
         search_requests += int(code_searches.get("requests") or 0)
-        context_requests += int(code_searches.get("context_requests") or 0)
-        requested_context_lines += int(
-            code_searches.get("requested_context_lines") or 0
-        )
+        context_projections += int(code_searches.get("context_projections") or 0)
         returned_context_lines += int(code_searches.get("returned_context_lines") or 0)
-        context_truncated_requests += int(
-            code_searches.get("context_truncated_requests") or 0
+        context_truncated_results += int(
+            code_searches.get("context_truncated_results") or 0
         )
-        context_unavailable_requests += int(
-            code_searches.get("context_unavailable_requests") or 0
+        context_unavailable_results += int(
+            code_searches.get("context_unavailable_results") or 0
         )
-        symbol_context_requests += int(
-            code_searches.get("symbol_context_requests") or 0
+        symbol_context_attempts += int(
+            code_searches.get("symbol_context_attempts") or 0
         )
         returned_symbol_context_lines += int(
             code_searches.get("returned_symbol_context_lines") or 0
@@ -138,6 +135,18 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         symbol_expanded_follow_up_read_requests += int(
             search_follow_up.get("symbol_expanded_follow_up_read_request_count") or 0
         )
+        symbol_expanded_within_span_follow_up_read_requests += int(
+            search_follow_up.get(
+                "symbol_expanded_within_span_follow_up_read_request_count"
+            )
+            or 0
+        )
+        symbol_expanded_extending_follow_up_read_requests += int(
+            search_follow_up.get(
+                "symbol_expanded_extending_follow_up_read_request_count"
+            )
+            or 0
+        )
 
         outlines = (analysis.get("initial_context") or {}).get("outlines") or {}
         initial_outline_attempts += int(outlines.get("attempts") or 0)
@@ -156,14 +165,6 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
                 }
             )
 
-        search_purposes.update(
-            {
-                str(purpose): int(requests)
-                for purpose, requests in (
-                    code_searches.get("purpose_counts") or {}
-                ).items()
-            }
-        )
         for failure in analysis.get("failures") or []:
             key = (
                 str(failure.get("impact") or "step"),
@@ -247,12 +248,6 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             key=lambda item: (-len(diagnostic_affected[item[0]]), item[0]),
         )
     ]
-    labeled_search_requests = sum(
-        requests
-        for purpose, requests in search_purposes.items()
-        if purpose != "(unspecified)"
-    )
-
     return {
         "chains": count,
         "outcomes": dict(sorted(outcomes.items())),
@@ -290,21 +285,14 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
         "code_searches": {
             "calls": search_calls,
             "requests": search_requests,
-            "purpose_counts": dict(
-                sorted(search_purposes.items(), key=lambda item: (-item[1], item[0]))
-            ),
-            "purpose_coverage": round(labeled_search_requests / search_requests, 3)
+            "context_projections": context_projections,
+            "context_projection_rate": round(context_projections / search_requests, 3)
             if search_requests
             else None,
-            "context_requests": context_requests,
-            "context_request_rate": round(context_requests / search_requests, 3)
-            if search_requests
-            else None,
-            "requested_context_lines": requested_context_lines,
             "returned_context_lines": returned_context_lines,
-            "context_truncated_requests": context_truncated_requests,
-            "context_unavailable_requests": context_unavailable_requests,
-            "symbol_context_requests": symbol_context_requests,
+            "context_truncated_results": context_truncated_results,
+            "context_unavailable_results": context_unavailable_results,
+            "symbol_context_attempts": symbol_context_attempts,
             "symbol_context_outcomes": dict(sorted(symbol_context_outcomes.items())),
             "returned_symbol_context_lines": returned_symbol_context_lines,
         },
@@ -331,6 +319,20 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             "symbol_expanded_follow_up_read_requests": symbol_expanded_follow_up_read_requests,
             "symbol_expanded_follow_up_read_rate": _ratio(
                 symbol_expanded_follow_up_read_requests,
+                symbol_expanded_hit_search_requests,
+            ),
+            "symbol_expanded_within_span_follow_up_read_requests": (
+                symbol_expanded_within_span_follow_up_read_requests
+            ),
+            "symbol_expanded_within_span_follow_up_read_rate": _ratio(
+                symbol_expanded_within_span_follow_up_read_requests,
+                symbol_expanded_hit_search_requests,
+            ),
+            "symbol_expanded_extending_follow_up_read_requests": (
+                symbol_expanded_extending_follow_up_read_requests
+            ),
+            "symbol_expanded_extending_follow_up_read_rate": _ratio(
+                symbol_expanded_extending_follow_up_read_requests,
                 symbol_expanded_hit_search_requests,
             ),
         },

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"os/exec"
 	"regexp"
 	"sort"
@@ -20,7 +19,8 @@ const (
 	gitGrepMaxCount         = 100
 	codeSearchMaxBatch      = 8
 	codeSearchMaxBatchCount = 200
-	codeSearchMaxContext    = 50
+	codeSearchNearbyLines   = 4
+	codeSearchNearbyMaxHits = 8
 	codeSearchContextBudget = 400
 	gitGrepTimeout          = 10 * time.Second
 )
@@ -33,9 +33,6 @@ type CodeSearchRequest struct {
 	FilePatterns  []string
 	CaseSensitive bool
 	Syntax        string
-	ContextLines  int
-	SymbolContext bool
-	Purpose       string
 }
 
 const (
@@ -101,18 +98,11 @@ func ParseCodeSearchRequests(args map[string]any) ([]CodeSearchRequest, error) {
 		if syntax != CodeSearchLiteral && syntax != CodeSearchRegexp {
 			return nil, fmt.Errorf("searches[%d].syntax must be literal or regexp", i)
 		}
-		contextLines, err := codeSearchContextLines(item["context_lines"])
-		if err != nil {
-			return nil, fmt.Errorf("searches[%d].context_lines %w", i, err)
-		}
 		requests[i] = CodeSearchRequest{
 			SearchText:    stringValue(item["query"]),
 			FilePatterns:  stringValues(item["file_patterns"]),
 			CaseSensitive: boolValue(item["case_sensitive"]),
 			Syntax:        syntax,
-			ContextLines:  contextLines,
-			SymbolContext: boolValue(item["symbol_context"]),
-			Purpose:       stringValue(item["purpose"]),
 		}
 	}
 	return requests, nil
@@ -209,16 +199,7 @@ func (p *CodeSearchProvider) Execute(ctx context.Context, args map[string]any) (
 		return "Error: " + err.Error(), nil
 	}
 	maxCount := min(gitGrepMaxCount, max(1, codeSearchMaxBatchCount/len(requests)))
-	contextRequests := 0
-	for _, request := range requests {
-		if request.ContextLines > 0 || request.SymbolContext {
-			contextRequests++
-		}
-	}
-	contextBudget := 0
-	if contextRequests > 0 {
-		contextBudget = codeSearchContextBudget / contextRequests
-	}
+	contextBudget := codeSearchContextBudget / len(requests)
 	results := make([]string, len(requests))
 	var wg sync.WaitGroup
 	for i, request := range requests {
@@ -258,8 +239,6 @@ func (p *CodeSearchProvider) executeOne(
 		request.Syntax == CodeSearchRegexp,
 		request.FilePatterns,
 		maxCount,
-		request.ContextLines,
-		request.SymbolContext,
 		contextBudget,
 	)
 	if err != nil {
@@ -342,7 +321,7 @@ func (p *CodeSearchProvider) gitGrep(ctx context.Context, searchText string, cas
 }
 
 func (p *CodeSearchProvider) gitGrepLimited(ctx context.Context, searchText string, caseSensitive bool, usePerlRegexp bool, pathspec []string, maxCount int) (string, error) {
-	return p.gitGrepLimitedWithContext(ctx, searchText, caseSensitive, usePerlRegexp, pathspec, maxCount, 0, false, 0)
+	return p.gitGrepLimitedWithContext(ctx, searchText, caseSensitive, usePerlRegexp, pathspec, maxCount, 0)
 }
 
 func (p *CodeSearchProvider) gitGrepLimitedWithContext(
@@ -352,8 +331,6 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 	usePerlRegexp bool,
 	pathspec []string,
 	maxCount int,
-	contextLines int,
-	symbolContext bool,
 	contextBudget int,
 ) (string, error) {
 	cmdArgs := p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, false, pathspec, maxCount)
@@ -434,8 +411,16 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 	}
 
 	symbolResult := codeSearchSymbolRender{}
-	if symbolContext {
+	if contextBudget > 0 && p.symbolSource != nil {
 		symbolResult = p.renderSymbolContext(ctx, fileOrder, fileMatches, contextBudget)
+	}
+	matchCount := 0
+	for _, matches := range fileMatches {
+		matchCount += len(matches)
+	}
+	nearbyLines := 0
+	if contextBudget > 0 && matchCount <= codeSearchNearbyMaxHits {
+		nearbyLines = codeSearchNearbyLines
 	}
 
 	remainingContext := contextBudget
@@ -446,13 +431,13 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 		for _, m := range matches {
 			sb.WriteString(fmt.Sprintf("%d|%s\n", m.lineNum, m.content))
 		}
-		if !symbolResult.expanded && contextLines > 0 && remainingContext > 0 {
+		if !symbolResult.expanded && nearbyLines > 0 && remainingContext > 0 {
 			content, readErr := p.FileReader.Read(ctx, path)
 			if readErr != nil {
 				sb.WriteString(fmt.Sprintf("Context unavailable: %v\n", readErr))
 			} else {
 				fileLines := strings.Split(content, "\n")
-				ranges := mergeSearchContextRanges(matches, contextLines, len(fileLines))
+				ranges := mergeSearchContextRanges(matches, nearbyLines, len(fileLines))
 				sb.WriteString("Context:\n")
 				for _, lineRange := range ranges {
 					if remainingContext == 0 {
@@ -474,7 +459,7 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 					}
 				}
 			}
-		} else if !symbolResult.expanded && contextLines > 0 {
+		} else if !symbolResult.expanded && nearbyLines > 0 {
 			contextTruncated = true
 		}
 		sb.WriteString("\n")
@@ -517,28 +502,6 @@ func mergeSearchContextRanges(matches []codeSearchMatch, contextLines, totalLine
 		merged[len(merged)-1].end = max(merged[len(merged)-1].end, lineRange.end)
 	}
 	return merged
-}
-
-func codeSearchContextLines(value any) (int, error) {
-	if value == nil {
-		return 0, nil
-	}
-	var contextLines int
-	switch number := value.(type) {
-	case int:
-		contextLines = number
-	case float64:
-		if math.Trunc(number) != number {
-			return 0, fmt.Errorf("must be an integer")
-		}
-		contextLines = int(number)
-	default:
-		return 0, fmt.Errorf("must be an integer")
-	}
-	if contextLines < 0 || contextLines > codeSearchMaxContext {
-		return 0, fmt.Errorf("must be between 0 and %d", codeSearchMaxContext)
-	}
-	return contextLines, nil
 }
 
 func (p *CodeSearchProvider) emptySearchResult(

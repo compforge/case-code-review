@@ -363,6 +363,9 @@ func canonicalizeSearchItem(item map[string]any) {
 	}
 	delete(item, "contextAround")
 	delete(item, "outputMode")
+	delete(item, "context_lines")
+	delete(item, "symbol_context")
+	delete(item, "purpose")
 }
 
 func safePatternAlias(pattern string, syntax any) bool {
@@ -371,8 +374,8 @@ func safePatternAlias(pattern string, syntax any) bool {
 }
 
 func searchSharedArguments(args map[string]any) map[string]any {
-	shared := make(map[string]any, 6)
-	for _, key := range []string{"file_patterns", "case_sensitive", "use_perl_regexp", "syntax", "context_lines", "purpose"} {
+	shared := make(map[string]any, 4)
+	for _, key := range []string{"file_patterns", "case_sensitive", "use_perl_regexp", "syntax"} {
 		if value, ok := args[key]; ok {
 			shared[key] = value
 		}

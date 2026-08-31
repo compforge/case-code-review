@@ -271,8 +271,8 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 相邻通常是逐步导航，不能反推前一次调用已经知道后续范围，因此只产生 `adjacent_file_reads` 诊断信号，不参与综合分。
 同一 inference turn 内发出多个 `read_files` 调用才产生 `unbatched_same_turn_reads` warning；较早的
 `search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计；
-有命中的 search request 另作为稳定分母，区分启用和未启用 `context_lines` 后的 follow-up read 比例。
-每个 query 的自由字符串 `purpose` 同时按原值统计覆盖率和分布，用来发现尚未进入既有工具分类的搜索需求。
+有命中的 search request 另作为稳定分母，区分 Provider 实际返回和未返回 source projection 后的
+follow-up read 比例。
 这些模式由 Detector 输出 Finding，并在 Dataset 上聚合 count/rate；Evaluator 只输出可选 verdict
 和/或 score，Model/Tool/Context Measurer 记录可计数、求和的事实。
 重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
@@ -381,12 +381,12 @@ Evaluator 不携带这些成本事实。报告分别展示 Review 1 Unit 与 Rev
 `workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
 工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
 不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。
-`search_code` 的 request purpose 按 Review stage 保留原始自由文本，报告展示 purpose 覆盖率和
-分布，用于观察真实搜索意图以及埋点完整度。`context_lines` 同时记录请求数、实际返回行数、预算截断
-和不可用次数；有命中的 search request 作为分母，分别计算启用和未启用 context 后的 follow-up read
-比例，避免用“所有 read 中有多少来自 search”错误衡量工具优化收益。`symbol_context` 另行记录
-请求数、`expanded / ambiguous / oversized / unsupported / budget_rejected` outcome、实际返回源码行数，
-并分别计算请求及成功展开后的 follow-up read，防止 fallback 与真实 symbol 展开混成同一效果口径。
+`search_code` 按 Review stage 记录 Provider 实际产生的可见源码投影数、返回行数、预算截断和不可用
+次数；有命中的 search request 作为分母，分别计算有无可见 source projection 后的 follow-up read
+比例，避免用“所有 read 中有多少来自 search”错误衡量工具优化收益。自动 symbol projection 另行记录
+尝试数、`expanded / ambiguous / oversized / unsupported / budget_rejected` outcome、实际返回源码行数，
+并分别计算尝试及成功展开后的 follow-up read；成功展开后的读取再区分完全落在已返回 symbol span
+内的重复读取，以及向 span 外扩展的补证读取，防止 fallback、重复消费和合理补证混成同一效果口径。
 Initial FileOutline 可用情况同样按 stage 和 language 展示 admitted、empty、read/analysis error 以及预算/容量淘汰，
 使 gotreesitter 升级或 CCR fallback 的收益能由运行事实验证。
 Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周内承载的 Assessment 数量变化

@@ -56,7 +56,7 @@ type CodeSearchSymbol struct {
 type CodeSearchSymbolSource func(context.Context, []CodeSearchHit) []CodeSearchSymbol
 
 // CodeSearchSymbolContextOutcome is the stable trajectory fact emitted for
-// every requested symbol_context expansion.
+// every automatic symbol projection attempt.
 type CodeSearchSymbolContextOutcome struct {
 	Status         string `json:"status"`
 	Reason         string `json:"reason,omitempty"`

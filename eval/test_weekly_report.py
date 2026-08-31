@@ -210,11 +210,9 @@ class WeeklyReportTest(unittest.TestCase):
                     "code_searches": {
                         "calls": 1,
                         "requests": 2,
-                        "purpose_counts": {"function": 1, "keyword": 1},
-                        "context_requests": 1,
-                        "requested_context_lines": 4,
+                        "context_projections": 1,
                         "returned_context_lines": 5,
-                        "context_truncated_requests": 1,
+                        "context_truncated_results": 1,
                     },
                     "search_then_read": {
                         "hit_search_request_count": 1,
@@ -256,10 +254,6 @@ class WeeklyReportTest(unittest.TestCase):
                     "code_searches": {
                         "calls": 2,
                         "requests": 3,
-                        "purpose_counts": {
-                            "custom-domain-concept": 2,
-                            "(unspecified)": 1,
-                        },
                     },
                     "search_then_read": {
                         "hit_search_request_count": 2,
@@ -332,20 +326,12 @@ class WeeklyReportTest(unittest.TestCase):
             {
                 "calls": 3,
                 "requests": 5,
-                "purpose_counts": {
-                    "custom-domain-concept": 2,
-                    "(unspecified)": 1,
-                    "function": 1,
-                    "keyword": 1,
-                },
-                "purpose_coverage": 0.8,
-                "context_requests": 1,
-                "context_request_rate": 0.2,
-                "requested_context_lines": 4,
+                "context_projections": 1,
+                "context_projection_rate": 0.2,
                 "returned_context_lines": 5,
-                "context_truncated_requests": 1,
-                "context_unavailable_requests": 0,
-                "symbol_context_requests": 0,
+                "context_truncated_results": 1,
+                "context_unavailable_results": 0,
+                "symbol_context_attempts": 0,
                 "symbol_context_outcomes": {},
                 "returned_symbol_context_lines": 0,
             },
@@ -368,6 +354,10 @@ class WeeklyReportTest(unittest.TestCase):
                 "symbol_expanded_hit_search_requests": 0,
                 "symbol_expanded_follow_up_read_requests": 0,
                 "symbol_expanded_follow_up_read_rate": None,
+                "symbol_expanded_within_span_follow_up_read_requests": 0,
+                "symbol_expanded_within_span_follow_up_read_rate": None,
+                "symbol_expanded_extending_follow_up_read_requests": 0,
+                "symbol_expanded_extending_follow_up_read_rate": None,
             },
         )
         self.assertEqual(
@@ -484,15 +474,12 @@ class WeeklyReportTest(unittest.TestCase):
             {
                 "calls": 0,
                 "requests": 0,
-                "purpose_counts": {},
-                "purpose_coverage": None,
-                "context_requests": 0,
-                "context_request_rate": None,
-                "requested_context_lines": 0,
+                "context_projections": 0,
+                "context_projection_rate": None,
                 "returned_context_lines": 0,
-                "context_truncated_requests": 0,
-                "context_unavailable_requests": 0,
-                "symbol_context_requests": 0,
+                "context_truncated_results": 0,
+                "context_unavailable_results": 0,
+                "symbol_context_attempts": 0,
                 "symbol_context_outcomes": {},
                 "returned_symbol_context_lines": 0,
             },
@@ -738,21 +725,21 @@ class WeeklyReportTest(unittest.TestCase):
         current = {
             "review1": {
                 "duration_sec": {"average": 20, "p50": 15, "p95": 40},
-                "code_searches": {"requests": 12, "purpose_coverage": 0.75},
+                "code_searches": {"requests": 12, "context_projection_rate": 0.75},
             },
             "review2": {
                 "duration_sec": {"average": 30, "p50": 25, "p95": 50},
-                "code_searches": {"requests": 4, "purpose_coverage": 1.0},
+                "code_searches": {"requests": 4, "context_projection_rate": 1.0},
             },
         }
         previous = {
             "review1": {
                 "duration_sec": {"average": 10, "p50": 12, "p95": 30},
-                "code_searches": {"requests": 8, "purpose_coverage": 0.5},
+                "code_searches": {"requests": 8, "context_projection_rate": 0.5},
             },
             "review2": {
                 "duration_sec": {"average": 20, "p50": 20, "p95": 45},
-                "code_searches": {"requests": 0, "purpose_coverage": None},
+                "code_searches": {"requests": 0, "context_projection_rate": None},
             },
         }
 
@@ -767,8 +754,8 @@ class WeeklyReportTest(unittest.TestCase):
         self.assertEqual(review1_average["change_pct"], 1.0)
         self.assertEqual(comparison["Review 2 p95 duration (sec)"]["delta"], 5)
         self.assertEqual(comparison["Review 1 search requests"]["delta"], 4)
-        self.assertEqual(comparison["Review 1 search purpose coverage"]["delta"], 0.25)
-        self.assertIsNone(comparison["Review 2 search purpose coverage"]["delta"])
+        self.assertEqual(comparison["Review 1 search context projection"]["delta"], 0.25)
+        self.assertIsNone(comparison["Review 2 search context projection"]["delta"])
 
     def test_writes_week_partition_with_machine_and_human_reports(self) -> None:
         empty = {
@@ -824,8 +811,7 @@ class WeeklyReportTest(unittest.TestCase):
         empty["review1"]["code_searches"] = {
             "calls": 1,
             "requests": 2,
-            "purpose_counts": {"function": 1, "custom-domain-concept": 1},
-            "purpose_coverage": 1.0,
+            "context_projection_rate": 1.0,
         }
         previous = json.loads(json.dumps(empty))
         previous["week"] = "2026-W31"
@@ -861,7 +847,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
             metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["schema_version"], "weekly-report-v9")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v10")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )
@@ -870,11 +856,9 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertIn("Slowest Review 1 units", report)
             self.assertIn("Failures", report)
             self.assertIn("Diagnostic findings", report)
-            self.assertIn("Search purposes", report)
             self.assertIn("Search context effectiveness", report)
             self.assertIn("Initial FileOutline availability", report)
             self.assertIn("Execution cohorts", report)
-            self.assertIn("custom-domain-concept", report)
             self.assertIn("Workflow timeout", report)
             self.assertIn("llm.routing.timeout", report)
             self.assertIn("Total/Assessment", report)

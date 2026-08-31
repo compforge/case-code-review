@@ -150,8 +150,7 @@ func resolveFeatures(cliFeatures []string) (feature.Set, error) {
 // off collapses a multi-model pool to a single deterministic model), and
 // returns the runtime bundle. tpl is mutated in place.
 type llmRuntimeOptions struct {
-	routingEnabled             bool
-	searchSymbolContextEnabled bool
+	routingEnabled bool
 }
 
 func loadLLMRuntime(
@@ -165,9 +164,6 @@ func loadLLMRuntime(
 	}
 	planToolDefs := runner.BuildToolDefs(toolEntries, true)
 	mainToolDefs := runner.BuildToolDefs(toolEntries, false)
-	runner.ConfigureSearchSymbolContext(planToolDefs, options.searchSymbolContextEnabled)
-	runner.ConfigureSearchSymbolContext(mainToolDefs, options.searchSymbolContextEnabled)
-
 	cfgPath, err := defaultConfigPath()
 	if err != nil {
 		return nil, err

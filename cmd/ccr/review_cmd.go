@@ -61,8 +61,7 @@ func runReview(args []string) error {
 	rt, err := loadLLMRuntime(
 		cc.Template, opts.toolConfigPath, opts.model,
 		llmRuntimeOptions{
-			routingEnabled:             features.Enabled(feature.Routing),
-			searchSymbolContextEnabled: features.Enabled(feature.SearchSymbolContext),
+			routingEnabled: features.Enabled(feature.Routing),
 		},
 	)
 	if err != nil {

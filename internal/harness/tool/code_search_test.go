@@ -15,18 +15,11 @@ import (
 func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
 	requests, err := ParseCodeSearchRequests(map[string]any{
 		"searches": []any{map[string]any{
-			"query": "Hello", "context_lines": float64(3), "purpose": "function",
+			"query": "Hello",
 		}},
 	})
-	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral ||
-		requests[0].ContextLines != 3 || requests[0].Purpose != "function" || requests[0].SymbolContext {
+	if err != nil || len(requests) != 1 || requests[0].Syntax != CodeSearchLiteral {
 		t.Fatalf("default syntax = %#v, err=%v", requests, err)
-	}
-	requests, err = ParseCodeSearchRequests(map[string]any{
-		"searches": []any{map[string]any{"query": "Hello", "symbol_context": true}},
-	})
-	if err != nil || !requests[0].SymbolContext {
-		t.Fatalf("symbol context = %#v, err=%v", requests, err)
 	}
 
 	requests, err = ParseCodeSearchRequests(map[string]any{
@@ -45,13 +38,6 @@ func TestParseCodeSearchRequestsDefaultsToLiteral(t *testing.T) {
 		"searches": []any{map[string]any{"query": "Hello", "syntax": "glob"}},
 	}); err == nil || !strings.Contains(err.Error(), "syntax must be literal or regexp") {
 		t.Fatalf("invalid syntax error = %v", err)
-	}
-	for _, value := range []any{-1, 51, 1.5, "3"} {
-		if _, err := ParseCodeSearchRequests(map[string]any{
-			"searches": []any{map[string]any{"query": "Hello", "context_lines": value}},
-		}); err == nil || !strings.Contains(err.Error(), "context_lines") {
-			t.Fatalf("context_lines=%v error = %v", value, err)
-		}
 	}
 }
 
@@ -330,7 +316,7 @@ func TestCodeSearchExecuteAddsMergedContextWindows(t *testing.T) {
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{
-			"query": "needle", "syntax": "literal", "context_lines": 2,
+			"query": "needle", "syntax": "literal",
 		}},
 	})
 	if err != nil {
@@ -341,7 +327,7 @@ func TestCodeSearchExecuteAddsMergedContextWindows(t *testing.T) {
 		t.Fatalf("result = %q", out)
 	}
 	result := results[0]
-	if !strings.Contains(result, "Match lines: 2\n4|needle four\n6|needle six\nContext:\nLINE_RANGE: 2-8") {
+	if !strings.Contains(result, "Match lines: 2\n4|needle four\n6|needle six\nContext:\nLINE_RANGE: 1-9") {
 		t.Fatalf("merged context missing from result:\n%s", result)
 	}
 	if got := strings.Count(result, "LINE_RANGE:"); got != 1 {
@@ -364,7 +350,7 @@ func TestCodeSearchExpandsOneBoundedSymbol(t *testing.T) {
 		})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{
-			"query": "Hello", "purpose": "function", "symbol_context": true, "context_lines": 2,
+			"query": "Hello",
 		}},
 	})
 	if err != nil {
@@ -397,7 +383,7 @@ func TestCodeSearchKeepsAmbiguousSymbolsAsAnchors(t *testing.T) {
 		})
 	out, err := p.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{
-			"query": "func", "purpose": "function", "symbol_context": true, "context_lines": 1,
+			"query": "func",
 		}},
 	})
 	if err != nil {
@@ -426,7 +412,7 @@ func TestCodeSearchRejectsOversizedSymbolBody(t *testing.T) {
 			}}
 		})
 	out, err := p.Execute(context.Background(), map[string]any{
-		"searches": []any{map[string]any{"query": "Hello", "purpose": "function", "symbol_context": true}},
+		"searches": []any{map[string]any{"query": "Hello"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -449,9 +435,7 @@ func TestCodeSearchSymbolContextSharesBatchBudget(t *testing.T) {
 		})
 	searches := make([]any, codeSearchMaxBatch)
 	for i := range searches {
-		searches[i] = map[string]any{
-			"query": "Hello", "purpose": "function", "symbol_context": true,
-		}
+		searches[i] = map[string]any{"query": "Hello"}
 	}
 	out, err := p.Execute(context.Background(), map[string]any{"searches": searches})
 	if err != nil {
@@ -476,27 +460,55 @@ func TestCodeSearchContextUsesBatchBudget(t *testing.T) {
 		lines[i] = "line"
 	}
 	lines[50] = "needle"
-	for i := 0; i < 5; i++ {
+	for i := 0; i < codeSearchNearbyMaxHits; i++ {
 		path := filepath.Join(dir, fmt.Sprintf("context-%d.txt", i))
 		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	searches := make([]any, codeSearchMaxBatch)
+	for i := range searches {
+		searches[i] = map[string]any{"query": "needle"}
+	}
 	out, err := p.Execute(context.Background(), map[string]any{
-		"searches": []any{map[string]any{
-			"query": "needle", "purpose": "keyword", "context_lines": 50,
-		}},
+		"searches": searches,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := regexp.MustCompile(`(?m)^\d+\|`).FindAllString(out, -1)
-	if len(result) != codeSearchContextBudget+5 {
-		t.Fatalf("numbered output lines = %d, want %d context + 5 hits", len(result), codeSearchContextBudget)
+	results, ok := DecodeCodeSearchResults(out)
+	if !ok || len(results) != codeSearchMaxBatch {
+		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
 	}
-	if !strings.Contains(out, "Context truncated") {
-		t.Fatalf("missing context budget note:\n%s", out)
+	for i, result := range results {
+		numbered := regexp.MustCompile(`(?m)^\d+\|`).FindAllString(result, -1)
+		if len(numbered) != codeSearchContextBudget/codeSearchMaxBatch+codeSearchNearbyMaxHits {
+			t.Fatalf("result %d numbered output lines = %d", i, len(numbered))
+		}
+		if !strings.Contains(result, "Context truncated") {
+			t.Fatalf("result %d missing context budget note:\n%s", i, result)
+		}
+	}
+}
+
+func TestCodeSearchOmitsNearbySourceForBroadResults(t *testing.T) {
+	dir := setupTestRepo(t)
+	for i := 0; i <= codeSearchNearbyMaxHits; i++ {
+		path := filepath.Join(dir, fmt.Sprintf("broad-%d.txt", i))
+		if err := os.WriteFile(path, []byte("before\nneedle\nafter\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := NewCodeSearch(&FileReader{RepoDir: dir, Mode: ModeWorkspace})
+	out, err := p.Execute(context.Background(), map[string]any{
+		"searches": []any{map[string]any{"query": "needle"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Context:\n") {
+		t.Fatalf("broad result unexpectedly projected nearby source:\n%s", out)
 	}
 }
 
