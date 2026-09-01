@@ -426,11 +426,27 @@ python3 eval/replay.py eval/data/corpus/<name>.json \
   --repo <repo-path> \
   --arm base \
   --arm candidate:<feature>=on \
+  --model <model> \
+  --concurrency 1 \
+  --runs 3 \
   --out eval/data/runs/<replay-name>
 ```
 
+默认 `--schedule interleaved` 按重复轮次旋转 arm 首位；两臂三次依次执行
+`base0,candidate0 → candidate1,base1 → base2,candidate2`，降低模型服务随时间变化造成的偏差。
+需要复现旧的逐 arm 顺序时显式传 `--schedule arm-major`。每条 `runs.jsonl` 同时记录 schedule、
+model/concurrency override、feature args，以及实际 Session 的 tool version、git head、model、features
+和 params，不能只用命令行意图代替生成事实。执行失败也按 sequence 写入 `runs.jsonl`，避免终端里
+看见失败、聚合数据却把该格静默丢掉。
+
+固定 corpus 的准入应同时满足：merge-parent 范围在目标仓库可解析；dry-run 能形成预期 Unit；健康
+smoke 完整结束；轨迹实际产生本实验所需的行为分母。优化 search 时，应优先选少量单 Unit 且有
+search 命中的样本，避免多 Unit 并发健康问题先于工具差异主导结果。候选与真实运行产物继续放在
+ignored `eval/data/`，不为共享实验命令提交真实源码、finding 或 Session。
+
 同工作负载比较时同时看 finding 质量、token/轮数成本和 incomplete/timeout；不能仅用 finding
-数量判断优劣。
+数量或随 search volume 一起变化的比例判断优劣。search 投影实验以每个完成 Unit 的实际
+`read_files` range 数为主指标，并把完整落在 expanded span 内的重复读与向 span 外补证分开报告。
 
 ## 给协作者 AI 的执行约定
 

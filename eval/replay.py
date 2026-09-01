@@ -12,6 +12,8 @@ arm 是一组 feature gate 配置。趋势对比只能在固定 corpus 上做（
 每个 run 打唯一 CCR_EVAL_TAG，事后从 session 目录按 tag 捞回 transcript，
 聚合 finding（指纹精确匹配 + path/symbol 宽松匹配两档——模型措辞会漂，
 指纹 undercount，宽松档 overcount，真值在两者之间）与 debrief 成本。
+默认按 run 轮换 arm 首位，避免先跑完一个 arm 再跑另一个造成时间漂移；
+模型与并发度可显式固定，并与 Session generation provenance 一起落盘。
 产物写 --out（默认 ~/.casecodereview/replay/<ts>/），不入库。
 
 stdlib only — no pip installs.
@@ -49,8 +51,43 @@ def parse_arm(spec: str) -> tuple[str, list[str]]:
     return name, args
 
 
-def run_ccr(ccr: str, repo: str, entry: dict, feat_args: list[str], tag: str) -> tuple[bool, str]:
+def build_schedule(
+    entries: list[dict],
+    arms: list[tuple[str, list[str]]],
+    runs: int,
+    schedule: str,
+) -> list[tuple[dict, str, list[str], int]]:
+    """Build a deterministic execution order for the corpus × arms × runs matrix."""
+
+    ordered: list[tuple[dict, str, list[str], int]] = []
+    for entry in entries:
+        if schedule == "arm-major":
+            for arm_name, feat_args in arms:
+                for run_index in range(runs):
+                    ordered.append((entry, arm_name, feat_args, run_index))
+            continue
+        for run_index in range(runs):
+            offset = run_index % len(arms)
+            rotated = arms[offset:] + arms[:offset]
+            for arm_name, feat_args in rotated:
+                ordered.append((entry, arm_name, feat_args, run_index))
+    return ordered
+
+
+def run_ccr(
+    ccr: str,
+    repo: str,
+    entry: dict,
+    feat_args: list[str],
+    tag: str,
+    model: str | None = None,
+    concurrency: int | None = None,
+) -> tuple[bool, str]:
     cmd = [ccr, "review", "--from", entry["from"], "--to", entry["to"], *feat_args]
+    if model:
+        cmd += ["--model", model]
+    if concurrency:
+        cmd += ["--concurrency", str(concurrency)]
     env = dict(os.environ, CCR_EVAL_TAG=tag)
     try:
         r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, timeout=RUN_TIMEOUT)
@@ -79,14 +116,21 @@ def find_session(repo: str, tag: str) -> Path | None:
 def collect(path: Path) -> dict:
     """Aggregate one transcript: findings + debrief cost + outcomes."""
     out = {"findings": [], "outcomes": Counter(), "prompt_tokens": 0, "completion_tokens": 0,
-           "cache_read": 0, "rounds": 0, "duration_s": 0.0, "llm_failures": 0, "units": 0}
+           "cache_read": 0, "rounds": 0, "duration_s": 0.0, "llm_failures": 0, "units": 0,
+           "generation": {}}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             o = json.loads(line)
         except json.JSONDecodeError:
             continue
         t = o.get("type")
-        if t == "finding":
+        if t == "session_start":
+            out["generation"] = {
+                key: o.get(key)
+                for key in ("tool_version", "git_head", "model", "features", "params")
+                if o.get(key) is not None
+            }
+        elif t == "finding":
             out["findings"].append({
                 "fingerprint": o.get("fingerprint"),
                 "symbol_id": o.get("symbol_id") or "",
@@ -130,10 +174,21 @@ def main() -> int:
                     help='arm 配置 "name[:feat=v,feat=v]"，可重复；第一个 arm 是对比基线')
     ap.add_argument("--repo", default=".", help="被重放的仓库（默认 cwd）")
     ap.add_argument("--ccr", default="ccr", help="ccr 可执行文件（默认 PATH 里的 ccr）")
+    ap.add_argument("--model", help="固定 review 模型；省略时使用 CCR 配置")
+    ap.add_argument("--concurrency", type=int,
+                    help="固定 CCR Unit 并发度；省略时使用 CCR 默认值")
     ap.add_argument("--only", help="只跑名字含此子串的 corpus 条目")
     ap.add_argument("--runs", type=int, default=1, help="每格重复次数（观测方差）")
+    ap.add_argument("--schedule", choices=("interleaved", "arm-major"),
+                    default="interleaved",
+                    help="执行顺序；interleaved 按 run 轮换 arm 首位（默认）")
     ap.add_argument("--out", help="产物目录（默认 ~/.casecodereview/replay/<ts>）")
     args = ap.parse_args()
+
+    if args.runs < 1:
+        ap.error("--runs must be at least 1")
+    if args.concurrency is not None and args.concurrency < 1:
+        ap.error("--concurrency must be at least 1")
 
     corpus = json.loads(Path(args.corpus).read_text(encoding="utf-8"))
     entries = [e for e in corpus["entries"] if not args.only or args.only in e["name"]]
@@ -143,30 +198,64 @@ def main() -> int:
 
     results: dict[tuple[str, str, int], dict] = {}
     with (out_dir / "runs.jsonl").open("w", encoding="utf-8") as runlog:
-        for e in entries:
-            for arm_name, feat_args in arms:
-                for i in range(args.runs):
-                    tag = f"replay:{e['name']}:{arm_name}:{i}:{int(time.time())}"
-                    print(f"▶ {e['name']} × {arm_name} (run {i})", flush=True)
-                    ok, err = run_ccr(args.ccr, args.repo, e, feat_args, tag)
-                    sess = find_session(args.repo, tag) if ok else None
-                    if not ok or sess is None:
-                        print(f"  ✗ {err or 'session not found'}", flush=True)
-                        results[(e["name"], arm_name, i)] = {"error": err or "session not found"}
-                        continue
-                    r = collect(sess)
-                    r["session"] = str(sess)
-                    results[(e["name"], arm_name, i)] = r
-                    runlog.write(json.dumps({"entry": e["name"], "arm": arm_name, "run": i,
-                                             **{k: (dict(v) if isinstance(v, Counter) else v) for k, v in r.items()}},
-                                            ensure_ascii=False) + "\n")
-                    runlog.flush()
-                    print(f"  ✓ units={r['units']} findings={len(r['findings'])} "
-                          f"prompt_tok={r['prompt_tokens']} dur={r['duration_s']:.0f}s", flush=True)
+        schedule = build_schedule(entries, arms, args.runs, args.schedule)
+        for sequence, (e, arm_name, feat_args, i) in enumerate(schedule):
+            tag = f"replay:{e['name']}:{arm_name}:{i}:{int(time.time())}"
+            print(f"▶ {e['name']} × {arm_name} (run {i})", flush=True)
+            ok, err = run_ccr(
+                args.ccr,
+                args.repo,
+                e,
+                feat_args,
+                tag,
+                model=args.model,
+                concurrency=args.concurrency,
+            )
+            sess = find_session(args.repo, tag) if ok else None
+            if not ok or sess is None:
+                error = err or "session not found"
+                print(f"  ✗ {error}", flush=True)
+                results[(e["name"], arm_name, i)] = {"error": error}
+                runlog.write(json.dumps({
+                    "entry": e["name"],
+                    "arm": arm_name,
+                    "run": i,
+                    "sequence": sequence,
+                    "schedule": args.schedule,
+                    "model_override": args.model,
+                    "concurrency": args.concurrency,
+                    "feature_args": feat_args,
+                    "error": error,
+                }, ensure_ascii=False) + "\n")
+                runlog.flush()
+                continue
+            r = collect(sess)
+            r["session"] = str(sess)
+            results[(e["name"], arm_name, i)] = r
+            runlog.write(json.dumps({
+                "entry": e["name"],
+                "arm": arm_name,
+                "run": i,
+                "sequence": sequence,
+                "schedule": args.schedule,
+                "model_override": args.model,
+                "concurrency": args.concurrency,
+                "feature_args": feat_args,
+                **{k: (dict(v) if isinstance(v, Counter) else v) for k, v in r.items()},
+            }, ensure_ascii=False) + "\n")
+            runlog.flush()
+            print(f"  ✓ units={r['units']} findings={len(r['findings'])} "
+                  f"prompt_tok={r['prompt_tokens']} dur={r['duration_s']:.0f}s", flush=True)
 
     # ── report ──
     base_arm = arms[0][0]
-    lines = [f"# replay report — corpus={args.corpus} arms={[a for a, _ in arms]} runs={args.runs}\n"]
+    lines = [
+        f"# replay report — corpus={args.corpus} arms={[a for a, _ in arms]} runs={args.runs}\n",
+        f"- schedule: {args.schedule}",
+        f"- model override: {args.model or '(configured default)'}",
+        f"- concurrency: {args.concurrency or '(engine default)'}",
+        f"- engine: {args.ccr}",
+    ]
     for e in entries:
         lines.append(f"\n## {e['name']}\n")
         lines.append("| arm | run | units | outcomes | findings | prompt tok | rounds | dur(s) |")
