@@ -229,7 +229,7 @@ class WeeklyReportTest(unittest.TestCase):
                             "admitted_bytes": 80,
                         }
                     },
-                    "evaluations": [
+                    "detections": [
                         {
                             "findings": [
                                 {
@@ -261,7 +261,7 @@ class WeeklyReportTest(unittest.TestCase):
                         "plain_hit_search_request_count": 2,
                         "plain_follow_up_read_request_count": 1,
                     },
-                    "evaluations": [
+                    "detections": [
                         {
                             "findings": [
                                 {
