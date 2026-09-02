@@ -4,11 +4,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from ccr_source import CCRSessionSource
 from ccr_trajectory_report import run_weekly_report
-from weekly_report import WeekWindow
+from weekly_report import SessionRecord, load_trajectory_rows
+from weekly_window import WeekWindow
 
 
 class CCRTrajectoryReportTest(unittest.TestCase):
@@ -91,9 +93,10 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 }
             )
             source = CCRSessionSource(root / "sessions", exporter=lambda _: atif)
+            window = WeekWindow.from_key("2026-W34", ZoneInfo("UTC"))
 
             result = run_weekly_report(
-                window=WeekWindow.from_key("2026-W34", ZoneInfo("UTC")),
+                window=window,
                 label_paths=[labels],
                 source=source,
                 runs_dir=root / "runs",
@@ -153,6 +156,48 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             self.assertIn("Data health", html)
             self.assertNotIn("Evaluation evidence", html)
             self.assertIn("wrong", html)
+
+            session = SessionRecord(
+                path=session_path,
+                session_id="session-1",
+                started_at=window.start,
+                cwd=str(root / "repo"),
+                model="model-from-session",
+                tool_version="version-from-session",
+                closed=True,
+                finding_count=0,
+            )
+            with (
+                patch(
+                    "trajectory_judge.detect",
+                    side_effect=AssertionError("detectors must not run again"),
+                ),
+                patch(
+                    "trajectory_judge.evaluate",
+                    side_effect=AssertionError("evaluators must not run again"),
+                ),
+                patch(
+                    "trajectory_judge.measure",
+                    side_effect=AssertionError("measurers must not run again"),
+                ),
+            ):
+                rows, failures = load_trajectory_rows(
+                    (result.artifact,),
+                    (session,),
+                )
+
+            self.assertEqual(failures, set())
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["session_id"], "session-1")
+            self.assertEqual(rows[0]["stage"], "review1")
+            self.assertEqual(rows[0]["model"], "model-from-session")
+            self.assertEqual(
+                rows[0]["analysis"]["detections"],
+                [
+                    item.to_dict()
+                    for item in result.artifact.run.detections[0].results
+                ],
+            )
 
 
 if __name__ == "__main__":

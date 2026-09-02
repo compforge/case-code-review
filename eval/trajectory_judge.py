@@ -63,8 +63,12 @@ from ccr_trajectory import (
 )
 from trajectory_harness import (
     ContextUsageMeasurer,
+    DetectionResult,
+    EvaluationResult,
+    MeasurementResult,
     ModelUsageMeasurer,
     Trajectory,
+    TrajectoryEvaluationRun,
     detect,
     evaluate,
     measure,
@@ -121,9 +125,59 @@ def objective_analysis(trajectory: Trajectory) -> dict:
     stage = review_stage(trajectory)
     detection = detect(trajectory, _STAGE_DETECTORS[stage])
     evaluation = evaluate(trajectory, _STAGE_EVALUATORS[stage])
-    measurements = measure(trajectory, _MEASURERS).results
+    measurement = measure(trajectory, _MEASURERS)
+    return _build_objective_analysis(
+        trajectory,
+        detection_results=detection.results,
+        evaluation_results=evaluation.results,
+        measurement_results=measurement.results,
+    )
+
+
+def objective_analysis_from_run(
+    trajectory: Trajectory, run: TrajectoryEvaluationRun
+) -> dict:
+    """Project persisted Runner results without executing evaluation components again."""
+
+    trajectory_id = trajectory.trajectory_id
+    detection_results = tuple(
+        result
+        for envelope in run.detections
+        if envelope.trajectory.trajectory_id == trajectory_id
+        for result in envelope.results
+    )
+    evaluation_results = tuple(
+        result
+        for envelope in run.evaluations
+        if envelope.trajectory.trajectory_id == trajectory_id
+        for result in envelope.results
+    )
+    measurement_results = tuple(
+        result
+        for envelope in run.measurements
+        if envelope.trajectory.trajectory_id == trajectory_id
+        for result in envelope.results
+    )
+    return _build_objective_analysis(
+        trajectory,
+        detection_results=detection_results,
+        evaluation_results=evaluation_results,
+        measurement_results=measurement_results,
+    )
+
+
+def _build_objective_analysis(
+    trajectory: Trajectory,
+    *,
+    detection_results: tuple[DetectionResult, ...],
+    evaluation_results: tuple[EvaluationResult, ...],
+    measurement_results: tuple[MeasurementResult, ...],
+) -> dict:
+    stage = review_stage(trajectory)
     model_usage = next(
-        result for result in measurements if result.measurer_id == "model_usage"
+        result
+        for result in measurement_results
+        if result.measurer_id == "model_usage"
     )
     tool_fails = [
         {"tool": step.name, "error": _tool_result(step)[:120]}
@@ -160,10 +214,10 @@ def objective_analysis(trajectory: Trajectory) -> dict:
         "stage": stage,
         # trajectory_harness intentionally does not invent a cross-Evaluator score;
         # this unweighted mean is CCR's explicit summary policy.
-        "score": _mean_score(evaluation.results),
-        "detections": [result.to_dict() for result in detection.results],
-        "evaluations": [result.to_dict() for result in evaluation.results],
-        "measurements": [result.to_dict() for result in measurements],
+        "score": _mean_score(evaluation_results),
+        "detections": [result.to_dict() for result in detection_results],
+        "evaluations": [result.to_dict() for result in evaluation_results],
+        "measurements": [result.to_dict() for result in measurement_results],
         "model_usage": model_usage.to_dict(),
         "rounds": sum(step.operation == "inference" for step in trajectory.steps),
         "duration_sec": round(

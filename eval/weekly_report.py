@@ -11,68 +11,27 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import subprocess
-import sys
 from collections import Counter
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ccr_trajectory import ATIFTrajectoryLoader, REVIEW1, REVIEW2, UNKNOWN_STAGE
+from ccr_source import CCRSessionSource
+from ccr_trajectory import REVIEW1, REVIEW2, UNKNOWN_STAGE
+from ccr_trajectory_report import run_weekly_report as run_trajectory_report
 from eval_snapshot import artifacts_match
-from trajectory_judge import objective_analysis
+from trajectory_harness import TrajectoryRunArtifact
+from trajectory_judge import objective_analysis_from_run
 from weekly_report_metrics import aggregate_cohorts, aggregate_stage
 from weekly_report_render import render_markdown
+from weekly_window import WeekWindow, default_dataset_paths
 
-DEFAULT_DATASET_PATHS = (
-    Path("eval/data/datasets/review-comments-public.jsonl"),
-    Path("eval/data/datasets/review-comments-private.jsonl"),
-)
 DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
 DEFAULT_LABEL_DATASET_MANIFEST = Path("eval/data/datasets/label-dataset.json")
-WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
-REPORT_SCHEMA_VERSION = "weekly-report-v10"
-
-
-@dataclass(frozen=True, slots=True)
-class WeekWindow:
-    key: str
-    start: datetime
-    end: datetime
-
-    @classmethod
-    def from_key(cls, key: str, zone: ZoneInfo) -> "WeekWindow":
-        match = WEEK_RE.fullmatch(key)
-        if not match:
-            raise ValueError(f"invalid ISO week {key!r}; expected YYYY-Www")
-        year, week = (int(value) for value in match.groups())
-        start_date = date.fromisocalendar(year, week, 1)
-        start = datetime.combine(start_date, time.min, tzinfo=zone)
-        return cls(key=key, start=start, end=start + timedelta(days=7))
-
-    @classmethod
-    def previous_complete(
-        cls, zone: ZoneInfo, now: datetime | None = None
-    ) -> "WeekWindow":
-        local_now = (now or datetime.now(timezone.utc)).astimezone(zone)
-        current_monday = local_now.date() - timedelta(days=local_now.weekday())
-        previous_monday = current_monday - timedelta(days=7)
-        iso_year, iso_week, _ = previous_monday.isocalendar()
-        return cls.from_key(f"{iso_year}-W{iso_week:02d}", zone)
-
-    def previous(self) -> "WeekWindow":
-        previous_date = self.start.date() - timedelta(days=7)
-        iso_year, iso_week, _ = previous_date.isocalendar()
-        return WeekWindow.from_key(
-            f"{iso_year}-W{iso_week:02d}", cast(ZoneInfo, self.start.tzinfo)
-        )
-
-    def contains(self, value: datetime) -> bool:
-        local = value.astimezone(self.start.tzinfo)
-        return self.start <= local < self.end
+REPORT_SCHEMA_VERSION = "weekly-report-v11"
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,29 +100,6 @@ def read_session(path: Path, zone: ZoneInfo) -> SessionRecord | None:
 
 def _resolved(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
-
-
-def default_dataset_paths(repo_root: Path | None = None) -> list[Path]:
-    """Resolve ignored eval data from the main worktree when run in a worktree."""
-
-    root = (repo_root or Path.cwd()).resolve()
-    local = [root / path for path in DEFAULT_DATASET_PATHS]
-    if any(path.is_file() for path in local):
-        return local
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return local
-    common_root = Path(result.stdout.strip()).resolve().parent
-    shared = [common_root / path for path in DEFAULT_DATASET_PATHS]
-    return shared if any(path.is_file() for path in shared) else local
 
 
 def default_github_label_manifest(repo_root: Path | None = None) -> Path:
@@ -285,73 +221,79 @@ def discover_sessions(
 
 
 def load_trajectory_rows(
-    sessions: Iterable[SessionRecord], ccr: str
+    artifacts: Iterable[TrajectoryRunArtifact],
+    sessions: Iterable[SessionRecord],
 ) -> tuple[list[dict[str, Any]], set[str]]:
+    """Project persisted trajectory runs into the detailed weekly read model."""
+
     rows: list[dict[str, Any]] = []
     failures: set[str] = set()
-    loader = ATIFTrajectoryLoader()
-    for session in sessions:
-        if not session.closed:
-            continue
-        try:
-            result = subprocess.run(
-                [ccr, "export", "--format", "atif", str(session.path)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=True,
+    sessions_by_id = {session.session_id: session for session in sessions}
+    for artifact in artifacts:
+        failures.update(issue.recording_id for issue in artifact.build.summary.issues)
+        for trajectory in artifact.dataset.trajectories:
+            analysis = objective_analysis_from_run(trajectory, artifact.run)
+            usage_result = analysis["model_usage"]
+            usage = usage_result.get("measurements") or {}
+            metadata = trajectory.metadata or {}
+            agent = metadata.get("agent") or {}
+            session_id = str(
+                trajectory.recording_id or metadata.get("session_id") or ""
             )
-            trajectories = loader.loads(result.stdout, source=str(session.path))
-            for trajectory in trajectories:
-                analysis = objective_analysis(trajectory)
-                usage_result = analysis["model_usage"]
-                usage = usage_result.get("measurements") or {}
-                metadata = trajectory.metadata or {}
-                agent = metadata.get("agent") or {}
-                rows.append(
-                    {
-                        "session_id": session.session_id,
-                        "trajectory_id": trajectory.trajectory_id,
-                        "execution_id": str(metadata.get("execution_id") or ""),
-                        "unit": str(
-                            metadata.get("file_path") or trajectory.trajectory_id
-                        ),
-                        "stage": analysis["stage"],
-                        "outcome": str(metadata.get("execution_outcome") or "unknown"),
-                        "reason": str(metadata.get("execution_reason") or ""),
-                        "score": analysis["score"],
-                        "rounds": analysis["rounds"],
-                        "duration_sec": analysis["duration_sec"],
-                        "prompt_tokens": int(usage.get("input_tokens") or 0),
-                        "completion_tokens": int(usage.get("output_tokens") or 0),
-                        "cached_tokens": int(usage.get("cached_input_tokens") or 0),
-                        "uncached_tokens": int(usage.get("uncached_input_tokens") or 0),
-                        "total_tokens": int(usage.get("total_tokens") or 0),
-                        "model_calls": int(usage.get("model_call_count") or 0),
-                        "usage_reported_calls": int(
-                            usage.get("usage_reported_call_count") or 0
-                        ),
-                        "usage_coverage": usage.get("usage_coverage_ratio"),
-                        "usage_status": usage_result.get("status"),
-                        "tool_freq": analysis["tool_freq"],
-                        "model": str(agent.get("model_name") or session.model),
-                        "tool_version": str(
-                            metadata.get("tool_version") or session.tool_version
-                        ),
-                        "repository": repository_identity(session.cwd),
-                        "analysis": analysis,
-                    }
-                )
-        except (
-            OSError,
-            subprocess.SubprocessError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as error:
-            failures.add(session.session_id)
-            print(
-                f"weekly_report: failed to evaluate session {session.session_id}: {error}",
-                file=sys.stderr,
+            session = sessions_by_id.get(session_id)
+            repository = (
+                repository_identity(session.cwd)
+                if session is not None
+                else repository_identity(str(metadata.get("repo") or ""))
+            )
+            outcome = (
+                trajectory.execution.outcome
+                if trajectory.execution is not None
+                else str(metadata.get("execution_outcome") or "unknown")
+            )
+            rows.append(
+                {
+                    "session_id": session_id,
+                    "trajectory_id": trajectory.trajectory_id,
+                    "execution_id": str(metadata.get("execution_id") or ""),
+                    "unit": str(
+                        metadata.get("file_path")
+                        or metadata.get("ccr_scope_id")
+                        or trajectory.trajectory_id
+                    ),
+                    "stage": analysis["stage"],
+                    "outcome": outcome,
+                    "reason": str(metadata.get("execution_reason") or ""),
+                    "score": analysis["score"],
+                    "rounds": analysis["rounds"],
+                    "duration_sec": analysis["duration_sec"],
+                    "prompt_tokens": int(usage.get("input_tokens") or 0),
+                    "completion_tokens": int(usage.get("output_tokens") or 0),
+                    "cached_tokens": int(usage.get("cached_input_tokens") or 0),
+                    "uncached_tokens": int(usage.get("uncached_input_tokens") or 0),
+                    "total_tokens": int(usage.get("total_tokens") or 0),
+                    "model_calls": int(usage.get("model_call_count") or 0),
+                    "usage_reported_calls": int(
+                        usage.get("usage_reported_call_count") or 0
+                    ),
+                    "usage_coverage": usage.get("usage_coverage_ratio"),
+                    "usage_status": usage_result.get("status"),
+                    "tool_freq": analysis["tool_freq"],
+                    "model": str(
+                        agent.get("model_name")
+                        or (session.model if session is not None else "unknown")
+                    ),
+                    "tool_version": str(
+                        metadata.get("tool_version")
+                        or (
+                            session.tool_version
+                            if session is not None
+                            else "unknown"
+                        )
+                    ),
+                    "repository": repository,
+                    "analysis": analysis,
+                }
             )
     return rows, failures
 
@@ -1003,6 +945,12 @@ def main() -> int:
         type=Path,
         default=Path("eval/data/reports/weekly"),
     )
+    parser.add_argument(
+        "--trajectory-runs-root",
+        type=Path,
+        default=Path("eval/data/reports/trajectory"),
+        help="canonical trajectory-harness run root",
+    )
     parser.add_argument("--ccr", default="ccr", help="ccr executable")
     args = parser.parse_args()
 
@@ -1024,8 +972,30 @@ def main() -> int:
         if current_window.contains(session.started_at)
         or previous_window.contains(session.started_at)
     ]
-    rows, failed_sessions = load_trajectory_rows(selected_sessions, args.ccr)
     dataset_paths = args.dataset or default_dataset_paths()
+    source = CCRSessionSource(
+        args.sessions_dir,
+        repositories=args.repo,
+        ccr_command=args.ccr,
+    )
+    previous_trajectory = run_trajectory_report(
+        window=previous_window,
+        label_paths=dataset_paths,
+        source=source,
+        runs_dir=args.trajectory_runs_root,
+        include_previous=False,
+    )
+    current_trajectory = run_trajectory_report(
+        window=current_window,
+        label_paths=dataset_paths,
+        source=source,
+        runs_dir=args.trajectory_runs_root,
+        include_previous=True,
+    )
+    rows, failed_sessions = load_trajectory_rows(
+        (previous_trajectory.artifact, current_trajectory.artifact),
+        selected_sessions,
+    )
     datasets, missing_datasets, invalid_dataset_lines = load_datasets(dataset_paths)
     github_label_manifest_path = (
         args.github_label_manifest or default_github_label_manifest()
@@ -1078,6 +1048,10 @@ def main() -> int:
         "github_label_manifest": str(github_label_manifest_path),
         "label_dataset_manifest": str(label_dataset_manifest_path),
         "ccr": args.ccr,
+        "trajectory_runs": {
+            current_window.key: str(current_trajectory.run_dir),
+            previous_window.key: str(previous_trajectory.run_dir),
+        },
         "session_files_scanned": len(sessions) + invalid_sessions,
         "session_files_valid": len(sessions),
         "session_files_invalid": invalid_sessions,

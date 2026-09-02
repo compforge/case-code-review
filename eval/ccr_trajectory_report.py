@@ -31,7 +31,7 @@ from trajectory_harness import (
     TrajectoryRunArtifact,
     ToolUsageMeasurer,
 )
-from weekly_report import WeekWindow, default_dataset_paths
+from weekly_window import WeekWindow, default_dataset_paths
 
 
 class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):

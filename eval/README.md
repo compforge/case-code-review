@@ -240,6 +240,8 @@ join、作为评估 target 的 Review 1/2、领域 Detector/Evaluator 套件，�
 HTML 展示人工 label 占比、Detector Finding、token、工具调用、耗时、周环比和数据健康；逐轨迹
 Detection、Evaluation 与 Measurement 明细保留在 Dataset / Run JSON 中。产物统一落在
 `eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/`，上周产物存在时自动加入趋势对比。
+日常生成完整周报时直接使用下文的 `weekly_report.py`：它会先生成本周和上周的这些 canonical
+Trajectory Run，再从同一持久化结果投影 Markdown，不会另行执行一套 Detector/Evaluator/Measurer。
 
 ## 可选：采集本地 review trajectory
 
@@ -334,8 +336,10 @@ python3 eval/posterior.py <session.jsonl-or-dir> \
 
 ## 可选：生成每周对比报告
 
-周报是 Session 与规范化标签数据集上的可再生成读模型；原始 session、labels、datasets 和 runs
-继续累积存储，不按周搬动。默认生成上一个完整 ISO week，并按 `Asia/Shanghai` 的周一零点切分：
+周报是 canonical Trajectory Run 与规范化标签数据集上的可再生成读模型；原始 session、labels、
+datasets 和 runs 继续累积存储，不按周搬动。命令先通过 `trajectory_harness` 为本周和上周生成
+Dataset/Run/HTML/Verdict，再从这两份持久化 artifact 投影 Markdown。默认生成上一个完整 ISO week，
+并按 `Asia/Shanghai` 的周一零点切分：
 
 ```bash
 uv run --project eval/reviewbench python eval/weekly_report.py
@@ -368,6 +372,12 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 默认输出：
 
 ```text
+eval/data/reports/trajectory/ccr-weekly/2026-W32/
+├── dataset.json          固定 Trajectory Dataset 与构建健康
+├── run.json              Detector/Evaluator/Measurer 的唯一运行结果
+├── report.html           trajectory_harness HTML 视图
+└── verdict.json          trajectory_harness 统一出口
+
 eval/data/reports/weekly/2026-W32/
 ├── REPORT.md             人读的本周数据与上周对比，以及最慢 Unit
 ├── metrics.json          可供后续周报继续比较的机器指标
