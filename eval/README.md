@@ -287,6 +287,36 @@ average/max batch；零命中按 query 区分有效 scope、空 scope、scope �
 CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
 judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
 
+对已经持久化的 canonical Run 做批量 LLM 诊断时，先查看确定性候选计划和缓存覆盖：
+
+```bash
+uv run --project eval/reviewbench python eval/trajectory_diagnostics.py \
+  eval/data/reports/trajectory/ccr-weekly/<YYYY-Www> \
+  --plan-only
+```
+
+确认候选数量后，再给本次运行设置新诊断预算；有效缓存命中不占该预算：
+
+```bash
+uv run --project eval/reviewbench python eval/trajectory_diagnostics.py \
+  eval/data/reports/trajectory/ccr-weekly/<YYYY-Www> \
+  --uncached-limit 20
+```
+
+规划器只读取 Run 中已有的 Failure、Detection、Evaluation 和 Measurement，优先选择执行失败、
+工具失败、契约失败、Detector finding 和 p95 成本异常，不会重新执行 Detector/Evaluator/Measurer。
+每条诊断成功后立即写入版本化缓存；key 绑定 trajectory、对应 Run 投影、taxonomy/prompt schema
+和 judge model，因此中断后可继续，也不会把旧 prompt 或其它模型的结果误当命中。运行目录额外生成：
+
+```text
+diagnostic-facets.jsonl   每条候选的诊断类别、证据、建议与缓存状态
+diagnostic-manifest.json  候选、命中、新调用、错误、预算跳过和实际覆盖率
+```
+
+这些结果是辅助定位原因的 `DiagnosticFacet`，不是 trajectory_harness 的 Finding、Evaluation 或
+Verdict；是否修改工具、prompt 或上下文，仍需回到固定 corpus 的 replay/A/B 求证。缓存默认位于
+`~/.casecodereview/eval-cache/trajectory-diagnostics/`，诊断产物位于 ignored `eval/data/`。
+
 [HTML 报告示例](examples/trajectory-evaluation-report.html)展示了 Trajectory facts、Failure、
 DetectionResult/Finding、EvaluationResult、Measurement 与聚合 Metric 在同一读模型中的分层关系。
 
@@ -496,6 +526,7 @@ python3 -m py_compile \
   eval/posterior.py \
   eval/replay.py \
   eval/trajectory_judge.py \
+  eval/trajectory_diagnostics.py \
   eval/weekly_report.py \
   eval/weekly_report_render.py
 
