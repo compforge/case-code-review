@@ -38,7 +38,9 @@ import subprocess
 import sys
 import urllib.request
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from ccr_trajectory import (
     ATIFTrajectoryLoader,
@@ -83,6 +85,13 @@ TAXONOMY = [
     "model_limitation",
     "ok",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeResult:
+    diagnostic: dict[str, Any]
+    usage: dict[str, int]
+
 
 # ── input ────────────────────────────────────────────────────────────────────
 
@@ -373,6 +382,12 @@ def load_llm(model_override: str | None):
 
 
 def judge_chain(url: str, key: str, model: str, digest: str) -> dict:
+    return judge_chain_with_usage(url, key, model, digest).diagnostic
+
+
+def judge_chain_with_usage(
+    url: str, key: str, model: str, digest: str
+) -> JudgeResult:
     body = {
         "model": model,
         "messages": [
@@ -397,7 +412,30 @@ def judge_chain(url: str, key: str, model: str, digest: str) -> dict:
     verdict["categories"] = [
         c for c in verdict.get("categories") or [] if c.get("type") in TAXONOMY
     ]
-    return verdict
+    raw_usage = out.get("usage") or {}
+    prompt_details = raw_usage.get("prompt_tokens_details") or {}
+    input_tokens = int(
+        raw_usage.get("prompt_tokens") or raw_usage.get("input_tokens") or 0
+    )
+    output_tokens = int(
+        raw_usage.get("completion_tokens") or raw_usage.get("output_tokens") or 0
+    )
+    usage = (
+        {
+            "input_tokens": input_tokens,
+            "cached_input_tokens": int(prompt_details.get("cached_tokens") or 0),
+            "output_tokens": output_tokens,
+            "total_tokens": int(
+                raw_usage.get("total_tokens") or input_tokens + output_tokens
+            ),
+        }
+        if raw_usage
+        else {}
+    )
+    return JudgeResult(
+        diagnostic=verdict,
+        usage=usage,
+    )
 
 
 # ── report ───────────────────────────────────────────────────────────────────
