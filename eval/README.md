@@ -305,12 +305,16 @@ uv run --project eval/reviewbench python eval/trajectory_diagnostics.py \
 
 规划器只读取 Run 中已有的 Failure、Detection、Evaluation 和 Measurement，优先选择执行失败、
 工具失败、契约失败、Detector finding 和 p95 成本异常，不会重新执行 Detector/Evaluator/Measurer。
+每条候选保留完整 step outline，但只展开 Evaluation/Finding `step_ids` 指向的步骤、错误步骤、初始
+context 和终态附近步骤；digest 自动限制在 24KB，不要求调用方或模型猜测上下文范围。
+`--plan-only` 同时展示新调用的启发式 input token 估算、证据步骤数和裁剪量，执行后 manifest 再记录
+provider 实际返回的 input/output/cache token 及 usage coverage，使调用数和 token 成本都可复查。
 每条诊断成功后立即写入版本化缓存；key 绑定 trajectory、对应 Run 投影、taxonomy/prompt schema
 和 judge model，因此中断后可继续，也不会把旧 prompt 或其它模型的结果误当命中。运行目录额外生成：
 
 ```text
 diagnostic-facets.jsonl   每条候选的诊断类别、证据、建议与缓存状态
-diagnostic-manifest.json  候选、命中、新调用、错误、预算跳过和实际覆盖率
+diagnostic-manifest.json  候选、命中、新调用、错误、预算跳过、成本和实际覆盖率
 ```
 
 这些结果是辅助定位原因的 `DiagnosticFacet`，不是 trajectory_harness 的 Finding、Evaluation 或
