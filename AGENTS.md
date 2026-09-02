@@ -70,6 +70,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
 5. **事实源不重复**：源码事实现场解析，contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
+   只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
    Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。
 
 ## References
