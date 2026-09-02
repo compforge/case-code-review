@@ -229,7 +229,7 @@ class WeeklyReportTest(unittest.TestCase):
                             "admitted_bytes": 80,
                         }
                     },
-                    "evaluations": [
+                    "detections": [
                         {
                             "findings": [
                                 {
@@ -239,6 +239,7 @@ class WeeklyReportTest(unittest.TestCase):
                             ]
                         }
                     ],
+                    "evaluations": [],
                 },
             },
             {
@@ -261,7 +262,7 @@ class WeeklyReportTest(unittest.TestCase):
                         "plain_hit_search_request_count": 2,
                         "plain_follow_up_read_request_count": 1,
                     },
-                    "evaluations": [
+                    "detections": [
                         {
                             "findings": [
                                 {
@@ -271,6 +272,7 @@ class WeeklyReportTest(unittest.TestCase):
                             ]
                         }
                     ],
+                    "evaluations": [],
                     "failures": [
                         {
                             "impact": "execution",
@@ -847,7 +849,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
             metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["schema_version"], "weekly-report-v10")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v11")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )

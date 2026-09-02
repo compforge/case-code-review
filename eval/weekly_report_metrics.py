@@ -172,8 +172,8 @@ def aggregate_stage(rows: list[dict[str, Any]], stage: str) -> dict[str, Any]:
             )
             failure_events[key] += 1
             failure_affected.setdefault(key, set()).add(row_index)
-        for evaluation in analysis.get("evaluations") or []:
-            for finding in evaluation.get("findings") or []:
+        for detection in analysis.get("detections") or []:
+            for finding in detection.get("findings") or []:
                 key = (
                     str(finding.get("severity") or "info"),
                     str(finding.get("code") or "unknown"),
