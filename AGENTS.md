@@ -80,7 +80,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 - Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
   与 HTML Viewer 可观测性——`docs/harness.md`
 - 可观测性：Session JSONL 是共同事实源，Viewer 用于单次运行诊断，eval 用固定数据，让 Detector、
-  Evaluator 与 Measurer 分别承担行为发现、契约判断和事实测量——`docs/observability.md`
+  Verifier 与 Measurer 分别承担行为发现、契约判断和事实测量——`docs/observability.md`
 - spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/compforge/spec-case)
 - 项目知识：Repository / Component / FileRole 等结构知识、作者声明的 Biz Knowledge 及其投影——`docs/project.md`
 - Unit 与上下文：`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费——`docs/unit-model.md`

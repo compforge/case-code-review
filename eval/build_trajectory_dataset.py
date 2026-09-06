@@ -6,12 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import replace
 from pathlib import Path
 from typing import Iterable, Sequence
 
 from ccr_source import CCRSessionSource
 from ccr_trajectory import ATIFTrajectoryLoader
+from trajectory_harness.model import (
+    trajectory_metadata,
+    trajectory_recording_id,
+)
 from trajectory_harness import (
     RecordingQuery,
     RecordingRef,
@@ -70,14 +73,19 @@ class CCRTrajectoryDatasetBuilder(TrajectoryDatasetBuilder):
         dataset_trajectories = []
         for trajectory in trajectories:
             scope_id = trajectory.trajectory_id
-            dataset_id = f"{trajectory.recording_id}/{scope_id}"
-            trajectory_ids_by_recording[trajectory.recording_id][scope_id] = dataset_id
+            dataset_id = f"{trajectory_recording_id(trajectory)}/{scope_id}"
+            trajectory_ids_by_recording[trajectory_recording_id(trajectory)][scope_id] = dataset_id
             dataset_trajectories.append(
-                replace(
-                    trajectory,
-                    trajectory_id=dataset_id,
-                    metadata={**trajectory.metadata, "ccr_scope_id": scope_id},
-                )
+                trajectory.model_copy(update={
+                    "trajectory_id": dataset_id,
+                    "extra": {
+                        **(trajectory.extra or {}),
+                        "case_harness": {
+                            **(trajectory.extra or {}).get("case_harness", {}),
+                            "metadata": {**trajectory_metadata(trajectory), "ccr_scope_id": scope_id},
+                        },
+                    },
+                })
             )
 
         examples = self.examples

@@ -23,6 +23,11 @@ from ccr_source import CCRSessionSource
 from ccr_trajectory import REVIEW1, REVIEW2, UNKNOWN_STAGE
 from ccr_trajectory_report import run_weekly_report as run_trajectory_report
 from eval_snapshot import artifacts_match
+from trajectory_harness.model import (
+    trajectory_execution,
+    trajectory_metadata,
+    trajectory_recording_id,
+)
 from trajectory_harness import TrajectoryRunArtifact
 from trajectory_judge import objective_analysis_from_run
 from weekly_report_metrics import aggregate_cohorts, aggregate_stage
@@ -31,7 +36,7 @@ from weekly_window import WeekWindow, default_dataset_paths
 
 DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
 DEFAULT_LABEL_DATASET_MANIFEST = Path("eval/data/datasets/label-dataset.json")
-REPORT_SCHEMA_VERSION = "weekly-report-v11"
+REPORT_SCHEMA_VERSION = "weekly-report-v12"
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,10 +240,10 @@ def load_trajectory_rows(
             analysis = objective_analysis_from_run(trajectory, artifact.run)
             usage_result = analysis["model_usage"]
             usage = usage_result.get("measurements") or {}
-            metadata = trajectory.metadata or {}
+            metadata = trajectory_metadata(trajectory) or {}
             agent = metadata.get("agent") or {}
             session_id = str(
-                trajectory.recording_id or metadata.get("session_id") or ""
+                trajectory_recording_id(trajectory) or metadata.get("session_id") or ""
             )
             session = sessions_by_id.get(session_id)
             repository = (
@@ -247,8 +252,8 @@ def load_trajectory_rows(
                 else repository_identity(str(metadata.get("repo") or ""))
             )
             outcome = (
-                trajectory.execution.outcome
-                if trajectory.execution is not None
+                trajectory_execution(trajectory).outcome
+                if trajectory_execution(trajectory) is not None
                 else str(metadata.get("execution_outcome") or "unknown")
             )
             rows.append(

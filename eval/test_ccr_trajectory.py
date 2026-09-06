@@ -1,21 +1,23 @@
 import json
 import unittest
 
+from atif import Trajectory
+
 from ccr_trajectory import (
     AdjacentFileReadsDetector,
     ATIFTrajectoryLoader,
-    AssessmentCompletionEvaluator,
-    DurationEfficiencyEvaluator,
+    AssessmentCompletionVerifier,
+    DurationEfficiencyVerifier,
     FileReadBatchingDetector,
-    FileReadCoverageEvaluator,
-    ReviewCompletionEvaluator,
-    PromptFileCoverageEvaluator,
+    FileReadCoverageVerifier,
+    ReviewCompletionVerifier,
+    PromptFileCoverageVerifier,
     REVIEW1,
     REVIEW2,
-    RoundEfficiencyEvaluator,
+    RoundEfficiencyVerifier,
     SearchThenReadDetector,
-    SearchScopeEvaluator,
-    ToolFailureEvaluator,
+    SearchScopeVerifier,
+    ToolFailureVerifier,
     adjacent_file_read_stats,
     code_search_stats,
     empty_tool_argument_stats,
@@ -28,11 +30,82 @@ from ccr_trajectory import (
     same_turn_file_read_batching,
     search_then_read_stats,
 )
-from trajectory_harness import RepeatedToolCallDetector, detect, evaluate
+from trajectory_harness.model import (
+    step_attributes,
+    step_failure,
+    step_operation,
+    step_status,
+    trajectory_execution,
+    trajectory_generation,
+    trajectory_metadata,
+)
+from trajectory_harness import RepeatedToolCallDetector, detect, verify
 from trajectory_judge import main_deductions, objective_analysis
 
 
 class CCRTrajectoryTest(unittest.TestCase):
+    def test_atif_roundtrip_preserves_identity_calls_and_evidence(self):
+        payload = self.trajectory.to_json_dict()
+        restored = Trajectory.model_validate(payload)
+        self.assertEqual(
+            ATIFTrajectoryLoader().loads(json.dumps(payload))[0].to_json_dict(),
+            payload,
+        )
+        self.assertEqual(restored.schema_version, "ATIF-v1.7")
+        self.assertEqual(restored.agent.name, "case-code-review")
+        self.assertEqual(restored.agent.version, "v1.2.3")
+        self.assertNotIn("metadata", payload)
+        self.assertNotIn("execution", payload)
+        self.assertEqual(
+            [step.step_id for step in restored.steps],
+            list(range(1, len(restored.steps) + 1)),
+        )
+        tools = [step for step in restored.steps if step.tool_calls]
+        self.assertEqual(len(tools), 4)
+        self.assertTrue(all(step.llm_call_count == 0 for step in tools))
+        for step in tools:
+            self.assertEqual(
+                step.tool_calls[0].tool_call_id,
+                step.observation.results[0].source_call_id,
+            )
+        analysis = objective_analysis(restored)
+        known_ids = {str(step.step_id) for step in restored.steps}
+        evidence = [*analysis["verifications"], *analysis["measurements"]]
+        evidence.extend(
+            finding
+            for detection in analysis["detections"]
+            for finding in detection["findings"]
+        )
+        for result in evidence:
+            self.assertNotEqual(result.get("status"), "error")
+            self.assertLessEqual(set(result.get("step_ids", [])), known_ids)
+
+    def test_standard_token_metrics_do_not_count_tool_steps_as_model_calls(self):
+        raw = {
+            "session_id": "metrics-session",
+            "subagent_trajectories": [{
+                "trajectory_id": "unit-metrics",
+                "extra": {"scope_kind": "unit", "execution_outcome": "completed"},
+                "steps": [{
+                    "step_id": 1,
+                    "source": "agent",
+                    "metrics": {"prompt_tokens": 100, "completion_tokens": 20, "cached_tokens": 60},
+                    "tool_calls": [{
+                        "tool_call_id": "read-1", "function_name": "read_files",
+                        "arguments": {"reads": [{"file_path": "a.go"}]},
+                    }],
+                    "observation": {"results": [{"source_call_id": "read-1", "content": "source"}]},
+                }],
+            }],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
+        restored = Trajectory.model_validate(trajectory.to_json_dict())
+        self.assertEqual(restored.steps[0].metrics.prompt_tokens, 100)
+        values = objective_analysis(restored)["model_usage"]["measurements"]
+        self.assertEqual(values["model_call_count"], 1)
+        self.assertEqual(values["total_tokens"], 120)
+        self.assertEqual(values["cached_input_tokens"], 60)
+
     def setUp(self):
         root = {
             "session_id": "s1",
@@ -150,7 +223,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         }
         self.trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
-    def test_projects_atif_and_runs_harness_evaluators(self):
+    def test_projects_atif_and_runs_harness_verifiers(self):
         detection = detect(
             self.trajectory,
             [
@@ -158,49 +231,50 @@ class CCRTrajectoryTest(unittest.TestCase):
                 AdjacentFileReadsDetector(),
             ],
         )
-        evaluation = evaluate(
+        evaluation = verify(
             self.trajectory,
             [
-                ToolFailureEvaluator(),
-                SearchScopeEvaluator(),
-                FileReadCoverageEvaluator(),
-                PromptFileCoverageEvaluator(),
-                RoundEfficiencyEvaluator(),
-                DurationEfficiencyEvaluator(),
-                ReviewCompletionEvaluator(),
+                ToolFailureVerifier(),
+                SearchScopeVerifier(),
+                FileReadCoverageVerifier(),
+                PromptFileCoverageVerifier(),
+                RoundEfficiencyVerifier(),
+                DurationEfficiencyVerifier(),
+                ReviewCompletionVerifier(),
             ],
         )
 
-        self.assertEqual(self.trajectory.metadata["session_id"], "s1")
-        self.assertEqual(self.trajectory.metadata["file_path"], "a.go")
+        self.assertEqual(trajectory_metadata(self.trajectory)["session_id"], "s1")
+        self.assertEqual(trajectory_metadata(self.trajectory)["file_path"], "a.go")
         self.assertEqual(
-            self.trajectory.generation,
+            trajectory_generation(self.trajectory),
             {
+                "agent": "case-code-review",
                 "agent_revision": "case-code-review@v1.2.3",
                 "model": "review-model",
                 "loop_config": '{"features":{"callchain":true}}',
             },
         )
-        self.assertIsNotNone(self.trajectory.execution)
-        self.assertEqual(self.trajectory.execution.outcome, "completed")
-        self.assertEqual(self.trajectory.execution.duration_ms, 1200)
+        self.assertIsNotNone(trajectory_execution(self.trajectory))
+        self.assertEqual(trajectory_execution(self.trajectory).outcome, "completed")
+        self.assertEqual(trajectory_execution(self.trajectory).duration_ms, 1200)
         self.assertEqual(review_stage(self.trajectory), REVIEW1)
         inference = next(
-            step for step in self.trajectory.steps if step.operation == "inference"
+            step for step in self.trajectory.steps if step_operation(step) == "inference"
         )
         self.assertEqual(
-            inference.attributes["reasoning_content"],
+            step_attributes(inference)["reasoning_content"],
             "The changed path needs more evidence.",
         )
         self.assertEqual(
-            [step.operation for step in self.trajectory.steps].count("execute_tool"), 4
+            [step_operation(step) for step in self.trajectory.steps].count("execute_tool"), 4
         )
         failed_tool = next(
             step
             for step in self.trajectory.steps
-            if step.operation == "execute_tool" and step.status == "error"
+            if step_operation(step) == "execute_tool" and step_status(step) == "error"
         )
-        self.assertEqual(failed_tool.failure.key, "tool.execute.execution_error")
+        self.assertEqual(step_failure(failed_tool).key, "tool.execute.execution_error")
         self.assertEqual(detection.results[0].findings[0].code, "repeated_tool_call")
         self.assertTrue(detection.results[0].findings[0].hypotheses)
         self.assertEqual(detection.results[1].findings[0].code, "adjacent_file_reads")
@@ -281,13 +355,13 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "covered_lines": 160,
                 "total_lines": 200,
                 "overlap_rate": 0.8,
-                "overlapping_steps": ["3:tool:1", "3:tool:2"],
+                "overlapping_steps": ["4", "5"],
             },
         )
         self.assertEqual(
             [
-                item["evaluator_id"]
-                for item in objective_analysis(self.trajectory)["evaluations"]
+                item["verifier_id"]
+                for item in objective_analysis(self.trajectory)["verifications"]
             ],
             [
                 "tool_success",
@@ -378,15 +452,15 @@ class CCRTrajectoryTest(unittest.TestCase):
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
         self.assertEqual(review_stage(trajectory), REVIEW2)
-        self.assertEqual(AssessmentCompletionEvaluator().evaluate(trajectory).score, 1)
+        self.assertEqual(AssessmentCompletionVerifier().verify(trajectory).score, 1)
         self.assertEqual(
-            ReviewCompletionEvaluator().evaluate(trajectory).status,
+            ReviewCompletionVerifier().verify(trajectory).status,
             "not_applicable",
         )
         self.assertEqual(
             [
-                item["evaluator_id"]
-                for item in objective_analysis(trajectory)["evaluations"]
+                item["verifier_id"]
+                for item in objective_analysis(trajectory)["verifications"]
             ],
             [
                 "tool_success",
@@ -462,7 +536,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "count": 1,
                 "by_tool": {"read_files": 1},
                 "by_model": {"model-a": 1},
-                "step_ids": ["1:tool:1"],
+                "step_ids": ["2"],
             },
         )
 
@@ -506,8 +580,8 @@ class CCRTrajectoryTest(unittest.TestCase):
         }
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
-        rounds = RoundEfficiencyEvaluator().evaluate(trajectory)
-        duration = DurationEfficiencyEvaluator().evaluate(trajectory)
+        rounds = RoundEfficiencyVerifier().verify(trajectory)
+        duration = DurationEfficiencyVerifier().verify(trajectory)
 
         self.assertEqual(rounds.score, 0.8)
         self.assertIn("2 review item(s)", rounds.explanation)
@@ -518,28 +592,28 @@ class CCRTrajectoryTest(unittest.TestCase):
         deductions = main_deductions(
             [
                 {
-                    "evaluations": [
+                    "verifications": [
                         {
-                            "evaluator_id": "duration",
+                            "verifier_id": "duration",
                             "verdict": "fail",
                             "score": 0.4,
                         },
                         {
-                            "evaluator_id": "search",
+                            "verifier_id": "search",
                             "verdict": "fail",
                             "score": 0.7,
                         },
                     ]
                 },
                 {
-                    "evaluations": [
+                    "verifications": [
                         {
-                            "evaluator_id": "duration",
+                            "verifier_id": "duration",
                             "verdict": "fail",
                             "score": 0.5,
                         },
                         {
-                            "evaluator_id": "completion",
+                            "verifier_id": "completion",
                             "verdict": "pass",
                             "score": 1.0,
                         },
@@ -602,10 +676,10 @@ class CCRTrajectoryTest(unittest.TestCase):
         }
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
-        result = FileReadCoverageEvaluator().evaluate(trajectory)
+        result = FileReadCoverageVerifier().verify(trajectory)
 
         self.assertEqual(result.score, 0.746)
-        self.assertEqual(result.step_ids, ("1:tool:2",))
+        self.assertEqual(result.step_ids, ("3",))
         self.assertEqual(
             adjacent_file_read_stats(trajectory),
             {
@@ -615,7 +689,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "cross_turn_mergeable_range_count": 0,
                 "same_turn_mergeable_range_count": 1,
                 "same_call_mergeable_range_count": 0,
-                "adjacent_step_ids": ["1:tool:2"],
+                "adjacent_step_ids": ["3"],
             },
         )
         adjacency = AdjacentFileReadsDetector().detect(trajectory)
@@ -624,7 +698,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(batching.findings[0].code, "unbatched_same_turn_reads")
         self.assertEqual(
             same_turn_file_read_batching(trajectory)["step_ids"],
-            ["1:tool:1", "1:tool:2"],
+            ["2", "3"],
         )
 
     def test_prompt_overlap_classifies_context_short_circuits(self):
@@ -829,9 +903,9 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "returned_symbol_context_lines": 0,
             },
         )
-        evaluation = SearchScopeEvaluator().evaluate(trajectory)
+        evaluation = SearchScopeVerifier().verify(trajectory)
         self.assertEqual(evaluation.score, 0.75)
-        self.assertEqual(evaluation.step_ids, ("1:tool:1:3",))
+        self.assertEqual(evaluation.step_ids, ("2",))
 
     def test_symbol_context_tracks_outcome_lines_and_follow_up(self):
         root = {
@@ -1038,7 +1112,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "symbol_expanded_within_span_follow_up_read_rate": None,
                 "symbol_expanded_extending_follow_up_read_request_count": 0,
                 "symbol_expanded_extending_follow_up_read_rate": None,
-                "step_ids": ["1:tool:1", "2:tool:1"],
+                "step_ids": ["2", "4"],
             },
         )
         detection = SearchThenReadDetector().detect(trajectory)
@@ -1079,12 +1153,12 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
         step = trajectory.steps[0]
-        self.assertEqual(step.status, "error")
-        self.assertIsNotNone(step.failure)
-        self.assertEqual(step.failure.key, "llm.routing.timeout")
-        self.assertIsNotNone(trajectory.execution)
-        self.assertEqual(trajectory.execution.outcome, "failed")
-        self.assertEqual(trajectory.execution.failure.key, "llm.routing.timeout")
+        self.assertEqual(step_status(step), "error")
+        self.assertIsNotNone(step_failure(step))
+        self.assertEqual(step_failure(step).key, "llm.routing.timeout")
+        self.assertIsNotNone(trajectory_execution(trajectory))
+        self.assertEqual(trajectory_execution(trajectory).outcome, "failed")
+        self.assertEqual(trajectory_execution(trajectory).failure.key, "llm.routing.timeout")
         self.assertEqual(
             objective_analysis(trajectory)["failures"],
             [
@@ -1123,9 +1197,9 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
-        self.assertIsNotNone(trajectory.execution)
-        self.assertEqual(trajectory.execution.outcome, "timeout")
-        self.assertEqual(trajectory.execution.failure.key, "workflow.timeout")
+        self.assertIsNotNone(trajectory_execution(trajectory))
+        self.assertEqual(trajectory_execution(trajectory).outcome, "timeout")
+        self.assertEqual(trajectory_execution(trajectory).failure.key, "workflow.timeout")
         self.assertEqual(
             objective_analysis(trajectory)["failures"],
             [
@@ -1162,9 +1236,9 @@ class CCRTrajectoryTest(unittest.TestCase):
 
         trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
 
-        self.assertEqual(trajectory.steps[0].failure.key, "llm.routing.timeout")
+        self.assertEqual(step_failure(trajectory.steps[0]).key, "llm.routing.timeout")
         self.assertEqual(
-            trajectory.execution.failure.key,
+            trajectory_execution(trajectory).failure.key,
             "llm.routing.timeout",
         )
 

@@ -52,7 +52,7 @@ from ccr_trajectory import (
     code_search_stats,
     detectors_for_stage,
     empty_tool_argument_stats,
-    evaluators_for_stage,
+    verifiers_for_stage,
     file_read_stats,
     hypothesis_yield,
     initial_context_stats,
@@ -63,16 +63,29 @@ from ccr_trajectory import (
     search_then_read_stats,
     tool_frequencies,
 )
+from trajectory_harness.model import (
+    step_attributes,
+    step_duration_ms,
+    step_failure,
+    step_id as trajectory_step_id,
+    step_input_messages,
+    step_name,
+    step_operation,
+    step_output_messages,
+    step_status,
+    trajectory_execution,
+    trajectory_metadata,
+)
 from trajectory_harness import (
     ContextUsageMeasurer,
     DetectionResult,
-    EvaluationResult,
+    VerificationResult,
     MeasurementResult,
     ModelUsageMeasurer,
     Trajectory,
-    TrajectoryEvaluationRun,
+    TrajectoryAnalysisRun,
     detect,
-    evaluate,
+    verify,
     measure,
     ToolUsageMeasurer,
 )
@@ -116,8 +129,8 @@ def load_trajectories(path: str | None) -> list[Trajectory]:
 
 # ── objective pass (deterministic, free) ─────────────────────────────────────
 
-_STAGE_EVALUATORS = {
-    stage: evaluators_for_stage(stage) for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
+_STAGE_VERIFIERS = {
+    stage: verifiers_for_stage(stage) for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
 }
 _STAGE_DETECTORS = {
     stage: detectors_for_stage(stage) for stage in (REVIEW1, REVIEW2, UNKNOWN_STAGE)
@@ -130,21 +143,21 @@ _MEASURERS = (
 
 
 def objective_analysis(trajectory: Trajectory) -> dict:
-    """Build deterministic detection, evaluation, and measurement data for one chain."""
+    """Build deterministic measurement, detection, and verification data for one chain."""
     stage = review_stage(trajectory)
-    detection = detect(trajectory, _STAGE_DETECTORS[stage])
-    evaluation = evaluate(trajectory, _STAGE_EVALUATORS[stage])
     measurement = measure(trajectory, _MEASURERS)
+    detection = detect(trajectory, _STAGE_DETECTORS[stage], measurements=measurement.results)
+    verification = verify(trajectory, _STAGE_VERIFIERS[stage], measurements=measurement.results)
     return _build_objective_analysis(
         trajectory,
         detection_results=detection.results,
-        evaluation_results=evaluation.results,
+        verification_results=verification.results,
         measurement_results=measurement.results,
     )
 
 
 def objective_analysis_from_run(
-    trajectory: Trajectory, run: TrajectoryEvaluationRun
+    trajectory: Trajectory, run: TrajectoryAnalysisRun
 ) -> dict:
     """Project persisted Runner results without executing evaluation components again."""
 
@@ -155,9 +168,9 @@ def objective_analysis_from_run(
         if envelope.trajectory.trajectory_id == trajectory_id
         for result in envelope.results
     )
-    evaluation_results = tuple(
+    verification_results = tuple(
         result
-        for envelope in run.evaluations
+        for envelope in run.verifications
         if envelope.trajectory.trajectory_id == trajectory_id
         for result in envelope.results
     )
@@ -170,7 +183,7 @@ def objective_analysis_from_run(
     return _build_objective_analysis(
         trajectory,
         detection_results=detection_results,
-        evaluation_results=evaluation_results,
+        verification_results=verification_results,
         measurement_results=measurement_results,
     )
 
@@ -179,7 +192,7 @@ def _build_objective_analysis(
     trajectory: Trajectory,
     *,
     detection_results: tuple[DetectionResult, ...],
-    evaluation_results: tuple[EvaluationResult, ...],
+    verification_results: tuple[VerificationResult, ...],
     measurement_results: tuple[MeasurementResult, ...],
 ) -> dict:
     stage = review_stage(trajectory)
@@ -189,29 +202,29 @@ def _build_objective_analysis(
         if result.measurer_id == "model_usage"
     )
     tool_fails = [
-        {"tool": step.name, "error": _tool_result(step)[:120]}
+        {"tool": step_name(step), "error": _tool_result(step)[:120]}
         for step in trajectory.steps
-        if step.operation == "execute_tool" and step.status == "error"
+        if step_operation(step) == "execute_tool" and step_status(step) == "error"
     ]
     failures = []
     for step in trajectory.steps:
-        if step.failure is None:
+        if step_failure(step) is None:
             continue
-        raw = step.attributes.get("failure") or {}
+        raw = step_attributes(step).get("failure") or {}
         details = raw.get("attributes") or {}
         failures.append(
             {
                 "impact": "step",
-                "key": step.failure.key,
-                "code": step.failure.code,
+                "key": step_failure(step).key,
+                "code": step_failure(step).code,
                 "request_phase": str(details.get("request_phase") or "unknown"),
                 "timeout_scope": str(details.get("timeout_scope") or "unknown"),
                 "response_started": details.get("response_started"),
-                "step_id": step.step_id,
+                "step_id": trajectory_step_id(step),
             }
         )
-    if trajectory.execution and trajectory.execution.failure:
-        failure = trajectory.execution.failure
+    if trajectory_execution(trajectory) and trajectory_execution(trajectory).failure:
+        failure = trajectory_execution(trajectory).failure
         failures.append(
             {
                 "impact": "execution",
@@ -221,16 +234,16 @@ def _build_objective_analysis(
         )
     return {
         "stage": stage,
-        # trajectory_harness intentionally does not invent a cross-Evaluator score;
+        # trajectory_harness intentionally does not invent a cross-Verifier score;
         # this unweighted mean is CCR's explicit summary policy.
-        "score": _mean_score(evaluation_results),
+        "score": _mean_score(verification_results),
         "detections": [result.to_dict() for result in detection_results],
-        "evaluations": [result.to_dict() for result in evaluation_results],
+        "verifications": [result.to_dict() for result in verification_results],
         "measurements": [result.to_dict() for result in measurement_results],
         "model_usage": model_usage.to_dict(),
-        "rounds": sum(step.operation == "inference" for step in trajectory.steps),
+        "rounds": sum(step_operation(step) == "inference" for step in trajectory.steps),
         "duration_sec": round(
-            sum(step.duration_ms for step in trajectory.steps) / 1000
+            sum(step_duration_ms(step) for step in trajectory.steps) / 1000
         ),
         "tool_freq": tool_frequencies(trajectory),
         "empty_args": empty_tool_argument_stats(trajectory),
@@ -255,15 +268,15 @@ def _mean_score(results) -> float | None:
 
 
 def main_deductions(analyses: list[dict], limit: int = 3) -> list[dict]:
-    """Rank the stage's recurring score losses without hiding raw Evaluations."""
+    """Rank the stage's recurring score losses without hiding raw Verifications."""
 
     grouped: dict[str, list[float]] = {}
     for analysis in analyses:
-        for result in analysis["evaluations"]:
+        for result in analysis["verifications"]:
             score = result.get("score")
             if result.get("verdict") != "fail" or score is None:
                 continue
-            grouped.setdefault(result["evaluator_id"], []).append(float(score))
+            grouped.setdefault(result["verifier_id"], []).append(float(score))
     ranked = [
         {
             "name": name,
@@ -308,23 +321,23 @@ def chain_digest(trajectory: Trajectory, analysis: dict) -> str:
     objective analysis appended as ASI."""
     lines = [
         f"stage: {review_stage(trajectory)} scope: {trajectory.trajectory_id} "
-        f"metadata={json.dumps(trajectory.metadata, ensure_ascii=False)}"
+        f"metadata={json.dumps(trajectory_metadata(trajectory), ensure_ascii=False)}"
     ]
     for step in trajectory.steps:
-        head = f"#{step.step_id} [{step.operation}]"
-        if step.operation == "context":
-            lines.append(f"{head} {_message_text(step.output_messages)[:_TRUNC]}")
+        head = f"#{trajectory_step_id(step)} [{step_operation(step)}]"
+        if step_operation(step) == "context":
+            lines.append(f"{head} {_message_text(step_output_messages(step))[:_TRUNC]}")
             continue
-        if step.operation == "inference":
+        if step_operation(step) == "inference":
             lines.append(
-                f"{head} ({int(step.duration_ms / 1000)}s) "
-                f"{_message_text(step.output_messages)[:_TRUNC]}"
+                f"{head} ({int(step_duration_ms(step) / 1000)}s) "
+                f"{_message_text(step_output_messages(step))[:_TRUNC]}"
             )
             continue
-        if step.operation == "execute_tool":
-            ok = " FAILED" if step.status == "error" else ""
+        if step_operation(step) == "execute_tool":
+            ok = " FAILED" if step_status(step) == "error" else ""
             lines.append(
-                f"{head} {step.name}{ok}({_tool_arguments(step)[:200]}) "
+                f"{head} {step_name(step)}{ok}({_tool_arguments(step)[:200]}) "
                 f"-> {_tool_result(step)[:_TRUNC]}"
             )
     lines.append(f"objective analysis: {json.dumps(analysis, ensure_ascii=False)}")
@@ -345,14 +358,14 @@ def _message_text(messages: tuple[dict, ...]) -> str:
 
 
 def _tool_arguments(step) -> str:
-    for part in _parts(step.input_messages):
+    for part in _parts(step_input_messages(step)):
         if part.get("type") == "tool_call":
             return json.dumps(part.get("arguments"), ensure_ascii=False)
     return "{}"
 
 
 def _tool_result(step) -> str:
-    for part in _parts(step.output_messages):
+    for part in _parts(step_output_messages(step)):
         if part.get("type") == "tool_call_response":
             value = part.get("response")
             return (
@@ -471,15 +484,15 @@ def main() -> int:
     judged = 0
     sessions = {}
     for trajectory in trajectories:
-        session_id = str(trajectory.metadata.get("session_id") or "?")
+        session_id = str(trajectory_metadata(trajectory).get("session_id") or "?")
         sessions.setdefault(session_id, []).append(trajectory)
 
     for session_id, session_trajectories in sessions.items():
         first = session_trajectories[0]
         print(
             f"# session {session_id[:8]} "
-            f"repo={first.metadata.get('repo', '?')} "
-            f"branch={first.metadata.get('branch', '?')}"
+            f"repo={trajectory_metadata(first).get('repo', '?')} "
+            f"branch={trajectory_metadata(first).get('branch', '?')}"
         )
         for stage, title in (
             (REVIEW1, "Review 1 · Unit"),
@@ -563,10 +576,10 @@ def main() -> int:
                         f"by_language={outlines['by_language']} "
                         f"admitted_bytes={outlines['admitted_bytes']}"
                     )
-                for result in sig["evaluations"]:
+                for result in sig["verifications"]:
                     if result["verdict"] == "fail":
                         print(
-                            f"   ⚠ {result['evaluator_id']}: "
+                            f"   ⚠ {result['verifier_id']}: "
                             f"{result['explanation']}"
                         )
                 for result in sig["detections"]:
@@ -604,7 +617,7 @@ def main() -> int:
                                 "session_id": session_id,
                                 "stage": stage,
                                 "trajectory_id": trajectory.trajectory_id,
-                                "extra": trajectory.metadata,
+                                "extra": trajectory_metadata(trajectory),
                                 "analysis": sig,
                                 "verdict": verdict,
                             },

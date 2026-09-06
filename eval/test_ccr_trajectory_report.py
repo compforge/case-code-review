@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from trajectory_harness.model import trajectory_recording_id
+
 import json
 import tempfile
 import unittest
@@ -8,7 +10,8 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from ccr_source import CCRSessionSource
-from ccr_trajectory_report import run_weekly_report
+from ccr_trajectory_report import CCRTrajectoryReportBuilder, run_weekly_report
+from trajectory_harness import load_run_artifact
 from weekly_report import SessionRecord, load_trajectory_rows
 from weekly_window import WeekWindow
 
@@ -106,13 +109,24 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             self.assertTrue(result.run_path.is_file())
             self.assertTrue(result.report_path.is_file())
             self.assertTrue(result.verdict_path.is_file())
+            persisted = load_run_artifact(result.run_dir)
+            self.assertEqual(
+                persisted.dataset.to_dict(), result.artifact.dataset.to_dict()
+            )
+            run_json = json.loads(result.run_path.read_text())
+            self.assertIn("verifications", run_json)
+            self.assertNotIn("evaluations", run_json)
+            self.assertTrue(persisted.run.verifier_specs)
+            for cell in (*persisted.run.detections, *persisted.run.verifications,
+                         *persisted.run.measurements):
+                self.assertTrue(all(item.status != "error" for item in cell.results))
             self.assertEqual(result.artifact.dataset.version, "2026-W34")
             self.assertEqual(result.artifact.dataset.metadata["labels"], 1)
             self.assertEqual(
                 result.artifact.dataset.metadata["missing_label_sessions"], 0
             )
             self.assertEqual(
-                result.artifact.dataset.trajectories[0].recording_id,
+                trajectory_recording_id(result.artifact.dataset.trajectories[0]),
                 "session-1",
             )
             self.assertEqual(
@@ -121,15 +135,15 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             )
             self.assertEqual(
                 result.artifact.run.detections[0].category,
-                "behavior",
+                "cost",
             )
             self.assertEqual(
-                result.artifact.run.evaluations[0].target,
+                result.artifact.run.verifications[0].target,
                 "review1",
             )
             self.assertEqual(
-                result.artifact.run.evaluations[0].category,
-                "quality",
+                {item.category for item in result.artifact.run.verifications},
+                {"cost", "effect"},
             )
             self.assertEqual(
                 result.artifact.run.measurements[0].category,
@@ -173,16 +187,17 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                     side_effect=AssertionError("detectors must not run again"),
                 ),
                 patch(
-                    "trajectory_judge.evaluate",
-                    side_effect=AssertionError("evaluators must not run again"),
+                    "trajectory_judge.verify",
+                    side_effect=AssertionError("verifiers must not run again"),
                 ),
                 patch(
                     "trajectory_judge.measure",
                     side_effect=AssertionError("measurers must not run again"),
                 ),
             ):
+                CCRTrajectoryReportBuilder().rerender(result.run_dir)
                 rows, failures = load_trajectory_rows(
-                    (result.artifact,),
+                    (persisted,),
                     (session,),
                 )
 

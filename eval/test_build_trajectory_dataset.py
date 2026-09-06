@@ -85,11 +85,11 @@ class BuildTrajectoryDatasetTest(unittest.TestCase):
                 "session-1/unit-1",
             )
             self.assertEqual(
-                dataset["trajectories"][0]["metadata"]["ccr_scope_id"],
+                dataset["trajectories"][0]["extra"]["case_harness"]["metadata"]["ccr_scope_id"],
                 "unit-1",
             )
             self.assertEqual(
-                dataset["trajectories"][0]["recording_id"], "session-1"
+                dataset["trajectories"][0]["extra"]["case_harness"]["recording"]["id"], "session-1"
             )
             self.assertEqual(dataset["dataset_id"], "ccr-reviews")
             self.assertEqual(dataset["version"], "local")

@@ -9,11 +9,22 @@ import json
 import math
 import sys
 from collections import Counter
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from trajectory_harness.model import (
+    step_duration_ms,
+    step_failure,
+    step_id as trajectory_step_id,
+    step_name,
+    step_operation,
+    step_status,
+    trajectory_execution,
+    trajectory_generation,
+    trajectory_recording_id,
+)
 from trajectory_harness import Trajectory, TrajectoryRunArtifact, load_run_artifact
 from trajectory_judge import (
     JUDGE_SYSTEM,
@@ -25,9 +36,9 @@ from trajectory_judge import (
     objective_analysis_from_run,
 )
 
-DIAGNOSTIC_SCHEMA_VERSION = 2
+DIAGNOSTIC_SCHEMA_VERSION = 3
 PLANNER_VERSION = "ccr-trajectory-diagnostic-planner-v2"
-PROMPT_VERSION = "ccr-trajectory-diagnostic-prompt-v2"
+PROMPT_VERSION = "ccr-trajectory-diagnostic-prompt-v3"
 FACETS_FILE = "diagnostic-facets.jsonl"
 MANIFEST_FILE = "diagnostic-manifest.json"
 DEFAULT_UNCACHED_LIMIT = 20
@@ -161,7 +172,7 @@ def rank_diagnostic_candidates(
     for trajectory, analysis in analyzed:
         priority = 0
         signals: list[str] = []
-        outcome = trajectory.execution.outcome if trajectory.execution else "unknown"
+        outcome = trajectory_execution(trajectory).outcome if trajectory_execution(trajectory) else "unknown"
         if outcome != "completed":
             priority = 500
             _append_signal(signals, f"execution:{outcome}")
@@ -172,12 +183,12 @@ def rank_diagnostic_candidates(
         for failure in analysis["tool_failures"]:
             priority = max(priority, 450)
             _append_signal(signals, f"tool_failure:{failure.get('tool') or 'unknown'}")
-        for evaluation in analysis["evaluations"]:
+        for evaluation in analysis["verifications"]:
             if evaluation.get("verdict") == "fail":
                 priority = max(priority, 400)
                 _append_signal(
                     signals,
-                    f"evaluation:{evaluation.get('evaluator_id') or 'unknown'}",
+                    f"verification:{evaluation.get('verifier_id') or 'unknown'}",
                 )
         for detection in analysis["detections"]:
             for finding in detection.get("findings") or ():
@@ -292,23 +303,23 @@ def build_diagnostic_prompt(candidate: DiagnosticCandidate) -> DiagnosticPrompt:
     selected_steps = tuple(steps[index] for index in selected_indexes)
     outline = [
         {
-            "step_id": step.step_id,
-            "operation": step.operation,
-            "name": step.name,
-            "status": step.status,
-            "duration_ms": round(step.duration_ms),
+            "step_id": trajectory_step_id(step),
+            "operation": step_operation(step),
+            "name": step_name(step),
+            "status": step_status(step),
+            "duration_ms": round(step_duration_ms(step)),
         }
         for step in steps
     ]
-    evidence_trajectory = replace(
-        trajectory,
-        steps=selected_steps,
-        metadata={
-            "generation": dict(trajectory.generation),
+    # This is a bounded diagnostic view, never a persisted Dataset trajectory.
+    evidence_trajectory = trajectory.model_copy(update={
+        "steps": list(selected_steps),
+        "extra": {"case_harness": {"metadata": {
+            "generation": dict(trajectory_generation(trajectory)),
             "total_steps": len(steps),
             "expanded_steps": len(selected_steps),
-        },
-    )
+        }}},
+    })
     source = "\n".join(
         (
             f"diagnostic signals: {json.dumps(candidate.signals, ensure_ascii=False)}",
@@ -337,10 +348,10 @@ def build_diagnostic_prompt(candidate: DiagnosticCandidate) -> DiagnosticPrompt:
 
 def _evidence_step_indexes(candidate: DiagnosticCandidate) -> tuple[int, ...]:
     steps = list(candidate.trajectory.steps)
-    indexes_by_id = {step.step_id: index for index, step in enumerate(steps)}
+    indexes_by_id = {trajectory_step_id(step): index for index, step in enumerate(steps)}
     referenced_ids = {
         str(step_id)
-        for evaluation in candidate.analysis["evaluations"]
+        for evaluation in candidate.analysis["verifications"]
         if evaluation.get("verdict") == "fail"
         for step_id in evaluation.get("step_ids") or ()
     }
@@ -358,7 +369,7 @@ def _evidence_step_indexes(candidate: DiagnosticCandidate) -> tuple[int, ...]:
     seed_indexes.update(
         index
         for index, step in enumerate(steps)
-        if step.status == "error" or step.failure is not None
+        if step_status(step) == "error" or step_failure(step) is not None
     )
     selected = {
         index
@@ -367,7 +378,7 @@ def _evidence_step_indexes(candidate: DiagnosticCandidate) -> tuple[int, ...]:
         if 0 <= index < len(steps)
     }
     selected.update(
-        index for index, step in enumerate(steps) if step.operation == "context"
+        index for index, step in enumerate(steps) if step_operation(step) == "context"
     )
     selected.update(range(max(0, len(steps) - TERMINAL_EVIDENCE_STEPS), len(steps)))
     return tuple(sorted(selected))
@@ -387,9 +398,9 @@ def _compact_objective_analysis(
         "tool_freq": analysis["tool_freq"],
         "failures": analysis["failures"],
         "tool_failures": analysis["tool_failures"],
-        "failed_evaluations": [
+        "failed_verifications": [
             evaluation
-            for evaluation in analysis["evaluations"]
+            for evaluation in analysis["verifications"]
             if evaluation.get("verdict") == "fail"
         ],
         "findings": [
@@ -478,11 +489,11 @@ def run_diagnostics(
             {
                 "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
                 "trajectory_id": candidate.trajectory.trajectory_id,
-                "recording_id": candidate.trajectory.recording_id,
+                "recording_id": trajectory_recording_id(candidate.trajectory),
                 "target": plan.artifact.run.target_for(
                     candidate.trajectory.trajectory_id
                 ),
-                "generation": dict(candidate.trajectory.generation),
+                "generation": dict(trajectory_generation(candidate.trajectory)),
                 "priority": candidate.priority,
                 "signals": list(candidate.signals),
                 "model": plan.model,
