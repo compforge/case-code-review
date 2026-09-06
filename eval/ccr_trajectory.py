@@ -1,7 +1,8 @@
-"""CCR ATIF projection and deterministic trajectory evaluators.
+"""Adapt CCR exports to ATIF v1.7 and verify review-specific criteria.
 
-ATIF is the persisted/export boundary.  This module is the only place that
-knows its shape; judges consume ``trajectory_harness.Trajectory`` instead.
+CCR exports retain their historical session/scope shape. The loader converts
+that shape to official ATIF models; downstream analysis uses the harness's
+namespaced extension accessors for CCR execution and context facts.
 """
 
 from __future__ import annotations
@@ -14,16 +15,36 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from atif import Agent, Metrics, Observation, ObservationResult, ToolCall
+
+from trajectory_harness.model import (
+    AnalysisCategory,
+    make_atif_step,
+    make_atif_trajectory,
+    step_attributes,
+    step_duration_ms,
+    step_failure,
+    step_id as trajectory_step_id,
+    step_input_messages,
+    step_name,
+    step_operation,
+    step_output_messages,
+    step_parent_id,
+    step_status,
+    trajectory_metadata,
+)
 from trajectory_harness import (
+    ATIFJsonLoader,
     DetectionResult,
     Detector,
     DetectorSpec,
-    EvaluationResult,
-    Evaluator,
-    EvaluatorSpec,
+    VerificationResult,
+    Verifier,
+    VerifierSpec,
     ExecutionResult,
     Failure,
     Finding,
+    Measurements,
     RepeatedToolCallDetector,
     RetryLoopDetector,
     Step,
@@ -35,13 +56,16 @@ REVIEW2 = "review2"
 UNKNOWN_STAGE = "unknown"
 
 
-def _evaluator_spec(
-    evaluator_id: str,
+def _verifier_spec(
+    verifier_id: str,
     title: str,
     description: str,
-) -> EvaluatorSpec:
-    return EvaluatorSpec(
-        evaluator_id=evaluator_id,
+    *,
+    category: AnalysisCategory = "effect",
+) -> VerifierSpec:
+    return VerifierSpec(
+        verifier_id=verifier_id,
+        category=category,
         title=title,
         description=description,
         kind="domain",
@@ -56,6 +80,7 @@ def _detector_spec(
 ) -> DetectorSpec:
     return DetectorSpec(
         detector_id=detector_id,
+        category="cost",
         title=title,
         description=description,
         kind="domain",
@@ -98,6 +123,11 @@ class ATIFTrajectoryLoader:
         roots = [json.loads(line) for line in text.splitlines() if line.strip()]
         trajectories = []
         for root in roots:
+            if root.get("schema_version") == "ATIF-v1.7":
+                trajectories.extend(
+                    ATIFJsonLoader().loads(json.dumps(root), source=source)
+                )
+                continue
             root_meta = {
                 "session_id": root.get("session_id"),
                 "agent": root.get("agent") or {},
@@ -112,18 +142,22 @@ class ATIFTrajectoryLoader:
     ) -> Trajectory:
         steps: list[Step] = []
         for raw in chain.get("steps") or []:
-            step_id = str(raw.get("step_id", len(steps) + 1))
+            inference_id = str(len(steps) + 1)
             start_ms = _timestamp_ms(raw.get("timestamp"))
             metrics = raw.get("metrics") or {}
             duration_ms = float((metrics.get("extra") or {}).get("duration_ms") or 0)
             source_role = raw.get("source") or ""
             if source_role != "agent":
                 steps.append(
-                    Step(
-                        step_id=step_id,
+                    make_atif_step(
+                        step_id=inference_id,
                         parent_step_id=None,
                         operation="context",
                         name=source_role or "context",
+                        source=source_role if source_role in {"system", "user"} else "user",
+                        timestamp=raw.get("timestamp"),
+                        message=str(raw.get("message") or ""),
+                        llm_call_count=0,
                         start_ms=start_ms,
                         duration_ms=0,
                         output_messages=(_message(source_role, raw.get("message")),),
@@ -148,11 +182,25 @@ class ATIFTrajectoryLoader:
             if failure is None:
                 failure = _legacy_llm_failure(str(attributes.get("llm_error") or ""))
             steps.append(
-                Step(
-                    step_id=step_id,
+                make_atif_step(
+                    step_id=inference_id,
                     parent_step_id=None,
                     operation="inference",
                     name=str(raw.get("model_name") or "model"),
+                    model_name=raw.get("model_name"),
+                    timestamp=raw.get("timestamp"),
+                    message=str(raw.get("message") or ""),
+                    reasoning_content=raw.get("reasoning_content"),
+                    metrics=(
+                        Metrics(
+                            prompt_tokens=metrics.get("prompt_tokens"),
+                            completion_tokens=metrics.get("completion_tokens"),
+                            cached_tokens=metrics.get(
+                                "cached_tokens", metrics.get("cache_read_tokens")
+                            ),
+                        )
+                        if metrics else None
+                    ),
                     start_ms=start_ms,
                     duration_ms=duration_ms,
                     status="error"
@@ -181,12 +229,36 @@ class ATIFTrajectoryLoader:
                     arguments = _json_value(extra.get("arguments"))
                 call_id = call.get("tool_call_id") or result.get("source_call_id")
                 tool_failure = _tool_failure(extra, result)
+                # Invalid arguments stay in the source extension. ATIF's native
+                # ToolCall requires an object; coercing to {} would erase evidence.
+                native_call = (
+                    ToolCall(
+                        tool_call_id=str(call_id or f"{inference_id}:{index}"),
+                        function_name=name,
+                        arguments=arguments,
+                    )
+                    if isinstance(arguments, dict) else None
+                )
+                content = result.get("content")
                 steps.append(
-                    Step(
-                        step_id=f"{step_id}:tool:{index}",
-                        parent_step_id=step_id,
+                    make_atif_step(
+                        step_id=len(steps) + 1,
+                        parent_step_id=inference_id,
                         operation="execute_tool",
                         name=name,
+                        llm_call_count=0,
+                        tool_calls=[native_call] if native_call else None,
+                        observation=Observation(results=[
+                            ObservationResult(
+                                source_call_id=(
+                                    native_call.tool_call_id if native_call else None
+                                ),
+                                content=(
+                                    content if isinstance(content, str)
+                                    else json.dumps(content, ensure_ascii=False)
+                                ),
+                            ),
+                        ]),
                         start_ms=start_ms + duration_ms,
                         duration_ms=0,
                         status="error" if tool_failure is not None else "",
@@ -205,7 +277,14 @@ class ATIFTrajectoryLoader:
             "final_metrics": chain.get("final_metrics") or {},
             "format": "atif",
         }
-        return Trajectory(
+        agent = root_meta.get("agent") or {}
+        return make_atif_trajectory(
+            agent=Agent(
+                name=str(agent.get("name") or "case-code-review"),
+                version=str(agent.get("version") or "unknown"),
+                model_name=agent.get("model_name"),
+                tool_definitions=agent.get("tool_definitions"),
+            ),
             trajectory_id=str(chain.get("trajectory_id") or ""),
             steps=tuple(steps),
             execution=_execution_result(metadata, steps),
@@ -260,9 +339,9 @@ def _generation_provenance(
         )
     models = sorted(
         {
-            step.name
+            step_name(step)
             for step in steps
-            if step.operation == "inference" and step.name and step.name != "model"
+            if step_operation(step) == "inference" and step_name(step) and step_name(step) != "model"
         }
     )
     configured_model = str(agent.get("model_name") or "")
@@ -319,7 +398,7 @@ def _execution_result(
         )
     elif raw_outcome == "llm_error":
         failure = next(
-            (step.failure for step in reversed(steps) if step.failure is not None),
+            (step_failure(step) for step in reversed(steps) if step_failure(step) is not None),
             Failure(
                 kind="llm",
                 phase="unknown",
@@ -329,31 +408,35 @@ def _execution_result(
         )
     return ExecutionResult(
         outcome=outcome,
-        duration_ms=sum(step.duration_ms for step in steps),
+        duration_ms=sum(step_duration_ms(step) for step in steps),
         failure=failure,
     )
 
 
 @dataclass(frozen=True, slots=True)
-class ToolFailureEvaluator:
-    spec: EvaluatorSpec = _evaluator_spec(
+class ToolFailureVerifier:
+    spec: VerifierSpec = _verifier_spec(
         "tool_success",
         "Tool success",
         "Measure successful tool executions in one CCR trajectory.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
         calls = _tool_steps(trajectory)
         if not calls:
-            return _not_evaluated(
-                self.spec.evaluator_id, "Trajectory contains no tool calls."
+            return _not_verified(
+                self.spec.verifier_id, "Trajectory contains no tool calls."
             )
-        failed = [step.step_id for step in calls if step.status == "error"]
-        return _ratio_evaluation(
-            self.spec.evaluator_id,
+        failed = [trajectory_step_id(step) for step in calls if step_status(step) == "error"]
+        return _ratio_verification(
+            self.spec.verifier_id,
             len(calls) - len(failed),
             len(calls),
             failed,
@@ -362,31 +445,35 @@ class ToolFailureEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class SearchScopeEvaluator:
+class SearchScopeVerifier:
     """Reject failed searches and empty scopes without penalizing valid absence."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "search_scope_validity",
         "Search scope validity",
         "Measure whether code searches execute against a valid non-empty scope.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
         observations = _code_search_observations(trajectory)
         if not observations:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_verified(
+                self.spec.verifier_id,
                 "Trajectory contains no search_code calls.",
             )
         evaluated = [
             item for item in observations if item["outcome"] != "scope_unknown"
         ]
         if not evaluated:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_verified(
+                self.spec.verifier_id,
                 "Searches returned legacy or unmeasured empty scopes.",
             )
         failed = [
@@ -394,8 +481,8 @@ class SearchScopeEvaluator:
             for item in evaluated
             if item["outcome"] in {"scope_miss", "tool_failure"}
         ]
-        return _ratio_evaluation(
-            self.spec.evaluator_id,
+        return _ratio_verification(
+            self.spec.verifier_id,
             len(evaluated) - len(failed),
             len(evaluated),
             failed,
@@ -404,47 +491,52 @@ class SearchScopeEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class FileReadCoverageEvaluator:
+class FileReadCoverageVerifier:
     """Score how much read_files output adds coverage not seen earlier."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "file_read_coverage",
         "File read coverage",
         "Measure how much read_files output adds previously unseen line coverage.",
+        category="cost",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
         covered: dict[str, list[tuple[int, int]]] = {}
         total_lines = 0
         novel_lines = 0
         overlapping_steps: list[str] = []
 
         for step in _tool_steps(trajectory):
-            if step.name != "read_files" or step.status == "error":
+            if step_name(step) != "read_files" or step_status(step) == "error":
                 continue
             for path, start, end in _file_read_ranges(step):
                 delivered = end - start + 1
                 prior = covered.setdefault(path, [])
                 overlap = _covered_lines(prior, start, end)
                 if overlap:
-                    overlapping_steps.append(step.step_id)
+                    overlapping_steps.append(trajectory_step_id(step))
                 total_lines += delivered
                 novel_lines += delivered - overlap
                 prior.append((start, end))
                 covered[path] = _merge_ranges(prior)
 
         if total_lines == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_verified(
+                self.spec.verifier_id,
                 "Trajectory contains no successful ranged read_files output.",
             )
         score = round(novel_lines / total_lines, 3)
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return VerificationResult(
+            verifier_id=self.spec.verifier_id,
+            status="verified",
             score=score,
             verdict="pass" if novel_lines == total_lines else "fail",
             explanation=(
@@ -455,30 +547,35 @@ class FileReadCoverageEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class PromptFileCoverageEvaluator:
+class PromptFileCoverageVerifier:
     """Measure read_files content already visible in initial File messages."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "file_read_prompt_novelty",
         "File read prompt novelty",
         "Measure whether read_files output was already present in initial context.",
+        category="cost",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
         overlap = prompt_file_read_overlap(trajectory)
         if overlap["total_lines"] == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_verified(
+                self.spec.verifier_id,
                 "Trajectory contains no successful ranged read_files output.",
             )
         novel = overlap["total_lines"] - overlap["covered_lines"]
         score = round(novel / overlap["total_lines"], 3)
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return VerificationResult(
+            verifier_id=self.spec.verifier_id,
+            status="verified",
             score=score,
             verdict="pass" if overlap["covered_lines"] == 0 else "fail",
             explanation=(
@@ -499,7 +596,9 @@ class AdjacentFileReadsDetector:
         "Identify adjacent or overlapping file ranges and when they became available.",
     )
 
-    def detect(self, trajectory: Trajectory) -> DetectionResult:
+    def detect(
+        self, trajectory: Trajectory, *, measurements: Measurements = ()
+    ) -> DetectionResult:
         stats = adjacent_file_read_stats(trajectory)
         range_count = stats["read_range_count"]
         if range_count == 0:
@@ -549,7 +648,9 @@ class FileReadBatchingDetector:
         "Identify same-turn read_files calls that could share one reads[] batch.",
     )
 
-    def detect(self, trajectory: Trajectory) -> DetectionResult:
+    def detect(
+        self, trajectory: Trajectory, *, measurements: Measurements = ()
+    ) -> DetectionResult:
         stats = file_read_stats(trajectory)
         if stats["calls"] == 0:
             return _not_detected(
@@ -595,7 +696,9 @@ class SearchThenReadDetector:
         "Identify source reads that follow and cover a search_code hit.",
     )
 
-    def detect(self, trajectory: Trajectory) -> DetectionResult:
+    def detect(
+        self, trajectory: Trajectory, *, measurements: Measurements = ()
+    ) -> DetectionResult:
         stats = search_then_read_stats(trajectory)
         if not stats["hit_search_request_count"]:
             return _not_detected(
@@ -634,30 +737,34 @@ class SearchThenReadDetector:
 
 
 @dataclass(frozen=True, slots=True)
-class ReviewCompletionEvaluator:
+class ReviewCompletionVerifier:
     """Score the authoritative Execution outcome, independent of result yield."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "review_completion",
         "Review completion",
         "Check the authoritative execution outcome of one CCR review scope.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
-        outcome = str(trajectory.metadata.get("execution_outcome") or "")
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
+        outcome = str(trajectory_metadata(trajectory).get("execution_outcome") or "")
         if not outcome:
-            return _not_evaluated(
-                self.spec.evaluator_id,
+            return _not_verified(
+                self.spec.verifier_id,
                 "Trajectory does not carry an authoritative Execution outcome.",
             )
         completed = outcome == "completed"
-        reason = str(trajectory.metadata.get("execution_reason") or "")
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        reason = str(trajectory_metadata(trajectory).get("execution_reason") or "")
+        return VerificationResult(
+            verifier_id=self.spec.verifier_id,
+            status="verified",
             score=1.0 if completed else 0.0,
             verdict="pass" if completed else "fail",
             explanation=(
@@ -669,39 +776,43 @@ class ReviewCompletionEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class AssessmentCompletionEvaluator:
+class AssessmentCompletionVerifier:
     """A Review 2 execution completes by submitting an Assessment."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "assessment_submission",
         "Assessment submission",
         "Measure whether Review 2 submitted and completed its Assessments.",
     )
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
         calls = _tool_steps(trajectory)
         if not calls and not any(
-            step.operation == "inference" for step in trajectory.steps
+            step_operation(step) == "inference" for step in trajectory.steps
         ):
-            return _not_evaluated(
-                self.spec.evaluator_id, "Trajectory contains no model execution."
+            return _not_verified(
+                self.spec.verifier_id, "Trajectory contains no model execution."
             )
-        submissions = [step for step in calls if step.name == "submit_assessment"]
+        submissions = [step for step in calls if step_name(step) == "submit_assessment"]
         if not submissions:
-            return EvaluationResult(
-                evaluator_id=self.spec.evaluator_id,
-                status="evaluated",
+            return VerificationResult(
+                verifier_id=self.spec.verifier_id,
+                status="verified",
                 score=0.0,
                 verdict="fail",
                 explanation="Review 2 ended without submitting an Assessment.",
             )
         completed = [step for step in submissions if _assessment_completed(step)]
-        failed = [step.step_id for step in submissions if step not in completed]
-        return _ratio_evaluation(
-            self.spec.evaluator_id,
+        failed = [trajectory_step_id(step) for step in submissions if step not in completed]
+        return _ratio_verification(
+            self.spec.verifier_id,
             len(completed),
             len(submissions),
             failed,
@@ -710,31 +821,36 @@ class AssessmentCompletionEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class RoundEfficiencyEvaluator:
+class RoundEfficiencyVerifier:
     """Score inference rounds per Unit or completed Lane assessment."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "round_efficiency",
         "Round efficiency",
         "Measure inference rounds per Unit or completed Lane assessment.",
+        category="cost",
     )
     target_rounds_per_item: int = 12
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
-        rounds = sum(step.operation == "inference" for step in trajectory.steps)
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
+        rounds = sum(step_operation(step) == "inference" for step in trajectory.steps)
         if rounds == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id, "Trajectory contains no model execution."
+            return _not_verified(
+                self.spec.verifier_id, "Trajectory contains no model execution."
             )
         items = _review_work_items(trajectory)
         budget = self.target_rounds_per_item * items
         score = min(1.0, round(budget / rounds, 3))
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return VerificationResult(
+            verifier_id=self.spec.verifier_id,
+            status="verified",
             score=score,
             verdict="pass" if rounds <= budget else "fail",
             explanation=(
@@ -745,25 +861,30 @@ class RoundEfficiencyEvaluator:
 
 
 @dataclass(frozen=True, slots=True)
-class DurationEfficiencyEvaluator:
+class DurationEfficiencyVerifier:
     """Score model/tool duration per Unit or completed Lane assessment."""
 
-    spec: EvaluatorSpec = _evaluator_spec(
+    spec: VerifierSpec = _verifier_spec(
         "duration_efficiency",
         "Duration efficiency",
         "Measure model and tool duration per Unit or completed Lane assessment.",
+        category="cost",
     )
     review1_seconds_per_item: int = 180
     review2_seconds_per_item: int = 120
 
-    def evaluate(
-        self, trajectory: Trajectory, reference: Trajectory | None = None
-    ) -> EvaluationResult:
-        del reference
-        duration = round(sum(step.duration_ms for step in trajectory.steps) / 1000)
+    def verify(
+        self,
+        trajectory: Trajectory,
+        *,
+        measurements: Measurements = (),
+        reference: Trajectory | None = None,
+    ) -> VerificationResult:
+        del reference, measurements
+        duration = round(sum(step_duration_ms(step) for step in trajectory.steps) / 1000)
         if duration == 0:
-            return _not_evaluated(
-                self.spec.evaluator_id, "Trajectory contains no recorded duration."
+            return _not_verified(
+                self.spec.verifier_id, "Trajectory contains no recorded duration."
             )
         items = _review_work_items(trajectory)
         per_item = (
@@ -773,9 +894,9 @@ class DurationEfficiencyEvaluator:
         )
         budget = per_item * items
         score = min(1.0, round(budget / duration, 3))
-        return EvaluationResult(
-            evaluator_id=self.spec.evaluator_id,
-            status="evaluated",
+        return VerificationResult(
+            verifier_id=self.spec.verifier_id,
+            status="verified",
             score=score,
             verdict="pass" if duration <= budget else "fail",
             explanation=(
@@ -788,34 +909,34 @@ class DurationEfficiencyEvaluator:
 def review_stage(trajectory: Trajectory) -> str:
     """Classify a CCR scope without relying on trajectory-id naming."""
 
-    scope_kind = trajectory.metadata.get("scope_kind")
+    scope_kind = trajectory_metadata(trajectory).get("scope_kind")
     if scope_kind == "unit":
         return REVIEW1
     if scope_kind == "lane":
         return REVIEW2
     if any(
-        step.attributes.get("task_type") == "hypothesis_review_task"
+        step_attributes(step).get("task_type") == "hypothesis_review_task"
         for step in trajectory.steps
-        if step.operation == "inference"
+        if step_operation(step) == "inference"
     ):
         return REVIEW2
     return UNKNOWN_STAGE
 
 
-def evaluators_for_stage(stage: str) -> tuple[Evaluator, ...]:
-    """Return CCR's deterministic evaluator suite for one review stage."""
+def verifiers_for_stage(stage: str) -> tuple[Verifier, ...]:
+    """Return CCR's deterministic verifier suite for one review stage."""
 
     common = (
-        ToolFailureEvaluator(),
-        SearchScopeEvaluator(),
-        FileReadCoverageEvaluator(),
-        PromptFileCoverageEvaluator(),
-        RoundEfficiencyEvaluator(),
-        DurationEfficiencyEvaluator(),
-        ReviewCompletionEvaluator(),
+        ToolFailureVerifier(),
+        SearchScopeVerifier(),
+        FileReadCoverageVerifier(),
+        PromptFileCoverageVerifier(),
+        RoundEfficiencyVerifier(),
+        DurationEfficiencyVerifier(),
+        ReviewCompletionVerifier(),
     )
     if stage == REVIEW2:
-        return (*common, AssessmentCompletionEvaluator())
+        return (*common, AssessmentCompletionVerifier())
     return common
 
 
@@ -848,7 +969,7 @@ def assessment_count(trajectory: Trajectory) -> int:
     accepted = set()
     completed_submissions = 0
     for step in _tool_steps(trajectory):
-        if step.name != "submit_assessment" or step.status == "error":
+        if step_name(step) != "submit_assessment" or step_status(step) == "error":
             continue
         try:
             result = json.loads(_tool_response(step))
@@ -869,7 +990,7 @@ def repeated_file_reads(trajectory: Trajectory) -> dict[str, int]:
 
     reads: Counter[str] = Counter()
     for step in _tool_steps(trajectory):
-        if step.name != "read_files":
+        if step_name(step) != "read_files":
             continue
         reads.update(
             str(request.get("file_path") or "?")
@@ -883,7 +1004,7 @@ def hypothesis_yield(trajectory: Trajectory) -> int:
 
     accepted = 0
     for step in _tool_steps(trajectory):
-        if step.name != "submit_hypothesis" or step.status == "error":
+        if step_name(step) != "submit_hypothesis" or step_status(step) == "error":
             continue
         if not _hypotheses_accepted(step):
             continue
@@ -938,7 +1059,7 @@ def context_demands(trajectory: Trajectory) -> list[ContextDemand]:
 
     demands = []
     for step in _tool_steps(trajectory):
-        extractor = _CONTEXT_DEMAND_EXTRACTORS.get(step.name)
+        extractor = _CONTEXT_DEMAND_EXTRACTORS.get(step_name(step))
         if extractor is not None:
             demands.extend(extractor(step))
     return demands
@@ -955,7 +1076,7 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
     inventory: dict[tuple[str, str], dict[str, Any]] = {}
     view_rank = {"source": 3, "outline": 2, "reference": 1}
 
-    for item in trajectory.metadata.get("initial_context") or []:
+    for item in trajectory_metadata(trajectory).get("initial_context") or []:
         if not isinstance(item, dict):
             continue
         kind = str(item.get("kind") or "unknown")
@@ -995,7 +1116,7 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
         demand.setdefault(item.signal, Counter())[representation] += 1
         reason_counts(reason)[item.signal] += 1
 
-    for item in trajectory.metadata.get("initial_outline_attempts") or []:
+    for item in trajectory_metadata(trajectory).get("initial_outline_attempts") or []:
         if not isinstance(item, dict):
             continue
         outcome = str(item.get("outcome") or "unknown")
@@ -1024,7 +1145,7 @@ def initial_context_stats(trajectory: Trajectory) -> dict[str, Any]:
 def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
     """Describe how file reads are spread across model turns."""
 
-    calls = [step for step in _tool_steps(trajectory) if step.name == "read_files"]
+    calls = [step for step in _tool_steps(trajectory) if step_name(step) == "read_files"]
     if not calls:
         return {
             "calls": 0,
@@ -1035,7 +1156,7 @@ def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
             "calls_per_round": 0.0,
         }
     batches = [max(len(_file_read_requests(step)), 1) for step in calls]
-    rounds = len({step.parent_step_id for step in calls})
+    rounds = len({step_parent_id(step) for step in calls})
     requests = sum(batches)
     return {
         "calls": len(calls),
@@ -1050,7 +1171,7 @@ def file_read_stats(trajectory: Trajectory) -> dict[str, float | int]:
 def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
     """Describe query batching separately from tool-call frequency."""
 
-    calls = [step for step in _tool_steps(trajectory) if step.name == "search_code"]
+    calls = [step for step in _tool_steps(trajectory) if step_name(step) == "search_code"]
     if not calls:
         return {
             "calls": 0,
@@ -1075,7 +1196,7 @@ def code_search_stats(trajectory: Trajectory) -> dict[str, Any]:
             "returned_symbol_context_lines": 0,
         }
     batches = [max(len(_code_search_requests(step)), 1) for step in calls]
-    rounds = len({step.parent_step_id for step in calls})
+    rounds = len({step_parent_id(step) for step in calls})
     requests = sum(batches)
     context_projections = 0
     returned_context_lines = 0
@@ -1150,10 +1271,10 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
     unmeasured = 0
     overlapping_steps: list[str] = []
     for step in _tool_steps(trajectory):
-        if step.name != "read_files":
+        if step_name(step) != "read_files":
             continue
         request_count = max(len(_file_read_requests(step)), 1)
-        if step.status == "error":
+        if step_status(step) == "error":
             failed += request_count
             continue
         if _tool_response(step).startswith("Investigation is closed."):
@@ -1167,7 +1288,7 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
                 total_lines += delivered
                 covered_lines += delivered
                 fully_covered += 1
-                overlapping_steps.append(step.step_id)
+                overlapping_steps.append(trajectory_step_id(step))
             else:
                 runtime_covered += 1
         ranges = _file_read_ranges(step)
@@ -1178,10 +1299,10 @@ def prompt_file_read_overlap(trajectory: Trajectory) -> dict[str, Any]:
             covered_lines += overlap
             if overlap == delivered:
                 fully_covered += 1
-                overlapping_steps.append(step.step_id)
+                overlapping_steps.append(trajectory_step_id(step))
             elif overlap:
                 partially_covered += 1
-                overlapping_steps.append(step.step_id)
+                overlapping_steps.append(trajectory_step_id(step))
             else:
                 new_context += 1
         unmeasured += max(0, request_count - len(available_ranges) - len(ranges))
@@ -1218,12 +1339,12 @@ def adjacent_file_read_stats(trajectory: Trajectory) -> dict[str, Any]:
 
     by_path: dict[str, list[tuple[int, int, str]]] = {}
     tool_steps = _tool_steps(trajectory)
-    parent_by_step = {step.step_id: step.parent_step_id for step in tool_steps}
+    parent_by_step = {trajectory_step_id(step): step_parent_id(step) for step in tool_steps}
     for step in tool_steps:
-        if step.name != "read_files" or step.status == "error":
+        if step_name(step) != "read_files" or step_status(step) == "error":
             continue
         for path, start, end in _file_read_observed_ranges(step):
-            by_path.setdefault(path, []).append((start, end, step.step_id))
+            by_path.setdefault(path, []).append((start, end, trajectory_step_id(step)))
 
     range_count = sum(len(ranges) for ranges in by_path.values())
     minimal_ranges = 0
@@ -1271,9 +1392,9 @@ def same_turn_file_read_batching(trajectory: Trajectory) -> dict[str, Any]:
 
     by_parent: dict[str, list[str]] = {}
     for step in _tool_steps(trajectory):
-        if step.name != "read_files" or not step.parent_step_id:
+        if step_name(step) != "read_files" or not step_parent_id(step):
             continue
-        by_parent.setdefault(step.parent_step_id, []).append(step.step_id)
+        by_parent.setdefault(step_parent_id(step), []).append(trajectory_step_id(step))
     groups = [step_ids for step_ids in by_parent.values() if len(step_ids) > 1]
     return {
         "extra_calls": sum(len(step_ids) - 1 for step_ids in groups),
@@ -1306,15 +1427,15 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
     identifier = re.compile(r"^[A-Za-z_][A-Za-z0-9_.$]*$")
 
     for step in _tool_steps(trajectory):
-        if step.status == "error":
+        if step_status(step) == "error":
             continue
-        if step.name == "search_code":
+        if step_name(step) == "search_code":
             search_calls += 1
             requests = _code_search_requests(step) or [{}]
             for index, result in enumerate(_code_search_result_parts(step)):
                 request = requests[index] if index < len(requests) else {}
                 query = str(request.get("query") if request else "")
-                request_id = f"{step.step_id}:{index + 1}"
+                request_id = f"{trajectory_step_id(step)}:{index + 1}"
                 symbol_outcome = _search_symbol_context_outcome(result)
                 has_symbol_context = bool(symbol_outcome)
                 symbol_expanded = symbol_outcome == "expanded"
@@ -1339,15 +1460,15 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                     line_matches = list(re.finditer(r"(?m)^(\d+)\|", block))
                     # Automatic nearby-source projection appends numbered windows
                     # after the original hit list. Only those first Match lines entries
-                    # identify the search hits this evaluator links to reads.
+                    # identify the search hits this verifier links to reads.
                     for line_match in line_matches[:match_count]:
                         request_has_hits = True
                         hits_by_path.setdefault(match.group(1), []).append(
                             (
                                 int(line_match.group(1)),
                                 query,
-                                step.step_id,
-                                step.parent_step_id,
+                                trajectory_step_id(step),
+                                step_parent_id(step),
                                 request_id,
                                 has_context,
                             )
@@ -1362,20 +1483,20 @@ def search_then_read_stats(trajectory: Trajectory) -> dict[str, Any]:
                     if symbol_expanded:
                         symbol_expanded_hit_requests.add(request_id)
             continue
-        if step.name != "read_files":
+        if step_name(step) != "read_files":
             continue
         for path, start, end in _file_read_observed_ranges(step):
             read_range_count += 1
             hits = [
                 hit
                 for hit in hits_by_path.get(path, [])
-                if start <= hit[0] <= end and hit[3] != step.parent_step_id
+                if start <= hit[0] <= end and hit[3] != step_parent_id(step)
             ]
             if not hits:
                 continue
             linked_ranges += 1
             linked_step_ids.extend(hit[2] for hit in hits)
-            linked_step_ids.append(step.step_id)
+            linked_step_ids.append(trajectory_step_id(step))
             for hit in hits:
                 follow_up_requests.add(hit[4])
                 (
@@ -1535,40 +1656,40 @@ def _ratio(numerator: int, denominator: int) -> float | None:
 
 
 def tool_frequencies(trajectory: Trajectory) -> dict[str, int]:
-    return dict(Counter(step.name for step in _tool_steps(trajectory)))
+    return dict(Counter(step_name(step) for step in _tool_steps(trajectory)))
 
 
 def empty_tool_argument_stats(trajectory: Trajectory) -> dict[str, Any]:
     """Count empty payload failures and attribute them to tool and model."""
 
     inference_models = {
-        step.step_id: step.name
+        trajectory_step_id(step): step_name(step)
         for step in trajectory.steps
-        if step.operation == "inference"
+        if step_operation(step) == "inference"
     }
     empty = [
         step
         for step in _tool_steps(trajectory)
-        if step.status == "error" and _tool_argument_value(step) == {}
+        if step_status(step) == "error" and _tool_argument_value(step) == {}
     ]
     return {
         "count": len(empty),
-        "by_tool": dict(Counter(step.name for step in empty)),
+        "by_tool": dict(Counter(step_name(step) for step in empty)),
         "by_model": dict(
             Counter(
-                inference_models.get(step.parent_step_id, "unknown") for step in empty
+                inference_models.get(step_parent_id(step), "unknown") for step in empty
             )
         ),
-        "step_ids": [step.step_id for step in empty],
+        "step_ids": [trajectory_step_id(step) for step in empty],
     }
 
 
 def _tool_steps(trajectory: Trajectory) -> list[Step]:
-    return [step for step in trajectory.steps if step.operation == "execute_tool"]
+    return [step for step in trajectory.steps if step_operation(step) == "execute_tool"]
 
 
 def _tool_argument_value(step: Step) -> Any:
-    for message in step.input_messages:
+    for message in step_input_messages(step):
         for part in message.get("parts") or []:
             if part.get("type") == "tool_call":
                 return part.get("arguments")
@@ -1581,7 +1702,7 @@ def _tool_arguments(step: Step) -> dict[str, Any]:
 
 
 def _tool_response(step: Step) -> str:
-    for message in step.output_messages:
+    for message in step_output_messages(step):
         for part in message.get("parts") or []:
             if part.get("type") == "tool_call_response":
                 value = part.get("response")
@@ -1640,7 +1761,7 @@ def _code_search_observations(trajectory: Trajectory) -> list[dict[str, str]]:
 
     observations = []
     for step in _tool_steps(trajectory):
-        if step.name != "search_code":
+        if step_name(step) != "search_code":
             continue
         requests = _code_search_requests(step) or [{}]
         results = _code_search_result_parts(step)
@@ -1648,7 +1769,7 @@ def _code_search_observations(trajectory: Trajectory) -> list[dict[str, str]]:
             text = results[index].strip() if index < len(results) else ""
             outcome = "hit"
             if (
-                step.status == "error"
+                step_status(step) == "error"
                 or not text
                 or text.startswith(("Error:", "search_code timed out"))
             ):
@@ -1684,7 +1805,8 @@ def _code_search_observations(trajectory: Trajectory) -> list[dict[str, str]]:
             )
             observations.append(
                 {
-                    "step_id": f"{step.step_id}:{index + 1}",
+                    "step_id": trajectory_step_id(step),
+                    "request_index": str(index + 1),
                     "outcome": outcome,
                     "request_key": request_key,
                 }
@@ -1758,9 +1880,9 @@ def _already_available_ranges(step: Step) -> list[tuple[str, str, int, int]]:
 def _context_file_ranges(trajectory: Trajectory) -> dict[str, list[tuple[int, int]]]:
     ranges: dict[str, list[tuple[int, int]]] = {}
     for step in trajectory.steps:
-        if step.operation != "context":
+        if step_operation(step) != "context":
             continue
-        for message in step.output_messages:
+        for message in step_output_messages(step):
             for part in message.get("parts") or []:
                 content = part.get("content")
                 if not isinstance(content, str):
@@ -1813,9 +1935,9 @@ def _hypotheses_accepted(step: Step) -> bool:
     return response.startswith("Hypothesis accepted for independent review.")
 
 
-def _not_evaluated(evaluator_id: str, explanation: str) -> EvaluationResult:
-    return EvaluationResult(
-        evaluator_id=evaluator_id,
+def _not_verified(verifier_id: str, explanation: str) -> VerificationResult:
+    return VerificationResult(
+        verifier_id=verifier_id,
         status="not_applicable",
         explanation=explanation,
     )
@@ -1829,21 +1951,21 @@ def _not_detected(detector_id: str, explanation: str) -> DetectionResult:
     )
 
 
-def _ratio_evaluation(
+def _ratio_verification(
     name: str,
     passed: int,
     total: int,
     failed_step_ids: list[str],
     description: str,
-) -> EvaluationResult:
+) -> VerificationResult:
     score = round(passed / total, 3)
-    return EvaluationResult(
-        evaluator_id=name,
-        status="evaluated",
+    return VerificationResult(
+        verifier_id=name,
+        status="verified",
         score=score,
         verdict="pass" if passed == total else "fail",
         explanation=f"{passed} of {total} {description}.",
-        step_ids=tuple(failed_step_ids),
+        step_ids=tuple(dict.fromkeys(failed_step_ids)),
     )
 
 

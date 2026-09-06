@@ -239,7 +239,7 @@ class WeeklyReportTest(unittest.TestCase):
                             ]
                         }
                     ],
-                    "evaluations": [],
+                    "verifications": [],
                 },
             },
             {
@@ -272,7 +272,7 @@ class WeeklyReportTest(unittest.TestCase):
                             ]
                         }
                     ],
-                    "evaluations": [],
+                    "verifications": [],
                     "failures": [
                         {
                             "impact": "execution",
@@ -291,7 +291,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 20,
                 "tool_freq": {},
                 "analysis": {
-                    "evaluations": [],
+                    "verifications": [],
                     "failures": [
                         {"impact": "step", "key": "llm.routing.timeout"},
                         {"impact": "execution", "key": "llm.routing.timeout"},
@@ -307,7 +307,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 50,
                 "completion_tokens": 5,
                 "tool_freq": {},
-                "analysis": {"evaluations": []},
+                "analysis": {"verifications": []},
             },
         ]
 
@@ -439,7 +439,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 30,
                 "cached_tokens": 15,
                 "tool_freq": {},
-                "analysis": {"evaluations": [], "assessment_count": 2},
+                "analysis": {"verifications": [], "assessment_count": 2},
             },
             {
                 "stage": "review2",
@@ -451,7 +451,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "completion_tokens": 15,
                 "cached_tokens": 0,
                 "tool_freq": {},
-                "analysis": {"evaluations": [], "assessment_count": 1},
+                "analysis": {"verifications": [], "assessment_count": 1},
             },
         ]
 
@@ -501,7 +501,7 @@ class WeeklyReportTest(unittest.TestCase):
                 "prompt_tokens": 100,
                 "completion_tokens": 10,
                 "tool_freq": {},
-                "analysis": {"evaluations": []},
+                "analysis": {"verifications": []},
             }
 
         cohorts = weekly.aggregate_cohorts(
@@ -849,7 +849,7 @@ class WeeklyReportTest(unittest.TestCase):
             self.assertTrue((out / "manifest.json").is_file())
             self.assertTrue((out / "unit-durations.jsonl").is_file())
             metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
-            self.assertEqual(metrics["schema_version"], "weekly-report-v11")
+            self.assertEqual(metrics["schema_version"], "weekly-report-v12")
             unit = json.loads(
                 (out / "unit-durations.jsonl").read_text(encoding="utf-8")
             )

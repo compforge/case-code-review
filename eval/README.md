@@ -25,7 +25,7 @@ eval/
 
 ### 1. 准备环境
 
-- Python 3.10+；基础采集脚本只使用标准库。trajectory 诊断和 reviewbench 共用
+- Python 3.11+；基础采集脚本只使用标准库。trajectory 诊断和 reviewbench 共用
   `eval/reviewbench` 的 uv 环境，其中 `case-harness` 提供 `trajectory_harness`。
 - GitHub：安装 `gh` 并确认 `gh auth status` 成功。
 - GitLab：在当前 shell 或 secret manager 中提供 `GITLAB_TOKEN`，并设置 `GITLAB_HOST`；
@@ -208,7 +208,7 @@ uv run --project eval/reviewbench python eval/build_trajectory_dataset.py
 CCRSessionSource.select/fetch
   → ATIF Recording
   → ATIFTrajectoryLoader
-  → canonical Trajectory
+  → ATIF v1.7 Trajectory
   + normalized forge label annotation
   → versioned TrajectoryDataset
 ```
@@ -236,12 +236,30 @@ uv run --project eval/reviewbench python eval/ccr_trajectory_report.py \
 ```
 
 Dataset、Worksheet、Metric、HTML 渲染和运行产物由 `trajectory_harness` 提供；CCR 定义 label
-join、作为评估 target 的 Review 1/2、领域 Detector/Evaluator 套件，以及面向周报的摘要投影。
+join、作为评估 target 的 Review 1/2、领域 Detector/Verifier 套件，以及面向周报的摘要投影。
 HTML 展示人工 label 占比、Detector Finding、token、工具调用、耗时、周环比和数据健康；逐轨迹
 Detection、Evaluation 与 Measurement 明细保留在 Dataset / Run JSON 中。产物统一落在
 `eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/`，上周产物存在时自动加入趋势对比。
 日常生成完整周报时直接使用下文的 `weekly_report.py`：它会先生成本周和上周的这些 canonical
-Trajectory Run，再从同一持久化结果投影 Markdown，不会另行执行一套 Detector/Evaluator/Measurer。
+Trajectory Run，再从同一持久化结果投影 Markdown，不会另行执行一套 Detector/Verifier/Measurer。
+
+### Trajectory 接口与升级
+
+评测依赖固定到 case-harness `afb1f3e`（ATIF v1.7、Verifier API），需要 Python 3.11+。
+`ATIFTrajectoryLoader` 将 CCR 的历史 Session/Scope 导出转换为官方 ATIF models：模型身份、
+消息、token metrics、工具参数与 observation 使用标准字段；执行状态、上下文曝光和来源身份
+保留在 `extra.case_harness`。步骤 ID 是连续整数，Finding / Verification 的证据使用对应 ID
+的字符串形式；批内请求序号不再拼入步骤 ID。
+
+处理顺序为 `Trajectory → Measurements → Detector / Verifier`。Measurer 确定性派生事实，
+Detector 发现行为模式，Verifier 验证显式判据；后二者的 `category=cost|effect` 与
+`rule_type=hard|soft` 相互独立。CCR 保留阶段判据及其摘要分，运行结果使用
+`TrajectoryAnalysisRun.verifications`，不再输出 `evaluations`。
+
+旧版 `dataset.json` / `run.json` 不能直接交给新版读取。升级后运行 `weekly_report.py --week
+<YYYY-Www>` 可从原始 Session 与 labels 重新生成当周和上周产物；只生成单周时，可先用
+`ccr_trajectory_report.py --week <YYYY-Www> --no-history`，随后按时间顺序重建需要比较的周。
+原始 Session 与 labels 无需迁移。诊断 schema / prompt 已升级到 v3，旧缓存不会被误用。
 
 ## 可选：采集本地 review trajectory
 
@@ -265,7 +283,7 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 诊断先由 CCR 的 ATIF Loader 将每个 scope 投影为通用 `Trajectory + Step`，再交给
 `trajectory_harness` 的通用重复调用/失败重试 Detector，以及 CCR 自己的相邻读取、同轮未批量读取
 和 search 后 read Detector；工具成功率、搜索范围、`read_files` 行覆盖率和 Unit 完成度仍由
-Evaluator 按明确契约判定。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
+Verifier 按明确契约判定。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
 `execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
 尚未提交的 Assessment，避免把“自然 clean”误判为未完成，也避免把“产出过结果”误判为完整执行。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
@@ -275,14 +293,14 @@ tool call 数、批内 range 请求数、占用的模型轮次、批量程度、
 `search_code` 命中被后续读取范围覆盖时产生 `search_then_read` info，供后续评估 symbol-aware read 等工具设计；
 有命中的 search request 另作为稳定分母，区分 Provider 实际返回和未返回 source projection 后的
 follow-up read 比例。
-这些模式由 Detector 输出 Finding，并在 Dataset 上聚合 count/rate；Evaluator 只输出可选 verdict
+这些模式由 Detector 输出 Finding，并在 Dataset 上聚合 count/rate；Verifier 只输出可选 verdict
 和/或 score，Model/Tool/Context Measurer 记录可计数、求和的事实。
 重复读取与初始 Prompt 重叠仍参与综合分；轮次与耗时
 按 Review 1 Unit 或 Review 2 已完成 Assessment 的数量归一化，避免把持续消费多个案卷的 Lane
 误判为单次超长执行。`search_code` 同样区分 tool call、批内 query 和模型轮次，报告
 average/max batch；零命中按 query 区分有效 scope、空 scope、scope 未知与工具失败，有效范围内
 未找到内容本身不扣分，是否属于有价值反证再由后续轨迹判断。Detector 产生
-`DetectionResult + Finding`，Evaluator 产生 `EvaluationResult`；两者分别表达模式发现与契约判断。
+`DetectionResult + Finding`，Verifier 产生 `VerificationResult`；两者分别表达模式发现与契约判断。
 重复工具调用只产生带 hypotheses 的 `Finding`，不伪装为执行 Failure 或低分；
 CCR 展示和传递这些诊断线索，并显式以其余 applicable score 的算术平均作为当前摘要分。可选 LLM
 judge 只在其后解释“为什么慢或弱”，不再直接解析 ATIF 私有字段。
@@ -304,7 +322,7 @@ uv run --project eval/reviewbench python eval/trajectory_diagnostics.py \
 ```
 
 规划器只读取 Run 中已有的 Failure、Detection、Evaluation 和 Measurement，优先选择执行失败、
-工具失败、契约失败、Detector finding 和 p95 成本异常，不会重新执行 Detector/Evaluator/Measurer。
+工具失败、契约失败、Detector finding 和 p95 成本异常，不会重新执行 Detector/Verifier/Measurer。
 每条候选保留完整 step outline，但只展开 Evaluation/Finding `step_ids` 指向的步骤、错误步骤、初始
 context 和终态附近步骤；digest 自动限制在 24KB，不要求调用方或模型猜测上下文范围。
 `--plan-only` 同时展示新调用的启发式 input token 估算、证据步骤数和裁剪量，执行后 manifest 再记录
@@ -322,7 +340,7 @@ Verdict；是否修改工具、prompt 或上下文，仍需回到固定 corpus �
 `~/.casecodereview/eval-cache/trajectory-diagnostics/`，诊断产物位于 ignored `eval/data/`。
 
 [HTML 报告示例](examples/trajectory-evaluation-report.html)展示了 Trajectory facts、Failure、
-DetectionResult/Finding、EvaluationResult、Measurement 与聚合 Metric 在同一读模型中的分层关系。
+DetectionResult/Finding、VerificationResult、Measurement 与聚合 Metric 在同一读模型中的分层关系。
 
 ATIF 把首次 `context_projected` 作为 Initial Context exposure；CCR eval 再用按工具注册的算子从轨迹中
 提取 `ContextDemand`，按 `source / outline / reference / missing` 连接统计。`source→read` 与行重合率
@@ -370,7 +388,7 @@ python3 eval/posterior.py <session.jsonl-or-dir> \
 
 ## 可选：生成每周对比报告
 
-周报是 canonical Trajectory Run 与规范化标签数据集上的可再生成读模型；原始 session、labels、
+周报是 ATIF v1.7 Trajectory Run 与规范化标签数据集上的可再生成读模型；原始 session、labels、
 datasets 和 runs 继续累积存储，不按周搬动。命令先通过 `trajectory_harness` 为本周和上周生成
 Dataset/Run/HTML/Verdict，再从这两份持久化 artifact 投影 Markdown。默认生成上一个完整 ISO week，
 并按 `Asia/Shanghai` 的周一零点切分：
@@ -408,7 +426,7 @@ uv run --project eval/reviewbench python eval/weekly_report.py \
 ```text
 eval/data/reports/trajectory/ccr-weekly/2026-W32/
 ├── dataset.json          固定 Trajectory Dataset 与构建健康
-├── run.json              Detector/Evaluator/Measurer 的唯一运行结果
+├── run.json              Detector/Verifier/Measurer 的唯一运行结果
 ├── report.html           trajectory_harness HTML 视图
 └── verdict.json          trajectory_harness 统一出口
 
@@ -421,7 +439,7 @@ eval/data/reports/weekly/2026-W32/
 
 执行指标按 `session_start` 归周，而不是按 Session 文件 mtime。模型调用次数和
 input/output/cache token 统一由 trajectory_harness 的 `ModelUsageMeasurer` 从 Trajectory 测量，
-Evaluator 不携带这些成本事实。报告分别展示 Review 1 Unit 与 Review 2 Lane 的完成率、
+Verifier 不携带这些成本事实。报告分别展示 Review 1 Unit 与 Review 2 Lane 的完成率、
 `workflow.timeout`、`llm.routing.timeout`、score、轮次、耗时、token、
 工具频率和主要扣分项。Failure 同时给出 operation / execution impact、事件数和受影响轨迹比例，
 不再把 workflow 终态 timeout 与 LLM timeout 合成一个口径。

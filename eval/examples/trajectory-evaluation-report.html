@@ -396,7 +396,7 @@
                 <tr><td><code>execution.completion.rate</code></td><td>0.938</td></tr>
                 <tr><td><code>failure.rate{kind=llm,error_type=timeout}</code></td><td>0.042</td></tr>
                 <tr><td><code>signal.rate{code=repeated_tool_call}</code></td><td>0.208</td></tr>
-                <tr><td><code>evaluation.score.mean{evaluator_id=tool_success}</code></td><td>0.962</td></tr>
+                <tr><td><code>verification.score.mean{verifier_id=tool_success}</code></td><td>0.962</td></tr>
               </tbody>
             </table>
           </div>
@@ -406,7 +406,7 @@
       <section class="ter-section">
         <div class="ter-section-head">
           <h2>Trajectory evidence</h2>
-          <span class="ter-muted">Facts remain separate from evaluator judgments</span>
+          <span class="ter-muted">Facts remain separate from verifier judgments</span>
         </div>
         <div class="ter-browser">
           <div class="ter-list">
@@ -437,15 +437,15 @@
           failure: "none",
           results: [
             {
-              evaluator: "repeated_tool_call",
-              status: "evaluated",
-              verdict: "warning",
+              component: "repeated_tool_call",
+              status: "analyzed",
+              verdict: null,
               score: "—",
               explanation: "2 of 9 tool calls repeat an earlier tool name and arguments.",
               signal: {
                 code: "repeated_tool_call",
                 severity: "warning",
-                evidence: "step-18, step-21",
+                evidence: "18, 21",
                 hypotheses: [
                   "The tool may be missing a batch operation.",
                   "The tool description may not encourage batching or result reuse.",
@@ -454,8 +454,8 @@
               }
             },
             {
-              evaluator: "tool_success",
-              status: "evaluated",
+              component: "tool_success",
+              status: "verified",
               verdict: "pass",
               score: "1.00",
               explanation: "9 of 9 tool calls succeeded."
@@ -473,15 +473,15 @@
           failure: "llm.request.timeout",
           results: [
             {
-              evaluator: "review_completion",
-              status: "evaluated",
+              component: "review_completion",
+              status: "verified",
               verdict: "fail",
               score: "0.00",
               explanation: "Review execution ended as timeout."
             },
             {
-              evaluator: "duration_efficiency",
-              status: "evaluated",
+              component: "duration_efficiency",
+              status: "verified",
               verdict: "fail",
               score: "0.60",
               explanation: "300s recorded duration; target is at most 180s."
@@ -499,15 +499,15 @@
           failure: "none",
           results: [
             {
-              evaluator: "assessment_submission",
-              status: "evaluated",
+              component: "assessment_submission",
+              status: "verified",
               verdict: "pass",
               score: "1.00",
               explanation: "2 of 2 Assessment submissions completed."
             },
             {
-              evaluator: "round_efficiency",
-              status: "evaluated",
+              component: "round_efficiency",
+              status: "verified",
               verdict: "pass",
               score: "0.82",
               explanation: "19 inference rounds for 2 review items."
@@ -543,15 +543,15 @@
         const resultMarkup = item.results.map((result) => `
           <section class="ter-result">
             <div class="ter-result-title">
-              <code>${result.evaluator}</code>
-              <span class="ter-status ${statusClass(result.verdict)}">${result.verdict}</span>
+              <code>${result.component}</code>
+              <span class="ter-status ${statusClass(result.verdict || result.signal?.severity)}">${result.verdict || "finding"}</span>
               <span class="ter-muted">status=${result.status} · score=${result.score}</span>
             </div>
             <p>${result.explanation}</p>
             ${result.signal ? `
               <div class="ter-signal">
                 <div class="ter-signal-head">
-                  <strong>DiagnosticSignal · ${result.signal.code}</strong>
+                  <strong>Finding · ${result.signal.code}</strong>
                   <span class="ter-status ter-status-warn">${result.signal.severity}</span>
                 </div>
                 <div><span class="ter-muted">Evidence</span> <span class="ter-evidence">${result.signal.evidence}</span></div>
@@ -575,8 +575,8 @@
             </div>
           </section>
           <section>
-            <div class="ter-section-head"><h3>Evaluation results</h3><span class="ter-muted">post-hoc judgments</span></div>
-            ${resultMarkup || '<p class="ter-empty">No applicable evaluator result.</p>'}
+            <div class="ter-section-head"><h3>Detection / verification results</h3><span class="ter-muted">post-hoc judgments</span></div>
+            ${resultMarkup || '<p class="ter-empty">No applicable analysis result.</p>'}
           </section>
         `;
       }

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from ccr_trajectory_report import CCRTrajectoryEvaluationRunner
+from ccr_trajectory_report import CCRTrajectoryAnalysisRunner
 from trajectory_diagnostics import (
     MAX_DIAGNOSTIC_DIGEST_BYTES,
     plan_diagnostics,
@@ -19,10 +19,10 @@ from trajectory_harness import (
     ExecutionResult,
     Failure,
     Step,
-    Trajectory,
     TrajectoryDataset,
     TrajectoryRunArtifact,
 )
+from trajectory_harness.model import make_atif_step, make_atif_trajectory
 from trajectory_judge import JudgeResult, judge_chain_with_usage
 
 
@@ -74,8 +74,8 @@ class TrajectoryDiagnosticsTest(unittest.TestCase):
                     side_effect=AssertionError("detectors must not run again"),
                 ),
                 patch(
-                    "trajectory_judge.evaluate",
-                    side_effect=AssertionError("evaluators must not run again"),
+                    "trajectory_judge.verify",
+                    side_effect=AssertionError("verifiers must not run again"),
                 ),
                 patch(
                     "trajectory_judge.measure",
@@ -240,14 +240,14 @@ def _artifact() -> TrajectoryRunArtifact:
         code="invalid_arguments",
     )
     trajectories = (
-        Trajectory(
+        make_atif_trajectory(
             trajectory_id="timeout",
             recording_id="session-1",
             steps=(
                 *_tool_steps("timeout", 6),
                 *_context_steps("timeout", 60),
                 _inference_step("timeout:model", 12_000),
-                Step(
+                make_atif_step(
                     step_id="timeout:failure",
                     parent_step_id=None,
                     operation="inference",
@@ -266,12 +266,12 @@ def _artifact() -> TrajectoryRunArtifact:
             generation={"agent_revision": "revision-1"},
             metadata={"scope_kind": "unit"},
         ),
-        Trajectory(
+        make_atif_trajectory(
             trajectory_id="tool-error",
             recording_id="session-2",
             steps=(
                 _inference_step("tool:model", 5_000),
-                Step(
+                make_atif_step(
                     step_id="tool:failure",
                     parent_step_id="tool:model",
                     operation="execute_tool",
@@ -286,7 +286,7 @@ def _artifact() -> TrajectoryRunArtifact:
             generation={"agent_revision": "revision-1"},
             metadata={"scope_kind": "unit"},
         ),
-        Trajectory(
+        make_atif_trajectory(
             trajectory_id="clean",
             recording_id="session-3",
             steps=(_inference_step("clean:model", 1_000),),
@@ -300,7 +300,7 @@ def _artifact() -> TrajectoryRunArtifact:
         version="test",
         trajectories=trajectories,
     )
-    run = CCRTrajectoryEvaluationRunner().run(
+    run = CCRTrajectoryAnalysisRunner().run(
         dataset,
         run_id="run-1",
         created_at=datetime(2026, 9, 2, tzinfo=timezone.utc),
@@ -320,7 +320,7 @@ def _artifact() -> TrajectoryRunArtifact:
 
 
 def _inference_step(step_id: str, duration_ms: float) -> Step:
-    return Step(
+    return make_atif_step(
         step_id=step_id,
         parent_step_id=None,
         operation="inference",
@@ -333,7 +333,7 @@ def _inference_step(step_id: str, duration_ms: float) -> Step:
 
 def _context_steps(prefix: str, count: int) -> tuple[Step, ...]:
     return tuple(
-        Step(
+        make_atif_step(
             step_id=f"{prefix}:context:{index}",
             parent_step_id=None,
             operation="context",
@@ -353,7 +353,7 @@ def _context_steps(prefix: str, count: int) -> tuple[Step, ...]:
 
 def _tool_steps(prefix: str, count: int) -> tuple[Step, ...]:
     return tuple(
-        Step(
+        make_atif_step(
             step_id=f"{prefix}:tool:{index}",
             parent_step_id=None,
             operation="execute_tool",

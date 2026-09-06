@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build CCR's versioned trajectory dataset, evaluate it, and render HTML."""
+"""Build CCR's versioned trajectory dataset, verify it, and render HTML."""
 
 from __future__ import annotations
 
@@ -13,18 +13,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from build_trajectory_dataset import CCRTrajectoryDatasetBuilder
 from ccr_source import CCRSessionSource
-from ccr_trajectory import detectors_for_stage, evaluators_for_stage, review_stage
+from ccr_trajectory import detectors_for_stage, verifiers_for_stage, review_stage
 from harness_common.report_kit import KV, Report, Section, Table
 from trajectory_harness import (
     ContextUsageMeasurer,
     Detector,
-    Evaluator,
+    Verifier,
     ModelUsageMeasurer,
     RecordingQuery,
     RecordingSource,
     Trajectory,
     TrajectoryDataset,
-    TrajectoryEvaluationRunner,
+    TrajectoryAnalysisRunner,
     TrajectoryHarness,
     TrajectoryHarnessResult,
     TrajectoryReportBuilder,
@@ -34,7 +34,7 @@ from trajectory_harness import (
 from weekly_window import WeekWindow, default_dataset_paths
 
 
-class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):
+class CCRTrajectoryAnalysisRunner(TrajectoryAnalysisRunner):
     """Evaluate CCR scopes with stage-specific checks and common cost measures."""
 
     def __init__(self) -> None:
@@ -50,11 +50,11 @@ class CCRTrajectoryEvaluationRunner(TrajectoryEvaluationRunner):
         del dataset
         return review_stage(trajectory)
 
-    def evaluators_for(
+    def verifiers_for(
         self, target: str, dataset: TrajectoryDataset
-    ) -> Sequence[Evaluator]:
+    ) -> Sequence[Verifier]:
         del dataset
-        return evaluators_for_stage(target)
+        return verifiers_for_stage(target)
 
     def detectors_for(
         self, target: str, dataset: TrajectoryDataset
@@ -565,7 +565,7 @@ def create_harness(
             source=source,
             version=dataset_version,
         ),
-        runner=CCRTrajectoryEvaluationRunner(),
+        runner=CCRTrajectoryAnalysisRunner(),
         reporter=CCRTrajectoryReportBuilder(),
     )
 

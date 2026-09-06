@@ -2,7 +2,7 @@
 name = "reviewbench"
 version = "0.1.0"
 description = "Review 评测编排：corpus(PR) × arms(engine×gates) 的 worksheet 评测，基于 case-harness eval_harness"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "case-harness",
     "spec-case[model]>=0.1.1",
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-case-harness = { git = "https://github.com/compforge/case-harness", subdirectory = "python" }
+case-harness = { git = "https://github.com/compforge/case-harness", subdirectory = "python", rev = "afb1f3e2ecc491d3c780f017aaca88ee3fa3fcaf" }
 spec-case = { git = "https://github.com/compforge/spec-case", subdirectory = "toolchains/python" }
 
 [build-system]
