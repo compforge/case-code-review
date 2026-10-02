@@ -1,25 +1,12 @@
-// Package codegraph builds a bounded, per-review picture of "what symbols
-// exist and how files reference each other", and ranks the symbols most
-// relevant to a change.
-//
-// It is the shared substrate for several consumers with DIFFERENT precision
-// needs: ranking a symbol map for prompt injection tolerates noisy edges
-// (a wrong edge wastes a few tokens), while chain-merge and caller-ascent
-// (future backends) demand resolved, high-confidence edges (a wrong edge
-// corrupts the review scope or the governing contract). Edges therefore
-// carry a Confidence level and consumers filter to what they can stomach —
-// one graph, tiered consumption, instead of per-feature heuristics.
-//
-// Source parsing and language-native facts live in internal/language. This
-// package adapts those facts into graph-backed review features: low-confidence
-// name-paired edges for ranking, and higher-confidence call neighbors for
-// context and unit merging.
-package codegraph
+// Package sourcecontext supplies review context from the standalone CodeGraph library.
+package sourcecontext
 
 import (
 	"fmt"
 	"sort"
 	"strings"
+
+	cg "github.com/compforge/codegraph"
 )
 
 // Def is one package-level definition extracted from a source file.
@@ -31,12 +18,11 @@ type Def struct {
 	Signature string // one-line signature for rendering
 }
 
-// Extraction is a language backend's raw output: definitions per file and
-// identifier reference counts per file. Ranking pairs them by name — the
-// aider repo-map model — so backends stay trivial.
+// Extraction is the review ranking view of one CodeGraph snapshot.
 type Extraction struct {
-	Defs map[string][]Def          // file -> defs
-	Refs map[string]map[string]int // file -> ident -> occurrence count
+	Graph *cg.Graph
+	Defs  map[string][]Def          // file -> defs
+	Refs  map[string]map[string]int // file -> ident -> occurrence count
 }
 
 // RankedSymbol is one entry of the ranked symbol map.

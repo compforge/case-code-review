@@ -14,9 +14,8 @@ CCR 不把“文件”直接等同于评审任务。文件是源码的存储边�
 CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文件改动收为一个 Unit，跨文件
 协作改动通过 call-chain 合并后可以进一步减少 loop。
 
-这种可变粒度依赖 Language Knowledge 提供足够可靠的 caller/callee 关系；随着
-[`gotreesitter`](https://github.com/odvcencio/gotreesitter) 的跨语言解析、符号定位和调用分析能力成熟，
-Formation 才能把分散在不同文件、但共同完成一个行为变化的 Fragment 实用地归入同一 Unit。
+这种可变粒度依赖 [CodeGraph](https://github.com/compforge/codegraph) 提供带置信度的 caller/callee
+关系。Language 适配源码身份，Formation 决定哪些协作的 Fragment 应归入同一个 Unit。
 
 Project Knowledge 先用 Repository / Component / FileRole 解释文件的稳定项目职责，再把 source 交给
 Unit formation，把 manifest / lock 等项目事实投影为 Clue。Component 是静态项目边界，Unit 是一次
@@ -120,11 +119,11 @@ Unit
 
 ### 3.2 图事实按置信度消费
 
-Language 负责产出 definition、reference、call edge 等源码事实；Unit 层决定这些事实能否参与合并
+CodeGraph 负责产出 definition、reference、call edge 等源码事实；Unit 层决定这些事实能否参与合并
 和上下文组织。
 
 - 低置信文本线索可用于 repo map、搜索建议或 clue 候选。
-- 类型解析后的调用边可用于 caller/callee 关系与 call-chain Unit。
+- `Exact/Scoped` 调用边可用于 caller/callee 关系与 call-chain Unit，不宣称完整编译器语义。
 - 无法判定的边保持 unknown，不升级成“确定调用”。
 
 图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Clue 的证据来源，

@@ -10,7 +10,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
+	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
 
@@ -21,8 +21,7 @@ import (
 //	go test ./internal/runner -run Dogfood -v
 //
 // It exercises both paths: a function with its own spec/case/rule/link, and a
-// deep function that inherits its caller's spec via CallerFinder (real git grep
-// + go/ast). No LLM involved — this shows the assembled context, not a review.
+// deep function that inherits its caller's spec via CallerFinder (real CodeGraph extraction and binding). No LLM involved — this shows the assembled context, not a review.
 func TestDogfoodContextAssembly(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -58,7 +57,7 @@ func TestDogfoodContextAssembly(t *testing.T) {
 			spec.NewRelatedFinder(spec.Catalog{Local: idx}, repo, spec.KindGates{Spec: true, Rule: true, Link: true, Doc: true}),
 		},
 		costlyFinders: []unit.ClueFinder{
-			codegraph.CallerFinder{RepoDir: repo, Index: idx, Kinds: spec.KindGates{Spec: true}},
+			sourcecontext.CallerFinder{RepoDir: repo, Index: idx, Kinds: spec.KindGates{Spec: true}},
 		},
 		changes: []change.Change{
 			{NewPath: "handler.go", NewFileContent: files["handler.go"], Insertions: 1, Deletions: 1,

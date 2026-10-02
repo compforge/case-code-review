@@ -1,15 +1,6 @@
-// This file supplies call-graph-derived review context via two
-// ClueFinders: CallerFinder recovers a changed function's GOVERNING spec by
-// walking up to its callers; CalleeFinder surfaces the contracts the function
-// DEPENDS ON by walking down to its callees. Both share one bounded walk
-// (walkForSpecs) and differ only in their neighbor function. They are
-// deliberately lightweight (git grep + per-language parsers, with an optional
-// typed Go graph), so they work on a diff that may not even compile and degrade to nothing whenever
-// they can't help.
-package codegraph
+package sourcecontext
 
 import (
-	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
@@ -25,9 +16,7 @@ import (
 // behind its own kind gate. Bounded by Max/Depth, degrading to nil on any miss.
 type CallerFinder struct {
 	RepoDir  string
-	Index    spec.Index     // may be nil: doc-only mode still works
-	Runner   *gitcmd.Runner // optional; falls back to exec when nil
-	Typed    *TypedGraph    // optional; typed answers for Go symbols, grep fallback otherwise
+	Index    spec.Index // may be nil: doc-only mode still works
 	Analyzer *language.Analyzer
 	Max      int            // cap on resolved spec-bearing callers (0 -> default)
 	Depth    int            // hops to walk up (0 -> default 2)
@@ -38,7 +27,7 @@ func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
 	// Func and chain units have function names to walk from (a chain walks from
 	// all member symbols; walkNeighbors seeds visited with them, so a member never
 	// surfaces as another member's caller). File units would fan out over every
-	// touched symbol — they degrade to nil. We also need a repo to grep.
+	// touched symbol — they degrade to nil. The graph uses the review repository.
 	if f.RepoDir == "" || (u.Scope != unit.ScopeFunc && u.Scope != unit.ScopeCallChain) {
 		return nil
 	}
@@ -63,9 +52,12 @@ func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
 	if max <= 0 {
 		max = defaultMaxResults
 	}
+	if f.Analyzer == nil {
+		f.Analyzer = language.NewAnalyzer(f.RepoDir)
+	}
 	var doc *docRider
 	if f.Kinds.Doc {
-		doc = &docRider{repoDir: f.RepoDir, relation: unit.RelCaller}
+		doc = &docRider{analyzer: f.Analyzer, relation: unit.RelCaller}
 	}
 	cfg := walkCfg{idx: f.Index, depth: f.Depth, max: max, spec: emitSpec, doc: doc}
 	return walkNeighbors(cfg, u.AllSymbols(), f.callers, func(id string) unit.Clue {
@@ -78,31 +70,10 @@ func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
 	})
 }
 
-// callers returns the symbol-ids of functions that call funcID — git grep the
-// function's name, then resolve each call site to its enclosing function.
 func (f CallerFinder) callers(funcID string) []string {
-	// Typed graph first: resolved edges beat name matching (a common method
-	// name greps half the repo; the type checker knows the one true caller set).
-	if ids, ok := f.Typed.Callers(funcID); ok {
-		return ids
+	analyzer := f.Analyzer
+	if analyzer == nil {
+		analyzer = language.NewAnalyzer(f.RepoDir)
 	}
-	name := language.BareSymbolName(funcID)
-	if name == "" {
-		return nil
-	}
-	// An unexported callee can only be called from its own package — scope the
-	// grep there so a same-named function elsewhere isn't mistaken for a caller.
-	path, _, _ := language.SplitSymbolID(funcID)
-	scope := language.ReferenceScope(path, name)
-	var ids []string
-	seen := map[string]bool{}
-	for _, h := range grepCode(f.RepoDir, f.Runner, []string{"-F", "-w", "-e", name}, defaultMaxResults*4, scope) {
-		id, ok := funcIDAt(f.Analyzer, f.RepoDir, h)
-		if !ok || id == funcID || seen[id] { // skip funcID's own definition / recursion / dupes
-			continue
-		}
-		seen[id] = true
-		ids = append(ids, id)
-	}
-	return ids
+	return analyzer.Repository().CallNeighbors(funcID, true)
 }

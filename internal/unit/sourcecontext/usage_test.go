@@ -1,6 +1,7 @@
-package codegraph
+package sourcecontext
 
 import (
+	"github.com/qiankunli/case-code-review/internal/language"
 	"testing"
 )
 
@@ -13,7 +14,7 @@ func TestFindUsages(t *testing.T) {
 
 	// The unit's own file is excluded (its internal uses are already visible in
 	// the inlined source); hits elsewhere come back with line text for rendering.
-	got := FindUsages(repo, nil, []string{"svc.go::Get"}, map[string]bool{"svc.go": true})
+	got := FindUsages(language.NewAnalyzer(repo), []string{"svc.go::Get"}, map[string]bool{"svc.go": true})
 	files := map[string]string{}
 	for _, u := range got {
 		if u.Symbol != "svc.go::Get" || u.Line <= 0 || u.Text == "" {
@@ -29,7 +30,7 @@ func TestFindUsages(t *testing.T) {
 	}
 
 	// No repo → degrade to nil.
-	if got := FindUsages("", nil, []string{"svc.go::Get"}, nil); got != nil {
+	if got := FindUsages(language.NewAnalyzer(""), []string{"svc.go::Get"}, nil); got != nil {
 		t.Fatalf("want nil without a repo, got %+v", got)
 	}
 }
@@ -40,7 +41,7 @@ func TestFindUsages_SkipsCommentProse(t *testing.T) {
 		// A dereference assignment starts with '*' but is NOT comment prose.
 		"use.go": "package p\n\n// the call graph is walked lazily\nvar n = graph()\n\nfunc set(p *int) {\n\t*p = graph()\n}\n",
 	})
-	got := FindUsages(repo, nil, []string{"g.go::graph"}, map[string]bool{"g.go": true})
+	got := FindUsages(language.NewAnalyzer(repo), []string{"g.go::graph"}, map[string]bool{"g.go": true})
 	texts := map[string]bool{}
 	for _, u := range got {
 		texts[u.Text] = true

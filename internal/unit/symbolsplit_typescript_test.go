@@ -44,7 +44,12 @@ const View = () => {
 	}
 	findFrag(t, frags, "app.tsx::alpha")
 	findFrag(t, frags, "app.tsx::Service.run")
-	view := findFrag(t, frags, "app.tsx::View")
+	// CodeGraph exposes arrow bindings as variables. Their edits remain in the
+	// file residual, rather than inventing a callable graph node in CCR.
+	view := findFrag(t, frags, "app.tsx")
+	if len(view.Symbols) != 0 {
+		t.Fatalf("arrow binding should use file residual: %+v", view)
+	}
 	if !strings.Contains(view.Diff, "<span>ok</span>") {
 		t.Fatalf("View diff not isolated:\n%s", view.Diff)
 	}

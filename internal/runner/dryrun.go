@@ -26,7 +26,7 @@ type UnitContext struct {
 	Prior          string         `json:"prior,omitempty"`           // a previous review's findings on this unit (to reconcile)
 	ProjectContext string         `json:"project_context,omitempty"` // changed manifest/lock pointers from the same Component
 	SourcePreloads []string       `json:"source_preloads,omitempty"` // descriptors, not content: own source + related bodies
-	UsageSites     string         `json:"usage_sites,omitempty"`     // pre-grepped use sites of the changed symbols
+	UsageSites     string         `json:"usage_sites,omitempty"`     // CodeGraph reference sites of the changed symbols
 }
 
 // countClues tallies a Unit's Clues on the relation×kind matrix, keyed

@@ -1,6 +1,7 @@
 package language
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,10 +19,8 @@ type Reference struct {
 }
 
 var (
-	identifier   = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*`)
-	goSelector   = regexp.MustCompile(`\b([a-z][A-Za-z0-9_]*)\.([A-Z][A-Za-z0-9_]*)\b`)
-	goImportLine = regexp.MustCompile(`^(?:([A-Za-z_]\w*|\.|_)\s+)?"([^"]+)"`)
-	pyFromImport = regexp.MustCompile(`(?m)^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]+(.+)$`)
+	identifier = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*`)
+	goSelector = regexp.MustCompile(`\b([a-z][A-Za-z0-9_]*)\.([A-Z][A-Za-z0-9_]*)\b`)
 )
 
 // ReferencesIn extracts names from a changed snippet and enriches references
@@ -30,6 +29,7 @@ var (
 // enough to suppress same-name fallback.
 func (a *Analyzer) ReferencesIn(source Source, snippet string) []Reference {
 	lang, _ := Detect(source.Path)
+	facts, _ := a.extract(context.Background(), source)
 	var out []Reference
 	seen := map[Reference]bool{}
 	add := func(reference Reference) {
@@ -42,14 +42,40 @@ func (a *Analyzer) ReferencesIn(source Source, snippet string) []Reference {
 
 	switch lang {
 	case Go:
-		imports := parseGoImports(source.Content)
+		imports := map[string]string{}
+		for _, imp := range facts.Imports {
+			alias := imp.Alias
+			if alias == "" {
+				alias = imp.Binding
+			}
+			if alias != "" && alias != "_" && alias != "." {
+				imports[alias] = imp.Path
+			}
+		}
 		for _, match := range goSelector.FindAllStringSubmatch(snippet, -1) {
 			if path, ok := imports[match[1]]; ok {
 				add(Reference{Name: match[2], FQN: path + "." + match[2]})
 			}
 		}
 	case Python:
-		imports := parsePyFromImports(source.Content)
+		imports := map[string]importedSymbol{}
+		for _, imp := range facts.Imports {
+			if imp.From == "" {
+				continue
+			}
+			for _, binding := range imp.Bindings {
+				imports[binding.Local] = importedSymbol{module: imp.From, name: binding.Name}
+			}
+			if len(imp.Bindings) == 0 {
+				for _, name := range imp.Names {
+					local := name
+					if imp.Alias != "" {
+						local = imp.Alias
+					}
+					imports[local] = importedSymbol{module: imp.From, name: name}
+				}
+			}
+		}
 		roots := pythonModuleRoots(a.repoDir)
 		for _, name := range identifier.FindAllString(snippet, -1) {
 			if imported, ok := imports[name]; ok {
@@ -68,86 +94,7 @@ func (a *Analyzer) ReferencesIn(source Source, snippet string) []Reference {
 	return out
 }
 
-func parseGoImports(src string) map[string]string {
-	out := map[string]string{}
-	inBlock := false
-	for _, line := range strings.Split(src, "\n") {
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case strings.HasPrefix(trimmed, "import ("):
-			inBlock = true
-			continue
-		case inBlock && trimmed == ")":
-			inBlock = false
-			continue
-		case !inBlock && strings.HasPrefix(trimmed, "import "):
-			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "import "))
-		case !inBlock:
-			continue
-		}
-		match := goImportLine.FindStringSubmatch(trimmed)
-		if match == nil {
-			continue
-		}
-		alias, path := match[1], match[2]
-		if alias == "_" || alias == "." {
-			continue
-		}
-		local := alias
-		if local == "" {
-			local = goPackageName(path)
-		}
-		if local != "" {
-			out[local] = path
-		}
-	}
-	return out
-}
-
-func goPackageName(path string) string {
-	segment := path[strings.LastIndex(path, "/")+1:]
-	if len(segment) > 1 && segment[0] == 'v' && isDigits(segment[1:]) {
-		if i := strings.LastIndex(path, "/"); i >= 0 {
-			rest := path[:i]
-			return rest[strings.LastIndex(rest, "/")+1:]
-		}
-	}
-	return segment
-}
-
-func isDigits(value string) bool {
-	for _, r := range value {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return value != ""
-}
-
 type importedSymbol struct{ module, name string }
-
-func parsePyFromImports(src string) map[string]importedSymbol {
-	out := map[string]importedSymbol{}
-	for _, match := range pyFromImport.FindAllStringSubmatch(src, -1) {
-		module := match[1]
-		clause := strings.TrimSpace(match[2])
-		clause = strings.TrimPrefix(clause, "(")
-		clause = strings.TrimSuffix(clause, ")")
-		clause = strings.TrimSuffix(strings.TrimSpace(clause), "\\")
-		for _, part := range strings.Split(clause, ",") {
-			fields := strings.Fields(strings.TrimSpace(part))
-			if len(fields) == 0 || fields[0] == "*" {
-				continue
-			}
-			name, local := fields[0], fields[0]
-			if len(fields) == 3 && fields[1] == "as" {
-				local = fields[2]
-			}
-			out[local] = importedSymbol{module: module, name: name}
-		}
-	}
-	return out
-}
 
 func pythonModuleRoots(repoDir string) []string {
 	if repoDir == "" {

@@ -1,6 +1,6 @@
-package codegraph
+package sourcecontext
 
-import "github.com/qiankunli/case-code-review/internal/gitcmd"
+import "github.com/qiankunli/case-code-review/internal/language"
 
 // CallAdjacency builds the undirected call adjacency among a set of CHANGED
 // function symbol-ids: an edge between X and Y whenever one directly calls the
@@ -10,15 +10,13 @@ import "github.com/qiankunli/case-code-review/internal/gitcmd"
 // functions into one review Unit so a requirement's change is reviewed along the
 // call chain it touched.
 //
-// It reuses callee resolution (language facts + definition grep) and is therefore
-// costly, so the caller gates it (only when the change stays function-grained).
-// Backends without callee facts simply leave those functions unclustered.
-func CallAdjacency(repoDir string, runner *gitcmd.Runner, typed *TypedGraph, funcIDs []string) map[string][]string {
+// CodeGraph owns call resolution; CCR owns the confidence gate and Unit grouping.
+func CallAdjacency(analyzer *language.Analyzer, funcIDs []string) map[string][]string {
 	set := make(map[string]bool, len(funcIDs))
 	for _, id := range funcIDs {
 		set[id] = true
 	}
-	cf := CalleeFinder{RepoDir: repoDir, Runner: runner, Typed: typed} // Index unused by callees()
+	cf := CalleeFinder{Analyzer: analyzer} // Index unused by callees()
 	adj := map[string][]string{}
 	seen := map[[2]string]bool{}
 	addEdge := func(a, b string) {

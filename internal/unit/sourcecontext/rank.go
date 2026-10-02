@@ -1,12 +1,14 @@
-package codegraph
+package sourcecontext
 
 import (
 	"math"
 	"sort"
+
+	cg "github.com/compforge/codegraph"
 )
 
 // Ranking = the aider repo-map kernel, reshaped for review: build a
-// file-level reference graph (referencer -> definer, paired by identifier),
+// file-level view of CodeGraph references (referencer -> definer),
 // personalize PageRank on the diff's files, then split each file's rank
 // across its out-edges to score individual (file, ident) definitions.
 // File-level nodes keep the graph tiny (#files, not #symbols) while the
@@ -17,8 +19,6 @@ const (
 	prIterations   = 50
 	prEpsilon      = 1e-8
 	seedIdentBoost = 10.0 // ident touched by the diff — what review cares about
-	commonPenalty  = 0.1  // ident defined in many files — near-zero signal
-	commonDefFiles = 5
 )
 
 type edge struct {
@@ -48,52 +48,53 @@ func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 		seedIdent[id] = true
 	}
 
-	// definers[ident] = files defining it; defs[(file,ident)] for scoring.
-	definers := map[string][]string{}
 	type defKey struct{ file, ident string }
 	defsByKey := map[defKey][]Def{}
-	for f, defs := range ex.Defs {
-		seen := map[string]bool{}
-		for _, d := range defs {
-			k := defKey{f, d.Ident}
-			defsByKey[k] = append(defsByKey[k], d)
-			if !seen[d.Ident] {
-				seen[d.Ident] = true
-				definers[d.Ident] = append(definers[d.Ident], f)
-			}
-		}
-	}
-
-	// Edges: file that references ident -> each file defining ident.
-	var edges []edge
 	nodes := map[string]bool{}
-	for f := range ex.Defs {
-		nodes[f] = true
-	}
-	for f := range ex.Refs {
-		nodes[f] = true
-	}
-	for refFile, refCounts := range ex.Refs {
-		for ident, n := range refCounts {
-			defFiles := definers[ident]
-			if len(defFiles) == 0 {
-				continue
-			}
-			w := math.Sqrt(float64(n))
-			if seedIdent[ident] {
-				w *= seedIdentBoost
-			}
-			if len(defFiles) > commonDefFiles {
-				w *= commonPenalty
-			}
-			for _, defFile := range defFiles {
-				if defFile == refFile {
-					continue // self-reference adds no cross-file signal
-				}
-				edges = append(edges, edge{from: refFile, to: defFile, ident: ident, weight: w})
-			}
+	for file, defs := range ex.Defs {
+		nodes[file] = true
+		for _, def := range defs {
+			defsByKey[defKey{file, def.Ident}] = append(defsByKey[defKey{file, def.Ident}], def)
 		}
 	}
+	if ex.Graph == nil {
+		return nil
+	}
+	// Ranking may use weaker graph candidates; only CodeGraph resolves endpoints.
+	counts := map[edge]int{}
+	for _, relation := range ex.Graph.Relations() {
+		if relation.Kind != cg.References && relation.Kind != cg.Calls {
+			continue
+		}
+		target, ok := ex.Graph.Node(relation.Target)
+		if !ok || target.Location == nil {
+			continue
+		}
+		from, to := relation.Location.Path, target.Location.Path
+		if from == to || len(defsByKey[defKey{to, target.QualifiedName}]) == 0 {
+			continue
+		}
+		nodes[from] = true
+		counts[edge{from: from, to: to, ident: target.QualifiedName}]++
+	}
+	var edges []edge
+	for e, count := range counts {
+		e.weight = math.Sqrt(float64(count))
+		if seedIdent[e.ident] {
+			e.weight *= seedIdentBoost
+		}
+		edges = append(edges, e)
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		a, b := edges[i], edges[j]
+		if a.from != b.from {
+			return a.from < b.from
+		}
+		if a.to != b.to {
+			return a.to < b.to
+		}
+		return a.ident < b.ident
+	})
 	if len(edges) == 0 {
 		return nil
 	}

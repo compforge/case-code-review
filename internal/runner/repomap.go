@@ -7,7 +7,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
+	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 )
 
 // buildRepoMap builds the run-level ranked symbol map: seeds are the diff's
@@ -28,7 +28,7 @@ func (a *Runner) buildRepoMap(units []unit.Unit) string {
 	var seedIdents []string
 	seen := map[string]bool{}
 	addIdent := func(s string) {
-		if s != "" && !seen[s] && codegraph.IsLikelySymbolName(s) {
+		if s != "" && !seen[s] && sourcecontext.IsLikelySymbolName(s) {
 			seen[s] = true
 			seedIdents = append(seedIdents, s)
 		}
@@ -46,10 +46,9 @@ func (a *Runner) buildRepoMap(units []unit.Unit) string {
 		}
 	}
 
-	ex := codegraph.Scan(a.args.RepoDir)
-	codegraph.PairMethodIdents(ex)
+	ex := sourcecontext.Scan(a.sourceAnalyzer())
 	a.repoIndex = ex
-	m := codegraph.BuildMap(ex, codegraph.MapRequest{
+	m := sourcecontext.BuildMap(ex, sourcecontext.MapRequest{
 		SeedFiles:  seedFiles,
 		SeedIdents: seedIdents,
 	})

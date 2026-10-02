@@ -1,178 +1,93 @@
-# Language：源码事实层
+# Language：源码分析的接入边界
 
-## 1. 理念 / 概念
+## 理念与职责
 
-Language 是 CCR 唯一的源码语言边界。它把 Go、Python、TypeScript 等不同语法与语义后端，统一成
-上层可消费的源码事实；不决定 Unit 如何合并，也不参与 finding 判断。
-
-```text
-source files
-  └─ language backend
-       ├─ symbol / definition / span
-       ├─ outline / containment
-       ├─ reference / call edge
-       ├─ symbol / file proximity
-       ├─ doc binding / import / dependency root
-       ├─ supertype reference (extends / implements / base)
-       └─ stable identity
-            └─ Unit / Clue / tools
-```
-
-这层的核心约束是：**有证据的事实才向上输出，解析失败保持 unknown**。上层可以选择降级策略，
-但不能把语言层的猜测当成确定关系。
-
-Language 对 `spec / case / link / rule / doc` 只拥有语法抽取、代码身份和 relation 绑定；这些声明表达的
-契约与业务场景属于 Project Knowledge 中作者声明的 Biz Knowledge。也就是说，Language 回答“这条
-声明绑定到哪段代码”，Project Knowledge 回答“这条声明要求代码守住什么”。
-
-## 2. 流程
-
-### 2.1 单文件分析
-
-Analyzer 面向一份明确的源码快照，提供：
-
-- 可定位的定义及其 span；
-- 文件结构的 Outline 与 containment；
-- 文件内可识别的符号、文档和依赖；
-- 源码显式声明的 import 与未解析 supertype reference；
-- 从 diff hunk 到所属定义的归属；
-- 从任意源码位置到最内层 named symbol 的归属，供有界源码导航使用；
-- 在给定语言能力内可证明的引用关系。
-
-这些事实支持 Fragment 切分、范围预载、评论定位和局部搜索。后端不能可靠识别时，应退化到文件
-级范围，不能制造虚假的函数边界。
-
-`FileOutline` 是 CCR 定义的、与底层实现无关的文件结构导航投影。gotreesitter outline 是它的一个
-重要输入子集：提供代码的 type、callable、span 与嵌套关系；CCR FileOutline 概念上是其超集，
-还可以表达 JSON 的 key 结构和 Markdown 的标题层级。未来接入其它 outline 实现时，消费方仍只依赖
-FileOutline；不同实现既可以替换，也可以提供互补的结构事实。
-
-代码文件默认依赖 gotreesitter 的跨语言能力，CCR 只为 Go 补充自身能够可靠维护的结构事实。JSON、
-Markdown 等非代码格式由 CCR 直接投影。Outline 是源码消息在上下文收紧时的导航摘要，不是新的
-行为证据，也不能替代读取源码验证行为。
-
-Runner 会把每次初始 FileOutline 生成与准入尝试的语言、结果和 fallback 原因保存为轨迹 Fact。这样评测可以
-区分 provider 无输出、读取/分析失败与 Harness 预算淘汰，而不把“最终只提供 path”误判成同一种问题。
-
-### 2.2 仓库级索引
-
-RepositoryIndex 把单文件事实组合成仓库查询面，用于 definition lookup、reference lookup、repo map
-和调用关系，并从可证明的结构边推导 symbol/file proximity。索引是可重建的事实视图，不持有 review
-业务状态。
-
-不同查询对置信度要求不同：
-
-- repo map 和搜索建议可以容忍低置信候选，因为模型仍会读取源码核实；
-- caller/callee 上下文需要更高置信，否则会注入无关材料；
-- call-chain Unit 会改变评审边界，只接受类型或等价语义解析证明的边。
-
-### 2.3 统一身份
-
-`symbol-id` 是仓库内连接 diff、definition、reference、Unit 和 history 的主要身份。它应由语言结构
-生成，而不是简单拼接显示名。作者声明的跨仓契约使用 `fqn`；两者解决的问题不同，不应互相替代。
-
-当 Forge 或外部数据只保留文件锚点时，上层可以降级到 path，但 Language 不应通过猜测恢复一个
-看似精确的 symbol-id。
-
-## 3. 关键设计
-
-### 3.1 Backend 隔离语言差异
-
-语言专属 parser、type checker、tree-sitter grammar 和 fallback 都封装在 backend 内。上层依赖统一
-接口，而不是散落 `if language == ...`。新增语言时，优先补齐事实能力表；缺失能力明确返回 unknown，
-而不是复制另一门语言的近似语义。
-
-数据成员同样由 backend 映射：Go/Java 可称为 field，TypeScript 称为 property，Python 称为
-attribute。FileOutline 统一消费它们的结构角色，但展示语言自身的术语；不支持该能力的 backend
-只输出已有 type/callable，不影响分析主链路。
-
-跨语言的类型血缘事实统一称为 **supertype reference**：Java / JavaScript / TypeScript 的 `extends`、
-Java 的 `implements` 与 Python 的 base class 都表示 subtype 对 supertype 名称的源码引用。Language 只保证
-声明与本地 subtype symbol-id，不猜测目标名对应哪个仓库符号；import 是帮助解析该名称的源码事实，
-不是面向 Unit 的 Relation。CodeGraph 解析成功后仍保留 `extends`、`implements` 或 `base` 的方向与
-语义。Go 的隐式 interface implementation 必须由类型检查证明，struct embedding 则是独立的
-`embeds` 关系，不能为了统一术语冒充继承。
-
-### 3.2 图是事实投影，不是第二套语言模型
-
-代码图由 definition、reference 和 call edge 投影而来。Language 负责边的来源与置信度，Unit 层负责
-如何消费：低置信边可做提示，高置信边才可参与 Unit formation。这样既避免图实现侵入 Runner，
-也避免同一调用关系在多个模块各自猜一次。
-
-### 3.3 快照一致性优先于索引复用
-
-一次 review 的 diff、源码读取和索引查询必须指向同一份 review snapshot。工作区、range 和 commit
-模式可以使用不同 Git 读取方式，但不能让 definition 来自当前工作区、diff 却来自旧 commit。
-缓存只有在快照身份一致时才能复用。Analyzer 的缓存身份还包含内部 backend：同一源码快照可以分别
-由 Python 语义分析和 gotreesitter Outline 产生事实，这些结果不能互换；使用同一 backend 的 Analysis
-与 FileOutline 则应共享分析结果，避免为了不同上层投影重复解析源码。
-
-### 3.4 复杂度边界
-
-Language 解决“代码事实是什么”，不解决：
-
-- 哪些 Fragment 应合并成 Unit；
-- 哪些上下文值得注入；
-- agent 该调用几轮工具；
-- Hypothesis 是否应成为 Finding。
-
-这些分别属于 Unit、Unit Review、Harness 和 Hypothesis Review。保持该边界，才能让语言能力增长
-而不把评审策略固化进 parser。
-
-## 4. 演进方向：CodeGraph 作为源码关系查询面
-
-File Outline 提供 type、function、field 等结构节点；再通过作用域、import、类型和继承解析连接定义、
-引用与调用，便可以形成表达 file / symbol 关系的 `CodeGraph`。`CallGraph` 只是其中
-callable-to-callable 的一个投影，完整关系还包括 containment、dependency、reference 与 type
-hierarchy。类型层级的具体 edge kind 可以是 `extends`、`implements` 或 `base`，而不是把所有语言都
-解释成 inheritance。
-
-CodeGraph 可以把一个 symbol 周围已解析的稳定结构关系聚合成面向 Reviewer 的 `clan` 查询入口。
-`clan` 与 `caller`、`callee`、`used` 一样回答“上下文如何与 Unit 相关”，但它不替代底层有方向、
-有来源与置信度的 `extends`、`implements`、`base`、`embeds`、`contains` 等具体 edge。类型血缘来自
-supertype reference；组合、嵌入和 containment 需要各语言独立证明，不能从普通引用或 import 推断。
-
-CodeGraph 的目的不是追求一张尽可能完整的仓库图，而是为 Review 提供统一、可查询的源码关系事实。
-同一份事实可以有三种消费方式：
-
-1. **Context compaction**：完整源码可降级为 File Outline 与关键关系；节点关系也帮助上下文管理器
-   判断哪些材料应优先保留。Language 提供可压缩的事实，实际压缩仍由 Harness 负责。
-2. **Initial context**：以 Unit 为中心找到高相关 file / symbol，在 loop 开始前注入相关 span、Outline
-   或小文件全文，把可预测的多轮 `read_files` 探索变成一次上下文供给。
-3. **On-demand tools**：初始上下文无法覆盖的问题，继续通过 `find_callers`、`find_callees`、
-   `find_implementations` 等只读工具查询；工具和预载应复用同一 CodeGraph，避免产生两套关系判断。
-
-CodeGraph 围绕 Unit 可提供如下关系视图：
+CCR 通过独立项目 [CodeGraph](https://github.com/compforge/codegraph) 分析源码：输入 Document，
+构造 symbol graph，并保留 outline 等可复用的解析产物。语法解析、声明抽取、名称绑定、关系与置信度
+由 CodeGraph 持有；CCR 的 Language 层提供输入材料，并把结果适配为评审使用的身份、范围和展示。
 
 ```text
-Unit
-├─ changed symbols
-├─ containing type / file / component
-├─ callers / callees
-├─ type hierarchy / implementations
-├─ related entrypoints / handlers
-└─ related tests
+review snapshot ─▶ Document ─▶ CodeGraph
+                                  ├─ declarations / imports / references
+                                  ├─ outline
+                                  └─ symbol graph + diagnostics
+                                           ↓
+                             Language 的身份与展示适配
+                                           ↓
+                         Fragment / Unit / Clue / 源码导航
 ```
 
-symbol 或 file 的 `proximity`（关系接近度）用于衡量图结构上的接近程度，可以综合 graph distance、边类型和置信度；
-Unit Review 再结合当前 diff、Unit 和 token 预算判断 context relevance。图上接近不等于评审相关，
-因此 Language 只提供关系、proximity、来源与置信度，不决定最终预载内容；Lane 等聚类场景再结合
-Component、目录与实际证据重合计算 review affinity。
+`internal/unit/sourcecontext` 消费这些结果，负责上下文相关性排序、寻找最近的契约、限制线索数量。
+形成哪个 Unit、注入哪些材料、Hypothesis 是否成立，分别由评审领域决定。
 
-Review 不直接接收完整仓库图，而只接收有界的相关材料。强关系优先提供 symbol span 或 Outline，
-小文件可按需提供全文，弱关系只暴露路径和关系说明；`read_files` 留给静态图无法预测的证据。效果可
-通过预载文件与实际读取文件的重合率、无效预载比例持续验证，避免为了减少工具调用而无界扩大初始
-prompt。
+作者声明的 `spec / case / link / rule / doc` 属于 Project Knowledge。Language 用源码身份和 import
+信息帮助 CCR 找到对应声明，不决定声明表达的业务契约。
 
-实现上优先渐进扩展现有 Analyzer / RepositoryIndex，并保证每条关系与 review snapshot 一致；SCIP、
-Stack Graphs、tree-sitter-graph 和 Joern / Code Property Graph 可作为协议、名称解析与图模型参考，
-不以引入重量级图数据库作为前提。
+## 分析流程
+
+### 单文件与仓库共用解析产物
+
+Analyzer 把明确的路径和内容交给 CodeGraph Extractor。单文件定义、源码导航、outline 和仓库图
+共享有界的 ExtractionCache；缓存按路径与内容区分版本。CCR 不建立第二套 parser 或类型检查后端。
+
+RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的源码集合，提供 Go module 根，
+将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
+的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
+
+工作区模式读取本地文件；commit/range 模式从评审目标 ref 枚举并读取文件。调用关系、usage 的行文本
+和调用邻居的文档都使用这份图输入，避免把当前工作区内容混入历史评审。每次 run 的图固定发布一次；
+新的源码版本需要新的 review 实例。
+
+读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
+另记录输入加载缺口。Session 的 `codegraph` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
+不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。
+
+### 评审身份与源码范围
+
+CodeGraph 的节点 ID 标识图内声明；CCR 的 `path::qualifiedName` 是连接 Unit、spec 和历史反馈的
+既有 join key。Language 通过声明的路径和 qualified name 转换身份，不从裸名称反向猜测目标。
+同名或重载声明在 CCR 身份下无法唯一对应时，关系消费保持保守。
+
+CodeGraph location 的行号从 1 开始、字节结束位置不包含在范围中；Language 转换为 CCR 的闭区间
+行范围。图不提供完整签名时，CCR 从已确定的声明范围截取有界的首行作为导航标题，不把它当作类型签名。
+
+### Outline 是导航投影
+
+FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 消费 CodeGraph 返回的
+`gotreesitter.OutlineSymbol`，不运行自己的 outline query。Go 的 type/field 展示可同时消费 CodeGraph
+已提供的声明；JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
+
+Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败时，保留已有的源码/路径回退；初始 outline
+尝试仍记录成功、失败与预算淘汰原因。展示层的取舍不会反向改变 symbol graph。
+
+## 关系的消费规则
+
+不同用途承担不同的错误成本：
+
+- Repo map 对 CodeGraph 关系做按 diff 个性化的排序，可以使用低置信候选；它只是后续阅读的提示。
+- caller/callee 契约、usage 与 call-chain Unit 只消费 `Exact` 或 `Scoped` 关系。CCR 不用 grep 补齐
+  缺失边，也不把同名符号升级成确定调用。
+- 多个声明落到同一个 CCR 身份时，需要避免把候选集合解释成唯一目标。
+
+这些置信度表示上游支持的静态证据强度，不表示完整编译器类型检查。Go 接口实现的启发式关系、动态
+分派和未解析调用，不自动成为 Unit 合并依据。Git 文本搜索仍是 review 工具，搜索结果不写回源码图。
+
+## 能力边界
+
+语言覆盖随依赖版本演进，使用 CodeGraph 的实际产物和 diagnostics 判断，不能用“有 grammar”推断
+“有完整语义关系”。当前接入有以下边界：
+
+- Go、Python、JavaScript/TypeScript 有专用静态分析；其他语言可能仅有声明和 outline。
+- JavaScript/TypeScript 的箭头函数绑定以变量声明提供，其改动保留在文件级 residual 中；对象字面量
+  中的 callable 不承诺独立符号或调用边。
+- 有歧义的扩展名沿用 CodeGraph 的语言选择。外部依赖未提供源码时，不承诺解析其真实包名或关系。
+- 普通注释与 docstring 的摘要属于评审展示；依赖目录发现和外部契约查找仍由 CCR 负责。
+
+新增源码能力应补在 CodeGraph；CCR 只增加所需的输入上下文、展示或消费策略，并以集成测试验证边界。
 
 ## References
 
+- [CodeGraph](https://github.com/compforge/codegraph) — Document 分析、图模型与语言能力
 - [`kernel.md`](kernel.md) — Language 在 CCR Kernel 中的位置
-- [`unit-model.md`](unit-model.md) — 源码事实如何形成 Unit 与 Clue
-- [`harness.md`](harness.md) — `read_files` / `search_code` 等只读工具的执行边界
-- [SCIP](https://github.com/scip-code/scip) · [Stack Graphs](https://github.github.com/stack-graph-docs/) ·
-  [tree-sitter-graph](https://github.com/tree-sitter/tree-sitter-graph) ·
-  [Joern](https://github.com/joernio/joern) — Code Graph 的协议、解析与完整模型参考
+- [`unit-model.md`](unit-model.md) — 源码关系如何参与 Unit 与 Clue
+- [`harness.md`](harness.md) — 只读源码工具与执行边界

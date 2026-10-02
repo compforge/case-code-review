@@ -1,6 +1,7 @@
-package codegraph
+package sourcecontext
 
 import (
+	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
@@ -14,7 +15,7 @@ type neighborFunc func(funcID string) []string
 // docRider configures the depth-1 neighbor docstring emission that rides on the
 // walk (nil = off — the doc kind gate, or no repo to read from).
 type docRider struct {
-	repoDir  string
+	analyzer *language.Analyzer
 	relation unit.Relation
 }
 
@@ -37,7 +38,7 @@ type walkCfg struct {
 //     SPARSE — "walk until spec" terminates on signal.
 //
 //   - doc (cfg.doc): the docstring of each *direct* (depth-1) neighbor, reusing
-//     neighbors the walk already computed (no extra grep). doc is a mark like
+//     neighbors the walk already computed (the same snapshot). doc is a mark like
 //     spec — just derived from source instead of authored, so it needs no
 //     spec.json. The payloads are peers; the asymmetry is density, not rank:
 //     docstrings are DENSE (nearly every symbol has one), so there is nothing to
@@ -69,7 +70,7 @@ func walkNeighbors(cfg walkCfg, start []string, neighborFn neighborFunc, mkClue 
 				}
 				visited[nb] = true
 				if d == 0 && cfg.doc != nil && len(docClues) < cfg.max {
-					if text := spec.SymbolDocstring(cfg.doc.repoDir, nb); text != "" {
+					if text := cfg.doc.analyzer.RepositoryDoc(nb); text != "" {
 						docClues = append(docClues, unit.Clue{
 							Kind:     unit.ClueDoc,
 							Relation: cfg.doc.relation,
@@ -94,3 +95,5 @@ func walkNeighbors(cfg walkCfg, start []string, neighborFn neighborFunc, mkClue 
 	}
 	return append(specClues, docClues...)
 }
+
+const defaultMaxResults = 8

@@ -18,7 +18,7 @@ type Gate string
 const (
 	Plan             Gate = "plan"              // PLAN_TASK pre-pass per unit
 	CallChain        Gate = "callchain"         // call-chain merge axis (cross-file units via call graph)
-	CallerCallee     Gate = "caller_callee"     // caller/callee context clues (call-graph grep)
+	CallerCallee     Gate = "caller_callee"     // caller/callee context clues (CodeGraph relations)
 	SpecCase         Gate = "spec_case"         // spec/case contract clues (authored; all relations)
 	Rule             Gate = "rule"              // @rule clues (authored; all relations)
 	Link             Gate = "link"              // @link see-also clues (authored; all relations)
@@ -28,11 +28,10 @@ const (
 	Relocation       Gate = "relocation"        // LLM re-location of comments to the right line
 	Routing          Gate = "routing"           // multi-model round-robin pool; off = single model (deterministic)
 	RepoMap          Gate = "repo_map"          // ranked symbol map injected per run (anti guessed-name searches)
-	TypedGraph       Gate = "typed_graph"       // type-checker-resolved call edges for caller/callee/merge (Go)
 
 	// Source-context gates control what each Unit receives before its loop so the
 	// model does not spend rounds fetching already-known files.
-	UsageSites     Gate = "usage_sites"     // pre-grepped use sites of the changed symbols
+	UsageSites     Gate = "usage_sites"     // CodeGraph use sites of the changed symbols
 	RangedPreload  Gate = "ranged_preload"  // deprecated compatibility gate; File preloads are now full-fidelity
 	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
@@ -70,7 +69,7 @@ type def struct {
 var registry = map[Gate]def{
 	Plan:             {true, "PLAN_TASK pre-pass per unit", false},
 	CallChain:        {true, "call-chain merge axis (cross-file units via call graph)", false},
-	CallerCallee:     {true, "caller/callee context clues (call-graph grep)", false},
+	CallerCallee:     {true, "caller/callee context clues (CodeGraph relations)", false},
 	SpecCase:         {true, "spec/case contract clues (authored; all relations)", false},
 	Rule:             {true, "@rule clues (authored; all relations)", false},
 	Link:             {true, "@link see-also clues (authored; all relations)", false},
@@ -80,9 +79,8 @@ var registry = map[Gate]def{
 	Relocation:       {true, "LLM re-location of comments to the right line", false},
 	Routing:          {true, "multi-model round-robin pool; off = single model (deterministic)", false},
 	RepoMap:          {true, "ranked symbol map injected per run (anti guessed-name searches)", false},
-	TypedGraph:       {true, "type-checker-resolved call edges for caller/callee/merge (Go)", false},
 
-	UsageSites:          {true, "pre-grepped use sites of the changed symbols in the initial context", false},
+	UsageSites:          {true, "CodeGraph use sites of the changed symbols in the initial context", false},
 	RangedPreload:       {true, "deprecated compatibility gate; File preloads are now full-fidelity", false},
 	NeighborSource:      {true, "callchain context: inline caller/callee neighbor bodies", false},
 	FileDedup:           {true, "stub earlier read_files results superseded by a later covering read", false},

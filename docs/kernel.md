@@ -19,7 +19,7 @@ Kernel 由两类 Knowledge、Unit 和 Harness 组成：
 | 能力中心 | 回答的问题 | 不负责 |
 |---|---|---|
 | **Project** | Repository 中有哪些 Component、文件角色，以及 `spec / case / link / rule / doc` 声明了哪些业务契约和场景 | 解析代码语义、决定是否成 Finding |
-| **Language** | 源码中有哪些 outline、definition、reference、call edge、symbol/file proximity 和稳定身份，作者声明如何绑定到代码 | 决定声明含义、决定是否成 Finding |
+| **Language** | 将 review snapshot 交给 CodeGraph 分析，适配声明、outline、关系和 CCR 身份，帮助关联作者声明 | 决定声明含义、决定是否成 Finding |
 | **Unit** | 哪些改动应一起审，本次 run 已获得哪些事实快照和阶段结论 | 运行 agent loop、决定阶段策略 |
 | **Harness** | 一次 agent execution 如何有界运行、完成并被观测 | 理解 Unit、Hypothesis、Finding |
 
@@ -93,7 +93,7 @@ Hypothesis 可以按真实完成顺序交错出现，最终输出顺序不等于
 ### 3.1 事实、作用域、执行和结论各有唯一 owner
 
 - Project 拥有 Repository、Component、FileRole 与项目事实；
-- Language 拥有源码事实与置信度；
+- CodeGraph 拥有源码事实与置信度，Language 负责快照输入和 CCR 适配；
 - Unit 拥有一次 run 的行为作用域、不可变文件/diff/搜索快照和已接受的阶段结果；
 - Harness 拥有 execution 生命周期、工具机制、预算和观测事件；
 - Review 1 拥有 Hypothesis 的产生逻辑，并把结果追加到来源 Unit；

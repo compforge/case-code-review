@@ -121,55 +121,6 @@ class Service extends Base {
 	}
 }
 
-func TestAnalyzerSharesTreeSitterCacheAcrossOutlineAndAnalysis(t *testing.T) {
-	analyzer := NewAnalyzer("")
-	source := Source{Path: "app.ts", Content: `class Service {
-  run() {}
-}
-`}
-	if _, err := analyzer.FileOutline(context.Background(), source); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(analyzer.cache); got != 1 {
-		t.Fatalf("cache entries after FileOutline = %d, want 1", got)
-	}
-	if _, err := analyzer.Analyze(context.Background(), source); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(analyzer.cache); got != 1 {
-		t.Fatalf("cache entries after Analyze = %d, want shared entry", got)
-	}
-	for key := range analyzer.cache {
-		if key.backend != analysisBackendTreeSitter {
-			t.Fatalf("cached backend = %q, want %q", key.backend, analysisBackendTreeSitter)
-		}
-	}
-}
-
-func TestAnalyzerSeparatesPythonSemanticAndOutlineBackends(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not available")
-	}
-	analyzer := NewAnalyzer("")
-	source := Source{Path: "service.py", Content: `class Service:
-    def run(self):
-        pass
-`}
-	if _, err := analyzer.FileOutline(context.Background(), source); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := analyzer.Analyze(context.Background(), source); err != nil {
-		t.Fatal(err)
-	}
-	backends := map[analysisBackend]bool{}
-	for key := range analyzer.cache {
-		backends[key.backend] = true
-	}
-	if len(analyzer.cache) != 2 || !backends[analysisBackendTreeSitter] || !backends[analysisBackendPython] {
-		t.Fatalf("cached backends = %v, want treesitter and python", backends)
-	}
-}
-
 func TestAnalyzeTypeScriptImportTypeQuery(t *testing.T) {
 	source := Source{Path: "app.ts", Content: `function load() {
   return factory<typeof import("./model").Result>();
@@ -234,15 +185,8 @@ class Service extends Base implements Runnable, AutoCloseable {
 		t.Fatalf("analysis metadata = (%q, %q)", analysis.Language, analysis.Quality)
 	}
 	assertDefinition(t, analysis, "Service.java::Service.run", Span{Start: 4, End: 6})
-	assertNames(t, analysis.CalleesOf("Service.run"), "validate")
-	if len(analysis.SupertypeReferences) != 3 {
-		t.Fatalf("supertype references = %#v, want extends plus two implements", analysis.SupertypeReferences)
-	}
-	if analysis.SupertypeReferences[0].SubtypeID != "Service.java::Service" || analysis.SupertypeReferences[0].Kind != SupertypeExtends || analysis.SupertypeReferences[0].Supertype != "Base" {
-		t.Fatalf("first supertype reference = %#v, want Service extends Base", analysis.SupertypeReferences[0])
-	}
-	if len(analysis.Imports) != 1 || analysis.Imports[0].Kind != ImportModule || analysis.Imports[0].Path != "framework.Base" || analysis.Imports[0].Span != (Span{Start: 1, End: 1}) {
-		t.Fatalf("imports = %#v, want framework.Base", analysis.Imports)
+	if len(analysis.Calls) != 0 || len(analysis.SupertypeReferences) != 0 || len(analysis.Imports) != 0 {
+		t.Fatalf("generic declaration coverage must not invent semantic facts: %+v", analysis)
 	}
 }
 
@@ -256,38 +200,8 @@ func TestAnalyzeRustWithTreeSitterTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDefinition(t, analysis, "lib.rs::run", Span{Start: 1, End: 3})
-	assertNames(t, analysis.CalleesOf("run"), "validate")
-}
-
-func TestTreeSitterFactProgramReusesCompiledExtractor(t *testing.T) {
-	entry := grammars.DetectLanguageByName("java")
-	first, err := treeSitterFactProgram(entry.Language())
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := treeSitterFactProgram(entry.Language())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first != second {
-		t.Fatal("treeSitterFactProgram did not reuse the compiled program")
-	}
-	wantKinds := gotreesitter.FactAll
-	if got := first.Kinds(); got != wantKinds {
-		t.Fatalf("fact kinds = %v, want %v", got, wantKinds)
-	}
-
-	tree, err := gotreesitter.NewParser(entry.Language()).ParseStrict([]byte(`import example.Base;
-class Service extends Base {
-  void run() { validate(); }
-}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tree.Release()
-	facts := first.Extract(tree)
-	if len(facts.Definitions) != 2 || len(facts.Calls) != 1 || len(facts.Heritage) != 1 || len(facts.Imports) != 1 {
-		t.Fatalf("facts = %#v, want definitions, call, heritage, and import", facts)
+	if analysis.Quality != QualityPartial || len(analysis.Calls) != 0 {
+		t.Fatalf("generic language must retain partial coverage: %+v", analysis)
 	}
 }
 
@@ -308,13 +222,13 @@ func TestStructuredExtensionsIncludeTreeSitterLanguages(t *testing.T) {
 	}
 }
 
-func TestDetectUsesCCRPrecedenceForAmbiguousExtensions(t *testing.T) {
+func TestDetectUsesCodeGraphLanguageSelection(t *testing.T) {
 	tests := []struct {
 		path string
 		want Language
 	}{
-		{path: "Program.fs", want: Language("fsharp")},
-		{path: "Controller.m", want: Language("objc")},
+		{path: "Program.fs", want: Language("forth")},
+		{path: "Controller.m", want: Language("matlab")},
 	}
 	for _, tt := range tests {
 		if got, ok := Detect(tt.path); !ok || got != tt.want {
@@ -325,11 +239,11 @@ func TestDetectUsesCCRPrecedenceForAmbiguousExtensions(t *testing.T) {
 
 func TestTreeSitterSignatureIsBoundedAndUTF8Safe(t *testing.T) {
 	content := "const render = () => " + strings.Repeat("界", 300)
-	got := treeSitterSignature(content, 0, uint32(len(content)))
+	got := sourceSignature(content, 0, uint32(len(content)))
 	if !utf8.ValidString(got) {
 		t.Fatalf("signature is not valid UTF-8: %q", got)
 	}
-	if len([]rune(got)) > maxTreeSitterSignatureRunes || !strings.HasSuffix(got, "...") {
+	if len([]rune(got)) > 240 || !strings.HasSuffix(got, "...") {
 		t.Fatalf("signature length = %d, signature = %q", len([]rune(got)), got)
 	}
 }

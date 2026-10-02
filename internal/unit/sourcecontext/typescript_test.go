@@ -1,4 +1,4 @@
-package codegraph
+package sourcecontext
 
 import (
 	"strings"
@@ -10,7 +10,7 @@ import (
 
 func TestCalleeFinder_TypeScript(t *testing.T) {
 	repo := newRepo(t, map[string]string{
-		"svc.ts":      "export function create() {\n  return validate();\n}\n",
+		"svc.ts":      "import { validate } from \"./validate\";\nexport function create() {\n  return validate();\n}\n",
 		"validate.ts": "export function validate() {\n  return true;\n}\n",
 	})
 	idx, err := spec.Parse([]byte(`{"validate.ts::validate": {"spec": "reject invalid input"}}`))
@@ -27,8 +27,8 @@ func TestCalleeFinder_TypeScript(t *testing.T) {
 
 func TestCallerFinder_TypeScript(t *testing.T) {
 	repo := newRepo(t, map[string]string{
-		"entry.ts":  "export const handle = () => {\n  return helper();\n};\n",
-		"helper.ts": "export const helper = () => true;\n",
+		"entry.ts":  "import { helper } from \"./helper\";\nexport function handle() {\n return helper();\n}\n",
+		"helper.ts": "export function helper() { return true; }\n",
 	})
 	idx, err := spec.Parse([]byte(`{"entry.ts::handle": {"spec": "governing contract"}}`))
 	if err != nil {

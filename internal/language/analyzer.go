@@ -2,29 +2,68 @@ package language
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	cg "github.com/compforge/codegraph"
+	"github.com/qiankunli/case-code-review/internal/gitcmd"
 )
 
-// ErrUnsupported is returned for paths without a registered source language.
 var ErrUnsupported = errors.New("unsupported source language")
 
-// Analyzer is the stable entry point for source-language analysis. Backend
-// selection and project-local tooling stay private so consumers are unaffected
-// when legacy parsers are replaced by gotreesitter.
+// Analyzer adapts CodeGraph's document analysis to CCR's review views.
+// One bounded extraction cache is shared by navigation and the repository graph.
 type Analyzer struct {
-	repoDir string
-	mu      sync.Mutex
-	cache   map[analysisKey]Analysis
+	// OnRepositoryBuilt observes the one published analysis result. Set before use.
+	OnRepositoryBuilt func(*RepositoryIndex)
+	ref               string
+	git               *gitcmd.Runner
+	repoDir           string
+	extractor         *cg.Extractor
+	repositoryOnce    sync.Once
+	repository        *RepositoryIndex
 }
 
-// FileOutline returns a language/file-format-aware structural projection.
-// Non-Go source files use gotreesitter's outline directly; data and document
-// formats keep their own shape without pretending to be code definitions.
+func NewAnalyzer(repoDir string) *Analyzer {
+	cache, _ := cg.NewExtractionCache(2000, 32<<20)
+	extractor, _ := cg.NewExtractor(cg.ExtractionOptions{Cache: cache})
+	return &Analyzer{repoDir: repoDir, extractor: extractor}
+}
+
+// NewSnapshotAnalyzer reads graph inputs from the reviewed Git ref. An empty
+// ref selects working files. Configure this before the first Repository call.
+func NewSnapshotAnalyzer(repoDir, ref string, runner *gitcmd.Runner) *Analyzer {
+	a := NewAnalyzer(repoDir)
+	a.ref, a.git = ref, runner
+	if a.git == nil {
+		a.git = gitcmd.New(0)
+	}
+	return a
+}
+
+func (a *Analyzer) extract(ctx context.Context, source Source) (cg.Facts, error) {
+	if _, ok := Detect(source.Path); !ok {
+		return cg.Facts{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
+	}
+	// External dependency navigation still needs a valid logical document path.
+	path := filepath.ToSlash(source.Path)
+	if filepath.IsAbs(path) {
+		path = strings.TrimPrefix(path, "/")
+	}
+	return a.extractor.Extract(ctx, cg.Document{Path: path, Content: []byte(source.Content)})
+}
+
+func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error) {
+	facts, err := a.extract(ctx, source)
+	if err != nil {
+		return Analysis{}, err
+	}
+	return projectAnalysis(source, facts), nil
+}
+
 func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline, error) {
 	switch strings.ToLower(filepath.Ext(source.Path)) {
 	case ".json":
@@ -32,98 +71,18 @@ func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline,
 	case ".md", ".markdown":
 		return markdownFileOutline(source), nil
 	}
-	lang, ok := Detect(source.Path)
-	if !ok {
-		return FileOutline{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
-	}
-	// Go is CCR's native language backend. Other source outlines come from
-	// gotreesitter so language-specific outline knowledge stays upstream.
-	backend := analysisBackendTreeSitter
-	if lang == Go {
-		backend = analysisBackendGo
-	}
-	analysis, err := a.analyzeWithBackend(ctx, lang, source, backend)
+	facts, err := a.extract(ctx, source)
 	if err != nil {
 		return FileOutline{}, err
 	}
-	return analysis.Outline(source.Path), nil
-}
-
-type analysisBackend string
-
-const (
-	analysisBackendGo         analysisBackend = "go"
-	analysisBackendPython     analysisBackend = "python"
-	analysisBackendTreeSitter analysisBackend = "treesitter"
-)
-
-type analysisKey struct {
-	path    string
-	digest  [32]byte
-	backend analysisBackend
-}
-
-func NewAnalyzer(repoDir string) *Analyzer {
-	return &Analyzer{repoDir: repoDir, cache: map[analysisKey]Analysis{}}
-}
-
-// Analyze extracts parser-independent facts from one source file.
-func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error) {
-	lang, ok := Detect(source.Path)
-	if !ok {
-		return Analysis{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
-	}
-	return a.analyzeWithBackend(ctx, lang, source, semanticAnalysisBackend(lang))
-}
-
-func semanticAnalysisBackend(lang Language) analysisBackend {
-	switch lang {
-	case Go:
-		return analysisBackendGo
-	case Python:
-		return analysisBackendPython
-	default:
-		return analysisBackendTreeSitter
-	}
-}
-
-func (a *Analyzer) analyzeWithBackend(
-	ctx context.Context,
-	lang Language,
-	source Source,
-	backend analysisBackend,
-) (Analysis, error) {
-	// Backend is part of the cache identity because one source snapshot may use
-	// different fact producers, such as Python AST analysis and a gotreesitter
-	// FileOutline. Results from those producers are not interchangeable.
-	key := analysisKey{
-		path: source.Path, digest: sha256.Sum256([]byte(source.Content)), backend: backend,
-	}
-	a.mu.Lock()
-	if a.cache == nil {
-		a.cache = map[analysisKey]Analysis{}
-	}
-	analysis, cached := a.cache[key]
-	a.mu.Unlock()
-	if cached {
-		return analysis, nil
-	}
-	var err error
-	switch backend {
-	case analysisBackendGo:
-		analysis, err = analyzeGo(source)
-	case analysisBackendPython:
-		analysis, err = analyzePython(ctx, source)
-	case analysisBackendTreeSitter:
-		analysis, err = analyzeTreeSitter(ctx, lang, source)
-	}
+	symbols, report, err := facts.Outline()
 	if err != nil {
-		return Analysis{}, err
+		return FileOutline{}, err
 	}
-	a.mu.Lock()
-	a.cache[key] = analysis
-	a.mu.Unlock()
-	return analysis, nil
+	if report.Declined() {
+		return FileOutline{}, fmt.Errorf("outline unavailable for %s: %s", source.Path, report.DeclineReason)
+	}
+	return FileOutline{Path: source.Path, Language: Language(facts.Language), entries: reviewOutlineEntries(source, facts, symbols)}, nil
 }
 
 // DefinitionAt resolves a source line to its enclosing callable definition.
@@ -164,7 +123,7 @@ func (a *Analyzer) CalleesOf(ctx context.Context, source Source, symbol string) 
 }
 
 // Doc returns the first-paragraph documentation attached to a symbol. It is a
-// language fact, so callers need not know whether comments or string literals
+// review documentation, so callers need not know whether comments or string literals
 // carry documentation in the underlying grammar.
 func (a *Analyzer) Doc(source Source, symbol string) string {
 	lang, ok := Detect(source.Path)
@@ -173,10 +132,23 @@ func (a *Analyzer) Doc(source Source, symbol string) string {
 	}
 	switch lang {
 	case Go:
-		return extractGoDoc(source.Content, symbol)
+		return a.goDoc(source, symbol)
 	case Python:
 		return extractPyDocstring(source.Content, symbol)
 	default:
 		return ""
 	}
+}
+
+// RepositoryDoc renders documentation from the same captured sources as call edges.
+func (a *Analyzer) RepositoryDoc(id string) string {
+	path, name, ok := SplitSymbolID(id)
+	if !ok {
+		return ""
+	}
+	source, ok := a.Repository().Sources[path]
+	if !ok {
+		return ""
+	}
+	return a.Doc(Source{Path: path, Content: source}, name)
 }
