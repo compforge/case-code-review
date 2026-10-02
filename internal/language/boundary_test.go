@@ -77,3 +77,27 @@ func TestLanguageSyntaxStaysOutsideConsumers(t *testing.T) {
 		}
 	}
 }
+
+// Graph parsing and resolution are upstream responsibilities, including inside
+// the language adapter. Only upstream outline value types may cross the boundary.
+func TestSourceAnalysisIsOwnedByCodeGraph(t *testing.T) {
+	forbidden := []string{`"go/ast"`, `"go/parser"`, `"go/types"`, `"golang.org/x/tools/go/packages"`, `"github.com/odvcencio/gotreesitter/grammars"`, `NewParser(`, `NewOutliner(`, `FactProgram`}
+	err := filepath.WalkDir("..", func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, token := range forbidden {
+			if strings.Contains(string(content), token) {
+				t.Errorf("%s duplicates source-analysis ownership with %s", path, token)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

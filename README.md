@@ -28,7 +28,7 @@ A **Unit** is one behavioral review scope. Depending on the change, it can be:
 
 This makes review granularity more flexible than file-by-file review. The practical goal is for Review 1 to use no more loops than there are reviewable files, and fewer when related cross-file changes can be reviewed together.
 
-Making Unit—not file—the basic review boundary depends on practical caller/callee discovery. This has become feasible as [`gotreesitter`](https://github.com/odvcencio/gotreesitter) has matured in cross-language parsing, symbol resolution, and call analysis.
+Making Unit—not file—the basic review boundary depends on practical caller/callee discovery. CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to identify symbols and their relationships, grouping changes when static call evidence is sufficiently strong.
 
 ### Review 1 discovers; Review 2 verifies; Review 3 gates
 

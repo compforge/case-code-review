@@ -1,4 +1,4 @@
-package codegraph
+package sourcecontext
 
 import (
 	"os"
@@ -91,7 +91,7 @@ func TestCallerFinder_Degrades(t *testing.T) {
 	}
 }
 
-// newRepo creates a git repo (git grep needs one) with the given files and
+// newRepo creates a git fixture with the given files and
 // returns its path. It skips the test when git is unavailable.
 func newRepo(t *testing.T, files map[string]string) string {
 	t.Helper()

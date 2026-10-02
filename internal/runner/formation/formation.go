@@ -7,10 +7,10 @@ import (
 	"fmt"
 
 	"github.com/compforge/go-stdx/slicesx"
-	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
+	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 )
 
 // DefaultWatermark bounds the number of function-grained review Units before
@@ -27,8 +27,7 @@ type Config struct {
 	Merger        unit.Merger
 	Finders       []unit.ClueFinder
 	CostlyFinders []unit.ClueFinder
-	GitRunner     *gitcmd.Runner
-	TypedGraph    *codegraph.TypedGraph
+	Analyzer      *language.Analyzer
 	CallChain     bool
 	Watermark     int
 }
@@ -69,8 +68,11 @@ func Form(config Config) ([]unit.Unit, bool, error) {
 	case len(files) == 1:
 		units = append(units, unit.CoalesceFile(files[0].Diff, files[0].Fragments))
 	case config.CallChain && total <= watermark*2:
-		adjacency := codegraph.CallAdjacency(
-			config.RepoDir, config.GitRunner, config.TypedGraph, funcIDsOf(files),
+		if config.Analyzer == nil {
+			config.Analyzer = language.NewAnalyzer(config.RepoDir)
+		}
+		adjacency := sourcecontext.CallAdjacency(
+			config.Analyzer, funcIDsOf(files),
 		)
 		units = mergeCallChains(files, adjacency, merger)
 	default:

@@ -1,77 +1,45 @@
 package language
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"context"
 	"strings"
 )
 
-// extractGoDoc returns the summary doc comment (first paragraph) of a Go symbol
-// in src, parsed with go/ast (the same infrastructure the splitter trusts for
-// function boundaries — no regex approximation, so grouped `type (...)` decls
-// and unusual formatting resolve correctly). name is the symbol part of a
-// symbol-id: a bare `Foo` for a func/type, or `Recv.Method` for a method
-// (matched against its receiver's type name). Best-effort; "" when the file
-// doesn't parse or the symbol has no doc.
-func extractGoDoc(src, name string) string {
-	f, err := parser.ParseFile(token.NewFileSet(), "src.go", src, parser.ParseComments)
-	if err != nil {
+// goDoc renders leading comment prose at a CodeGraph declaration. It does not
+// discover declarations or resolve receiver types itself.
+func (a *Analyzer) goDoc(source Source, name string) string {
+	definition, ok := a.DefinitionByID(context.Background(), source, SymbolID(source.Path, "", name))
+	if !ok {
 		return ""
 	}
-	recv, method, isMethod := strings.Cut(name, ".")
-	for _, d := range f.Decls {
-		switch decl := d.(type) {
-		case *ast.FuncDecl:
-			if isMethod {
-				if decl.Recv != nil && goDocReceiverName(decl.Recv) == recv && decl.Name.Name == method {
-					return docSummary(decl.Doc)
-				}
-			} else if decl.Recv == nil && decl.Name.Name == name {
-				return docSummary(decl.Doc)
-			}
-		case *ast.GenDecl:
-			if decl.Tok != token.TYPE || isMethod {
-				continue
-			}
-			for _, s := range decl.Specs {
-				ts, ok := s.(*ast.TypeSpec)
-				if !ok || ts.Name.Name != name {
-					continue
-				}
-				// grouped decl: the doc sits on the TypeSpec; single decl: on the GenDecl.
-				if ts.Doc != nil {
-					return docSummary(ts.Doc)
-				}
-				return docSummary(decl.Doc)
+	lines := strings.Split(source.Content, "\n")
+	end := definition.Span.Start - 1
+	start := end
+	for start > 0 {
+		line := strings.TrimSpace(lines[start-1])
+		if strings.HasPrefix(line, "//") {
+			start--
+			continue
+		}
+		if strings.HasSuffix(line, "*/") {
+			start--
+			for start > 0 && !strings.Contains(lines[start], "/*") {
+				start--
 			}
 		}
+		break
 	}
-	return ""
-}
-
-// recvTypeName unwraps a method receiver to its type name (`*Recv`, `Recv`,
-// `Recv[T]` all yield "Recv").
-func goDocReceiverName(recv *ast.FieldList) string {
-	if len(recv.List) == 0 {
+	if start == end {
 		return ""
 	}
-	t := recv.List[0].Type
-	if star, ok := t.(*ast.StarExpr); ok {
-		t = star.X
+	var text []string
+	for _, line := range lines[start:end] {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimPrefix(line, "/*")
+		line = strings.TrimSuffix(line, "*/")
+		line = strings.TrimPrefix(strings.TrimSpace(line), "*")
+		text = append(text, strings.TrimSpace(line))
 	}
-	if idx, ok := t.(*ast.IndexExpr); ok { // generic receiver
-		t = idx.X
-	}
-	if ident, ok := t.(*ast.Ident); ok {
-		return ident.Name
-	}
-	return ""
-}
-
-func docSummary(doc *ast.CommentGroup) string {
-	if doc == nil {
-		return ""
-	}
-	return summarizeDoc(doc.Text()) // reuse: first paragraph, whitespace-collapsed
+	return summarizeDoc(strings.Join(text, "\n"))
 }

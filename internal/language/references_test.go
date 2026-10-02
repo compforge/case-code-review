@@ -6,29 +6,20 @@ import (
 	"testing"
 )
 
-func TestParseGoImports(t *testing.T) {
+func TestReferencesUseCodeGraphImportBindings(t *testing.T) {
 	source := `package x
 import (
     "github.com/org/framework/mw/trace"
     tr "github.com/org/other/trace"
     _ "embed"
     . "fmt"
-    "github.com/org/lib/v2"
+    lib "github.com/org/lib/v2"
 )
 import "strings"
 `
-	got := parseGoImports(source)
-	want := map[string]string{
-		"trace": "github.com/org/framework/mw/trace", "tr": "github.com/org/other/trace",
-		"lib": "github.com/org/lib/v2", "strings": "strings",
-	}
-	for name, path := range want {
-		if got[name] != path {
-			t.Errorf("%s = %q, want %q", name, got[name], path)
-		}
-	}
-	if _, ok := got["embed"]; ok {
-		t.Fatal("blank import must be skipped")
+	references := NewAnalyzer("").ReferencesIn(Source{Path: "source.go", Content: source}, "trace.Load() tr.Load() lib.Load() strings.Load()")
+	for _, path := range []string{"github.com/org/framework/mw/trace", "github.com/org/other/trace", "github.com/org/lib/v2", "strings"} {
+		assertReference(t, references, Reference{Name: "Load", FQN: path + ".Load"})
 	}
 }
 

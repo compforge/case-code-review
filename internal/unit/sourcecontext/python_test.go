@@ -1,4 +1,4 @@
-package codegraph
+package sourcecontext
 
 import (
 	"os/exec"
@@ -20,7 +20,7 @@ func TestCalleeFinder_Python(t *testing.T) {
 	requirePython3(t)
 	// Svc.create (changed) calls validate, which carries a spec.
 	repo := newRepo(t, map[string]string{
-		"svc.py":      "class Svc:\n    def create(self, req):\n        return validate(req)\n",
+		"svc.py":      "from validate import validate\n\nclass Svc:\n    def create(self, req):\n        return validate(req)\n",
 		"validate.py": "def validate(req):\n    return None\n",
 	})
 	idx, err := spec.Parse([]byte(`{"validate.py::validate": {"spec": "rejects an empty tenant"}}`))
@@ -39,7 +39,7 @@ func TestCalleeFinder_PythonDocstring(t *testing.T) {
 	requirePython3(t)
 	// The callee has a docstring but no spec.json entry — adoption-free contract.
 	repo := newRepo(t, map[string]string{
-		"svc.py":      "class Svc:\n    def create(self, req):\n        return validate(req)\n",
+		"svc.py":      "from validate import validate\n\nclass Svc:\n    def create(self, req):\n        return validate(req)\n",
 		"validate.py": "def validate(req):\n    \"\"\"Rejects an empty tenant.\"\"\"\n    return None\n",
 	})
 	u := unit.UnitOf(unit.Fragment{Path: "svc.py", Symbols: []string{"svc.py::Svc.create"}})
@@ -55,7 +55,7 @@ func TestCallerFinder_Python(t *testing.T) {
 	// helper (changed, no spec) <- handle (calls helper, spec): inherit upward.
 	repo := newRepo(t, map[string]string{
 		"helper.py": "def helper(req):\n    return None\n",
-		"entry.py":  "def handle(req):\n    return helper(req)\n",
+		"entry.py":  "from helper import helper\n\ndef handle(req):\n    return helper(req)\n",
 	})
 	idx, err := spec.Parse([]byte(`{"entry.py::handle": {"spec": "the governing contract"}}`))
 	if err != nil {

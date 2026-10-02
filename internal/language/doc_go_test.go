@@ -65,3 +65,7 @@ func TestAnalyzerDoc_Go(t *testing.T) {
 		t.Errorf("Analyzer.Doc(go) = %q", got)
 	}
 }
+
+func extractGoDoc(src, name string) string {
+	return NewAnalyzer("").Doc(Source{Path: "source.go", Content: src}, name)
+}

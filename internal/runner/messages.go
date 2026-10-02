@@ -16,7 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
+	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 )
 
 const (
@@ -371,7 +371,7 @@ func (a *Runner) describePreloadedSources(u unit.Unit) []string {
 	return out
 }
 
-// renderUsageSites pre-greps where else the repo references the unit's changed
+// renderUsageSites selects CodeGraph references to the unit's changed
 // symbols and renders a `path:line: text` blast-radius map for {{usage_sites}},
 // plus the site count for the unit's debrief. Same cost class as the
 // caller/callee walk, so it honors the same costly-context budget gate
@@ -389,7 +389,7 @@ func (a *Runner) renderUsageSites(u unit.Unit) (string, int, []string) {
 	for _, p := range u.Paths() {
 		exclude[p] = true
 	}
-	usages := codegraph.FindUsages(a.args.RepoDir, a.args.GitRunner, symbols, exclude)
+	usages := sourcecontext.FindUsages(a.sourceAnalyzer(), symbols, exclude)
 	if len(usages) == 0 {
 		return "", 0, nil
 	}

@@ -36,8 +36,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
 	"github.com/qiankunli/case-code-review/internal/unit/history"
+	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
 
@@ -189,10 +189,8 @@ type Runner struct {
 	// It exists to stop the reviewer from guessing symbol names in searches:
 	// it lists names that actually exist, ranked by relevance to the diff.
 	repoMap   string
-	repoIndex *codegraph.Extraction
-	// typedGraph is the shared lazy handle to the typed Go call graph
-	// (nil when the typed_graph gate is off). See codegraph.TypedGraph.
-	typedGraph *codegraph.TypedGraph
+	repoIndex *sourcecontext.Extraction
+
 	// analyzer is the run-scoped source-language boundary shared by splitting,
 	// callgraph lookup, comment tagging, and ranged source preload.
 	analyzer *language.Analyzer
@@ -248,7 +246,15 @@ func New(args Args) *Runner {
 	// the caller_callee COST gate switches the expensive call-graph walk. Relations
 	// themselves are not gated (cheap mechanism). See docs/unit-model.md.
 	f := args.Features
-	analyzer := language.NewAnalyzer(args.RepoDir)
+	ref := args.To
+	if args.Commit != "" {
+		ref = args.Commit
+	}
+	analyzer := language.NewSnapshotAnalyzer(args.RepoDir, ref, args.GitRunner)
+	analyzer.OnRepositoryBuilt = func(index *language.RepositoryIndex) {
+		args.Session.WriteArtifact("codegraph", codeGraphArtifact(index))
+	}
+
 	kinds := spec.KindGates{
 		Spec: f.Enabled(feature.SpecCase),
 		Rule: f.Enabled(feature.Rule),
@@ -259,13 +265,10 @@ func New(args Args) *Runner {
 	if f.Enabled(feature.History) {
 		finders = append(finders, history.Finder{Index: args.HistoryIndex})
 	}
-	// One typed call graph per review, shared by clue finders and merge
+	// One CodeGraph snapshot per review, shared by clue finders and merge
 	// adjacency; lazily built on first Go neighbor query. Gate off -> nil
 	// handle -> every consumer stays on the grep heuristics.
-	var typed *codegraph.TypedGraph
-	if f.Enabled(feature.TypedGraph) {
-		typed = &codegraph.TypedGraph{RepoDir: args.RepoDir}
-	}
+
 	var costlyFinders []unit.ClueFinder
 	// caller/callee sit behind the cost gate (call-graph grep) and emit per the
 	// kind gates: inherited/depended-on specs when the spec kind is on and a spec
@@ -275,8 +278,8 @@ func New(args Args) *Runner {
 	// Resolution is intra-repo, hence the local index.
 	if f.Enabled(feature.CallerCallee) && (kinds.Spec || kinds.Doc) {
 		costlyFinders = append(costlyFinders,
-			codegraph.CallerFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Runner: args.GitRunner, Kinds: kinds, Typed: typed, Analyzer: analyzer},
-			codegraph.CalleeFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Runner: args.GitRunner, Kinds: kinds, Typed: typed, Analyzer: analyzer},
+			sourcecontext.CallerFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Kinds: kinds, Analyzer: analyzer},
+			sourcecontext.CalleeFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Kinds: kinds, Analyzer: analyzer},
 		)
 	}
 	a := &Runner{
@@ -290,7 +293,6 @@ func New(args Args) *Runner {
 		merger:        unit.WatermarkMerger{Watermark: formation.DefaultWatermark},
 		finders:       finders,       // cheap spec.json / history clues, gated per kind
 		costlyFinders: costlyFinders, // call-graph caller/callee clues (gated + budget-gated)
-		typedGraph:    typed,
 		analyzer:      analyzer,
 	}
 	// Review Team board (docs/unit_review.md): one shared in-memory board per run
@@ -932,8 +934,7 @@ func (a *Runner) splitUnits() ([]unit.Unit, error) {
 		Merger:        a.merger,
 		Finders:       finders,
 		CostlyFinders: a.costlyFinders,
-		GitRunner:     a.args.GitRunner,
-		TypedGraph:    a.typedGraph,
+		Analyzer:      a.sourceAnalyzer(),
 		CallChain:     a.features.Enabled(feature.CallChain),
 	})
 	if err != nil {

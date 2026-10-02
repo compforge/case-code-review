@@ -1,6 +1,7 @@
-package codegraph
+package sourcecontext
 
 import (
+	"github.com/qiankunli/case-code-review/internal/language"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ func writeFixture(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
+	write("go.mod", "module fixture.local/rank\n\ngo 1.26\n")
 	write("internal/bed/bed.go", `package bed
 
 type Manager struct{}
@@ -32,8 +34,10 @@ func (m *Manager) Purge(id string) error { return nil }
 `)
 	write("internal/web/web.go", `package web
 
+import "fixture.local/rank/internal/bed"
+
 func handleResolve() {
-	var m Manager
+	var m bed.Manager
 	_ = m.Resolve("a")
 	_ = m.Resolve("b")
 	_ = m.Purge("c")
@@ -47,7 +51,7 @@ func Helper() int { return 42 }
 }
 
 func TestScan_DefsAndSignatures(t *testing.T) {
-	ex := Scan(writeFixture(t))
+	ex := Scan(language.NewAnalyzer(writeFixture(t)))
 	defs := ex.Defs["internal/bed/bed.go"]
 	if len(defs) != 3 { // type Manager + 2 methods
 		t.Fatalf("expected 3 defs in bed.go, got %d: %+v", len(defs), defs)
@@ -70,8 +74,7 @@ func TestScan_DefsAndSignatures(t *testing.T) {
 }
 
 func TestRank_SeedsPullRelatedSymbolsUp(t *testing.T) {
-	ex := Scan(writeFixture(t))
-	PairMethodIdents(ex)
+	ex := Scan(language.NewAnalyzer(writeFixture(t)))
 	// The diff touches web.go and mentions Resolve — bed.go's defs must
 	// outrank the unrelated util.go Helper.
 	ranked := Rank(ex, []string{"internal/web/web.go"}, []string{"Resolve"})
@@ -94,8 +97,7 @@ func TestRank_SeedsPullRelatedSymbolsUp(t *testing.T) {
 }
 
 func TestBuildMap_BudgetAndContent(t *testing.T) {
-	ex := Scan(writeFixture(t))
-	PairMethodIdents(ex)
+	ex := Scan(language.NewAnalyzer(writeFixture(t)))
 	m := BuildMap(ex, MapRequest{
 		SeedFiles:  []string{"internal/web/web.go"},
 		SeedIdents: []string{"Resolve"},
@@ -125,10 +127,8 @@ func TestBuildMap_BudgetAndContent(t *testing.T) {
 func TestBuildMap_Deterministic(t *testing.T) {
 	dir := writeFixture(t)
 	req := MapRequest{SeedFiles: []string{"internal/web/web.go"}, SeedIdents: []string{"Resolve"}}
-	ex1 := Scan(dir)
-	PairMethodIdents(ex1)
-	ex2 := Scan(dir)
-	PairMethodIdents(ex2)
+	ex1 := Scan(language.NewAnalyzer(dir))
+	ex2 := Scan(language.NewAnalyzer(dir))
 	if a, b := BuildMap(ex1, req), BuildMap(ex2, req); a != b {
 		t.Errorf("non-deterministic map:\n--A--\n%s\n--B--\n%s", a, b)
 	}

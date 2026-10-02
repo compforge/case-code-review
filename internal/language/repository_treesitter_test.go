@@ -76,7 +76,7 @@ func findDef(defs []IndexedDefinition, ident string) *IndexedDefinition {
 
 func TestScanTreeSitterRepository_TypeScriptDefsRefsAndSkips(t *testing.T) {
 	dir := writeTSFixture(t)
-	ex := scanTreeSitterRepository(dir)
+	ex := ScanRepository(dir)
 
 	if _, ok := ex.Definitions["src/service.test.ts"]; ok {
 		t.Error("test files must be skipped")
@@ -88,7 +88,7 @@ func TestScanTreeSitterRepository_TypeScriptDefsRefsAndSkips(t *testing.T) {
 		t.Error("non-reviewable files must not enter the symbol index")
 	}
 	serviceDefs := ex.Definitions["src/service.ts"]
-	for _, ident := range []string{"Config", "Status", "Service", "Service.run", "handler", "workers.resolve"} {
+	for _, ident := range []string{"Config", "Status", "Service", "Service.run", "handler", "workers"} {
 		if findDef(serviceDefs, ident) == nil {
 			t.Errorf("%s not extracted: %+v", ident, serviceDefs)
 		}
@@ -116,7 +116,7 @@ func TestScanTreeSitterRepository_TypeScriptDefsRefsAndSkips(t *testing.T) {
 
 func TestScanTreeSitterRepository_TypeScriptDoesNotNeedNode(t *testing.T) {
 	t.Setenv("PATH", "")
-	ex := scanTreeSitterRepository(writeTSFixture(t))
+	ex := ScanRepository(writeTSFixture(t))
 	if findDef(ex.Definitions["src/service.ts"], "Service.run") == nil {
 		t.Fatalf("TypeScript scan should work without Node: %+v", ex.Definitions["src/service.ts"])
 	}

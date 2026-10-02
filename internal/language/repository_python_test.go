@@ -51,7 +51,7 @@ def handle(key):
 
 func TestScanPythonRepository_DefsRefsAndSkips(t *testing.T) {
 	requirePython3(t)
-	ex := scanPythonRepository(writePyFixture(t))
+	ex := ScanRepository(writePyFixture(t))
 	if ex == nil {
 		t.Fatal("ScanPy returned nil")
 	}

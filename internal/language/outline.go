@@ -16,14 +16,6 @@ type FileOutline struct {
 	rendered string
 }
 
-// outlineMember is a language-native type-owned data declaration. Label uses
-// the language's term (field, property, attribute); all are the same
-// cross-language role for outline construction.
-type outlineMember struct {
-	Name, Owner, Label, Signature string
-	Span                          Span
-}
-
 type outlineEntry struct {
 	Name, Owner, Label, Signature string
 	Span                          Span
@@ -32,25 +24,7 @@ type outlineEntry struct {
 
 // Outline derives a file projection from facts already produced by Analyze.
 func (a Analysis) Outline(path string) FileOutline {
-	outline := FileOutline{Path: path, Language: a.Language}
-	if a.outlineProjected {
-		outline.entries = append(outline.entries, a.outlineEntries...)
-		return outline
-	}
-	for _, definition := range a.Definitions {
-		outline.entries = append(outline.entries, outlineEntry{
-			Name: definition.Name, Owner: definition.Owner, Label: string(definition.Kind),
-			Signature: definition.Signature, Span: definition.Span,
-			CanOwn: canOwnOutlineChildren(string(definition.Kind)),
-		})
-	}
-	for _, member := range a.outlineMembers {
-		outline.entries = append(outline.entries, outlineEntry{
-			Name: member.Name, Owner: member.Owner, Label: member.Label,
-			Signature: member.Signature, Span: member.Span,
-		})
-	}
-	return outline
+	return FileOutline{Path: path, Language: a.Language, entries: append([]outlineEntry(nil), a.outlineEntries...)}
 }
 
 func canOwnOutlineChildren(kind string) bool {

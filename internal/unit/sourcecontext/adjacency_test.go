@@ -1,6 +1,7 @@
-package codegraph
+package sourcecontext
 
 import (
+	"github.com/qiankunli/case-code-review/internal/language"
 	"slices"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestCallAdjacency(t *testing.T) {
 		"b.go": "package p\n\nfunc B() {}\n",
 		"c.go": "package p\n\nfunc C() {}\n",
 	})
-	adj := CallAdjacency(repo, nil, nil, []string{"a.go::A", "b.go::B", "c.go::C"})
+	adj := CallAdjacency(language.NewAnalyzer(repo), []string{"a.go::A", "b.go::B", "c.go::C"})
 
 	if !slices.Contains(adj["a.go::A"], "b.go::B") || !slices.Contains(adj["b.go::B"], "a.go::A") {
 		t.Errorf("want undirected A-B edge, got %v", adj)
@@ -30,7 +31,7 @@ func TestCallAdjacencyIgnoresCallsOutsideSet(t *testing.T) {
 		"a.go": "package p\n\nfunc A() { B() }\n",
 		"b.go": "package p\n\nfunc B() {}\n",
 	})
-	adj := CallAdjacency(repo, nil, nil, []string{"a.go::A"})
+	adj := CallAdjacency(language.NewAnalyzer(repo), []string{"a.go::A"})
 	if len(adj["a.go::A"]) != 0 {
 		t.Errorf("B not in set -> A should have no edges, got %v", adj["a.go::A"])
 	}

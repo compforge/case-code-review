@@ -28,7 +28,7 @@ ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现
 
 因此 Unit 比逐文件评审更灵活。实践目标是 Review 1 loop 数不多于需评审文件数；当跨文件改动存在明确关系时，用更少的 loop 一起理解它们。
 
-Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提是 caller/callee 关系已经具备实用的分析能力；这受益于 [`gotreesitter`](https://github.com/odvcencio/gotreesitter) 在跨语言语法解析、符号定位和调用分析上的持续成熟。
+Unit 能取代固定的文件粒度成为基本评审单元，一个重要前提是 caller/callee 关系已经具备实用的分析能力；CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 获取符号与关系，在静态调用证据足够强时把协作改动归入同一个 Unit。
 
 ### Review 1 发现，Review 2 验证，Review 3 门禁
 

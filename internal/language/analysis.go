@@ -1,22 +1,12 @@
-// Package language owns source-language facts and the parsers that produce
-// them. Review concepts such as units, ranking, and clue traversal consume
+// Package language adapts CodeGraph source facts and supplies repository inputs. Review concepts such as units, ranking, and clue traversal consume
 // these facts but remain in their own packages.
 package language
 
 import (
-	"path/filepath"
 	"sort"
-	"strings"
 
-	"github.com/odvcencio/gotreesitter/grammars"
+	cg "github.com/compforge/codegraph"
 )
-
-// Some extensions are inherently ambiguous. ccr's review allowlist gives
-// these suffixes a product-level meaning, so do not inherit registry order.
-var preferredGrammarByExtension = map[string]string{
-	".fs": "fsharp",
-	".m":  "objc",
-}
 
 // Data and markup files remain reviewable at file scope, but should not enter
 // function-oriented repository scans or callgraph grep pathspecs.
@@ -43,18 +33,8 @@ const (
 // source path. Reviewable languages without a backend still degrade to file
 // scope at the unit boundary.
 func Detect(path string) (Language, bool) {
-	extension := strings.ToLower(filepath.Ext(path))
-	if preferred := preferredGrammarByExtension[extension]; preferred != "" {
-		entry := grammars.DetectLanguageByName(preferred)
-		if entry != nil {
-			return Language(entry.Name), true
-		}
-	}
-	entry := grammars.DetectLanguage(path)
-	if entry == nil {
-		return "", false
-	}
-	return Language(entry.Name), true
+	name := cg.Language(path)
+	return Language(name), name != ""
 }
 
 // StructuredExtensions returns the source suffixes currently backed by
@@ -86,6 +66,7 @@ type Source struct {
 type Kind string
 
 const (
+	KindVariable  Kind = "variable"
 	KindFunction  Kind = "function"
 	KindMethod    Kind = "method"
 	KindClass     Kind = "class"
@@ -172,9 +153,8 @@ const (
 type Quality string
 
 const (
-	QualitySyntax   Quality = "syntax"
-	QualitySemantic Quality = "semantic"
-	QualityPartial  Quality = "partial"
+	QualitySyntax  Quality = "syntax"
+	QualityPartial Quality = "partial"
 )
 
 // Analysis is the parser-independent fact model consumed by ccr. Parser trees,
@@ -188,15 +168,7 @@ type Analysis struct {
 	Imports             []Import
 	Decorators          []string
 	References          map[string]int
-	// outlineMembers are type-owned data declarations used only by FileOutline.
-	// They stay out of Definitions so repository ranking, call graphs, and Unit
-	// formation do not accidentally treat fields/properties as code symbols.
-	outlineMembers []outlineMember
-	// outlineEntries preserve a backend's direct structural projection. When
-	// present, FileOutline uses them instead of reconstructing structure from
-	// the flatter Definition facts.
-	outlineEntries   []outlineEntry
-	outlineProjected bool
+	outlineEntries      []outlineEntry
 }
 
 // DefinitionAt returns the innermost callable definition containing line.
