@@ -109,17 +109,9 @@ func (r *executionRecorder) finishExecution(taskType session.TaskType, result Ex
 func (r *executionRecorder) finishModel(
 	record *session.TaskRecord,
 	response *llm.ChatResponse,
-	err error,
 	duration time.Duration,
 	trackEvent bool,
 ) {
-	if record != nil {
-		if err != nil {
-			record.SetError(err, duration)
-		} else {
-			record.SetResponse(response, duration)
-		}
-	}
 	if response == nil {
 		return
 	}

@@ -13,8 +13,8 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/go-stdx/uuid"
 )
 
 func TestEncodeRepoPath(t *testing.T) {

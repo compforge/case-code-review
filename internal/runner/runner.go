@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
@@ -38,7 +39,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
 	"github.com/qiankunli/case-code-review/internal/unit/history"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 // Warning is the non-fatal execution warning exposed by Runner.
@@ -1409,18 +1409,15 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc session.Scope, rawDiff
 
 	fs := a.session.GetOrCreateScope(sc)
 	rec := fs.AppendTaskRecord(session.PlanTask, messages)
-	startTime := time.Now()
 
-	resp, err := a.args.LLMClient.CompletionsWithCtx(ctx, llm.ChatRequest{
+	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
 		MaxTokens: a.args.Template.MaxTokens,
 	})
 	if err != nil {
-		rec.SetError(err, time.Since(startTime))
 		return "", fmt.Errorf("plan request: %w", err)
 	}
-	rec.SetResponse(resp, time.Since(startTime))
 	a.executor.RecordUsage(resp.Usage)
 	fmt.Fprintf(console.Out(), "[ccr] Plan completed for %s\n", newPath)
 	return resp.Content(), nil

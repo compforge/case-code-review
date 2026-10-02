@@ -5,19 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
-	"net/http/httptrace"
-	"sync"
 	"time"
-)
-
-const (
-	requestPhaseUnknown        = "unknown"
-	requestPhaseConnectionPool = "connection_pool"
-	requestPhaseConnect        = "connect"
-	requestPhaseWriteRequest   = "request_write"
-	requestPhaseAwaitResponse  = "await_response"
-	requestPhaseResponseRead   = "response_read"
 )
 
 // ErrorDetails is the stable failure projection persisted with an LLM error.
@@ -63,122 +51,6 @@ func DescribeError(err error) *ErrorDetails {
 	return &details
 }
 
-type requestProgress struct {
-	mu                sync.Mutex
-	startedAt         time.Time
-	httpAttempts      int
-	phase             string
-	connectionReused  bool
-	requestWritten    bool
-	responseStarted   bool
-	gotConnectionAt   time.Duration
-	requestWrittenAt  time.Duration
-	responseStartedAt time.Duration
-}
-
-func (p *requestProgress) middleware(
-	req *http.Request,
-	next func(*http.Request) (*http.Response, error),
-) (*http.Response, error) {
-	p.beginAttempt()
-	trace := &httptrace.ClientTrace{
-		GetConn: func(string) {
-			p.waitForConnection()
-		},
-		DNSStart: func(httptrace.DNSStartInfo) {
-			p.startConnect()
-		},
-		ConnectStart: func(string, string) {
-			p.startConnect()
-		},
-		GotConn: func(info httptrace.GotConnInfo) {
-			p.gotConnection(info.Reused)
-		},
-		WroteRequest: func(info httptrace.WroteRequestInfo) {
-			if info.Err == nil {
-				p.wroteRequest()
-			}
-		},
-		GotFirstResponseByte: p.gotFirstResponseByte,
-	}
-	resp, err := next(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
-	if resp != nil {
-		p.gotFirstResponseByte()
-	}
-	return resp, err
-}
-
-func (p *requestProgress) beginAttempt() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.startedAt = time.Now()
-	p.httpAttempts++
-	p.phase = requestPhaseUnknown
-	p.connectionReused = false
-	p.requestWritten = false
-	p.responseStarted = false
-	p.gotConnectionAt = 0
-	p.requestWrittenAt = 0
-	p.responseStartedAt = 0
-}
-
-func (p *requestProgress) waitForConnection() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.phase = requestPhaseConnectionPool
-}
-
-func (p *requestProgress) startConnect() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.phase = requestPhaseConnect
-}
-
-func (p *requestProgress) gotConnection(reused bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.phase = requestPhaseWriteRequest
-	p.connectionReused = reused
-	p.gotConnectionAt = time.Since(p.startedAt)
-}
-
-func (p *requestProgress) wroteRequest() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.phase = requestPhaseAwaitResponse
-	p.requestWritten = true
-	p.requestWrittenAt = time.Since(p.startedAt)
-}
-
-func (p *requestProgress) gotFirstResponseByte() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.responseStarted {
-		return
-	}
-	p.phase = requestPhaseResponseRead
-	p.responseStarted = true
-	p.responseStartedAt = time.Since(p.startedAt)
-}
-
-func (p *requestProgress) attributes() map[string]any {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	attributes := map[string]any{
-		"request_phase":      p.phase,
-		"http_attempts":      p.httpAttempts,
-		"connection_reused":  p.connectionReused,
-		"request_written":    p.requestWritten,
-		"response_started":   p.responseStarted,
-		"got_connection_ms":  p.gotConnectionAt.Milliseconds(),
-		"request_written_ms": p.requestWrittenAt.Milliseconds(),
-	}
-	if p.responseStarted {
-		attributes["response_started_ms"] = p.responseStartedAt.Milliseconds()
-	}
-	return attributes
-}
-
 func requestPhase(attributes map[string]any) string {
 	phase, _ := attributes["request_phase"].(string)
 	if phase == "" {
@@ -199,7 +71,7 @@ func failurePhaseForRequest(attributes map[string]any) string {
 	}
 }
 
-func annotateRequestError(ctx context.Context, err error, progress *requestProgress) error {
+func annotateRequestError(ctx context.Context, err error, progress *requestTrace) error {
 	if err == nil || !isTimeout(err) {
 		return err
 	}

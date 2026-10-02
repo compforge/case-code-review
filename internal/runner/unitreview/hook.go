@@ -2,7 +2,6 @@ package unitreview
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -107,24 +106,14 @@ func (h *HypothesisHook) relocate(
 	draft *finding.Finding,
 	ch *change.Change,
 ) {
-	started := time.Now()
-	_, response, messages := finding.ReLocateComment(
-		ctx, draft, ch, h.LLMClient, h.Template.ReLocationTask, h.Model, h.Template.MaxTokens,
+	client := h.LLMClient
+	if h.Session != nil {
+		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, session.ReLocationTask)
+	}
+	_, response, _ := finding.ReLocateComment(
+		ctx, draft, ch, client, h.Template.ReLocationTask, h.Model, h.Template.MaxTokens,
 	)
-	if messages == nil || h.Session == nil {
-		if response != nil && h.RecordUsage != nil {
-			h.RecordUsage(response.Usage)
-		}
-		return
-	}
-
-	record := h.Session.GetOrCreateScope(scope).AppendTaskRecord(session.ReLocationTask, messages)
-	if response == nil {
-		record.SetError(fmt.Errorf("re-location LLM call failed"), time.Since(started))
-		return
-	}
-	record.SetResponse(response, time.Since(started))
-	if h.RecordUsage != nil {
+	if response != nil && h.RecordUsage != nil {
 		h.RecordUsage(response.Usage)
 	}
 }

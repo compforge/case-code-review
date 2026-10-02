@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 const laneReviewWorkers = 2

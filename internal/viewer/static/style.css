@@ -942,3 +942,6 @@ p { color: #586069; padding: 1rem 0; }
 	}
 	.conversation-inspector { max-height: none; }
 }
+
+.timeline-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.timeline-table th, .timeline-table td { padding: .5rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }

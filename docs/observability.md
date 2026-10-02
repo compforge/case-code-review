@@ -73,6 +73,18 @@ Execution 的 duration 直接相加。
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
 
+### 请求时间线
+
+每个实际模型请求使用 `go-stdx/timeline` 记录请求、路由、模型尝试、HTTP 请求及连接、写出、
+等待首字节和读取响应的阶段。Session recorder 将原生 Update 增量写入同一 JSONL，并携带
+Scope、Execution、task type 与 request number；Viewer 和 ATIF export 使用 timeline 的合并规则
+恢复阶段事实。阶段开始与转换即时刷新到文件，使没有收到响应的请求仍留下最后已观察到的阶段。
+
+请求结果由调用方决定：一次模型尝试失败后 fallback 成功，请求仍然成功。HTTP 回调只表达客户端
+观察到的进度；等待首字节不能直接解释为服务端排队。并行或嵌套阶段的耗时不能相加作为请求总耗时。
+超时沿用 timeline 的取消状态，CCR 的结构化错误 code 区分调用方截止时间与路由预算耗尽。
+缺少结束记录时保留运行中事实，实际终态未知；进程退出码或信号需要由外部启动器观察。
+
 ### 流式交付不是 Session tail
 
 Session JSONL 是本地执行事实源，不是对外发布协议。需要在长时间 review 中尽早消费成熟 Finding 的调用方，

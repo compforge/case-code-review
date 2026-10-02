@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/compforge/go-stdx/timeline"
 )
 
 const atifSchemaVersion = "ATIF-v1.8"
@@ -83,6 +85,8 @@ type atifFinal struct {
 // exportEvent is the read-side of session records for export — richer than
 // statsEvent (full messages / tool calls / usage), still decode-what-we-need.
 type exportEvent struct {
+	TimelineID             string           `json:"timeline_id"`
+	TimelineUpdate         timeline.Update  `json:"update"`
 	Type                   string           `json:"type"`
 	Timestamp              string           `json:"timestamp"`
 	SessionID              string           `json:"sessionId"`
@@ -293,6 +297,24 @@ func exportSession(path string) (*atifTrajectory, error) {
 				c.sawProjection = true
 				c.extra["initial_context"] = e.Items
 			}
+		case "timeline_update":
+			c := get(e)
+			entries, _ := c.extra["request_timelines"].(map[string]any)
+			if entries == nil {
+				entries = make(map[string]any)
+				c.extra["request_timelines"] = entries
+			}
+			entry, _ := entries[e.TimelineID].(map[string]any)
+			if entry == nil {
+				entry = map[string]any{"execution_id": e.ExecutionID, "task_type": e.TaskType, "request_no": e.RequestNo}
+				entries[e.TimelineID] = entry
+			}
+			current, _ := entry["timeline"].(timeline.Document)
+			document, _, err := timeline.MergeDocument(e.TimelineID, current, e.TimelineUpdate)
+			if err != nil {
+				return nil, fmt.Errorf("export request timeline %s: %w", e.TimelineID, err)
+			}
+			entry["timeline"] = document
 		case "llm_request":
 			c := get(e)
 			// Only the chain's FIRST request seeds steps: later requests replay the

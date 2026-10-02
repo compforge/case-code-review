@@ -593,19 +593,16 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 
 	fs := a.session.GetOrCreateScope(scanScope(it.Path))
 	rec := fs.AppendTaskRecord(session.PlanTask, messages)
-	startTime := time.Now()
 
-	resp, err := a.args.LLMClient.CompletionsWithCtx(ctx, llm.ChatRequest{
+	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
 		MaxTokens: a.args.Template.MaxTokens,
 	})
 	if err != nil {
-		rec.SetError(err, time.Since(startTime))
 		fmt.Fprintf(console.Out(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
 		return noPlan
 	}
-	rec.SetResponse(resp, time.Since(startTime))
 	a.executor.RecordUsage(resp.Usage)
 
 	guidance := formatPlanGuidance(resp.Content())
@@ -646,19 +643,16 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	const pathKey = "__scan_project_summary__"
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
 	rec := fs.AppendTaskRecord(session.MemoryCompressionTask, messages) // reuse existing task type
-	startTime := time.Now()
 
-	resp, err := a.args.LLMClient.CompletionsWithCtx(ctx, llm.ChatRequest{
+	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
 		MaxTokens: a.args.Template.MaxTokens,
 	})
 	if err != nil {
-		rec.SetError(err, time.Since(startTime))
 		fmt.Fprintf(console.Out(), "[ccr] scan project summary failed: %v\n", err)
 		return
 	}
-	rec.SetResponse(resp, time.Since(startTime))
 	a.executor.RecordUsage(resp.Usage)
 
 	body := strings.TrimSpace(llm.StripMarkdownFences(resp.Content()))
@@ -721,19 +715,16 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	pathKey := fmt.Sprintf("__scan_dedup_batch_%d__", batchIdx)
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
 	rec := fs.AppendTaskRecord(session.MemoryCompressionTask, messages) // reuse existing task type; no scan-specific type to invent
-	startTime := time.Now()
 
-	resp, err := a.args.LLMClient.CompletionsWithCtx(ctx, llm.ChatRequest{
+	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
 		MaxTokens: a.args.Template.MaxTokens,
 	})
 	if err != nil {
-		rec.SetError(err, time.Since(startTime))
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
 		return
 	}
-	rec.SetResponse(resp, time.Since(startTime))
 	a.executor.RecordUsage(resp.Usage)
 
 	deduped, ok := applyDedupGroups(resp.Content(), batchComments)

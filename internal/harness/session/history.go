@@ -11,9 +11,9 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/go-stdx/uuid"
 )
 
 // TaskType identifies the kind of LLM request within a file subtask.

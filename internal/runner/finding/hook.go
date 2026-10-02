@@ -2,7 +2,6 @@ package finding
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -106,24 +105,14 @@ func (h *Hook) handleTool(
 }
 
 func (h *Hook) relocate(ctx context.Context, scope session.Scope, finding *Finding, ch *change.Change) {
-	started := time.Now()
-	_, response, messages := ReLocateComment(
-		ctx, finding, ch, h.LLMClient, h.Template.ReLocationTask, h.Model, h.Template.MaxTokens,
+	client := h.LLMClient
+	if h.Session != nil {
+		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, session.ReLocationTask)
+	}
+	_, response, _ := ReLocateComment(
+		ctx, finding, ch, client, h.Template.ReLocationTask, h.Model, h.Template.MaxTokens,
 	)
-	if messages == nil || h.Session == nil {
-		if response != nil && h.RecordUsage != nil {
-			h.RecordUsage(response.Usage)
-		}
-		return
-	}
-
-	record := h.Session.GetOrCreateScope(scope).AppendTaskRecord(session.ReLocationTask, messages)
-	if response == nil {
-		record.SetError(fmt.Errorf("re-location LLM call failed"), time.Since(started))
-		return
-	}
-	record.SetResponse(response, time.Since(started))
-	if h.RecordUsage != nil {
+	if response != nil && h.RecordUsage != nil {
 		h.RecordUsage(response.Usage)
 	}
 }
