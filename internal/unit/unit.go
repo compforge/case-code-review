@@ -13,9 +13,9 @@ package unit
 import (
 	"strings"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 // Scope is how a Unit's Fragments were grouped — set when the Unit is formed.

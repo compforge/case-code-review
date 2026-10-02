@@ -6,11 +6,11 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 // ReviewInput is the Unit state needed to assess one Hypothesis. It is an API

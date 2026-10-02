@@ -272,6 +272,10 @@ python3 eval/collect.py \
   --out eval/data/runs/<collection-name>
 ```
 
+ATIF 的 Scope `extra.request_timelines` 保存按请求身份关联的原生 timeline Document，包含
+模型 fallback、HTTP 重试和传输阶段。没有请求终态时保留已记录的 running stage；这些诊断事实
+不自动构成质量判定或额外模型调用。
+
 不调用 LLM 的客观链路诊断：
 
 ```bash

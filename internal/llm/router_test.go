@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,7 +61,7 @@ func TestLLMRouter_FalloverThenSuccess(t *testing.T) {
 }
 
 func TestLLMRouter_ClientErrorShortCircuits(t *testing.T) {
-	c0 := &fakeClient{err: &openai.Error{StatusCode: 400}} // bad request → no fallover
+	c0 := &fakeClient{err: &openai.Error{StatusCode: 400, Request: &http.Request{Method: "POST"}, Response: &http.Response{StatusCode: 400}}} // bad request → no fallover
 	c1 := &fakeClient{resp: &ChatResponse{ID: "ok"}}
 	r := newRouter(routerMember{client: c0, label: "a"}, routerMember{client: c1, label: "b"})
 

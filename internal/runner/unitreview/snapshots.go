@@ -5,10 +5,10 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 // AttachMessages retains the exact repository snapshots that were admitted to

@@ -6,11 +6,11 @@ package formation
 import (
 	"fmt"
 
+	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/case-code-review/internal/unit/codegraph"
-	"github.com/qiankunli/go-stdx/slicesx"
 )
 
 // DefaultWatermark bounds the number of function-grained review Units before

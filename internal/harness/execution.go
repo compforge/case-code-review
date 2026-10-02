@@ -11,11 +11,11 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/go-stdx/uuid"
 )
 
 const defaultCompletionPrompt = "The review is not complete until you call task_done. Finish any required result tool calls, then call task_done."

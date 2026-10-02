@@ -12,9 +12,9 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/go-stdx/uuid"
 )
 
 // sessionSubDir is the subdirectory under ~/.casecodereview that holds session
@@ -23,9 +23,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v8 adds monotonic
-// run-relative timing and authoritative Execution start facts.
-const SchemaVersion = 8
+// protocol instead of guessing old record semantics. v9 records incremental
+// native timeline updates for model requests, fallback attempts and HTTP phases.
+const SchemaVersion = 9
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,

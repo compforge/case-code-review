@@ -52,8 +52,8 @@ func (m *chatModel) Generate(
 	}
 	record := m.recorder.beginModel(m.taskType, request.Messages)
 	started := time.Now()
-	resp, err := m.client.CompletionsWithCtx(ctx, request)
-	m.recorder.finishModel(record, resp, err, time.Since(started), m.events)
+	resp, err := record.Call(ctx, m.client, request)
+	m.recorder.finishModel(record, resp, time.Since(started), m.events)
 	if err != nil {
 		return nil, err
 	}

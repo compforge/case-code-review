@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/compforge/go-stdx/timeline"
 )
 
 // ReviewStage is the stable viewer vocabulary for the two review loops. Scan
@@ -113,6 +115,7 @@ type ToolUsage struct {
 // nodes carry the complete recorded model input; no message-dedup heuristic is
 // used to reconstruct context after compaction.
 type ConversationNode struct {
+	Timeline         *timeline.Document
 	ID               string
 	Kind             string
 	Label            string
@@ -279,6 +282,10 @@ func buildConversation(executionID string, turns []*TaskCard, compactions []Cont
 			CacheReadTokens: turn.CacheReadTokens, CacheWriteTokens: turn.CacheWriteTokens,
 			PromptDelta: turn.PromptDelta, MessageDelta: turn.MessageDelta,
 		})
+
+		if turn.Timeline != nil {
+			appendTurnNode(ConversationNode{Kind: "timeline", Label: fmt.Sprintf("Request Timeline · Turn %d", turn.TurnNo), Timeline: turn.Timeline, Preview: string(turn.Timeline.Status), TurnNo: turn.TurnNo})
+		}
 
 		preview := firstLine(turn.ResponseContent)
 		if preview == "" {

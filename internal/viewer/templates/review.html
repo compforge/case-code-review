@@ -111,6 +111,19 @@
                         {{if $node.Error}}<span class="badge badge-error">{{$node.Error}}</span>{{end}}
                     </div>
                 </div>
+                {{if $node.Timeline}}
+                <div class="conversation-section">
+                    <div class="conversation-section-label">Request: {{$node.Timeline.Status}}</div>
+                    {{if $node.Timeline.FinishedAt.IsZero}}<p>Request terminal state is not recorded. Running stages show the last observed phase.</p>{{end}}
+                    <table class="timeline-table"><thead><tr><th>Stage</th><th>Result</th><th>Duration</th><th>Details</th></tr></thead><tbody>
+                    {{range $node.Timeline.Stages}}<tr>
+                        <td><code>{{.Name}}</code></td><td>{{.Status}}</td>
+                        <td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .Elapsed.Milliseconds}}{{end}}</td>
+                        <td>{{range $key, $value := .Fields}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Code}}<div>{{.Code}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
+                    </tr>{{end}}
+                    </tbody></table>
+                </div>
+                {{end}}
                 {{if eq $node.Kind "prompt"}}
                 {{if or (lt $node.PromptDelta 0) (lt $node.MessageDelta 0)}}<div class="context-reduced">Context reduced before this call.</div>{{end}}
                 <div class="prompt-snapshot">

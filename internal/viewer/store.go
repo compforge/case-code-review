@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 )
 
@@ -312,6 +313,7 @@ const (
 
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
+	Timeline    *timeline.Document
 	ExecutionID string
 	Sequence    int
 	// Request holds the complete recorded message list sent in this call.
@@ -479,6 +481,18 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			if execution != nil {
 				execution.Tasks[taskType] = append(execution.Tasks[taskType], card)
 				execution.Calls = append(execution.Calls, card)
+			}
+
+		case "timeline_update":
+			scope, execution := executionFor(rec)
+			for _, card := range cardsFor(scope, execution, TaskType(stringValue(rec["taskType"]))) {
+				if card.RequestNo != intValue(rec["request_no"]) {
+					continue
+				}
+				if err := card.applyTimeline(rec); err != nil {
+					return nil, fmt.Errorf("load request timeline: %w", err)
+				}
+				break
 			}
 
 		case "llm_response":
