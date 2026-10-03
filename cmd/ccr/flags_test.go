@@ -48,3 +48,13 @@ func TestParseReviewFlagsRejectsJSONLPreview(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestReviewTokenBudgetFlag(t *testing.T) {
+	opts, err := parseReviewFlags([]string{"--max-tokens-budget", "12345"})
+	if err != nil || opts.maxTokensBudget != 12345 {
+		t.Fatalf("budget=%d err=%v", opts.maxTokensBudget, err)
+	}
+	if _, err := parseReviewFlags([]string{"--max-tokens-budget", "-1"}); err == nil {
+		t.Fatal("negative budget accepted")
+	}
+}

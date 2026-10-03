@@ -112,28 +112,29 @@ func expandShortFlags(args []string, shortMap map[string]string) []string {
 // --- review subcommand options ---
 
 type reviewOptions struct {
-	toolConfigPath string
-	rulePath       string
-	repoDir        string
-	from           string
-	to             string
-	commit         string
-	excludes       string // --exclude: comma-separated gitignore-style patterns
-	outputFormat   string
-	audience       string // --audience: "human" (default) or "agent"
-	background     string // --background: optional requirement context
-	bizID          string // --biz-id: caller-owned execution identity, persisted only
-	specPath       string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
-	historyPath    string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
-	model          string // --model: override resolved LLM model for this review
-	concurrency    int
-	perFileTimeout int
-	maxTools       int
-	maxGitProcs    int
-	preview        bool
-	dryRun         bool
-	features       []string // --feature name=on|off (repeatable): ablation gates; see internal/runner/feature
-	showHelp       bool
+	toolConfigPath  string
+	rulePath        string
+	repoDir         string
+	from            string
+	to              string
+	commit          string
+	excludes        string // --exclude: comma-separated gitignore-style patterns
+	outputFormat    string
+	audience        string // --audience: "human" (default) or "agent"
+	background      string // --background: optional requirement context
+	bizID           string // --biz-id: caller-owned execution identity, persisted only
+	specPath        string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
+	historyPath     string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
+	model           string // --model: override resolved LLM model for this review
+	concurrency     int
+	perFileTimeout  int
+	maxTokensBudget int
+	maxTools        int
+	maxGitProcs     int
+	preview         bool
+	dryRun          bool
+	features        []string // --feature name=on|off (repeatable): ablation gates; see internal/runner/feature
+	showHelp        bool
 }
 
 func parseReviewFlags(args []string) (reviewOptions, error) {
@@ -150,6 +151,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVar(&opts.excludes, "exclude", "", "comma-separated gitignore-style patterns to exclude; merged with rule.json excludes")
 	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text, json, or jsonl")
 	a.StringSliceVar(&opts.features, "feature", "toggle a feature gate: name=on|off (repeatable); run 'ccr review --help' for the list")
+	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "soft limit on reported input+output tokens across the run; stops new model calls (0 = unlimited)")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
@@ -172,6 +174,9 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 		return opts, nil
 	}
 
+	if opts.maxTokensBudget < 0 {
+		return opts, fmt.Errorf("--max-tokens-budget must be non-negative")
+	}
 	modeCount := 0
 	if opts.from != "" || opts.to != "" {
 		modeCount++
@@ -269,6 +274,7 @@ Flags:
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)
   --from string           source ref to start diff from (e.g., 'main')
+  --max-tokens-budget int soft limit on total input+output tokens; 0 = unlimited
   --max-tools int         max tool call rounds per file (0 = template default; min 10)
   --model string          override LLM model for this review (e.g., claude-opus-4-6)
   -p, --preview           no-LLM, file level: list which files will be reviewed

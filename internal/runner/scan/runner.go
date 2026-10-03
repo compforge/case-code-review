@@ -66,9 +66,8 @@ type Args struct {
 	// SkipSummary disables the post-run PROJECT_SUMMARY_TASK even when the
 	// template defines one. Set via the --no-summary CLI flag.
 	SkipSummary bool
-	// MaxTokensBudget, when > 0, caps total token usage (input+output, as
-	// reported by the API). Once the running total exceeds it, no further
-	// batches are dispatched. 0 = unlimited. Set via --max-tokens-budget
+	// MaxTokensBudget, when > 0, limits reported token usage across all model calls.
+	// Once reached, no new calls or files start; in-flight requests can finish. 0 = unlimited. Set via --max-tokens-budget
 	// or ScanTemplate.MaxTokensBudget.
 	MaxTokensBudget int64
 }
@@ -103,6 +102,7 @@ func (a *Runner) summaryEnabled() bool {
 // (file enumeration, FULL_SCAN_TASK rendering, per-file filtering) and
 // delegates each file's tool-use loop to a Harness Execution.
 type Runner struct {
+	budget         *llm.BudgetClient
 	args           Args
 	items          []Item
 	currentDate    string
@@ -134,6 +134,14 @@ func New(args Args) *Runner {
 	a := &Runner{
 		args:    args,
 		session: args.Session,
+	}
+	if args.MaxTokensBudget > 0 {
+		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
+			a.recordWarning("token_budget_reached", "", fmt.Sprintf("reported token usage %d reached budget %d; no new model calls", used, limit))
+			a.session.WriteArtifact("token_budget", map[string]any{"used": used, "limit": limit, "exhausted": true})
+		})
+		args.LLMClient = a.budget
+		a.args.LLMClient = a.budget
 	}
 	findingTemplate := toFindingTemplate(args.Template)
 	findingHook := &finding.Hook{
@@ -234,7 +242,7 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	est := estimateCost(a.items, a.planEnabled(), a.dedupEnabled(), a.summaryEnabled())
 	fmt.Fprintf(console.Out(), "[ccr] estimated cost: %s\n", est)
 	if a.args.MaxTokensBudget > 0 {
-		fmt.Fprintf(console.Out(), "[ccr] token budget: %s (dispatch stops once exceeded)\n", humanTokens(a.args.MaxTokensBudget))
+		fmt.Fprintf(console.Out(), "[ccr] token budget: %s (new model calls stop once reached)\n", humanTokens(a.args.MaxTokensBudget))
 		if est.TotalTokens > a.args.MaxTokensBudget {
 			fmt.Fprintf(console.Out(), "[ccr] WARNING: estimate (%s) exceeds budget (%s); scan will stop partway\n",
 				humanTokens(est.TotalTokens), humanTokens(a.args.MaxTokensBudget))
@@ -449,8 +457,8 @@ func (a *Runner) resolveBatchStrategy() BatchStrategy {
 // concurrency slot and before launching the subtask: if the tokens already
 // spent PLUS a look-ahead estimate of this file's cost would exceed the
 // budget, the file (and all remaining files in the batch) are skipped.
-// This keeps overrun bounded by roughly one in-flight file per worker,
-// instead of a whole batch as the coarse batch-level gate did.
+// The shared client also checks each model call within a running file, so
+// exhausting the allowance does not let the rest of that file run unchecked.
 func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) (int64, bool, error) {
 	concurrency := a.args.MaxConcurrency
 	if concurrency <= 0 {
@@ -466,26 +474,25 @@ func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) 
 	)
 
 	for i := range batch {
-		// Per-file budget look-ahead. Stop before acquiring a slot so we
-		// don't even queue work that would blow the budget.
-		if a.args.MaxTokensBudget > 0 {
-			used := a.executor.TotalTokensUsed()
-			projected := used + estimateFileTokens(batch[i], a.planEnabled())
-			if projected > a.args.MaxTokensBudget {
-				fmt.Fprintf(console.Out(), "[ccr] token budget reached (used %s + next-file est ≈ %s > budget %s) — skipping %s and remaining files\n",
-					humanTokens(used), humanTokens(projected), humanTokens(a.args.MaxTokensBudget), batch[i].Path)
-				a.recordWarning("token_budget_reached", batch[i].Path,
-					fmt.Sprintf("stopped in batch #%d: used %d tokens + next-file estimate exceeds budget %d", batchIdx, used, a.args.MaxTokensBudget))
-				budgetHit = true
-				break
-			}
-		}
-
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
 			wg.Wait()
 			return dispatched, budgetHit, ctx.Err()
+		}
+		if a.args.MaxTokensBudget > 0 {
+			used := a.executor.TotalTokensUsed()
+			if a.budget != nil {
+				used = a.budget.Used()
+			}
+			projected := used + estimateFileTokens(batch[i], a.planEnabled())
+			if used >= a.args.MaxTokensBudget || projected > a.args.MaxTokensBudget {
+				<-sem
+				a.recordWarning("token_budget_reached", batch[i].Path,
+					fmt.Sprintf("stopped in batch #%d: used %d tokens + next-file estimate exceeds budget %d", batchIdx, used, a.args.MaxTokensBudget))
+				budgetHit = true
+				break
+			}
 		}
 
 		dispatched++

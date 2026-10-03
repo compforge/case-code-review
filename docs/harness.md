@@ -137,6 +137,10 @@ ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo
 但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
 统计和恢复行为会分裂。
 
+上下文占用由 AgentGo 按实际消息投影估算，包含 tool call 的名称和参数。有效的 API input usage
+可校准此前的输入，但本轮 assistant 输出与后续工具结果仍需计入下一次请求。去重或压缩改写消息后，
+旧 input usage 不再对应当前 prompt，直到下一次真实响应前使用估算；原始 usage 留在执行记录中用于成本统计。
+
 ### 3.3 预算是机制，完成策略属于调用方
 
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
@@ -151,6 +155,15 @@ Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用�
 完整结构化结果的流程可以要求 terminal tool；允许“检查完即结束”的流程可以选择 natural completion，
 因此简单 Review 1 不必为了形式上的交卷继续等待或耗尽预算。超时或轮次耗尽时返回
 partial/incomplete，不把空输出包装成成功；此前已被领域层接受的增量结果不随 Execution 的失败回滚。
+
+整轮累计 token 预算与单次上下文窗口分别控制成本和容量。Review / Scan 的所有模型入口共享同一份
+累计预算，包括 Plan、主循环、Review 2、压缩、重定位和汇总等辅助调用。每次调用返回后按 provider
+报告的 input + output usage 累计，达到预算后拒绝新调用；派发器在获得并发槽位后再检查预算，避免
+等待期间沿用旧额度。Scan 同时保留启动新文件前的成本预估。
+
+这是软预算：已放行的并发请求及其 provider 内部重试可以完成，未报告的 usage 无法精确计费。
+预算耗尽不额外购买收卷轮次；未完成的 Execution 以带原因的 truncated 结束，已接受的结果保留，
+尚未派发的 Review Unit 记为 skipped_policy。局部预算拒绝不计为 provider 失败。
 
 ### 3.4 Tool 与 Hook 是执行能力，不是领域所有权
 

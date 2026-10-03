@@ -756,11 +756,11 @@ func TestContextCompactsFromTailAndCommitsProjection(t *testing.T) {
 		msg.NewFile("b.go", 1, 80, 80, content("b.go")),
 		msg.NewFile("c.go", 1, 80, 80, content("c.go")),
 	}
-	full := countContextTokens(messages)
+	full := agentcontext.EstimateTotal(messages)
 	tail := append([]agentgo.AgentMessage(nil), messages...)
 	compacted, _ := tail[len(tail)-1].Compact(0)
 	tail[len(tail)-1] = compacted
-	afterTail := countContextTokens(tail)
+	afterTail := agentcontext.EstimateTotal(tail)
 	limit := (full + afterTail) / 2
 	manager := newContextManager(ExecutionSpec{
 		ContextWindow:    limit * 5 / 4,
@@ -831,7 +831,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 		msg.Text("user", "stable task"),
 		file,
 	}
-	full := countContextTokens(messages)
+	full := agentcontext.EstimateTotal(messages)
 	roomy := newContextManager(ExecutionSpec{
 		ContextWindow:    full * 2,
 		FileEvictEnabled: true,
@@ -848,7 +848,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 	outlineMessages := append([]agentgo.AgentMessage(nil), messages...)
 	outline, _ := outlineMessages[2].Compact(0.9)
 	outlineMessages[2] = outline
-	afterOutline := countContextTokens(outlineMessages)
+	afterOutline := agentcontext.EstimateTotal(outlineMessages)
 	limit := (full + afterOutline) / 2
 	manager := newContextManager(ExecutionSpec{
 		ContextWindow:    limit * 5 / 4,

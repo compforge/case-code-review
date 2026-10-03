@@ -62,7 +62,7 @@ func parseScanFlags(args []string) (scanOptions, error) {
 	a.BoolVar(&opts.noDedup, "no-dedup", false, "skip the per-batch DEDUP_TASK (keeps raw comments; one fewer LLM call per batch)")
 	a.BoolVar(&opts.noSummary, "no-summary", false, "skip the post-run PROJECT_SUMMARY_TASK (no project-level markdown summary)")
 	a.StringVar(&opts.batch, "batch", "", "override BATCH_STRATEGY from scan template: none | by-language | by-directory")
-	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "cap total token usage (input+output); dispatch stops once exceeded (0 = unlimited)")
+	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "cap total token usage (input+output); new model calls stop once reached (0 = unlimited)")
 	a.StringVar(&opts.model, "model", "", "override LLM model for this scan (e.g., claude-opus-4-6)")
 
 	if err := a.Parse(args); err != nil {
@@ -279,7 +279,7 @@ Flags:
   --no-dedup              skip the per-batch DEDUP_TASK (keeps raw comments)
   --no-summary            skip the post-run PROJECT_SUMMARY_TASK
   --batch string          override BATCH_STRATEGY: none | by-language | by-directory
-  --max-tokens-budget int cap total token usage; dispatch stops once exceeded (0 = unlimited)
+  --max-tokens-budget int cap total token usage; new model calls stop once reached (0 = unlimited)
   --model string          override LLM model for this scan (e.g., claude-opus-4-6)
   --audience string       output audience: human (show progress) or agent (summary only) (default "human")
   -b, --background string optional requirement/business context for the scan

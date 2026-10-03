@@ -567,6 +567,11 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		result.Reason = string(e.summary.EndReason)
 		return result, nil
 	}
+	if errors.Is(e.runErr, llm.ErrTokenBudget) {
+		result.State = OutcomeTruncated
+		result.Reason = llm.ErrTokenBudget.Error()
+		return result, nil
+	}
 	if e.runErr != nil {
 		result.State = OutcomeLLMError
 		result.Reason = e.runErr.Error()

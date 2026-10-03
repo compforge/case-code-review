@@ -188,9 +188,10 @@ func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentg
 	}
 	if resp.Usage != nil {
 		message.Usage = &agentgo.Usage{
-			Provider:    resp.Alias,
-			Model:       resp.Model,
-			Input:       int(resp.Usage.PromptTokens),
+			Provider: resp.Alias,
+			Model:    resp.Model,
+			// CCR input includes cache creation; AgentGo adds CacheWrite separately.
+			Input:       int(max(0, resp.Usage.PromptTokens-resp.Usage.CacheWriteTokens)),
 			Output:      int(resp.Usage.CompletionTokens),
 			CacheRead:   int(resp.Usage.CacheReadTokens),
 			CacheWrite:  int(resp.Usage.CacheWriteTokens),

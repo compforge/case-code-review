@@ -106,6 +106,7 @@ func runReview(args []string) error {
 		SystemRule:            cc.Resolver,
 		FileFilter:            cc.FileFilter,
 		LLMClient:             rt.Client,
+		MaxTokensBudget:       int64(opts.maxTokensBudget),
 		Tools:                 tools,
 		PlanToolDefs:          rt.PlanToolDefs,
 		MainToolDefs:          rt.MainToolDefs,

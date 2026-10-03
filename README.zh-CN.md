@@ -83,6 +83,8 @@ ccr review --format json                # 面向 CI / bot 的机器可读输出
 
 连续评审 PR/MR 时，可用 `--history prior.json` 传入之前已经交付的 Finding。Forge comments 是持久事实源；调用方在每个 revision 拉取它们，使 ccr 能区分新问题与重复交付。
 
+`review` 和 `scan` 均可用 `--max-tokens-budget 200000` 设置整轮输入 + 输出 token 预算（默认不限）。报告用量达到上限后停止新模型调用，保留已接受结果；已放行的请求可以完成，因此这是软上限。
+
 ### 花 Token 前先检查
 
 ```bash
