@@ -20,15 +20,11 @@ ccr does not try to enumerate every possible defect. It focuses bounded agent ex
 
 ### Unit: the review boundary
 
-A **Unit** is one behavioral review scope. Depending on the change, it can be:
+A **Unit** brings related changes into a complete, bounded review context. It can cover one declaration, a region of a file, or cooperating changes across files.
 
-- a **function** when one symbol is the natural boundary;
-- a **file** when the diff touches only one reviewable file;
-- a **cross-file call chain** when changed functions collaborate and separate file reviews would rediscover the same context.
+CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships. For example, a changed caller and callee can be reviewed together; unrelated functions in the same file can remain separate. Deleted code is interpreted against the pre-change source.
 
-This makes review granularity more flexible than file-by-file review. The practical goal is for Review 1 to use no more loops than there are reviewable files, and fewer when related cross-file changes can be reviewed together.
-
-Making Unit—not file—the basic review boundary depends on practical caller/callee discovery. CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to identify symbols and their relationships, grouping changes when static call evidence is sufficiently strong.
+Each Unit has a size budget. Large groups are split while retaining their connecting relationships as context; unsupported source remains reviewable without inferred relationships. Fewer repeated explorations are useful, but coverage and coherent review boundaries determine the grouping.
 
 ### Review 1 discovers; Review 2 verifies; Review 3 gates
 

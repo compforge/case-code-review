@@ -18,6 +18,8 @@ func FindingFor(h Hypothesis) finding.Finding {
 		SuggestionCode: h.SuggestionCode,
 		ExistingCode:   h.ExistingCode,
 		StartLine:      h.StartLine,
+		Side:           h.Side,
+		OldPath:        h.OldPath,
 		EndLine:        h.EndLine,
 		Thinking:       h.Thinking,
 		Alias:          h.Alias,

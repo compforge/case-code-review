@@ -92,7 +92,7 @@ func TestPreloadReviewFilesAddsBoundedCallNeighbors(t *testing.T) {
 		"b.go": "package p\n\nfunc G() {}\n",
 		"c.go": "package p\n\nfunc Entry() {\n\tF()\n}\n",
 	})
-	u := unit.NewChainUnit([]unit.Fragment{
+	u := unit.NewRelatedUnit([]unit.Fragment{
 		{Path: "a.go", Symbols: []string{"a.go::F"}},
 		{Path: "b.go", Symbols: []string{"b.go::G"}},
 	})
@@ -194,13 +194,13 @@ func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
 
 func TestDescribePreloadedSources(t *testing.T) {
 	a := &Runner{}
-	u := unit.NewChainUnit([]unit.Fragment{
+	u := unit.NewRelatedUnit([]unit.Fragment{
 		{Path: "a.go", Symbols: []string{"a.go::F"}},
 		{Path: "b.go", Symbols: []string{"b.go::G"}},
 	})
 	u.Clues = []unit.Clue{{Relation: unit.RelCaller, Ref: "c.go::Entry"}}
 	got := a.describePreloadedSources(u)
-	if len(got) != 3 || !strings.Contains(got[0], "a.go::F") || got[2] != "caller c.go::Entry (body)" {
+	if len(got) != 3 || !strings.Contains(strings.Join(got[:2], "\n"), "a.go::F") || !strings.Contains(strings.Join(got[:2], "\n"), "b.go::G") || got[2] != "caller c.go::Entry (body)" {
 		t.Fatalf("descriptors = %v", got)
 	}
 }

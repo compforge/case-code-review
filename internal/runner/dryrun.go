@@ -12,21 +12,26 @@ import (
 // UnitContext is the review context ccr would inject for one review unit — what
 // `--dry-run` prints (text) or emits (json) instead of running the LLM. The
 // structural fields (Scope/Paths/Fragments/Clues) let `--format json` be used to
-// compare how features (call-chain merge, clues) change unit shape, for free.
+// compare how features (relation grouping, clues) change unit shape, for free.
 type UnitContext struct {
-	ID             string         `json:"id"`
-	Path           string         `json:"path"`                      // representative member path
-	Scope          string         `json:"scope"`                     // func / file / callchain
-	Paths          []string       `json:"paths"`                     // member files; len>1 = cross-file (call-chain) unit
-	Fragments      int            `json:"fragments"`                 // changed regions merged into this unit
-	Clues          map[string]int `json:"clues"`                     // "<relation>/<kind>" -> count (e.g. owner/rule, used/doc, caller/spec)
-	SpecCases      string         `json:"spec_cases,omitempty"`      // contract: own spec/case + inherited caller spec + depended-on callee contracts
-	Rules          string         `json:"rules,omitempty"`           // path-glob rule.json + function-level @rule
-	SeeAlso        string         `json:"see_also,omitempty"`        // curated @link pointers
-	Prior          string         `json:"prior,omitempty"`           // a previous review's findings on this unit (to reconcile)
-	ProjectContext string         `json:"project_context,omitempty"` // changed manifest/lock pointers from the same Component
-	SourcePreloads []string       `json:"source_preloads,omitempty"` // descriptors, not content: own source + related bodies
-	UsageSites     string         `json:"usage_sites,omitempty"`     // CodeGraph reference sites of the changed symbols
+	BudgetExceeded bool                    `json:"budget_exceeded,omitempty"`
+	Grouping       []unit.GroupingEvidence `json:"grouping,omitempty"`
+	Boundaries     []unit.GroupingEvidence `json:"boundaries,omitempty"`
+	Targets        []unit.TargetSummary    `json:"targets"`
+	DiffTokens     int                     `json:"diff_tokens"`
+	ID             string                  `json:"id"`
+	Path           string                  `json:"path"`                      // representative member path
+	Scope          string                  `json:"scope"`                     // func / file / related
+	Paths          []string                `json:"paths"`                     // member files
+	Fragments      int                     `json:"fragments"`                 // changed regions merged into this unit
+	Clues          map[string]int          `json:"clues"`                     // "<relation>/<kind>" -> count (e.g. owner/rule, used/doc, caller/spec)
+	SpecCases      string                  `json:"spec_cases,omitempty"`      // contract: own spec/case + inherited caller spec + depended-on callee contracts
+	Rules          string                  `json:"rules,omitempty"`           // path-glob rule.json + function-level @rule
+	SeeAlso        string                  `json:"see_also,omitempty"`        // curated @link pointers
+	Prior          string                  `json:"prior,omitempty"`           // a previous review's findings on this unit (to reconcile)
+	ProjectContext string                  `json:"project_context,omitempty"` // changed manifest/lock pointers from the same Component
+	SourcePreloads []string                `json:"source_preloads,omitempty"` // descriptors, not content: own source + related bodies
+	UsageSites     string                  `json:"usage_sites,omitempty"`     // CodeGraph reference sites of the changed symbols
 }
 
 // countClues tallies a Unit's Clues on the relation×kind matrix, keyed
@@ -47,6 +52,9 @@ func countClues(clues []unit.Clue) map[string]int {
 // filtering, spec.json / call-graph coverage and map injection can all be
 // inspected in one pass, for free.
 func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, error) {
+	if a.session != nil {
+		defer a.session.Flush()
+	}
 	if err := a.loadChanges(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("load diffs: %w", err)
 	}
@@ -75,7 +83,8 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 			rule += specRules
 		}
 		out = append(out, UnitContext{
-			ID:             u.ID,
+			ID:       u.ID,
+			Grouping: u.Grouping, Boundaries: u.Boundaries, Targets: u.Targets(), DiffTokens: u.DiffTokens, BudgetExceeded: u.BudgetExceeded,
 			Path:           u.Path(),
 			Scope:          string(u.Scope),
 			Paths:          u.Paths(),

@@ -1,13 +1,6 @@
-// Package unit models the two stages of the review pipeline:
-//
-//   - Fragment — the atom: one file's changed region (a function's hunks, or the
-//     file residual). A Splitter's output. Pure data: no context, no grouping.
-//   - Unit — the review scope: 1..N Fragments grouped by an axis (one function;
-//     same-file coalesced; or a cross-file call chain) plus the context (Clues)
-//     gathered for that scope. A Merger's output; the review loop runs once per
-//     Unit.
-//
-// (diff → Fragment → merge → Unit → review loop. See docs/unit-model.md.)
+// Package unit models changed source fragments and their bounded review scope.
+// CodeGraph supplies source ownership and relations; formation selects which
+// changes to review together, then gathers context for the resulting Unit.
 package unit
 
 import (
@@ -28,35 +21,34 @@ const (
 	ScopeFunc Scope = "func"
 	// ScopeCallChain groups call-adjacent changed functions (may span files).
 	ScopeCallChain Scope = "callchain"
+	ScopeRelated   Scope = "related"
 )
 
-// Formation is WHY a Unit has its shape — set by its constructor, recorded in
-// the unit's debrief. Scope says what the unit IS; Formation distinguishes what
-// Scope can't: a "file" unit that is naturally whole-file (residual /
-// unparseable) vs one the cost governor COALESCED from function fragments.
-// That distinction feeds the granularity dashboard's too-coarse signal
-// (coalesced units delivering clean verdicts) and is not recoverable after
-// the fact.
+// Formation records why a Unit has its shape. Scope is presentation only;
+// neither field controls the availability of source context.
 type Formation string
 
 const (
 	FormedFunc     Formation = "func"     // a lone function fragment
 	FormedFile     Formation = "file"     // whole-file fragment: residual / unparseable / multi-symbol
 	FormedCoalesce Formation = "coalesce" // cost governor merged a file's fragments
-	FormedChain    Formation = "chain"    // call-adjacent changed functions grouped semantically
+	FormedGraph    Formation = "graph"
 )
 
-// Fragment is the atom: one file's changed region. Symbols are the symbol-ids
-// (functions) it covers — one for a function fragment, none for a file residual,
-// several for a coalesced whole-file fragment. Pure data: a Splitter produces it,
-// a Merger groups it; it carries no context.
+// Fragment is one file's changed region with separate before/after owners.
+// It can cover declarations, bindings, or unbound residual edits. Symbols is
+// the after-side review identity projection; before-side finders use Before.
 type Fragment struct {
-	Path       string
-	Symbols    []string
-	Diff       string
-	Status     string
-	Insertions int64
-	Deletions  int64
+	Path          string
+	OldPath       string
+	Before, After []language.Anchor
+	Gaps          []string
+	BeforeView    bool // internal projection for old-side ClueFinders
+	Symbols       []string
+	Diff          string
+	Status        string
+	Insertions    int64
+	Deletions     int64
 }
 
 // Unit is the review scope and the currency of the pipeline: the loop runs once
@@ -76,7 +68,11 @@ type Unit struct {
 	// Clues are the deduped project and language facts assembled for this Unit
 	// after formation, across the self/owner/caller/callee/used/project relations.
 	// See docs/unit-model.md.
-	Clues []Clue
+	Clues          []Clue
+	Grouping       []GroupingEvidence
+	Boundaries     []GroupingEvidence
+	DiffTokens     int
+	BudgetExceeded bool
 	// review is shared by value-copied Units and accumulates immutable evidence
 	// plus accepted outputs as the Unit moves through Review 1, Review 2 and Trial.
 	review *reviewState
@@ -147,8 +143,7 @@ func (u Unit) Diff() string {
 	return b.String()
 }
 
-// Splitter turns one file's diff into Fragments — one per changed function plus a
-// residual, or a single whole-file Fragment when the file can't be parsed.
+// Splitter attributes edits to source owners, retaining unbound residuals.
 type Splitter interface {
 	Split(d change.Change) ([]Fragment, error)
 }
@@ -158,7 +153,8 @@ type FileSplitter struct{}
 
 func (FileSplitter) Split(d change.Change) ([]Fragment, error) {
 	return []Fragment{{
-		Path:       d.NewPath,
+		Path:       d.Path(),
+		OldPath:    d.OldPath,
 		Diff:       d.Diff,
 		Insertions: d.Insertions,
 		Deletions:  d.Deletions,
@@ -174,50 +170,6 @@ func UnitOf(f Fragment) Unit {
 	return Unit{ID: f.Path, Scope: ScopeFile, Formed: FormedFile, Fragments: []Fragment{f}, review: newReviewState()}
 }
 
-// CoalesceFile merges a file's Fragments into one ScopeFile Unit reviewing the
-// whole-file diff while retaining every Fragment's Symbols — the cost governor's
-// function→file rung (caps loop count, not context).
-func CoalesceFile(d change.Change, frags []Fragment) Unit {
-	whole := Fragment{Path: d.NewPath, Diff: d.Diff, Insertions: d.Insertions, Deletions: d.Deletions}
-	for _, f := range frags {
-		whole.Symbols = append(whole.Symbols, f.Symbols...)
-	}
-	return Unit{ID: d.NewPath, Scope: ScopeFile, Formed: FormedCoalesce, Fragments: []Fragment{whole}, review: newReviewState()}
-}
-
-// CoalesceFragments groups the remaining fragments of one file without
-// reintroducing parts already assigned to a cross-file chain. It is used only
-// after semantic formation has claimed those related fragments.
-func CoalesceFragments(frags []Fragment) Unit {
-	if len(frags) == 1 {
-		return UnitOf(frags[0])
-	}
-	if len(frags) == 0 {
-		return Unit{}
-	}
-	return Unit{
-		ID:        frags[0].Path,
-		Scope:     ScopeFile,
-		Formed:    FormedCoalesce,
-		Fragments: append([]Fragment(nil), frags...),
-		review:    newReviewState(),
-	}
-}
-
-// NewChainUnit groups call-adjacent changed functions (possibly across files)
-// into one ScopeCallChain review Unit — a requirement's change reviewed along the
-// call chain it touched. Callers should pass Fragments in a stable order (e.g.
-// sorted by path/symbol) so the ID is deterministic.
-func NewChainUnit(frags []Fragment) Unit {
-	var names []string
-	for _, f := range frags {
-		for _, s := range f.Symbols {
-			names = append(names, symbolName(s))
-		}
-	}
-	return Unit{ID: "chain:" + strings.Join(names, "+"), Scope: ScopeCallChain, Formed: FormedChain, Fragments: frags, review: newReviewState()}
-}
-
 // symbolName returns the bare symbol from a symbol-id ("p/x.go::Svc.Get" -> "Svc.Get")
 // for building a Unit ID; falls back to the whole string when it isn't an id.
 func symbolName(symbolID string) string {
@@ -225,4 +177,13 @@ func symbolName(symbolID string) string {
 		return sym
 	}
 	return symbolID
+}
+
+// GroupingEvidence explains an accepted relation or a budget boundary between
+// changed fragments. It references the source publication rather than owning facts.
+type GroupingEvidence struct {
+	Before       bool                `json:"before"`
+	Link         language.Connection `json:"link"`
+	FromFragment string              `json:"from_fragment"`
+	ToFragment   string              `json:"to_fragment"`
 }

@@ -64,7 +64,7 @@ func ParseHunks(rawDiffText string) []Hunk {
 			continue
 		}
 
-		if current == nil {
+		if current == nil || line == "" {
 			continue // skip file-level headers and preamble
 		}
 

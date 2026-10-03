@@ -111,6 +111,7 @@ func finalizeDiff(ctx context.Context, d *change.Change, repoDir string, ref str
 			output, err = cmd.Output()
 		}
 		if err != nil {
+			d.NewContentMissing = true
 			fmt.Fprintf(console.Err(), "[ccr] WARNING: cannot read file %s at ref %s: %v\n",
 				d.NewPath, ref, err)
 			return
@@ -120,6 +121,7 @@ func finalizeDiff(ctx context.Context, d *change.Change, repoDir string, ref str
 	}
 	content, err := readWorkspaceFileForDiff(repoDir, d.NewPath)
 	if err != nil {
+		d.NewContentMissing = true
 		fmt.Fprintf(console.Err(), "[ccr] WARNING: cannot read file %s for review: %v\n", d.NewPath, err)
 		return
 	}

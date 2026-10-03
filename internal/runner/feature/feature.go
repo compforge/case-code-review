@@ -17,7 +17,7 @@ type Gate string
 
 const (
 	Plan             Gate = "plan"              // PLAN_TASK pre-pass per unit
-	CallChain        Gate = "callchain"         // call-chain merge axis (cross-file units via call graph)
+	CallChain        Gate = "callchain"         // group related changes using source graph evidence
 	CallerCallee     Gate = "caller_callee"     // caller/callee context clues (CodeGraph relations)
 	SpecCase         Gate = "spec_case"         // spec/case contract clues (authored; all relations)
 	Rule             Gate = "rule"              // @rule clues (authored; all relations)
@@ -33,7 +33,7 @@ const (
 	// model does not spend rounds fetching already-known files.
 	UsageSites     Gate = "usage_sites"     // CodeGraph use sites of the changed symbols
 	RangedPreload  Gate = "ranged_preload"  // deprecated compatibility gate; File preloads are now full-fidelity
-	NeighborSource Gate = "neighbor_source" // callchain context: inline caller/callee neighbor bodies
+	NeighborSource Gate = "neighbor_source" // inline caller/callee neighbor bodies
 	FileDedup      Gate = "file_dedup"      // stub earlier read_files results superseded by a later covering read
 	FileEvict      Gate = "file_evict"      // under token pressure, shed re-derivable file content before LLM compression
 	// SearchSymbolContext lets search_code automatically expand one unambiguous enclosing
@@ -68,7 +68,7 @@ type def struct {
 // OFF for ablation).
 var registry = map[Gate]def{
 	Plan:             {true, "PLAN_TASK pre-pass per unit", false},
-	CallChain:        {true, "call-chain merge axis (cross-file units via call graph)", false},
+	CallChain:        {true, "group related changes using source graph evidence", false},
 	CallerCallee:     {true, "caller/callee context clues (CodeGraph relations)", false},
 	SpecCase:         {true, "spec/case contract clues (authored; all relations)", false},
 	Rule:             {true, "@rule clues (authored; all relations)", false},
@@ -82,7 +82,7 @@ var registry = map[Gate]def{
 
 	UsageSites:          {true, "CodeGraph use sites of the changed symbols in the initial context", false},
 	RangedPreload:       {true, "deprecated compatibility gate; File preloads are now full-fidelity", false},
-	NeighborSource:      {true, "callchain context: inline caller/callee neighbor bodies", false},
+	NeighborSource:      {true, "inline caller/callee neighbor bodies", false},
 	FileDedup:           {true, "stub earlier read_files results superseded by a later covering read", false},
 	FileEvict:           {true, "under token pressure, shed re-derivable file content before LLM compression", false},
 	SearchSymbolContext: {false, "bounded enclosing-symbol source in search_code results", true},

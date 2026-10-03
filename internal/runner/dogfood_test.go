@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
@@ -53,7 +52,6 @@ func TestDogfoodContextAssembly(t *testing.T) {
 
 	a := &Runner{
 		splitter: unit.AutoSplitter{},
-		merger:   unit.WatermarkMerger{Watermark: formation.DefaultWatermark},
 		finders: []unit.ClueFinder{
 			spec.NewRelatedFinder(spec.Catalog{Local: idx}, language.NewAnalyzer(repo), spec.KindGates{Spec: true, Rule: true, Link: true, Doc: true}),
 		},
@@ -76,7 +74,9 @@ func TestDogfoodContextAssembly(t *testing.T) {
 	got := map[string]ctx{}
 	for _, u := range units {
 		sc, ru, sa, _ := renderClues(u.Clues)
-		got[u.ID] = ctx{sc, ru, sa}
+		for _, symbol := range u.AllSymbols() {
+			got[symbol] = ctx{sc, ru, sa}
+		}
 		t.Logf("\n========== review unit: %s ==========\n"+
 			"── Governing Spec/Case ──\n%s\n── Review Rules ──\n%s\n── See Also ──\n%s",
 			u.ID, orNone(sc), orNone(ru), orNone(sa))
@@ -85,13 +85,13 @@ func TestDogfoodContextAssembly(t *testing.T) {
 	// The entry function gets all four of its own context paths. (A function
 	// Unit's ID is "<path>#<symbol>" — the telemetry id — distinct from the
 	// "<path>::<symbol>" symbol-id used as the spec join key.)
-	if e := got["handler.go#CreateNotebook"]; !strings.Contains(e.sc, "tenant header") ||
+	if e := got["handler.go::CreateNotebook"]; !strings.Contains(e.sc, "tenant header") ||
 		!strings.Contains(e.ru, "hot path") || !strings.Contains(e.sa, "tenancy.md") {
 		t.Errorf("entry unit missing its own spec/rule/link context: %+v", e)
 	}
 	// The deep helper has no context of its own, yet inherits the caller's spec
 	// (and only the spec — rules/links are not inherited).
-	if e := got["service.go#doCreate"]; !strings.Contains(e.sc, "inherited from caller handler.go::CreateNotebook") ||
+	if e := got["service.go::doCreate"]; !strings.Contains(e.sc, "inherited from caller handler.go::CreateNotebook") ||
 		!strings.Contains(e.sc, "tenant header") || e.ru != "" || e.sa != "" {
 		t.Errorf("callee unit should inherit only the caller's spec: %+v", e)
 	}

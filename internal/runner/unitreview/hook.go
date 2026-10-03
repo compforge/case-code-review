@@ -64,6 +64,8 @@ func (h *HypothesisHook) HandleTool(
 			h.Relocation && h.Template.ReLocationTask != nil {
 			h.relocate(workCtx, call.Scope, &draft, ch)
 		}
+		hypothesis.Side = draft.Side
+		hypothesis.OldPath = draft.OldPath
 		hypothesis.StartLine = draft.StartLine
 		hypothesis.EndLine = draft.EndLine
 		hypothesis.ExistingCode = draft.ExistingCode

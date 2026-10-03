@@ -9,147 +9,45 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-// AutoSplitter attributes changed hunks to callable definitions reported by
-// language.Analyzer. Unsupported or unparseable files degrade to file scope.
-// It deliberately knows nothing about individual parser backends.
+// AutoSplitter locates diff edits in CodeGraph publications. A source item can
+// be a declaration or binding; unsupported syntax remains an unbound fragment.
 type AutoSplitter struct {
 	RepoDir  string
 	Analyzer *language.Analyzer
+	Before   *language.Analyzer
 }
 
 func (s AutoSplitter) Split(d change.Change) ([]Fragment, error) {
-	if d.NewFileContent == "" {
-		return FileSplitter{}.Split(d)
+	a := s.Analyzer
+	if a == nil {
+		a = language.NewAnalyzer(s.RepoDir)
 	}
-	if _, ok := language.Detect(d.NewPath); !ok {
-		return FileSplitter{}.Split(d)
+	var before, after []language.Anchor
+	var gaps []string
+	if d.NewContentMissing {
+		gaps = append(gaps, "after: source unavailable")
 	}
-	analyzer := s.Analyzer
-	if analyzer == nil {
-		analyzer = language.NewAnalyzer(s.RepoDir)
-	}
-	analysis, err := analyzer.Analyze(context.Background(), language.Source{
-		Path: d.NewPath, Content: d.NewFileContent,
-	})
-	if err != nil {
-		return FileSplitter{}.Split(d)
-	}
-	spans := make([]funcSpan, 0, len(analysis.Definitions))
-	for _, definition := range analysis.Definitions {
-		if definition.Callable() {
-			spans = append(spans, funcSpan{
-				start: definition.Span.Start,
-				end:   definition.Span.End,
-				id:    definition.SymbolID,
-			})
+	if !d.IsDeleted && d.NewFileContent != "" {
+		var err error
+		after, err = a.Anchors(context.Background(), language.Source{Path: d.NewPath, Content: d.NewFileContent})
+		if err != nil {
+			gaps = append(gaps, "after: "+err.Error())
 		}
 	}
-	return splitByFuncSpans(d, spans), nil
-}
-
-// funcSpan is the minimal language fact needed by diff attribution.
-type funcSpan struct {
-	start, end int
-	id         string
-}
-
-// splitByFuncSpans turns a file diff into one Fragment per touched function
-// plus a residual file Fragment for changes outside every function.
-func splitByFuncSpans(d change.Change, spans []funcSpan) []Fragment {
-	header := diffHeader(d.Diff)
-	hunks := change.ParseHunks(d.Diff)
-	grouped := make(map[int][]change.Hunk)
-	for _, h := range hunks {
-		for _, part := range splitHunkByFuncSpans(h, spans) {
-			grouped[part.group] = append(grouped[part.group], part.hunk)
+	if !d.IsNew && d.OldContentKnown && d.OldFileContent != "" {
+		old := s.Before
+		if old == nil {
+			old = language.NewSnapshotAnalyzer(s.RepoDir, d.BeforeRef, nil)
 		}
-	}
-
-	var fragments []Fragment
-	for i := range spans {
-		hunks := grouped[i]
-		if len(hunks) == 0 {
-			continue
+		var err error
+		before, err = old.Anchors(context.Background(), language.Source{Path: d.OldPath, Content: d.OldFileContent})
+		if err != nil {
+			gaps = append(gaps, "before: "+err.Error())
 		}
-		insertions, deletions := countChanges(hunks)
-		fragments = append(fragments, Fragment{
-			Path: d.NewPath, Symbols: []string{spans[i].id},
-			Diff: header + renderHunks(hunks), Insertions: insertions, Deletions: deletions,
-		})
+	} else if d.Deletions > 0 && !d.OldContentKnown {
+		gaps = append(gaps, "before: source unavailable")
 	}
-	if hunks := grouped[-1]; len(hunks) > 0 {
-		insertions, deletions := countChanges(hunks)
-		fragments = append(fragments, Fragment{
-			Path: d.NewPath, Diff: header + renderHunks(hunks),
-			Insertions: insertions, Deletions: deletions,
-		})
-	}
-	if len(fragments) == 0 {
-		fragments, _ = FileSplitter{}.Split(d)
-	}
-	return fragments
-}
-
-type attributedHunk struct {
-	group int
-	hunk  change.Hunk
-}
-
-// splitHunkByFuncSpans handles the common case where git joins nearby changes
-// from several functions into one @@ block. Attribution follows each line's
-// post-change position, so a large unified hunk does not make its first changed
-// function own every later function in the same block.
-func splitHunkByFuncSpans(h change.Hunk, spans []funcSpan) []attributedHunk {
-	oldLine, newLine := h.OldStart, h.NewStart
-	group := -2
-	part := change.Hunk{}
-	changed := false
-	var parts []attributedHunk
-
-	flush := func() {
-		if len(part.Lines) > 0 && changed {
-			parts = append(parts, attributedHunk{group: group, hunk: part})
-		}
-		part = change.Hunk{}
-		changed = false
-	}
-
-	for _, line := range h.Lines {
-		owner := funcAtLine(newLine, spans)
-		if owner != group {
-			flush()
-			group = owner
-			part.OldStart = oldLine
-			part.NewStart = newLine
-		}
-		part.Lines = append(part.Lines, line)
-		switch line.Type {
-		case change.HunkAdded:
-			part.NewCount++
-			newLine++
-			changed = true
-		case change.HunkDeleted:
-			part.OldCount++
-			oldLine++
-			changed = true
-		default:
-			part.OldCount++
-			part.NewCount++
-			oldLine++
-			newLine++
-		}
-	}
-	flush()
-	return parts
-}
-
-func funcAtLine(line int, spans []funcSpan) int {
-	for i := range spans {
-		if line >= spans[i].start && line <= spans[i].end {
-			return i
-		}
-	}
-	return -1
+	return splitGraphChange(d, before, after, gaps), nil
 }
 
 func countChanges(hunks []change.Hunk) (insertions, deletions int64) {
@@ -167,11 +65,11 @@ func countChanges(hunks []change.Hunk) (insertions, deletions int64) {
 }
 
 func diffHeader(rawDiff string) string {
-	if i := strings.Index(rawDiff, "\n@@"); i >= 0 {
-		return rawDiff[:i+1]
-	}
 	if strings.HasPrefix(rawDiff, "@@") {
 		return ""
+	}
+	if i := strings.Index(rawDiff, "\n@@"); i >= 0 {
+		return rawDiff[:i+1]
 	}
 	return rawDiff
 }

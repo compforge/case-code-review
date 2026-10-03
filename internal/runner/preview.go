@@ -93,9 +93,6 @@ func (a *Runner) buildPreview() *Preview {
 			}
 		} else {
 			reason := a.whyExcluded(d)
-			if reason == ExcludeNone && d.IsDeleted {
-				reason = ExcludeDeleted
-			}
 			entry.WillReview = reason == ExcludeNone
 			entry.ExcludeReason = reason
 		}

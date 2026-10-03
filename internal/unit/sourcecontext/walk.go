@@ -23,6 +23,7 @@ type docRider struct {
 type walkCfg struct {
 	idx        spec.Index // local spec index; may be nil in doc-only mode
 	depth, max int
+	exclude    []string
 	spec       bool      // emit nearest spec-bearing neighbors (the walk's payload)
 	doc        *docRider // depth-1 docstring rider (nil = off)
 }
@@ -55,7 +56,7 @@ func walkNeighbors(cfg walkCfg, start []string, neighborFn neighborFunc, mkClue 
 		depth = 1 // doc-only: direct neighbors carry the whole payload
 	}
 	visited := map[string]bool{}
-	for _, s := range start {
+	for _, s := range append(append([]string(nil), start...), cfg.exclude...) {
 		visited[s] = true
 	}
 	frontier := append([]string(nil), start...)
@@ -67,6 +68,9 @@ func walkNeighbors(cfg walkCfg, start []string, neighborFn neighborFunc, mkClue 
 			for _, nb := range neighborFn(f) {
 				if visited[nb] {
 					continue
+				}
+				if len(visited) >= 128 {
+					return append(specClues, docClues...)
 				}
 				visited[nb] = true
 				if d == 0 && cfg.doc != nil && len(docClues) < cfg.max {

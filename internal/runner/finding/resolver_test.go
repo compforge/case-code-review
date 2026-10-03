@@ -875,3 +875,18 @@ func TestResolveLineNumbers_DiffMarkerInExistingCode(t *testing.T) {
 		t.Errorf("diff marker in existing_code: expected 2..2, got %d..%d", cm.StartLine, cm.EndLine)
 	}
 }
+
+func TestResolveRemovedCodeRetainsOldSideAndPath(t *testing.T) {
+	d := change.Change{OldPath: "old.go", NewPath: "new.go", IsRenamed: true, Diff: "@@ -10 +10 @@\n-checkPermission()\n+run()\n"}
+	f := Finding{Path: "new.go", ExistingCode: "checkPermission()"}
+	if !ResolveComment(&f, &d) || f.Side != "old" || f.OldPath != "old.go" || f.StartLine != 10 {
+		t.Fatalf("old anchor lost: %+v", f)
+	}
+}
+
+func TestResolveNumberedDeletedFindingRetainsSide(t *testing.T) {
+	findings := ResolveLineNumbers([]Finding{{Path: "removed.go", StartLine: 3}}, []change.Change{{OldPath: "removed.go", NewPath: "/dev/null", IsDeleted: true}})
+	if findings[0].Side != "old" || findings[0].OldPath != "removed.go" || findings[0].StartLine != 3 {
+		t.Fatalf("deleted location lost: %+v", findings[0])
+	}
+}

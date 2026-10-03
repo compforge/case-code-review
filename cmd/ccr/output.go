@@ -382,6 +382,7 @@ type dryRunMetrics struct {
 }
 
 type dryRunJSON struct {
+	Analysis map[string]any       `json:"analysis"`
 	Features map[string]bool      `json:"features"` // resolved feature gates — self-describes the run for A/B
 	Preview  *runner.Preview      `json:"preview"`
 	Metrics  dryRunMetrics        `json:"metrics"`
@@ -393,7 +394,7 @@ type dryRunJSON struct {
 // preview, a structural metrics summary, and each unit's assembled context.
 // Deterministic (no LLM), so it's the free layer for A/B-comparing what a feature
 // changes — and it records which gates were active.
-func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoMap string, features map[string]bool) error {
+func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoMap string, features map[string]bool, analysis map[string]any) error {
 	m := dryRunMetrics{
 		UnitCount:    len(units),
 		ScopeCounts:  map[string]int{},
@@ -413,7 +414,7 @@ func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoM
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(dryRunJSON{Features: features, Preview: preview, Metrics: m, Units: units, RepoMap: repoMap})
+	return enc.Encode(dryRunJSON{Analysis: analysis, Features: features, Preview: preview, Metrics: m, Units: units, RepoMap: repoMap})
 }
 
 func dryRunSection(title, body string) {

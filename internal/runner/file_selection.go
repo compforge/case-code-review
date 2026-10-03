@@ -110,10 +110,6 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 		return selection
 	}
 	if f != nil && f.HasInclude() && f.IsUserIncluded(path) {
-		if d.IsDeleted {
-			selection.Reason = ExcludeDeleted
-			return selection
-		}
 		selection.Target = true
 		return selection
 	}
@@ -133,10 +129,6 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 	}
 	if reason := a.whyExcluded(d); reason != ExcludeNone {
 		selection.Reason = reason
-		return selection
-	}
-	if d.IsDeleted {
-		selection.Reason = ExcludeDeleted
 		return selection
 	}
 	selection.Target = true

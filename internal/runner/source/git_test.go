@@ -196,8 +196,8 @@ func TestBaseRefMatchesReviewMode(t *testing.T) {
 	runner := gitcmd.New(0)
 
 	workspace := NewWorkspaceProvider(repo, runner)
-	if got := workspace.BaseRef(context.Background()); got != "HEAD" {
-		t.Fatalf("workspace base = %q, want HEAD", got)
+	if got := workspace.BaseRef(context.Background()); len(got) != 40 {
+		t.Fatalf("workspace base must be pinned to a commit, got %q", got)
 	}
 
 	runGitTest(t, repo, "add", "sample.txt")
@@ -417,5 +417,27 @@ func TestRangeDiffSurvivesExternalDiffTool(t *testing.T) {
 		t.Fatalf("expected at least one parsed range diff with an external diff "+
 			"tool active, got 0 -- git diff range call site must pass "+
 			"--no-ext-diff (issue #82). GIT_EXTERNAL_DIFF=%s", garbage)
+	}
+}
+
+func TestProviderCapturesBeforeAfterMaterial(t *testing.T) {
+	repo := initRepoWithChange(t)
+	provider := NewWorkspaceProvider(repo, gitcmd.New(0))
+	diffs, err := provider.GetDiff(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diffs) != 1 {
+		t.Fatal(diffs)
+	}
+	d := diffs[0]
+	if !d.OldContentKnown || !strings.Contains(d.OldFileContent, "line2") || !strings.Contains(d.NewFileContent, "CHANGED") || len(d.BeforeRef) != 40 || d.AfterRef != "" {
+		t.Fatalf("wrong diff materials: %+v", d)
+	}
+	// The base belongs to this comparison, even after the branch advances.
+	runGitTest(t, repo, "add", "sample.txt")
+	runGitTest(t, repo, "commit", "-qm", "next")
+	if provider.BaseRef(context.Background()) != d.BeforeRef {
+		t.Fatal("base moved with HEAD")
 	}
 }

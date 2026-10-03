@@ -10,6 +10,8 @@ type Finding struct {
 	Content        string `json:"content"`
 	SuggestionCode string `json:"suggestion_code,omitempty"`
 	ExistingCode   string `json:"existing_code,omitempty"`
+	OldPath        string `json:"old_path,omitempty"`
+	Side           string `json:"side,omitempty"` // old or new; empty remains new for existing producers
 	StartLine      int    `json:"start_line"`
 	EndLine        int    `json:"end_line"`
 	// SymbolID is the enclosing function's symbol-id (<relpath>::<symbol>) the

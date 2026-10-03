@@ -2,6 +2,7 @@ package language
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -64,6 +65,33 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		out.Gaps = append(out.Gaps, err.Error())
 		return out
 	}
+	// Changed materials are admitted first, even if a workspace file was moved
+	// after GetDiff. Remaining repository material is deterministic and bounded.
+	present := map[string]bool{}
+	for i := range entries {
+		if content, ok := a.documents[entries[i].path]; ok {
+			entries[i].size = int64(len(content))
+		}
+		present[entries[i].path] = true
+	}
+	for path, content := range a.documents {
+		if !present[path] {
+			entries = append(entries, repositoryEntry{path: path, size: int64(len(content))})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		// Module identity is needed even when source admission reaches its budget.
+		aMod, bMod := filepath.Base(entries[i].path) == "go.mod", filepath.Base(entries[j].path) == "go.mod"
+		if aMod != bMod {
+			return aMod
+		}
+		_, aChanged := a.documents[entries[i].path]
+		_, bChanged := a.documents[entries[j].path]
+		if aChanged != bChanged {
+			return aChanged
+		}
+		return entries[i].path < entries[j].path
+	})
 	for _, entry := range entries {
 		if ctx.Err() != nil {
 			out.Gaps = append(out.Gaps, ctx.Err().Error())
@@ -114,12 +142,11 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		facts = append(facts, f)
 		out.Sources[rel] = source.Content
 	}
-	builder, err := cg.NewBuilder(snapshot, cg.Options{MaxDocuments: maxScanFiles, MaxDocumentBytes: maxFileBytes, ResolutionContext: cg.ResolutionContext{GoModules: modules}})
-	if err == nil {
-		err = builder.Add(facts...)
-	}
-	if err == nil {
-		out.Graph, out.Report, err = builder.Build(ctx)
+	opts := cg.Options{MaxDocuments: maxScanFiles, MaxDocumentBytes: maxFileBytes, ResolutionContext: cg.ResolutionContext{GoModules: modules}}
+	var admitted int
+	out.Graph, out.Report, admitted, err = buildBoundedGraph(ctx, snapshot, facts, opts)
+	if admitted < len(facts) {
+		out.Gaps = append(out.Gaps, fmt.Sprintf("graph budget: omitted %d of %d parsed documents; changed documents were prioritized", len(facts)-admitted, len(facts)))
 	}
 	if err != nil {
 		out.Gaps = append(out.Gaps, fmt.Sprintf("build graph: %v", err))
@@ -202,4 +229,24 @@ func (r *RepositoryIndex) CallNeighbors(symbol string, incoming bool) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// Source byte limits alone cannot bound graph density. A failed publication is
+// retried on a deterministic prefix, keeping the changed-document priority and
+// the original deadline. Only a budget failure authorizes reducing coverage.
+func buildBoundedGraph(ctx context.Context, snapshot string, facts []cg.Facts, opts cg.Options) (*cg.Graph, cg.BuildReport, int, error) {
+	for n := len(facts); ; n /= 2 {
+		builder, err := cg.NewBuilder(snapshot, opts)
+		if err == nil {
+			err = builder.Add(facts[:n]...)
+		}
+		var graph *cg.Graph
+		var report cg.BuildReport
+		if err == nil {
+			graph, report, err = builder.Build(ctx)
+		}
+		if err == nil || !errors.Is(err, cg.ErrBuildBudget) || n <= 1 || ctx.Err() != nil {
+			return graph, report, n, err
+		}
+	}
 }

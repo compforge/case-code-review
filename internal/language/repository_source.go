@@ -86,6 +86,9 @@ func skipRepositoryPath(path string) bool {
 }
 
 func (a *Analyzer) readRepositoryFile(ctx context.Context, snapshot, path string) ([]byte, error) {
+	if content, ok := a.documents[path]; ok {
+		return []byte(content), nil
+	}
 	if a.ref != "" {
 		return a.git.Output(ctx, a.repoDir, "show", snapshot+":"+path)
 	}

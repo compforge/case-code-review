@@ -14,8 +14,7 @@ Project / Language facts ─▶ Unit ─Unit Review─▶ Hypothesis
 Project Knowledge 既解释 Repository / Component / FileRole 等结构，也包含用
 `spec / case / link / rule / doc` 表达的 Biz Knowledge；Language Knowledge 提供源码事实，并负责把
 这些声明绑定到代码身份。两者共同参与 Unit formation 或按作用域向 Unit Review / Hypothesis Review
-提供上下文。相对 OCR 固定按 file 发起 loop，
-CCR 的 Unit 可以是函数、文件或跨文件 call-chain，以行为边界组织评审并减少重复探索。
+提供上下文。CCR 的 Unit 让相关改动得到完整、有界的共同评审，按源码关系组织行为边界并减少重复探索。
 
 CCR 不追求通读仓库或穷举所有问题，而是在相关、有界的上下文内发现具体缺陷。任何优化都要同时观察
 **健壮性、准确性、成本**：loop 必须真实完成，结论必须有证据，时间、token 和工具调用必须有界。
@@ -46,7 +45,7 @@ case-code-review/
 **主链路**：
 
 ```
-git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Merger─▶ Unit
+git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Formation─▶ Unit
                                       └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
     ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis
     ─Lane─▶ Hypothesis Review ─▶ Assessment ─Trial (Review 3)─▶ Finding
@@ -63,13 +62,13 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    `spec / case / link / rule / doc` 等 Biz Knowledge；CodeGraph 拥有源码解析与关系绑定，Language 负责输入快照和 CCR 身份适配；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 不等于文件**：只有一个 target 文件时收为一个 File Unit；多文件改动按高置信行为关系形成
-   call-chain Unit。目标是 Review 1 loop 不多于需评审文件数，同时不靠错误合并牺牲准确性。
+2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，以高置信图关系形成有界分组。每条目标改动恰好归入一个 Fragment；
+   缺少图事实时保留未绑定目标，预算切断的关系保留为上下文。上下文能力不由 Unit 的展示形状决定。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
-5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
+5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
    只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
    Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。
 

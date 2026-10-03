@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -47,13 +46,17 @@ func countScope(units []unit.Unit, s unit.Scope) int {
 	return n
 }
 
-func TestSplitUnits_SingleFileCoalescesBelowWatermark(t *testing.T) {
+func TestSplitUnits_IndependentChangesInOneFileRemainSeparate(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 3))
-	if len(units) != 1 || units[0].Scope != unit.ScopeFile {
-		t.Fatalf("want 1 file unit, got %d (%+v)", len(units), units)
+	if len(units) != 3 {
+		t.Fatalf("want 3 independent changes, got %d", len(units))
 	}
-	if len(units[0].AllSymbols()) != 3 {
-		t.Errorf("file unit should retain all 3 func ids, got %v", units[0].AllSymbols())
+	seen := map[string]bool{}
+	for _, u := range units {
+		if seen[u.ID] {
+			t.Fatal("duplicate Unit identity")
+		}
+		seen[u.ID] = true
 	}
 }
 
@@ -64,41 +67,18 @@ func TestSplitUnits_MultipleFilesBelowWatermarkKeepFunctions(t *testing.T) {
 	}
 }
 
-func TestSplitUnits_SingleFileRetainsSymbolsAboveWatermark(t *testing.T) {
-	units := splitWith(t, goDiff("p.go", formation.DefaultWatermark+2))
-	if len(units) != 1 || units[0].Scope != unit.ScopeFile {
-		t.Fatalf("want 1 coalesced file unit, got %d (%+v)", len(units), units)
+func TestSplitUnits_LargeChangeDoesNotDiscardSymbolScopes(t *testing.T) {
+	units := splitWith(t, goDiff("p.go", 12))
+	if len(units) != 12 {
+		t.Fatalf("want 12 independent changes, got %d", len(units))
 	}
-	if len(units[0].AllSymbols()) != formation.DefaultWatermark+2 {
-		t.Errorf("coalesced unit should retain all %d func ids, got %d", formation.DefaultWatermark+2, len(units[0].AllSymbols()))
-	}
-}
-
-func TestSplitUnits_GovernorCoarsensOnlyMultiFuncFiles(t *testing.T) {
-	// 9 single-function files + 1 two-function file = 11 Units > budget(10).
-	// Only the multi-function file coarsens: 9 func units + 1 coalesced file unit.
-	var diffs []change.Change
-	for i := range 9 {
-		diffs = append(diffs, goDiff(fmt.Sprintf("f%d.go", i), 1))
-	}
-	diffs = append(diffs, goDiff("multi.go", 2))
-
-	units := splitWith(t, diffs...)
-	if len(units) != 10 {
-		t.Fatalf("want 10 units, got %d", len(units))
-	}
-	if got := countScope(units, unit.ScopeFunc); got != 9 {
-		t.Errorf("want 9 function units (single-func files stay func), got %d", got)
-	}
-	if got := countScope(units, unit.ScopeFile); got != 1 {
-		t.Fatalf("want 1 coalesced file unit, got %d", got)
-	}
-	// the coalesced file unit retains both of multi.go's function ids
+	symbols := map[string]bool{}
 	for _, u := range units {
-		if u.Scope == unit.ScopeFile {
-			if len(u.AllSymbols()) != 2 {
-				t.Errorf("coalesced multi.go unit should retain 2 func ids, got %v", u.AllSymbols())
-			}
+		for _, s := range u.AllSymbols() {
+			symbols[s] = true
 		}
+	}
+	if len(symbols) != 12 {
+		t.Fatalf("lost target symbols: %v", symbols)
 	}
 }

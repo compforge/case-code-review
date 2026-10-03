@@ -37,16 +37,16 @@ type RelationCollector interface {
 
 // --- self: the changed symbols themselves ---
 
-type selfCollector struct{}
+type selfCollector struct{ analyzer *language.Analyzer }
 
-func (selfCollector) Related(u unit.Unit) []RelatedSymbol {
+func (c selfCollector) Related(u unit.Unit) []RelatedSymbol {
 	var out []RelatedSymbol
 	for _, sym := range u.AllSymbols() {
 		name := sym
 		if parsed, ok := language.SymbolName(sym); ok {
 			name = parsed
 		}
-		out = append(out, RelatedSymbol{ID: sym, Relation: unit.RelSelf, Name: name})
+		out = append(out, RelatedSymbol{ID: sym, Relation: unit.RelSelf, Name: name, Ref: sym, Doc: c.analyzer.RepositoryDoc(sym)})
 	}
 	return out
 }
@@ -141,19 +141,7 @@ func (c usedCollector) Related(u unit.Unit) []RelatedSymbol {
 // snapshot. Headerless synthetic fragments can select an already-known symbol.
 func changedSourceSpans(f unit.Fragment, index *language.RepositoryIndex) []language.Span {
 	hunks := change.ParseHunks(f.Diff)
-	var spans []language.Span
-	for _, h := range hunks {
-		line := h.NewStart
-		for _, l := range h.Lines {
-			if l.Type == change.HunkDeleted {
-				continue
-			}
-			if l.Type == change.HunkAdded {
-				spans = append(spans, language.Span{Start: line, End: line})
-			}
-			line++
-		}
-	}
+	spans := f.ChangedSpans(f.BeforeView)
 	if len(hunks) == 0 {
 		for _, id := range f.Symbols {
 			if n, ok := index.Declaration(id); ok && n.Location.Path == f.Path {
@@ -185,7 +173,7 @@ func NewRelatedFinder(cat Catalog, analyzer *language.Analyzer, gates KindGates)
 		local: cat.Local,
 		gates: gates,
 		collectors: []RelationCollector{
-			selfCollector{},
+			selfCollector{analyzer: analyzer},
 			ownerCollector{analyzer: analyzer},
 			newUsedCollector(cat, analyzer),
 		},

@@ -15,7 +15,8 @@ func codeGraphArtifact(index *language.RepositoryIndex) map[string]any {
 	return map[string]any{
 		"snapshot":           index.Report.Snapshot,
 		"duration_ms":        index.Duration.Milliseconds(),
-		"documents":          len(index.Sources),
+		"documents":          len(index.Report.Documents),
+		"parsed_documents":   len(index.Sources),
 		"nodes":              index.Report.Nodes,
 		"relations":          index.Report.Relations,
 		"available":          index.Graph != nil,
@@ -24,4 +25,14 @@ func codeGraphArtifact(index *language.RepositoryIndex) map[string]any {
 		"gap_count":          len(index.Gaps),
 		"gap_samples":        index.Gaps[:min(16, len(index.Gaps))],
 	}
+}
+
+// CodeGraphReports exposes the same bounded analysis evidence as Session for
+// no-LLM replay. A partial publication must not look like an empty dependency graph.
+func (a *Runner) CodeGraphReports() map[string]any {
+	reports := map[string]any{"after": codeGraphArtifact(a.sourceAnalyzer().Repository())}
+	if a.beforeAnalyzer != nil {
+		reports["before"] = codeGraphArtifact(a.beforeAnalyzer.Repository())
+	}
+	return reports
 }

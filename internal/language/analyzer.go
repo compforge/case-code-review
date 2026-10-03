@@ -25,6 +25,7 @@ type Analyzer struct {
 	extractor         *cg.Extractor
 	repositoryOnce    sync.Once
 	repository        *RepositoryIndex
+	documents         map[string]string // captured changed documents, configured before publication
 }
 
 func NewAnalyzer(repoDir string) *Analyzer {
@@ -162,4 +163,34 @@ func documentGraph(ctx context.Context, facts cg.Facts) (*cg.Graph, error) {
 	}
 	graph, _, err := builder.Build(ctx)
 	return graph, err
+}
+
+// SetDocuments prioritizes captured diff inputs over subsequent workspace reads.
+// Configure once, before the analyzer is shared with review consumers.
+func (a *Analyzer) SetDocuments(documents map[string]string) { a.documents = documents }
+
+func (a *Analyzer) Anchors(ctx context.Context, source Source) ([]Anchor, error) {
+	facts, err := a.extract(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	graph, err := documentGraph(ctx, facts)
+	if err != nil {
+		return nil, err
+	}
+	anchors := graphAnchors(graph, documentPath(source.Path))
+	snapshot := a.ref
+	if snapshot == "" {
+		snapshot = "review-worktree"
+	}
+	for i := range anchors {
+		anchors[i].Snapshot = snapshot
+	}
+	return anchors, nil
+}
+
+// Capture pins the provider's resolved revision and changed bytes before use.
+func (a *Analyzer) Capture(ref string, documents map[string]string) {
+	a.ref = ref
+	a.documents = documents
 }
