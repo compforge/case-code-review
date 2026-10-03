@@ -21,8 +21,7 @@ type Def struct {
 // Extraction is the review ranking view of one CodeGraph snapshot.
 type Extraction struct {
 	Graph *cg.Graph
-	Defs  map[string][]Def          // file -> defs
-	Refs  map[string]map[string]int // file -> ident -> occurrence count
+	Defs  map[string][]Def // file -> defs
 }
 
 // RankedSymbol is one entry of the ranked symbol map.

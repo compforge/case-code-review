@@ -8,84 +8,76 @@ import (
 
 // projectAnalysis preserves CCR's symbol join keys and review presentation;
 // declarations, imports and reference evidence belong to CodeGraph.
-func projectAnalysis(source Source, facts cg.Facts, graph *cg.Graph) Analysis {
-	a := Analysis{Language: Language(facts.Language), Quality: QualitySyntax, References: map[string]int{}}
-	if len(facts.Issues) > 0 {
+func projectAnalysis(source Source, graph *cg.Graph) Analysis {
+	path := documentPath(source.Path)
+	doc, _ := graph.Node(cg.DocumentID(path))
+	a := Analysis{Language: Language(doc.Language), Quality: QualitySyntax}
+	if len(graph.Report().Diagnostics) > 0 {
 		a.Quality = QualityPartial
 	}
-	for _, node := range graph.Find(facts.Path, "", "") {
+	for _, node := range graph.Find(path, "", "") {
 		if definition, ok := reviewDefinition(source.Path, node); ok {
 			a.Definitions = append(a.Definitions, definition)
 		}
 	}
-	for _, call := range facts.Calls {
-		// Byte containment avoids assigning a call to a same-line sibling.
-		owner := -1
-		for i, d := range facts.Declarations {
-			kind, ok := reviewKind(d.Kind)
-			if !ok || (kind != KindFunction && kind != KindMethod) || d.Location.StartByte > call.Location.StartByte || d.Location.EndByte < call.Location.EndByte {
-				continue
-			}
-			if owner < 0 || d.Location.EndByte-d.Location.StartByte < facts.Declarations[owner].Location.EndByte-facts.Declarations[owner].Location.StartByte {
-				owner = i
-			}
-		}
-		if owner >= 0 {
-			a.Calls = append(a.Calls, Call{CallerID: SymbolID(source.Path, "", facts.Declarations[owner].QualifiedName), Name: call.Name})
-		}
-	}
-	for _, ref := range facts.References {
-		a.References[ref.Name]++
-	}
-	for _, ref := range facts.TypeRelations {
-		if ref.Owner < 0 || ref.Owner >= len(facts.Declarations) {
+	for _, node := range graph.Nodes() {
+		if node.Location == nil || node.Location.Path != path {
 			continue
 		}
-		kind := SupertypeKind(ref.Kind)
-		if a.Language == Python && kind == SupertypeExtends {
-			kind = SupertypeBase
-		}
-		a.SupertypeReferences = append(a.SupertypeReferences, SupertypeReference{SubtypeID: SymbolID(source.Path, "", facts.Declarations[ref.Owner].QualifiedName), Kind: kind, Supertype: ref.Name, Span: locationSpan(ref.Location)})
-	}
-	for _, imp := range facts.Imports {
-		kind := ImportModule
-		if imp.From != "" {
-			kind = ImportFrom
-		}
-		if len(imp.Names) == 0 {
-			a.Imports = append(a.Imports, Import{Kind: kind, Path: imp.Path, From: imp.From, Alias: imp.Alias, Relative: imp.Relative, Span: locationSpan(imp.Location)})
-		} else {
-			for _, name := range imp.Names {
-				path := imp.Path
-				if a.Language == Python && imp.From != "" {
-					path = imp.From + "." + name
+		switch node.Kind {
+		case cg.Import:
+			if node.Binding == nil {
+				continue
+			}
+			b := node.Binding
+			imp := Import{Kind: ImportModule, Path: b.Specifier, Alias: b.LocalName, Static: b.Form != "dynamic", Wildcard: b.Form == "wildcard", Span: locationSpan(*node.Location)}
+			if a.Language == Python && b.Form == "named" {
+				imp.Kind = ImportFrom
+				imp.Relative = len(b.Specifier) - len(strings.TrimLeft(b.Specifier, "."))
+				imp.From = strings.TrimLeft(b.Specifier, ".")
+				imp.Name = b.ImportedName
+				imp.Path = imp.From + "." + b.ImportedName
+			}
+			a.Imports = append(a.Imports, imp)
+		case cg.Reference:
+			switch node.ReferenceKind {
+			case cg.DecoratorReference:
+				if len(graph.RelationsFrom(node.ID, cg.Decorates)) > 0 {
+					a.Decorators = append(a.Decorators, referenceName(node))
 				}
-				alias := imp.Alias
-				for _, binding := range imp.Bindings {
-					if binding.Name == name && binding.Local != name {
-						alias = binding.Local
+			case cg.CallReference, cg.BaseReference, cg.InterfaceReference:
+				for _, edge := range graph.RelationsFrom(node.ID, cg.OccursIn) {
+					owner, ok := graph.Node(edge.Target)
+					if !ok {
+						continue
+					}
+					d, ok := reviewDefinition(source.Path, owner)
+					if !ok {
+						continue
+					}
+					if node.ReferenceKind == cg.CallReference && d.Callable() {
+						a.Calls = append(a.Calls, Call{CallerID: d.SymbolID, Name: node.Name})
+					}
+					if node.ReferenceKind == cg.BaseReference || node.ReferenceKind == cg.InterfaceReference {
+						kind := SupertypeKind(node.ReferenceKind)
+						if a.Language == Python && kind == SupertypeExtends {
+							kind = SupertypeBase
+						}
+						a.SupertypeReferences = append(a.SupertypeReferences, SupertypeReference{SubtypeID: d.SymbolID, Kind: kind, Supertype: referenceName(node), Span: locationSpan(*node.Location)})
 					}
 				}
-				a.Imports = append(a.Imports, Import{Kind: kind, Path: path, From: imp.From, Name: name, Alias: alias, Relative: imp.Relative, Span: locationSpan(imp.Location)})
 			}
 		}
 	}
-	var decorators func([]cg.Statement)
-	decorators = func(statements []cg.Statement) {
-		for _, statement := range statements {
-			if statement.Value.Kind == "decorator" {
-				if name := expressionName(statement.Value); name != "" {
-					a.Decorators = append(a.Decorators, name)
-				}
-			}
-			decorators(statement.Body)
-			decorators(statement.Else)
-		}
-	}
-	decorators(facts.Statements)
-	a.outlineEntries = graphOutlineEntries(graph, facts.Path)
-
+	a.outlineEntries = graphOutlineEntries(graph, path)
 	return a
+}
+
+func referenceName(n cg.Node) string {
+	if n.Receiver != "" {
+		return n.Receiver + "." + n.Name
+	}
+	return n.Name
 }
 
 func reviewKind(kind cg.NodeKind) (Kind, bool) {
@@ -117,27 +109,10 @@ func locationSpan(loc cg.Location) Span {
 
 // ReviewSymbolID translates a graph declaration to the contract/Unit join key.
 func ReviewSymbolID(node cg.Node) string {
-	if node.Location == nil || node.Kind == cg.DocumentKind {
+	if node.Location == nil || node.QualifiedName == "" || node.Kind == cg.Reference || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentKind {
 		return ""
 	}
 	return SymbolID(node.Location.Path, "", node.QualifiedName)
-}
-
-// The statement tree already identifies decorators; CCR selects names for FileRole policy.
-func expressionName(expr cg.Expression) string {
-	switch expr.Kind {
-	case "identifier":
-		return expr.Text
-	case "attribute":
-		if len(expr.Children) > 0 {
-			return expressionName(expr.Children[0]) + "." + expr.Text
-		}
-	case "decorator", "call":
-		if len(expr.Children) > 0 {
-			return expressionName(expr.Children[0])
-		}
-	}
-	return ""
 }
 
 func reviewDefinition(path string, node cg.Node) (Definition, bool) {

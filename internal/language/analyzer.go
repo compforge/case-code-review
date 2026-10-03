@@ -49,10 +49,7 @@ func (a *Analyzer) extract(ctx context.Context, source Source) (cg.Facts, error)
 		return cg.Facts{}, fmt.Errorf("%w: %s", ErrUnsupported, source.Path)
 	}
 	// External dependency navigation still needs a valid logical document path.
-	path := filepath.ToSlash(source.Path)
-	if filepath.IsAbs(path) {
-		path = strings.TrimPrefix(path, "/")
-	}
+	path := documentPath(source.Path)
 	return a.extractor.Extract(ctx, cg.Document{Path: path, Content: []byte(source.Content)})
 }
 
@@ -65,7 +62,7 @@ func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error)
 	if err != nil {
 		return Analysis{}, err
 	}
-	return projectAnalysis(source, facts, graph), nil
+	return projectAnalysis(source, graph), nil
 }
 
 func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline, error) {
@@ -83,7 +80,8 @@ func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline,
 	if err != nil {
 		return FileOutline{}, err
 	}
-	return FileOutline{Path: source.Path, Language: Language(facts.Language), entries: graphOutlineEntries(graph, facts.Path)}, nil
+	doc, _ := graph.Node(cg.DocumentID(documentPath(source.Path)))
+	return FileOutline{Path: source.Path, Language: Language(doc.Language), entries: graphOutlineEntries(graph, documentPath(source.Path))}, nil
 }
 
 // DefinitionAt resolves a source line to its enclosing callable definition.
@@ -127,32 +125,30 @@ func (a *Analyzer) CalleesOf(ctx context.Context, source Source, symbol string) 
 // review documentation, so callers need not know whether comments or string literals
 // carry documentation in the underlying grammar.
 func (a *Analyzer) Doc(source Source, symbol string) string {
-	lang, ok := Detect(source.Path)
-	if !ok {
+	facts, err := a.extract(context.Background(), source)
+	if err != nil {
 		return ""
 	}
-	switch lang {
-	case Go:
-		return a.goDoc(source, symbol)
-	case Python:
-		return extractPyDocstring(source.Content, symbol)
-	default:
+	graph, err := documentGraph(context.Background(), facts)
+	if err != nil {
 		return ""
 	}
+	nodes := graph.Find(documentPath(source.Path), "", symbol)
+	if len(nodes) != 1 {
+		return ""
+	}
+	return declarationDoc(nodes[0])
 }
 
-// RepositoryDoc renders documentation from the same captured sources as call edges.
+// RepositoryDoc reads documentation from the publication that supplied relations.
 func (a *Analyzer) RepositoryDoc(id string) string {
-	path, name, ok := SplitSymbolID(id)
-	if !ok {
-		return ""
+	if n, ok := a.Repository().Declaration(id); ok {
+		return declarationDoc(n)
 	}
-	source, ok := a.Repository().Sources[path]
-	if !ok {
-		return ""
-	}
-	return a.Doc(Source{Path: path, Content: source}, name)
+	return ""
 }
+
+func documentPath(path string) string { return strings.TrimPrefix(filepath.ToSlash(path), "/") }
 
 // Document navigation consumes a publication built from the shared extraction
 // cache; it never depends on the parser's intermediate outline representation.

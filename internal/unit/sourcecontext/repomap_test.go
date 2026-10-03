@@ -137,7 +137,6 @@ func TestBuildMap_Deterministic(t *testing.T) {
 func TestRank_NoEdgesReturnsNil(t *testing.T) {
 	ex := &Extraction{
 		Defs: map[string][]Def{"a.go": {{Ident: "Lonely", File: "a.go", Line: 1}}},
-		Refs: map[string]map[string]int{},
 	}
 	if got := Rank(ex, nil, nil); got != nil {
 		t.Errorf("expected nil for edgeless graph, got %+v", got)

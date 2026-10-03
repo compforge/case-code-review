@@ -68,6 +68,13 @@ func TestRepositorySnapshotIgnoresWorktreeChanges(t *testing.T) {
 	write("extra.py", "def helper():\n    return 99\n")
 	analyzer := NewSnapshotAnalyzer(dir, commit, nil)
 	index := analyzer.Repository()
+	refs := analyzer.ReferencesAt("entry.py", []Span{{3, 3}})
+	if len(refs) != 1 || refs[0].SymbolID != "helper.py::helper" {
+		t.Fatalf("used relation escaped snapshot: %+v", refs)
+	}
+	if doc := analyzer.RepositoryDoc("helper.py::helper"); doc != "Snapshot contract." {
+		t.Fatalf("documentation escaped snapshot: %q", doc)
+	}
 	if index.Graph == nil || index.Graph.Snapshot() != commit || len(index.Gaps) > 0 {
 		t.Fatalf("snapshot not built: %+v", index)
 	}

@@ -35,7 +35,7 @@ case-code-review/
 └── internal/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
-    ├── language/   ★ CodeGraph 接入边界：选择 review snapshot 的 Document，共享分析缓存与图，适配 symbol-id、源码范围、outline 与契约查找；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
+    ├── language/   ★ CodeGraph 接入边界：选择 review snapshot 的 Document，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
     ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力，`llmloop` 作为旧实现隔离保留。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施平铺
@@ -69,7 +69,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
-5. **事实源不重复**：源码事实通过 CodeGraph 分析，CCR 不维护并行 parser 或关系推断；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
+5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
    只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
    Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。
 

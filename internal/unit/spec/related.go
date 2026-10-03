@@ -1,12 +1,11 @@
 package spec
 
 import (
-	"os"
-	"path/filepath"
 	"sort"
 
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // This file is the factored context pipeline of docs/unit-model.md: the
@@ -21,9 +20,10 @@ type RelatedSymbol struct {
 	ID       string // local symbol-id ("" when the symbol isn't in this repo's index)
 	Relation unit.Relation
 	Name     string // bare name as referenced (labels authored marks)
-	Ref      string // Clue.Ref for the doc clue (owner: symbol-id; used: fqn)
+	Ref      string // Clue.Ref for the doc clue (local symbol-id or external FQN)
 	DocFile  string // source file for docstring extraction ("" = no doc)
 	DocName  string // symbol name inside DocFile
+	Doc      string // rendered documentation from the same graph publication
 	// Entry is the resolved spec entry when the collector already knows it —
 	// required for dependency symbols, which have no local symbol-id (they
 	// resolve by fqn). Nil means "look ID up in the local index".
@@ -56,64 +56,41 @@ func (selfCollector) Related(u unit.Unit) []RelatedSymbol {
 // Without the owner relation, a class-level marker only fires when the whole
 // class is the changed symbol — which almost never happens; changing `Svc.create`
 // must still surface class `Svc`'s @rule and docstring.
-type ownerCollector struct{ repoDir string }
+type ownerCollector struct{ analyzer *language.Analyzer }
 
 func (c ownerCollector) Related(u unit.Unit) []RelatedSymbol {
-	own := make(map[string]bool, len(u.AllSymbols()))
-	for _, s := range u.AllSymbols() {
-		own[s] = true
+	own := map[string]bool{}
+	for _, id := range u.AllSymbols() {
+		own[id] = true
 	}
 	seen := map[string]bool{}
 	var out []RelatedSymbol
-	for _, sym := range u.AllSymbols() {
-		owner, ok := language.EnclosingSymbolID(sym)
-		if !ok || own[owner] || seen[owner] {
-			continue // no owner, or the owner is itself a changed symbol (self covers it)
+	for _, id := range u.AllSymbols() {
+		for _, owner := range c.analyzer.Repository().Owners(id) {
+			if own[owner] || seen[owner] {
+				continue
+			}
+			seen[owner] = true
+			name, _ := language.SymbolName(owner)
+			out = append(out, RelatedSymbol{ID: owner, Relation: unit.RelOwner, Name: name, Ref: owner, Doc: c.analyzer.RepositoryDoc(owner)})
 		}
-		seen[owner] = true
-		name, _ := language.SymbolName(owner)
-		rs := RelatedSymbol{ID: owner, Relation: unit.RelOwner, Name: name, Ref: owner}
-		if rel, name, ok := language.SplitSymbolID(owner); ok && c.repoDir != "" {
-			rs.DocFile = filepath.Join(c.repoDir, rel)
-			rs.DocName = name
-		}
-		out = append(out, rs)
 	}
 	return out
 }
 
-// --- used: types/funcs the diff references (callee ⊇ class) ---
-
-// usedCollector resolves a referenced name two ways, precise first: (1) via the
-// referencing file's imports to the symbol's fqn (Python from-imports, Go
-// pkg.Symbol selectors) — disambiguating same-named types and reaching a
-// *dependency's* symbols cross-repo; (2) failing that, by bare name against the
-// **local** index's non-method symbols. Bare names never match dependency
-// entries: a dependency symbol is only reachable through its fqn (its relpath
-// keys belong to another repo's address space). An import-resolved symbol also
-// carries its source file, so its docstring is available even when it has no
-// spec entry (adoption-free).
+// Used contracts follow published source uses and aliases. The contract catalog
+// supplies authored meaning; it cannot prove a source binding by matching a name.
 type usedCollector struct {
-	byName   map[string][]string // bare symbol name -> local symbol-ids (non-method only)
-	byFqn    map[string]fqnHit   // fqn -> resolved entry (local entries win over deps)
-	repoDir  string
+	byFqn    map[string]fqnHit
 	analyzer *language.Analyzer
 }
-
-// fqnHit is one fqn-resolved entry; id is "" for a dependency entry (no local
-// symbol-id exists for it).
 type fqnHit struct {
 	id    string
 	entry Entry
 }
 
-// newUsedCollector precomputes the name/fqn indexes once (not per Unit). Local
-// symbol-ids are processed in sorted order so the winner is deterministic when
-// two entries share an fqn (possible across merged spec.json layers); local
-// entries override dependency entries on the same fqn.
-func newUsedCollector(cat Catalog, repoDir string) usedCollector {
-	byName := make(map[string][]string)
-	byFqn := make(map[string]fqnHit)
+func newUsedCollector(cat Catalog, analyzer *language.Analyzer) usedCollector {
+	byFqn := map[string]fqnHit{}
 	for fqn, e := range cat.Deps {
 		byFqn[fqn] = fqnHit{entry: e}
 	}
@@ -123,81 +100,68 @@ func newUsedCollector(cat Catalog, repoDir string) usedCollector {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		e := cat.Local[id]
-		if e.Fqn != "" {
+		if e := cat.Local[id]; e.Fqn != "" {
 			byFqn[e.Fqn] = fqnHit{id: id, entry: e}
 		}
-		sym, _ := language.SymbolName(id)
-		if _, ok := language.EnclosingSymbolID(id); ok {
-			continue // a method (Class.method) isn't referenced by a bare name
-		}
-		byName[sym] = append(byName[sym], id)
 	}
-	return usedCollector{byName: byName, byFqn: byFqn, repoDir: repoDir, analyzer: language.NewAnalyzer(repoDir)}
+	return usedCollector{byFqn: byFqn, analyzer: analyzer}
 }
-
 func (c usedCollector) Related(u unit.Unit) []RelatedSymbol {
-	own := make(map[string]bool, len(u.AllSymbols()))
-	for _, s := range u.AllSymbols() {
-		own[s] = true
+	own := map[string]bool{}
+	for _, id := range u.AllSymbols() {
+		own[id] = true
 	}
+	seen := map[string]bool{}
 	var out []RelatedSymbol
-	emitted := map[string]bool{}
-	emit := func(rs RelatedSymbol) {
-		if rs.ID != "" && own[rs.ID] {
-			return // the Unit's own symbol — the self relation covers it
-		}
-		key := rs.ID + "\x00" + rs.Ref
-		if emitted[key] {
-			return
-		}
-		emitted[key] = true
-		out = append(out, rs)
-	}
-	var references []language.Reference
-	for _, fragment := range u.Fragments {
-		source := language.Source{Path: fragment.Path}
-		if c.repoDir != "" {
-			if content, err := os.ReadFile(filepath.Join(c.repoDir, fragment.Path)); err == nil {
-				source.Content = string(content)
-			}
-		}
-		references = append(references, c.analyzer.ReferencesIn(source, fragment.Diff)...)
-	}
-
-	resolved := map[string]bool{} // names resolved precisely — skip their bare-name fallback
-	for _, reference := range references {
-		if reference.FQN == "" {
-			continue
-		}
-		rs := RelatedSymbol{
-			Relation: unit.RelUsed, Name: reference.Name, Ref: reference.FQN,
-			DocFile: reference.SourcePath, DocName: reference.SourceName,
-		}
-		if hit, ok := c.byFqn[reference.FQN]; ok {
-			rs.ID, rs.Entry = hit.id, &hit.entry
-			if rs.DocFile == "" && hit.id != "" && c.repoDir != "" {
-				if rel, name, ok := language.SplitSymbolID(hit.id); ok {
-					rs.DocFile, rs.DocName = filepath.Join(c.repoDir, rel), name
+	for _, f := range u.Fragments {
+		spans := changedSourceSpans(f, c.analyzer.Repository())
+		for _, ref := range c.analyzer.ReferencesAt(f.Path, spans) {
+			rs := RelatedSymbol{ID: ref.SymbolID, Relation: unit.RelUsed, Name: ref.Name, Ref: ref.SymbolID}
+			if rs.ID != "" {
+				rs.Doc = c.analyzer.RepositoryDoc(rs.ID)
+			} else {
+				rs.Ref = ref.FQN
+				rs.DocFile, rs.DocName = ref.SourcePath, ref.SourceName
+				if hit, ok := c.byFqn[ref.FQN]; ok {
+					rs.ID, rs.Entry = hit.id, &hit.entry
 				}
 			}
-			emit(rs)
-			resolved[reference.Name] = true
-			continue
-		}
-		if rs.DocFile != "" {
-			emit(rs) // resolvable source without a spec entry: docstring-only
-		}
-	}
-	for _, reference := range references {
-		if reference.FQN != "" || resolved[reference.Name] {
-			continue
-		}
-		for _, id := range c.byName[reference.Name] {
-			emit(RelatedSymbol{ID: id, Relation: unit.RelUsed, Name: reference.Name, Ref: reference.Name})
+			key := rs.ID + "\x00" + rs.Ref
+			if own[rs.ID] || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, rs)
 		}
 	}
 	return out
+}
+
+// Coordinates select code facts; deleted lines cannot be rebound in the target
+// snapshot. Headerless synthetic fragments can select an already-known symbol.
+func changedSourceSpans(f unit.Fragment, index *language.RepositoryIndex) []language.Span {
+	hunks := change.ParseHunks(f.Diff)
+	var spans []language.Span
+	for _, h := range hunks {
+		line := h.NewStart
+		for _, l := range h.Lines {
+			if l.Type == change.HunkDeleted {
+				continue
+			}
+			if l.Type == change.HunkAdded {
+				spans = append(spans, language.Span{Start: line, End: line})
+			}
+			line++
+		}
+	}
+	if len(hunks) == 0 {
+		for _, id := range f.Symbols {
+			if n, ok := index.Declaration(id); ok && n.Location.Path == f.Path {
+				spans = append(spans, language.Span{Start: n.Location.Line, End: n.Location.EndLine})
+			}
+		}
+	}
+	return spans
 }
 
 // --- the composed finder: relation axis × source axis ---
@@ -216,19 +180,22 @@ type RelatedFinder struct {
 	collectors []RelationCollector
 }
 
-func NewRelatedFinder(cat Catalog, repoDir string, gates KindGates) RelatedFinder {
+func NewRelatedFinder(cat Catalog, analyzer *language.Analyzer, gates KindGates) RelatedFinder {
 	return RelatedFinder{
 		local: cat.Local,
 		gates: gates,
 		collectors: []RelationCollector{
 			selfCollector{},
-			ownerCollector{repoDir: repoDir},
-			newUsedCollector(cat, repoDir),
+			ownerCollector{analyzer: analyzer},
+			newUsedCollector(cat, analyzer),
 		},
 	}
 }
 
 func (f RelatedFinder) Find(u unit.Unit) []unit.Clue {
+	if !f.gates.Spec && !f.gates.Rule && !f.gates.Link && !f.gates.Doc {
+		return nil
+	}
 	var clues []unit.Clue
 	for _, c := range f.collectors {
 		for _, rs := range c.Related(u) {
@@ -239,7 +206,7 @@ func (f RelatedFinder) Find(u unit.Unit) []unit.Clue {
 }
 
 // cluesFor is the source axis: a related symbol's authored marks (its resolved
-// entry, or a local-index lookup) and derived docstring (source file). Text is
+// entry, or a local-index lookup) and derived documentation. Text is
 // RAW content and Ref the source identity — how a clue reached the unit is
 // worded at render time from (relation, kind, ref), not here.
 func (f RelatedFinder) cluesFor(rs RelatedSymbol) []unit.Clue {
@@ -291,8 +258,12 @@ func (f RelatedFinder) cluesFor(rs RelatedSymbol) []unit.Clue {
 			}
 		}
 	}
-	if f.gates.Doc && rs.DocFile != "" {
-		if doc := extractDocFromFile(rs.DocFile, rs.DocName); doc != "" {
+	if f.gates.Doc {
+		doc := rs.Doc
+		if doc == "" && rs.DocFile != "" {
+			doc = extractDocFromFile(rs.DocFile, rs.DocName)
+		}
+		if doc != "" {
 			clues = append(clues, unit.Clue{Kind: unit.ClueDoc, Relation: rs.Relation, Text: doc, Ref: rs.Ref})
 		}
 	}

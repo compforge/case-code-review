@@ -73,8 +73,8 @@ func TestScanPythonRepository_DefsRefsAndSkips(t *testing.T) {
 	if !strings.Contains(resolve.Signature, "def resolve(self, key):") {
 		t.Errorf("Signature = %q", resolve.Signature)
 	}
-	if ex.References["app/api.py"]["resolve"] < 2 {
-		t.Errorf("api.py should reference resolve >=2 times, got %d", ex.References["app/api.py"]["resolve"])
+	if referenceCount(ex, "app/api.py", "resolve") < 2 {
+		t.Errorf("api.py should reference resolve >=2 times, got %d", referenceCount(ex, "app/api.py", "resolve"))
 	}
 }
 
