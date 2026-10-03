@@ -114,14 +114,6 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		}
 		facts = append(facts, f)
 		out.Sources[rel] = source.Content
-		analysis := projectAnalysis(source, f)
-		// Tests remain graph evidence (callers/usages), but do not dominate repo-map ranking.
-		if !isRepositoryTestFile(name) {
-			out.References[rel] = analysis.References
-			for _, d := range analysis.Definitions {
-				out.Definitions[rel] = append(out.Definitions[rel], IndexedDefinition{Name: d.Name, SymbolID: d.SymbolID, Path: rel, Line: d.Span.Start, Signature: d.Signature})
-			}
-		}
 	}
 	builder, err := cg.NewBuilder(snapshot, cg.Options{MaxDocuments: maxScanFiles, MaxDocumentBytes: maxFileBytes, ResolutionContext: cg.ResolutionContext{GoModules: modules}})
 	if err == nil {
@@ -133,6 +125,33 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	if err != nil {
 		out.Gaps = append(out.Gaps, fmt.Sprintf("build graph: %v", err))
 	}
+	if out.Graph != nil {
+		// Project the publication once. Repository ranking does not need to construct
+		// a per-file outline or repeatedly scan the full graph's adjacency.
+		for _, node := range out.Graph.Nodes() {
+			if node.Location == nil || isRepositoryTestFile(filepath.Base(node.Location.Path)) {
+				continue
+			}
+			path := node.Location.Path
+			if d, ok := reviewDefinition(path, node); ok {
+				out.Definitions[path] = append(out.Definitions[path], IndexedDefinition{Name: d.Name, SymbolID: d.SymbolID, Path: path, Line: d.Span.Start, Signature: d.Signature})
+			}
+		}
+		for path := range out.Definitions {
+			sort.SliceStable(out.Definitions[path], func(i, j int) bool { return out.Definitions[path][i].Line < out.Definitions[path][j].Line })
+		}
+		for _, f := range facts {
+			if isRepositoryTestFile(filepath.Base(f.Path)) {
+				continue
+			}
+			references := map[string]int{}
+			for _, ref := range f.References {
+				references[ref.Name]++
+			}
+			out.References[f.Path] = references
+		}
+	}
+
 	return out
 }
 

@@ -61,7 +61,11 @@ func (a *Analyzer) Analyze(ctx context.Context, source Source) (Analysis, error)
 	if err != nil {
 		return Analysis{}, err
 	}
-	return projectAnalysis(source, facts), nil
+	graph, err := documentGraph(ctx, facts)
+	if err != nil {
+		return Analysis{}, err
+	}
+	return projectAnalysis(source, facts, graph), nil
 }
 
 func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline, error) {
@@ -75,14 +79,11 @@ func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline,
 	if err != nil {
 		return FileOutline{}, err
 	}
-	symbols, report, err := facts.Outline()
+	graph, err := documentGraph(ctx, facts)
 	if err != nil {
 		return FileOutline{}, err
 	}
-	if report.Declined() {
-		return FileOutline{}, fmt.Errorf("outline unavailable for %s: %s", source.Path, report.DeclineReason)
-	}
-	return FileOutline{Path: source.Path, Language: Language(facts.Language), entries: reviewOutlineEntries(source, facts, symbols)}, nil
+	return FileOutline{Path: source.Path, Language: Language(facts.Language), entries: graphOutlineEntries(graph, facts.Path)}, nil
 }
 
 // DefinitionAt resolves a source line to its enclosing callable definition.
@@ -151,4 +152,18 @@ func (a *Analyzer) RepositoryDoc(id string) string {
 		return ""
 	}
 	return a.Doc(Source{Path: path, Content: source}, name)
+}
+
+// Document navigation consumes a publication built from the shared extraction
+// cache; it never depends on the parser's intermediate outline representation.
+func documentGraph(ctx context.Context, facts cg.Facts) (*cg.Graph, error) {
+	builder, err := cg.NewBuilder("document", cg.Options{})
+	if err != nil {
+		return nil, err
+	}
+	if err := builder.Add(facts); err != nil {
+		return nil, err
+	}
+	graph, _, err := builder.Build(ctx)
+	return graph, err
 }
