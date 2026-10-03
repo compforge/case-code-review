@@ -5,173 +5,144 @@ package formation
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 )
 
-// DefaultWatermark bounds the number of function-grained review Units before
-// Formation coarsens the remaining work to file scope.
-const DefaultWatermark = 10
-
 // Config supplies the rules and knowledge sources needed to form Units. The
-// zero value keeps semantic call-chain grouping off and uses the default cost
-// governor.
+// zero value keeps relation grouping off and uses default per-Unit budgets.
 type Config struct {
-	RepoDir       string
-	Changes       []change.Change
-	Splitter      unit.Splitter
-	Merger        unit.Merger
-	Finders       []unit.ClueFinder
-	CostlyFinders []unit.ClueFinder
-	Analyzer      *language.Analyzer
-	CallChain     bool
-	Watermark     int
+	RepoDir         string
+	Changes         []change.Change
+	Splitter        unit.Splitter
+	Finders         []unit.ClueFinder
+	CostlyFinders   []unit.ClueFinder
+	Analyzer        *language.Analyzer
+	Before          *language.Analyzer
+	GroupDiffTokens int
+	CallChain       bool
 }
 
-// Form returns the Units and whether the diff stayed below the expensive
-// context watermark. Clues are gathered only after each Unit's scope is final.
-func Form(config Config) ([]unit.Unit, bool, error) {
-	watermark := config.Watermark
-	if watermark <= 0 {
-		watermark = DefaultWatermark
+// Form returns the Units and their graph-backed context. Clues are gathered only after each Unit's scope is final.
+func Form(config Config) ([]unit.Unit, error) {
+	if config.Analyzer == nil && config.RepoDir != "" {
+		config.Analyzer = language.NewAnalyzer(config.RepoDir)
+	}
+	tokenLimit := config.GroupDiffTokens
+	if tokenLimit <= 0 {
+		tokenLimit = DefaultGroupDiffTokens
 	}
 	splitter := config.Splitter
 	if splitter == nil {
-		splitter = unit.AutoSplitter{RepoDir: config.RepoDir}
+		splitter = unit.AutoSplitter{RepoDir: config.RepoDir, Analyzer: config.Analyzer, Before: config.Before}
 	}
-
-	var files []unit.FileFragments
-	total := 0
-	for i := range config.Changes {
-		if config.Changes[i].IsDeleted {
-			continue
-		}
-		fragments, err := splitter.Split(config.Changes[i])
+	var fragments []unit.Fragment
+	for _, d := range config.Changes {
+		fs, err := splitter.Split(d)
 		if err != nil {
-			return nil, false, fmt.Errorf("split units for %s: %w", config.Changes[i].NewPath, err)
+			return nil, fmt.Errorf("split units for %s: %w", d.Path(), err)
 		}
-		files = append(files, unit.FileFragments{Diff: config.Changes[i], Fragments: fragments})
-		total += len(fragments)
-	}
-
-	merger := config.Merger
-	if merger == nil {
-		merger = unit.WatermarkMerger{Watermark: watermark}
-	}
-	costly := total <= watermark
-	var units []unit.Unit
-	switch {
-	case len(files) == 1:
-		units = append(units, unit.CoalesceFile(files[0].Diff, files[0].Fragments))
-	case config.CallChain && total <= watermark*2:
-		if config.Analyzer == nil {
-			config.Analyzer = language.NewAnalyzer(config.RepoDir)
+		// Check the partition before budget cuts. Context lines may repeat, edits may not.
+		if err := validateEdits(d, fs); err != nil {
+			return nil, err
 		}
-		adjacency := sourcecontext.CallAdjacency(
-			config.Analyzer, funcIDsOf(files),
-		)
-		units = mergeCallChains(files, adjacency, merger)
-	default:
-		units = merger.Merge(files)
+		var bounded []unit.Fragment
+		for _, f := range fs {
+			bounded = append(bounded, unit.BoundFragment(f, tokenLimit, maxGroupLines)...)
+		}
+		if err := validateEdits(d, bounded); err != nil {
+			return nil, err
+		}
+		fragments = append(fragments, bounded...)
 	}
-
+	units := groupFragments(fragments, config.Analyzer, config.Before, config.CallChain, tokenLimit)
 	for i := range units {
-		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders, costly)
+		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders)
+		units[i].Clues = append(units[i].Clues, boundaryClues(units[i].Boundaries)...)
 	}
-	return units, costly, nil
+	return units, nil
 }
 
-func mergeCallChains(
-	files []unit.FileFragments,
-	adjacency map[string][]string,
-	merger unit.Merger,
-) []unit.Unit {
-	chains, _ := clusterByCallChain(files, adjacency)
-	if len(chains) == 0 {
-		return merger.Merge(files)
-	}
-
-	// Keep semantic chains independently: one chain that duplicates both of its
-	// files must not force an unrelated, useful chain back to file scope.
-	selected := make([]unit.Unit, 0, len(chains))
-	for _, chain := range chains {
-		candidate := append(append([]unit.Unit(nil), selected...), chain)
-		if len(candidate)+len(residualAfterChains(files, candidate)) <= len(files) {
-			selected = candidate
+// validateEdits compares coordinate/content multisets rather than reported line
+// counts: synthetic inputs and metadata-only changes can have zero churn fields.
+func validateEdits(d change.Change, fs []unit.Fragment) error {
+	want := editCounts(d.Diff)
+	got := map[string]int{}
+	for _, f := range fs {
+		for key, n := range editCounts(f.Diff) {
+			got[key] += n
 		}
 	}
-	if len(selected) == 0 {
-		return coalesceFiles(files)
+	if len(want) != len(got) {
+		return fmt.Errorf("fragment coverage mismatch for %s", d.Path())
 	}
-
-	units := append([]unit.Unit(nil), selected...)
-	residual := residualAfterChains(files, selected)
-	for _, file := range residual {
-		if len(file.Fragments) > 0 {
-			units = append(units, unit.CoalesceFragments(file.Fragments))
+	for k, n := range want {
+		if got[k] != n {
+			return fmt.Errorf("fragment coverage mismatch for %s at %s", d.Path(), k)
 		}
 	}
-	return units
+	return nil
 }
-
-func residualAfterChains(files []unit.FileFragments, chains []unit.Unit) []unit.FileFragments {
-	selected := make(map[string]struct{})
-	for _, chain := range chains {
-		for _, fragment := range chain.Fragments {
-			if len(fragment.Symbols) == 1 {
-				selected[fragment.Symbols[0]] = struct{}{}
+func editCounts(diff string) map[string]int {
+	out := map[string]int{}
+	for _, h := range change.ParseHunks(diff) {
+		old, new := h.OldStart, h.NewStart
+		for _, l := range h.Lines {
+			if l.Type == change.HunkAdded {
+				out[fmt.Sprintf("+%d:%s", new, l.Content)]++
+				new++
+			} else if l.Type == change.HunkDeleted {
+				out[fmt.Sprintf("-%d:%s", old, l.Content)]++
+				old++
+			} else {
+				old++
+				new++
 			}
 		}
 	}
-
-	residual := make([]unit.FileFragments, 0, len(files))
-	for _, file := range files {
-		fragments := make([]unit.Fragment, 0, len(file.Fragments))
-		for _, fragment := range file.Fragments {
-			if len(fragment.Symbols) == 1 {
-				if _, ok := selected[fragment.Symbols[0]]; ok {
-					continue
-				}
-			}
-			fragments = append(fragments, fragment)
-		}
-		if len(fragments) > 0 {
-			residual = append(residual, unit.FileFragments{Diff: file.Diff, Fragments: fragments})
-		}
-	}
-	return residual
-}
-
-func coalesceFiles(files []unit.FileFragments) []unit.Unit {
-	units := make([]unit.Unit, 0, len(files))
-	for _, file := range files {
-		if len(file.Fragments) > 0 {
-			units = append(units, unit.CoalesceFile(file.Diff, file.Fragments))
-		}
-	}
-	return units
+	return out
 }
 
 func findClues(
 	reviewUnit unit.Unit,
 	finders []unit.ClueFinder,
 	costlyFinders []unit.ClueFinder,
-	includeCostly bool,
 ) []unit.Clue {
 	var clues []unit.Clue
 	for _, finder := range finders {
 		clues = append(clues, finder.Find(reviewUnit)...)
 	}
-	if includeCostly {
-		for _, finder := range costlyFinders {
-			clues = append(clues, finder.Find(reviewUnit)...)
-		}
+	for _, finder := range costlyFinders {
+		clues = append(clues, finder.Find(reviewUnit)...)
 	}
 	return slicesx.UniqBy(clues, func(clue unit.Clue) string {
-		return string(clue.Relation) + "\x00" + string(clue.Kind) + "\x00" + clue.Text
+		return strings.Join([]string{string(clue.Relation), string(clue.Kind), clue.Ref, clue.Snapshot, clue.Text}, "\x00")
 	})
+}
+
+// Full cut evidence remains in the formation trace. Prompt context is bounded
+// independently: several source occurrences can describe the same file dependency.
+func boundaryClues(boundaries []unit.GroupingEvidence) []unit.Clue {
+	const limit = 8
+	seen := map[string]bool{}
+	var out []unit.Clue
+	for _, boundary := range boundaries {
+		link := boundary.Link
+		key := strings.Join([]string{link.SourcePath, link.TargetPath, string(link.Kind), link.Snapshot}, "\x00")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if len(out) < limit {
+			out = append(out, unit.Clue{Kind: unit.ClueProject, Relation: unit.RelUsed, Ref: link.TargetPath, Text: fmt.Sprintf("Related change across Unit budget boundary: %s -> %s (%s, snapshot %s). Inspect the related diff when checking this dependency.", link.SourcePath, link.TargetPath, link.Kind, link.Snapshot)})
+		}
+	}
+	if len(seen) > limit {
+		out = append(out, unit.Clue{Kind: unit.ClueProject, Relation: unit.RelUsed, Text: fmt.Sprintf("%d additional cross-Unit dependencies omitted from initial context; formation trace retains the full graph evidence.", len(seen)-limit)})
+	}
+	return out
 }

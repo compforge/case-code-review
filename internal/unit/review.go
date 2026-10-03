@@ -92,6 +92,8 @@ type Hypothesis struct {
 	Content           string   `json:"content"`
 	SuggestionCode    string   `json:"suggestion_code,omitempty"`
 	ExistingCode      string   `json:"existing_code,omitempty"`
+	OldPath           string   `json:"old_path,omitempty"`
+	Side              string   `json:"side,omitempty"`
 	StartLine         int      `json:"start_line,omitempty"`
 	EndLine           int      `json:"end_line,omitempty"`
 	Trigger           string   `json:"trigger,omitempty"`

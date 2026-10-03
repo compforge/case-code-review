@@ -86,7 +86,7 @@ func symbolsByPath(u unit.Unit) map[string][]string {
 // relatedSourceClues selects a bounded set of already-known call neighbors.
 // Only functions outside the Unit are useful as extra source context.
 func (a *Runner) relatedSourceClues(u unit.Unit) []unit.Clue {
-	if u.Scope != unit.ScopeCallChain || !a.features.Enabled(feature.NeighborSource) {
+	if !a.features.Enabled(feature.NeighborSource) {
 		return nil
 	}
 	own := make(map[string]bool)
@@ -96,7 +96,7 @@ func (a *Runner) relatedSourceClues(u unit.Unit) []unit.Clue {
 	seen := make(map[string]bool)
 	var out []unit.Clue
 	for _, clue := range u.Clues {
-		if clue.Relation != unit.RelCaller && clue.Relation != unit.RelCallee {
+		if clue.Snapshot != "" || (clue.Relation != unit.RelCaller && clue.Relation != unit.RelCallee) {
 			continue
 		}
 		filePath, _, ok := language.SplitSymbolID(clue.Ref)
@@ -373,12 +373,11 @@ func (a *Runner) describePreloadedSources(u unit.Unit) []string {
 
 // renderUsageSites selects CodeGraph references to the unit's changed
 // symbols and renders a `path:line: text` blast-radius map for {{usage_sites}},
-// plus the site count for the unit's debrief. Same cost class as the
-// caller/callee walk, so it honors the same costly-context budget gate
-// (a.costlyContext) on top of its own feature gate. Returns "" when gated off
+// plus the site count for the unit's debrief. Each Unit uses the feature gate
+// and result caps independently. Returns "" when gated off
 // or nothing was found.
 func (a *Runner) renderUsageSites(u unit.Unit) (string, int, []string) {
-	if !a.features.Enabled(feature.UsageSites) || !a.costlyContext {
+	if !a.features.Enabled(feature.UsageSites) {
 		return "", 0, nil
 	}
 	symbols := u.AllSymbols()

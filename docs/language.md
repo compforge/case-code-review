@@ -34,13 +34,15 @@ RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的�
 将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
 
-工作区模式读取本地文件；commit/range 模式从评审目标 ref 枚举并读取文件。调用关系、usage 的行文本、
-owner/used 契约和调用邻居的文档都使用这份图输入，避免把当前工作区内容混入历史评审。每次 run 的图固定发布一次；
-新的源码版本需要新的 review 实例。
+Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区模式优先使用捕获的改动内容，
+其余文件在发布时读取；commit/range 模式从固定的目标 commit 读取。删除或重命名涉及的旧侧关系从基线
+单独构图。同一侧的调用关系、usage 行文本、owner/used 契约和声明文档共享一次发布，新旧侧保留版本标识。
+改动文件优先进入有界的源码集合，Go module 元数据先于源码读取。新的源码版本需要新的 review 实例。
 
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
-另记录输入加载缺口。Session 的 `codegraph` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
-不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。
+另记录输入加载缺口。Session 的 `codegraph` / `codegraph_before` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
+不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。源码量相同也可能产生不同的图密度；
+构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。
 
 ### 评审身份与源码范围
 
@@ -67,11 +69,11 @@ Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败
 不同用途承担不同的错误成本：
 
 - Repo map 对 CodeGraph 关系做按 diff 个性化的排序，可以使用低置信候选；它只是后续阅读的提示。
-- caller/callee 契约与 call-chain Unit 消费声明间的 `Exact/Scoped` calls；repo map 使用声明关系，
+- caller/callee 契约消费声明间的 `Exact/Scoped` calls；Unit 分组也使用 references、extends、implements、aliases、exports。repo map 使用声明关系，
   排除 Reference 发出的源码位置边，避免把两个粒度重复计数。
-- used 契约按 diff 新侧增加行定位 Reference，沿 references 与 aliases 读取声明或显式导入绑定；
+- used 契约按 diff 对应版本的增加行或删除行定位 Reference，沿 references 与 aliases 读取声明或显式导入绑定；
   usage 反向遍历同一链路，并按源码行去重。必要环节均须达到 `Scoped`，不按裸名字匹配 catalog。
-- 删除行不能在目标快照中重新绑定；没有 hunk 坐标的内部 Fragment 只可使用已知声明范围。
+- 删除行只在旧侧快照中绑定；没有 hunk 坐标的内部 Fragment 只可使用已知声明范围。
   未解析使用仍在图中，但不作为确定的契约或邻接关系。
 - 多个声明落到同一个 CCR 身份时，需要避免把候选集合解释成唯一目标。
 

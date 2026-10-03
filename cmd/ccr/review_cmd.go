@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/runner"
@@ -242,6 +243,9 @@ func runPreview(cc *commonContext, opts reviewOptions) error {
 // + caller/callee) without an LLM call — needs the spec index + rule resolver,
 // but no LLM runtime, so it works whether or not the LLM is configured.
 func runDryRun(cc *commonContext, opts reviewOptions) error {
+	if opts.outputFormat == "json" {
+		defer console.Quiet()()
+	}
 	specs, err := spec.Load(cc.RepoDir, opts.specPath)
 	if err != nil {
 		return fmt.Errorf("load spec: %w", err)
@@ -274,7 +278,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		return fmt.Errorf("dry-run failed: %w", err)
 	}
 	if opts.outputFormat == "json" {
-		return outputDryRunJSON(preview, units, repoMap, features.Resolved())
+		return outputDryRunJSON(preview, units, repoMap, features.Resolved(), ag.CodeGraphReports())
 	}
 	outputPreviewText(preview) // which files are reviewed/excluded (the --preview view)
 	outputDryRunText(units)    // each unit's assembled context

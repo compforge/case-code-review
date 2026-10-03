@@ -36,6 +36,8 @@ type Provider struct {
 	// Commit mode parameter
 	commit string // single commit hash/ref
 
+	base      string
+	baseKnown bool
 	mergeBase string // cached common ancestor for range mode
 }
 
@@ -91,12 +93,20 @@ func (p *Provider) MergeBase(ctx context.Context) string {
 // BaseRef returns the tree immediately before the reviewed change. Range mode
 // uses the merge base (matching GetDiff), workspace uses HEAD, and commit mode
 // uses the first parent. Empty means an empty-tree baseline (root commit).
-func (p *Provider) BaseRef(ctx context.Context) string {
+func (p *Provider) BaseRef(ctx context.Context) (ref string) {
+	if p.baseKnown {
+		return p.base
+	}
+	defer func() { p.base = ref; p.baseKnown = true }()
 	switch p.mode {
 	case ModeRange:
 		return p.MergeBase(ctx)
 	case ModeWorkspace:
-		return "HEAD"
+		sha, err := p.runGit(ctx, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(sha)
 	case ModeCommit:
 		out, err := p.runGit(
 			ctx, "rev-parse", "--verify", "--end-of-options", p.commit+"^1^{commit}",
@@ -112,6 +122,24 @@ func (p *Provider) BaseRef(ctx context.Context) string {
 
 // GetDiff returns all changes as parsed Diff structs.
 func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
+	// Resolve symbolic targets once before diff/content acquisition. Every
+	// subsequent query, including graph construction, uses these exact commits.
+	if p.mode == ModeRange || p.mode == ModeCommit {
+		target := p.to
+		if p.mode == ModeCommit {
+			target = p.commit
+		}
+		sha, err := p.runGit(ctx, "rev-parse", "--verify", "--end-of-options", target+"^{commit}")
+		if err != nil {
+			return nil, fmt.Errorf("resolve review target: %w", err)
+		}
+		if p.mode == ModeCommit {
+			p.commit = strings.TrimSpace(sha)
+		} else {
+			p.to = strings.TrimSpace(sha)
+		}
+	}
+	p.BaseRef(ctx)
 	var combined strings.Builder
 
 	switch p.mode {
@@ -177,6 +205,20 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	if err != nil {
 		return nil, err
 	}
+	base := p.BaseRef(ctx)
+	for i := range diffs {
+		d := &diffs[i]
+		d.BeforeRef, d.AfterRef = base, ref
+		if d.IsNew || base == "" {
+			d.OldContentKnown = true
+			continue
+		}
+		content, e := p.runGit(ctx, "show", base+":"+d.OldPath)
+		if e == nil {
+			d.OldFileContent = content
+			d.OldContentKnown = true
+		}
+	}
 	return p.filterDiffs(diffs), nil
 }
 
@@ -218,7 +260,7 @@ func (p *Provider) computeMergeBase(ctx context.Context, from, to string) string
 }
 
 func (p *Provider) workspaceTrackedDiff(ctx context.Context) (string, error) {
-	out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "HEAD", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--")
+	out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", p.BaseRef(ctx), "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--")
 	if err == nil && out != "" {
 		return out, nil
 	}

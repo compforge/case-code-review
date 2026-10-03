@@ -5,17 +5,12 @@
 CCR 不把“文件”直接等同于评审任务。文件是源码的存储边界，**Unit 才是一次行为审查的边界**：
 它应尽量容纳理解同一项行为变化所需的改动，同时避免把互不相关的变化塞进同一个 agent loop。
 
-相对 OCR 固定的“一文件一个 loop”，Unit 有两个直接收益：
+**让相关改动得到完整、有界的共同评审**，是选择 Unit 作为基本单元的目的。调用方与被调用方、
+公开绑定与使用方等协作改动可以共享一次理解；同文件中互不相关的变化可以分别评审。减少重复探索
+是收益，不能用 loop 数不超过文件数替代相关性和覆盖完整性。
 
-1. **粒度更灵活**：可以是函数、文件或跨文件 call-chain，按真实行为边界组织评审；
-2. **减少重复 loop**：若 `file1.func1` 调用 `file2.func2`，两个 file loop 最终都要读取彼此，
-   不如把两处改动形成一个 call-chain Unit，一次理解并判断，从而节省 token 和时间。
-
-CCR 追求 **Review 1 loop 数不多于需要评审的改动文件数**：单文件改动收为一个 Unit，跨文件
-协作改动通过 call-chain 合并后可以进一步减少 loop。
-
-这种可变粒度依赖 [CodeGraph](https://github.com/compforge/codegraph) 提供带置信度的 caller/callee
-关系。Language 适配源码身份，Formation 决定哪些协作的 Fragment 应归入同一个 Unit。
+CodeGraph 的 Node + Relation 提供源码归属和关系，Language 适配版本、身份与范围，Formation 决定
+哪些 Fragment 一起评审。图可以是局部的，静态分析也可能不完整；缺少关系表示未知，不妨碍保留目标改动。
 
 Project Knowledge 先用 Repository / Component / FileRole 解释文件的稳定项目职责，再把 source 交给
 Unit formation，把 manifest / lock 等项目事实投影为 Clue。Component 是静态项目边界，Unit 是一次
@@ -32,7 +27,7 @@ Git Change ─▶ Component / FileRole
 | 对象 | 语义 |
 |---|---|
 | `Change` | Git 层的一份文件变更 |
-| `Fragment` | Change 中可独立定位的改动片段，通常对应函数、类型或残余文件区段 |
+| `Fragment` | Change 中可独立定位的改动片段，对应声明、导入/导出绑定或残余文件区段 |
 | `Unit` | 一次 run 的评审聚合根：稳定行为范围，以及逐阶段追加的事实快照、Hypothesis、Assessment 和 Trial decision |
 | `Clue` | 与 Unit 有关系、可用于判断契约的事实或线索 |
 
@@ -52,19 +47,19 @@ Project 分类完成后才进入 formation；Clue 在 Unit scope 最终确定后
 
 ### 2.2 从 Fragment 形成 Unit
 
-Unit 粒度是一条从小到大的阶梯，而不是固定按函数或文件：
+1. Git 固定比较基线和目标版本，并捕获改动文件内容。增加行在新侧图中定位，删除行在旧侧图中定位；
+   重命名保留两侧路径。旧侧图按需构建，声明的文档与标记范围沿图中的归属一并定位。
+2. Formation 按图中最内层源码归属切分编辑块。连续替换保留为同一个补丁，不用同名推断跨版本身份；
+   无法定位的编辑保留为 residual。拆分前后校验编辑的坐标与内容，确保每条编辑恰好出现一次。
+3. 以 `Exact/Scoped` 的调用、引用、继承、实现、别名和导出关系连接已改动目标，优先选择触及改动行的
+   使用关系。共同依赖同一个未改动工具函数，不构成合并两处改动的依据。
+4. 以稳定顺序形成分组，每次合并都检查文件数、片段数、改动行数和 diff token 预算。过大的片段先按
+   补丁坐标拆分；关系被预算切断时保留双方的连接线索。不可再分的超限目标显式标记 incomplete。
+5. 图无法定位归属时，使用有界的同文件分组。没有分组关系的已定位声明保持独立；关闭关系分组的
+   ablation 也保留同文件预算。单文件与多文件使用同一套规则。
 
-1. `runner/formation` 调用语言层，把选为 target 的 Change 切成可定位的 Fragment；无法可靠切分时保留文件级 Fragment。
-2. 若 Unit Review 只有一个 target 文件，直接收为一个 file Unit。一次 loop 共同理解同文件内的相关改动，
-   通常比机械地逐函数启动多个 loop 更快、更完整。
-3. 若改动跨多个文件，先用高置信调用关系合并真正协作的 Fragment。例如 `func1` 调用另一文件
-   的 `func3`，两者可形成 call-chain Unit；无关的 `func2` 保持独立。
-4. 剩余 Fragment 再按最小合理作用域收敛。每条 call-chain 独立接受成本约束：加入后若不会让
-   Unit 总数超过 target 文件数就保留，否则只把该 chain 退回文件级，避免一个膨胀的 chain 连带
-   取消其它有效关系。
-
-合并的目标不是追求更少 Unit，而是让每个 Unit 接近一个可独立判断的行为变化。调用图没有足够
-置信度时宁可保持分离，再通过 Clue 补充邻域；错误合并会同时放大 token、推理和归因成本。
+图决定“哪些关系有依据”，CCR 决定“这次哪些目标一起审”。分组依据和预算边界随 Unit 保存，
+`--dry-run --format json` 与 Session 可以解释每个目标的归属、合并关系、切断关系和材料缺口。
 
 ### 2.3 为 Unit 组织上下文
 
@@ -90,6 +85,11 @@ Unit
                  └─ Review Messages
 ```
 
+每个 Unit 都按自己的符号集合寻找 self / owner / used / caller / callee，上下文查询不依赖 file、func
+或 related 的展示标签。邻域搜索有独立深度、数量和访问预算；改动总量变大不会关闭整批 Unit 的上下文。
+已归入 Unit 的成员提供自身契约与文档，避免合并后因排除“内部邻居”而丢失证据。旧侧线索带基线标识，
+旧的仓库契约从基线版本读取；删除侧 finding 保留旧路径和旧行号。
+
 ### 2.4 初始消息与按需工具
 
 初始消息只预载高确定性、高复用的信息：Unit 自身 diff、必要源码、直接契约和少量高价值邻域。
@@ -111,7 +111,8 @@ Unit
 ### 3.1 稳定身份连接 diff、源码和契约
 
 路径和短函数名不足以跨文件、重命名和依赖建立关系。语言层提供稳定 `symbol-id`；作者声明的
-契约另保留可跨仓匹配的 `fqn`。Unit、Clue 和历史反馈优先用稳定身份连接，Forge 只剩文件锚点时
+契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 身份由完整路径、两侧图身份和补丁内容派生，成员顺序不改变 Unit 身份。
+Clue 和历史反馈使用各自支持的身份连接，Forge 只剩文件锚点时
 才退化到 path。
 
 身份解析失败表示 `unknown`，不能用猜测的同名符号替代。这是防止“上下文看似丰富、实际属于
@@ -123,9 +124,9 @@ CodeGraph 负责产出 definition、reference、call edge 等源码事实；Unit
 和上下文组织。
 
 - repo map 可使用图已提供的低置信候选排序；它不从裸名匹配重新生成符号关系。
-- `Exact/Scoped` 调用边可用于 caller/callee 关系与 call-chain Unit，不宣称完整编译器语义。
+- `Exact/Scoped` 调用边可用于 caller/callee；分组也消费引用、类型和绑定关系，不宣称完整编译器语义。
 - owner 沿图的语义归属或词法嵌套查找；used 按改动行选择 Reference，并沿 references / aliases 查找声明或显式公开绑定。
-- 同一次 review 的 caller/callee、owner、used、usage 和声明文档共享一个图快照。源码项边与声明依赖边按用途选择，不重复计数。
+- 同一版本的 caller/callee、owner、used、usage 和声明文档共享图快照；新旧侧分别解释。源码项边与声明依赖边按用途选择，不重复计数。
 - 无法判定的边保持 unknown，不升级成“确定调用”；contract catalog 提供作者的含义，不能通过同名命中证明源码绑定。
 
 图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Clue 的证据来源，
@@ -153,7 +154,7 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 
 - 原始 diff file 数、实际 review file 数与 Review 1 loop 数，区分文件过滤和 Unit formation 各自
   节省的 loop；
-- Fragment 到 Unit 的合并比例与错误合并样本；
+- 目标编辑覆盖率、Fragment 到 Unit 的合并比例、错误合并和预算切断样本；
 - 每个 Unit 的预载字节、工具调用、token 和完成状态；
 - 有真实 finding 的 Unit 是否获得了足够契约和邻域；
 - 被合并或被拆开的 Unit 是否改变 wrong / missed；

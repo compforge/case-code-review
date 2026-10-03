@@ -48,7 +48,7 @@ Git diff
   │
   ▼
 Change ─▶ Component / FileRole
-                  ├─ source ─Splitter─▶ Fragment ─Merger─▶ Unit
+                  ├─ source ─Splitter─▶ Fragment ─Formation─▶ Unit
                   │     └─ entrypoint / handler ──────────▶ Clue
                   └─ manifest / lock ─────────────────────▶ Clue
                                       │

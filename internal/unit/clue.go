@@ -46,6 +46,7 @@ type Clue struct {
 	Relation Relation
 	Text     string
 	Ref      string
+	Snapshot string // nonempty for evidence from the pre-change publication
 }
 
 // ClueFinder finds the Clues relevant to reviewing one Unit — one implementation

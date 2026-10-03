@@ -24,29 +24,12 @@ type CallerFinder struct {
 }
 
 func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
-	// Func and chain units have function names to walk from (a chain walks from
-	// all member symbols; walkNeighbors seeds visited with them, so a member never
-	// surfaces as another member's caller). File units would fan out over every
-	// touched symbol — they degrade to nil. The graph uses the review repository.
-	if f.RepoDir == "" || (u.Scope != unit.ScopeFunc && u.Scope != unit.ScopeCallChain) {
+	if len(u.AllSymbols()) == 0 {
 		return nil
 	}
 	emitSpec := f.Kinds.Spec && f.Index != nil
 	if !emitSpec && !f.Kinds.Doc {
 		return nil
-	}
-	// Own-spec short-circuit: a function with its own contract needs no inherited
-	// one — this keeps a widely-called utility (huge fan-in) from exploding.
-	if emitSpec {
-		for _, sym := range u.AllSymbols() {
-			if e, ok := f.Index[sym]; ok && (e.Spec != "" || len(e.Cases) > 0) {
-				emitSpec = false
-				break
-			}
-		}
-		if !emitSpec && !f.Kinds.Doc {
-			return nil
-		}
 	}
 	max := f.Max
 	if max <= 0 {
@@ -59,15 +42,23 @@ func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
 	if f.Kinds.Doc {
 		doc = &docRider{analyzer: f.Analyzer, relation: unit.RelCaller}
 	}
-	cfg := walkCfg{idx: f.Index, depth: f.Depth, max: max, spec: emitSpec, doc: doc}
-	return walkNeighbors(cfg, u.AllSymbols(), f.callers, func(id string) unit.Clue {
-		return unit.Clue{
-			Kind:     unit.ClueSpec,
-			Relation: unit.RelCaller,
-			Text:     f.Index.Render([]string{id}),
-			Ref:      id,
+	var starts []string
+	for _, sym := range u.AllSymbols() {
+		e := f.Index[sym]
+		if e.Spec == "" && len(e.Cases) == 0 {
+			starts = append(starts, sym)
 		}
-	})
+	}
+	var clues []unit.Clue
+	if emitSpec {
+		clues = walkNeighbors(walkCfg{idx: f.Index, depth: f.Depth, max: max, spec: true, exclude: u.AllSymbols()}, starts, f.callers, func(id string) unit.Clue {
+			return unit.Clue{Kind: unit.ClueSpec, Relation: unit.RelCaller, Text: f.Index.Render([]string{id}), Ref: id}
+		})
+	}
+	if doc != nil {
+		clues = append(clues, walkNeighbors(walkCfg{max: max, doc: doc}, u.AllSymbols(), f.callers, nil)...)
+	}
+	return clues
 }
 
 func (f CallerFinder) callers(funcID string) []string {

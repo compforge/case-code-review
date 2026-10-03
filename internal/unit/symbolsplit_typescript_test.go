@@ -44,12 +44,7 @@ const View = () => {
 	}
 	findFrag(t, frags, "app.tsx::alpha")
 	findFrag(t, frags, "app.tsx::Service.run")
-	// CodeGraph exposes arrow bindings as variables. Their edits remain in the
-	// file residual, rather than inventing a callable graph node in CCR.
-	view := findFrag(t, frags, "app.tsx")
-	if len(view.Symbols) != 0 {
-		t.Fatalf("arrow binding should use file residual: %+v", view)
-	}
+	view := findFrag(t, frags, "app.tsx::View")
 	if !strings.Contains(view.Diff, "<span>ok</span>") {
 		t.Fatalf("View diff not isolated:\n%s", view.Diff)
 	}
@@ -112,13 +107,8 @@ export function beta() {
 	if strings.Contains(alpha.Diff, "new-beta") || strings.Contains(beta.Diff, "new-alpha") {
 		t.Fatalf("one git hunk leaked across function fragments:\nalpha:\n%s\nbeta:\n%s", alpha.Diff, beta.Diff)
 	}
-	var residual *Fragment
-	for i := range frags {
-		if len(frags[i].Symbols) == 0 {
-			residual = &frags[i]
-		}
-	}
-	if residual == nil || !strings.Contains(residual.Diff, "ready: boolean") {
-		t.Fatalf("top-level interface change missing from residual: %+v", frags)
+	field := findFrag(t, frags, "app.ts::State.ready")
+	if !strings.Contains(field.Diff, "ready: boolean") {
+		t.Fatalf("field edit lost: %+v", field)
 	}
 }

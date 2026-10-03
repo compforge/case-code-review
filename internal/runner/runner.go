@@ -166,24 +166,15 @@ type Runner struct {
 	session          *session.SessionHistory
 	unitFailed       int64 // count of failed unit reviews, accessed atomically
 	executor         *unitreview.Executor
-	// splitter turns each changed file's diff into diff units (one per changed
-	// function); merger consolidates those into review units (what actually
-	// triggers a review loop). Both set in New().
-	splitter unit.Splitter
-	merger   unit.Merger
-	// finders fill each diff unit's Clues before merge. Cheap finders (spec.json
-	// lookups) always run; costly ones (call-graph grep) run only when the diff
-	// is focused enough that units won't coalesce — see splitUnits.
+	// Splitting locates graph-owned edits; Formation groups them before any
+	// context lookup. Both finder sets run with their own per-Unit limits.
+	splitter      unit.Splitter
 	finders       []unit.ClueFinder
 	costlyFinders []unit.ClueFinder
 	// features are the resolved ablation gates; consulted in splitUnits (callchain)
 	// and dispatchUnits (plan / hypothesis review). Clue gates are applied at finder
 	// assembly in New(), so findClues stays gate-agnostic.
 	features feature.Set
-	// costlyContext records splitUnits' budget-gate verdict (diff focused enough
-	// for call-graph greps) so the initial context's usage-sites grep — same cost class —
-	// rides the same gate. Set in splitUnits, read by renderUsageSites.
-	costlyContext bool
 	// repoMap is the run-level ranked symbol map (computed once in
 	// dispatchUnits, shared by every unit's prompt — like background/rule).
 	// It exists to stop the reviewer from guessing symbol names in searches:
@@ -193,7 +184,8 @@ type Runner struct {
 
 	// analyzer is the run-scoped source-language boundary shared by splitting,
 	// callgraph lookup, comment tagging, and ranged source preload.
-	analyzer *language.Analyzer
+	analyzer       *language.Analyzer
+	beforeAnalyzer *language.Analyzer
 	// board is the Review Team's shared case board for this run (nil when the
 	// review_team gate is off). See docs/unit_review.md.
 	board          *board.Registry
@@ -234,7 +226,7 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"unit_watermark": formation.DefaultWatermark,
+				"group_diff_tokens": formation.DefaultGroupDiffTokens,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -285,13 +277,10 @@ func New(args Args) *Runner {
 		args:     args,
 		session:  args.Session,
 		features: f,
-		// AutoSplitter cuts each file to function-level diff units by language,
-		// degrading to file scope when its parser is unavailable;
-		// WatermarkMerger coalesces them into review units above the watermark.
+		// Graph ownership locates edits; Formation owns their bounded partition.
 		splitter:      unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
-		merger:        unit.WatermarkMerger{Watermark: formation.DefaultWatermark},
 		finders:       finders,       // cheap spec.json / history clues, gated per kind
-		costlyFinders: costlyFinders, // call-graph caller/callee clues (gated + budget-gated)
+		costlyFinders: costlyFinders, // graph caller/callee clues with per-Unit limits
 		analyzer:      analyzer,
 	}
 	// Review Team board (docs/unit_review.md): one shared in-memory board per run
@@ -465,6 +454,7 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 	}
 
 	a.changes = parsed
+	a.captureGraphs(ctx)
 	if p, ok := a.args.Tools.Get(tool.FileReadBase.Name()); ok {
 		if base, ok := p.(*tool.FileReadProvider); ok {
 			base.SetRef(provider.BaseRef(ctx))
@@ -523,14 +513,11 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		telemetry.RecordReviewDuration(ctx, time.Since(startTime))
 	}()
 
-	// Pre-filter: discard diffs whose diff content alone exceeds 80% of the token threshold.
-	a.changes = a.filterLargeDiffs(a.changes)
 	if len(a.changes) == 0 {
-		return nil, fmt.Errorf("all diffs filtered out by token size")
+		return nil, fmt.Errorf("no review targets selected")
 	}
 
-	// Split each surviving (non-deleted) file diff into review Units (function-
-	// level for Go, file-level otherwise / when coarsened by the cost governor).
+	// Locate selected edits in their source versions, then form bounded Units.
 	// The fan-out machinery below is granularity-agnostic.
 	formationStarted := time.Now()
 	units, err := a.splitUnits()
@@ -676,7 +663,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	// that partial pipeline alive so accepted Assessments/Findings are not
 	// discarded merely because every producer eventually ended incomplete.
 	if failed > 0 && failed == dispatched && len(hypotheses) == 0 {
-		return nil, fmt.Errorf("all %d unit review(s) failed — check your LLM configuration and API key", dispatched)
+		return nil, fmt.Errorf("all %d unit review(s) failed — inspect unit warnings for the cause", dispatched)
 	}
 
 	var comments []finding.Finding
@@ -823,13 +810,18 @@ func (a *Runner) persistFormedUnits(units []unit.Unit, formationDuration time.Du
 	})
 	for _, reviewUnit := range units {
 		a.session.WriteArtifact("review_unit", map[string]any{
-			"unit_id":    reviewUnit.ID,
-			"scope":      reviewUnit.Scope,
-			"formed":     reviewUnit.Formed,
-			"paths":      reviewUnit.Paths(),
-			"fragments":  len(reviewUnit.Fragments),
-			"insertions": reviewUnit.Insertions(),
-			"deletions":  reviewUnit.Deletions(),
+			"unit_id":         reviewUnit.ID,
+			"scope":           reviewUnit.Scope,
+			"formed":          reviewUnit.Formed,
+			"paths":           reviewUnit.Paths(),
+			"fragments":       len(reviewUnit.Fragments),
+			"targets":         reviewUnit.Targets(),
+			"grouping":        reviewUnit.Grouping,
+			"boundaries":      reviewUnit.Boundaries,
+			"diff_tokens":     reviewUnit.DiffTokens,
+			"budget_exceeded": reviewUnit.BudgetExceeded,
+			"insertions":      reviewUnit.Insertions(),
+			"deletions":       reviewUnit.Deletions(),
 		})
 	}
 }
@@ -907,7 +899,7 @@ func (a *Runner) persistTrialDecisions(
 func (a *Runner) tagSymbolIDs(comments []finding.Finding) {
 	for i := range comments {
 		d := a.findChange(comments[i].Path)
-		if d == nil || d.NewFileContent == "" {
+		if comments[i].Side == "old" || d == nil || d.NewFileContent == "" {
 			continue
 		}
 		if definition, ok := a.sourceAnalyzer().DefinitionAt(context.Background(), language.Source{
@@ -926,20 +918,24 @@ func (a *Runner) splitUnits() ([]unit.Unit, error) {
 		selections: a.fileSelections,
 		clues:      a.componentClues,
 	})
-	units, costly, err := formation.Form(formation.Config{
-		RepoDir:       a.args.RepoDir,
-		Changes:       a.changes,
-		Splitter:      a.splitter,
-		Merger:        a.merger,
-		Finders:       finders,
-		CostlyFinders: a.costlyFinders,
-		Analyzer:      a.sourceAnalyzer(),
-		CallChain:     a.features.Enabled(feature.CallChain),
+	groupDiffTokens := formation.DefaultGroupDiffTokens
+	if a.args.Template.MaxTokens > 0 {
+		groupDiffTokens = min(groupDiffTokens, max(1, a.args.Template.MaxTokens/2))
+	}
+	units, err := formation.Form(formation.Config{
+		RepoDir:         a.args.RepoDir,
+		Changes:         a.changes,
+		Splitter:        a.splitter,
+		Finders:         finders,
+		CostlyFinders:   a.costlyFinders,
+		Analyzer:        a.sourceAnalyzer(),
+		Before:          a.beforeAnalyzer,
+		GroupDiffTokens: groupDiffTokens,
+		CallChain:       a.features.Enabled(feature.CallChain),
 	})
 	if err != nil {
 		return nil, err
 	}
-	a.costlyContext = costly
 
 	// Review Team: register each unit's board interest before dispatch — its
 	// files + covered symbols + clue neighbors (the Relation axis reused as
@@ -1028,6 +1024,14 @@ func renderProjectContext(clues []unit.Clue) string {
 // relation×kind label table. self needs no label (it IS the changed symbol), and
 // a self/owner spec none either (Index.Render embeds the symbol-id).
 func clueLabel(c unit.Clue) string {
+	prefix := ""
+	if c.Snapshot != "" {
+		prefix = "(before change, snapshot " + c.Snapshot + ")\n"
+	}
+	return prefix + relationClueLabel(c)
+}
+
+func relationClueLabel(c unit.Clue) string {
 	switch c.Relation {
 	case unit.RelOwner:
 		name := c.Ref
@@ -1065,6 +1069,12 @@ func clueLabel(c unit.Clue) string {
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
 func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
+	if u.BudgetExceeded {
+		reason := "indivisible target exceeds diff-token budget; review incomplete"
+		a.recordWarning("unit_incomplete", u.Path(), reason)
+		a.session.CloseScope(session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}, session.Debrief{Formed: string(u.Formed), Outcome: "incomplete", Reason: reason})
+		return fmt.Errorf("%s", reason)
+	}
 	ctx, span := telemetry.StartSpan(ctx, "unit.review."+u.ID)
 	defer span.End()
 	telemetry.SetAttr(span, "file.path", u.Path())
@@ -1298,40 +1308,11 @@ func (a *Runner) resolveSystemRule(path string) string {
 	return a.args.SystemRule.Resolve(path)
 }
 
-// filterLargeDiffs drops diffs whose diff content alone consumes more than 80% of MaxTokens.
-func (a *Runner) filterLargeDiffs(changes []change.Change) []change.Change {
-	limit := a.args.Template.MaxTokens * 4 / 5
-	if limit <= 0 {
-		return changes
-	}
-	var kept []change.Change
-	skipped := 0
-
-	for _, d := range changes {
-		tokens := llm.CountTokens(d.Diff)
-		if tokens > limit {
-			fmt.Fprintf(console.Out(), "[ccr] Skipping %s (~%d tokens exceeds 80%% of max_tokens(%d))\n",
-				d.NewPath, tokens, a.args.Template.MaxTokens)
-			skipped++
-			continue
-		}
-		kept = append(kept, d)
-	}
-
-	if skipped > 0 {
-		fmt.Fprintf(console.Out(), "[ccr] Pre-filtered %d file(s) exceeding 80%% of max_tokens\n", skipped)
-	}
-	return kept
-}
-
-// countReviewable counts diffs that will survive all filters and are not pure deletions.
+// countReviewable counts selected targets, including deleted source files.
 func (a *Runner) countReviewable(changes []change.Change) int {
 	count := 0
 	for _, d := range changes {
 		if !a.shouldReview(d) {
-			continue
-		}
-		if d.IsDeleted {
 			continue
 		}
 		count++

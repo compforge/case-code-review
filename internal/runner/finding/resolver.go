@@ -31,24 +31,9 @@ func ResolveLineNumbers(comments []Finding, diffs []change.Change) []Finding {
 
 	for i := range result {
 		cm := &result[i]
-		if cm.StartLine > 0 || cm.EndLine > 0 {
-			continue
+		if d, ok := diffByPath[cm.Path]; ok {
+			ResolveComment(cm, d)
 		}
-		if cm.ExistingCode == "" {
-			continue
-		}
-		d, ok := diffByPath[cm.Path]
-		if !ok {
-			continue
-		}
-
-		// Primary: try matching from deleted/context lines in diff hunks
-		if resolveFromHunk(d, cm) {
-			continue
-		}
-
-		// Fallback: scan the new file content for consecutive matches
-		resolveFromFileContent(d, cm)
 	}
 
 	return result
@@ -57,6 +42,10 @@ func ResolveLineNumbers(comments []Finding, diffs []change.Change) []Finding {
 // ResolveComment attempts to resolve StartLine/EndLine for a single comment
 // by matching ExistingCode against the diff. Returns true on success.
 func ResolveComment(cm *Finding, d *change.Change) bool {
+	if d.IsDeleted {
+		cm.Side = "old"
+		cm.OldPath = d.OldPath
+	}
 	if cm.StartLine > 0 || cm.EndLine > 0 {
 		return true
 	}
@@ -95,6 +84,7 @@ func resolveFromHunk(d *change.Change, cm *Finding) bool {
 		if start, end, ok := matchConsecutive(newSide, targetLines); ok {
 			cm.StartLine = start
 			cm.EndLine = end
+			cm.Side = "new"
 			return true
 		}
 	}
@@ -104,6 +94,8 @@ func resolveFromHunk(d *change.Change, cm *Finding) bool {
 		if start, end, ok := matchConsecutive(oldSide, targetLines); ok {
 			cm.StartLine = start
 			cm.EndLine = end
+			cm.Side = "old"
+			cm.OldPath = d.OldPath
 			return true
 		}
 	}
