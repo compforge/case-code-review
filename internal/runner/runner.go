@@ -72,7 +72,8 @@ type Args struct {
 	FileFilter *rules.FileFilter
 
 	// LLM client for model inference.
-	LLMClient llm.LLMClient
+	LLMClient       llm.LLMClient
+	MaxTokensBudget int64
 
 	// Tool registry mapping tool aliases to implementations.
 	Tools *tool.Registry
@@ -190,6 +191,7 @@ type Runner struct {
 	// review_team gate is off). See docs/unit_review.md.
 	board          *board.Registry
 	hypothesisHook *unitreview.HypothesisHook
+	budget         *llm.BudgetClient
 }
 
 // sourceAnalyzer preserves the useful zero-value shape of Runner in focused
@@ -227,6 +229,7 @@ func New(args Args) *Runner {
 			ToolVersion: args.Version,
 			Params: map[string]any{
 				"group_diff_tokens": formation.DefaultGroupDiffTokens,
+				"max_tokens_budget": args.MaxTokensBudget,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -282,6 +285,14 @@ func New(args Args) *Runner {
 		finders:       finders,       // cheap spec.json / history clues, gated per kind
 		costlyFinders: costlyFinders, // graph caller/callee clues with per-Unit limits
 		analyzer:      analyzer,
+	}
+	if args.MaxTokensBudget > 0 {
+		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
+			a.recordWarning("token_budget_reached", "", fmt.Sprintf("reported token usage %d reached budget %d; no new model calls", used, limit))
+			a.session.WriteArtifact("token_budget", map[string]any{"used": used, "limit": limit, "exhausted": true})
+		})
+		args.LLMClient = a.budget
+		a.args.LLMClient = a.budget
 	}
 	// Review Team board (docs/unit_review.md): one shared in-memory board per run
 	// when the gate is on; nil otherwise (loop behavior byte-identical).
@@ -590,9 +601,17 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var dispatched int64
 	for i := range units {
+		sem <- struct{}{} // acquire before rechecking usage from completed peers
+		if a.budget != nil && a.budget.Check() != nil {
+			<-sem
+			for _, skipped := range units[i:] {
+				a.session.CloseScope(session.Scope{ID: skipped.ID, Kind: "unit", Type: string(skipped.Scope), Paths: skipped.Paths()},
+					session.Debrief{Formed: string(skipped.Formed), Outcome: "skipped_policy", Reason: llm.ErrTokenBudget.Error()})
+			}
+			break
+		}
 		dispatched++
 		wg.Add(1)
-		sem <- struct{}{} // acquire semaphore
 
 		go func(u unit.Unit) {
 			defer wg.Done()

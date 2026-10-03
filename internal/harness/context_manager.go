@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -94,6 +95,9 @@ func (m *contextManager) Project(
 	if m.engine != nil {
 		engineProjection, err := m.engine.Project(ctx, view)
 		if err != nil {
+			if errors.Is(err, llm.ErrTokenBudget) {
+				return agentgo.ContextProjection{}, err
+			}
 			// Compression is a context optimization, not permission to discard
 			// an otherwise runnable review turn. The engine keeps its own
 			// failure circuit breaker; this turn falls back to the deterministic
@@ -213,7 +217,8 @@ func (m *contextManager) Snapshot() *agentgo.ContextSnapshot {
 }
 
 func (m *contextManager) EstimateContext(messages []agentgo.AgentMessage) (int, int, int) {
-	return m.estimateTokens(messages), 0, 0
+	estimate := agentcontext.EstimateContextTokens(messages)
+	return estimate.Tokens, estimate.UsageTokens, estimate.TrailingTokens
 }
 
 func (m *contextManager) ContextWindow() int { return m.window }
@@ -229,23 +234,25 @@ func (m *contextManager) rewrite(
 		changed = changed || compacted > 0
 	}
 
+	if changed {
+		view = agentcontext.InvalidateUsage(view)
+	}
 	return view, m.estimateUsage(view), changed
 }
 
 func (m *contextManager) estimateUsage(messages []agentgo.AgentMessage) *agentgo.ContextUsage {
-	tokens := m.estimateTokens(messages)
+	estimate := agentcontext.EstimateContextTokens(messages)
+	tokens := estimate.Tokens
 	usage := &agentgo.ContextUsage{
-		Tokens:        tokens,
-		ContextWindow: m.window,
+		Tokens:         tokens,
+		ContextWindow:  m.window,
+		UsageTokens:    estimate.UsageTokens,
+		TrailingTokens: estimate.TrailingTokens,
 	}
 	if m.window > 0 {
 		usage.Percent = float64(tokens) / float64(m.window) * 100
 	}
 	return usage
-}
-
-func (m *contextManager) estimateTokens(messages []agentgo.AgentMessage) int {
-	return countContextTokens(messages)
 }
 
 func (m *contextManager) remember(
@@ -437,14 +444,6 @@ func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentM
 		}
 	}
 	return out, changed
-}
-
-func countContextTokens(messages []agentgo.AgentMessage) int {
-	var total int
-	for _, message := range messages {
-		total += llm.CountTokens(message.TextContent())
-	}
-	return total
 }
 
 func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.AgentMessage {

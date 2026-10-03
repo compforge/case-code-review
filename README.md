@@ -84,6 +84,8 @@ ccr review --format jsonl               # stream accepted Findings before the ru
 
 For continuous PR/MR review, pass earlier delivered findings with `--history prior.json`. The forge comments are the durable source; the caller fetches them for each revision so ccr can distinguish new findings from repeat delivery.
 
+Use `--max-tokens-budget 200000` with `review` or `scan` to set a run-wide input + output token budget (default: unlimited). Once reported usage reaches it, new model calls stop and accepted results are retained. In-flight calls can finish, so this is a soft limit.
+
 ### Inspect before spending tokens
 
 ```bash

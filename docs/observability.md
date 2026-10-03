@@ -61,6 +61,8 @@ Execution 的 duration 直接相加。
 - tool call 参数、结果、耗时、成功状态及其所属 Execution；
 - 每次模型调用前实际可见的 ContextItem；首次 `context_projected` 作为 Initial Context exposure；
 - 每次 context compaction 的原因、提交状态、前后 token/消息数与 summary checkpoint 状态；
+- 累计 token 预算首次耗尽时的 `token_budget` artifact（已用量、上限）及停止原因；本地预算拒绝
+  使用 `policy/admission` 错误详情，不累加 provider 失败计数；
 - `execution_start` / `execution_end` 中的起点、outcome、reason、turn/tool 统计和总耗时；
 - `unit_formation` 的共享 Formation 成本、`review_unit` 的形成结果与 diff 规模，以及
   `unit_review_start` 到 Unit debrief 的 Review 1 边界；

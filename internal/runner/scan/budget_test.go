@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -142,5 +143,38 @@ func TestBudgetGate_Unlimited(t *testing.T) {
 	}
 	if calls := atomic.LoadInt64(&fake.calls); calls != 5 {
 		t.Errorf("unlimited budget should run all 5 files, ran %d", calls)
+	}
+}
+
+// An admitted file cannot spend the remainder of its tool rounds after a peer
+// (or its own Plan) consumes the run budget. Auxiliary calls share that budget.
+func TestRunningScanAndSummaryShareBudget(t *testing.T) {
+	tpl := budgetTestTemplate()
+	tpl.PlanTask = &template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "plan"}}}
+	tpl.ProjectSummaryTask = &template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "summarize"}}}
+	fake := &fakeBudgetClient{perCallTokens: 100_000}
+	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{ReviewMode: session.ReviewModeFullScan})
+	defer history.Finalize()
+	a := New(Args{Template: tpl, LLMClient: fake, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100_000})
+	a.items = makeScanItems(3)
+	a.args.Tools.Freeze()
+	if _, err := a.dispatchSubtasks(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	a.maybeRunProjectSummary(t.Context(), []finding.Finding{{Path: "f0.go", Content: "accepted finding"}})
+	if calls := atomic.LoadInt64(&fake.calls); calls != 1 {
+		t.Fatalf("calls = %d, want only the first file's Plan", calls)
+	}
+	if history.LLMFailures() != 0 {
+		t.Fatal("budget rejection counted as provider failure")
+	}
+	found := false
+	for _, warning := range a.Warnings() {
+		if warning.Type == "unit_incomplete" && strings.Contains(warning.Message, llm.ErrTokenBudget.Error()) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing incomplete outcome: %+v", a.Warnings())
 	}
 }

@@ -4,6 +4,7 @@
 package session
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -581,7 +582,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 }
 
 // SetError records an error for this task record, writes an llm_error entry to
-// the JSONL stream, and increments the session-level LLM failure counter.
+// the JSONL stream, and counts request failures except local budget rejection.
 func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 	tr.Error = err.Error()
 	tr.Duration = duration
@@ -593,7 +594,9 @@ func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 				err.Error(), llm.DescribeError(err), duration,
 			)
 		}
-		atomic.AddInt64(&ss.session.llmFailures, 1)
+		if !errors.Is(err, llm.ErrTokenBudget) {
+			atomic.AddInt64(&ss.session.llmFailures, 1)
+		}
 	}
 }
 
