@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from replay import build_schedule, collect, run_ccr
+from replay import build_schedule, collect, compare_runs, main, run_ccr
 
 
 class ReplayTest(unittest.TestCase):
@@ -78,6 +78,35 @@ class ReplayTest(unittest.TestCase):
             ],
         )
         self.assertEqual(run.call_args.kwargs["env"]["CCR_EVAL_TAG"], "eval-tag")
+
+    def test_comparison_pairs_every_repeat_and_preserves_failed_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.jsonl"
+            path.write_text('{"type":"session_start"}\n', encoding="utf-8")
+            results = {( "case", arm, run): {"session": str(path)}
+                       for arm in ("base", "candidate") for run in range(2)}
+            results[("case", "candidate", 1)]["error"] = "timeout"
+            reports = compare_runs(results, [{"name": "case"}], [("base", []), ("candidate", [])], 2)
+            self.assertEqual([r["run"] for r in reports], [0, 1])
+            self.assertTrue(any("command failed" in w for w in reports[1]["warnings"]))
+
+    def test_failed_command_keeps_found_transcript_in_runlog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root / "corpus.json"
+            corpus.write_text(json.dumps({"entries": [{"name": "case", "from": "a", "to": "b"}]}))
+            session = root / "session.jsonl"
+            session.write_text('{"type":"session_start"}\n{"type":"finding","path":"a.go","content":"bug"}\n')
+            out = root / "out"
+            with patch("replay.run_ccr", return_value=(False, "timeout")), \
+                 patch("replay.find_session", return_value=session), \
+                 patch("sys.argv", ["replay", str(corpus), "--arm", "base", "--out", str(out)]), \
+                 patch("builtins.print"):
+                self.assertEqual(main(), 0)
+            run = json.loads((out / "runs.jsonl").read_text())
+            self.assertEqual(run["error"], "timeout")
+            self.assertEqual(len(run["findings"]), 1)
+            self.assertFalse(run["closed"])
 
     def test_collect_retains_generation_provenance(self):
         events = [

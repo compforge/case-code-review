@@ -588,6 +588,15 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 		"fingerprint": f.Fingerprint,
 		"content":     f.Content,
 	}
+	if f.ExistingCode != "" {
+		rec["existing_code"] = f.ExistingCode
+	}
+	if f.Side != "" {
+		rec["side"] = f.Side
+	}
+	if f.OldPath != "" {
+		rec["old_path"] = f.OldPath
+	}
 	if f.SymbolID != "" {
 		rec["symbol_id"] = f.SymbolID
 	}

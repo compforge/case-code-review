@@ -231,6 +231,9 @@ type SessionOptions struct {
 // git_head as the anchor). Investigative result-tool calls in llm_response
 // records are pre-Trial and don't reflect what the review delivered.
 type Finding struct {
+	ExistingCode string
+	Side         string
+	OldPath      string
 	HypothesisID string
 	OriginUnit   string
 	LaneID       string
