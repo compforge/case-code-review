@@ -454,6 +454,7 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 	}
 
 	a.changes = parsed
+	a.persistReviewInput(ctx)
 	a.captureGraphs(ctx)
 	if p, ok := a.args.Tools.Get(tool.FileReadBase.Name()); ok {
 		if base, ok := p.(*tool.FileReadProvider); ok {
@@ -782,6 +783,9 @@ func (a *Runner) persistFindings(comments []finding.Finding, units []unit.Unit) 
 	findings := make([]session.Finding, 0, len(comments))
 	for _, c := range comments {
 		findings = append(findings, session.Finding{
+			ExistingCode: c.ExistingCode,
+			Side:         c.Side,
+			OldPath:      c.OldPath,
 			HypothesisID: c.HypothesisID,
 			OriginUnit:   originByHypothesis[c.HypothesisID],
 			LaneID:       laneByHypothesis[c.HypothesisID],
@@ -851,6 +855,7 @@ func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
 	a.session.WriteArtifact("review_hypothesis", map[string]any{
 		"id": h.ID, "fingerprint": h.Fingerprint, "origin_unit": h.OriginUnit, "path": h.Path,
 		"content": h.Content, "existing_code": h.ExistingCode,
+		"side": h.Side, "old_path": h.OldPath,
 		"start_line": h.StartLine, "end_line": h.EndLine,
 		"trigger": h.Trigger, "impact": h.Impact,
 		"change_attribution": h.ChangeAttribution,

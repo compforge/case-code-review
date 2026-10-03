@@ -10,8 +10,7 @@ arm 是一组 feature gate 配置。趋势对比只能在固定 corpus 上做（
       --arm base --arm no-plan:plan=off [--only "#93"] [--runs 2]
 
 每个 run 打唯一 CCR_EVAL_TAG，事后从 session 目录按 tag 捞回 transcript，
-聚合 finding（指纹精确匹配 + path/symbol 宽松匹配两档——模型措辞会漂，
-指纹 undercount，宽松档 overcount，真值在两者之间）与 debrief 成本。
+按 target 完成证据区分 finding 持续、未再报告与未完成复查，并聚合 debrief 成本。
 默认按 run 轮换 arm 首位，避免先跑完一个 arm 再跑另一个造成时间漂移；
 模型与并发度可显式固定，并与 Session generation provenance 一起落盘。
 产物写 --out（默认 ~/.casecodereview/replay/<ts>/），不入库。
@@ -26,8 +25,9 @@ import os
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
+
+from session_compare import compare, markdown, read_session
 
 RUN_TIMEOUT = 30 * 60
 
@@ -114,57 +114,28 @@ def find_session(repo: str, tag: str) -> Path | None:
 
 
 def collect(path: Path) -> dict:
-    """Aggregate one transcript: findings + debrief cost + outcomes."""
-    out = {"findings": [], "outcomes": Counter(), "prompt_tokens": 0, "completion_tokens": 0,
-           "cache_read": 0, "rounds": 0, "duration_s": 0.0, "llm_failures": 0, "units": 0,
-           "generation": {}}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        t = o.get("type")
-        if t == "session_start":
-            out["generation"] = {
-                key: o.get(key)
-                for key in ("tool_version", "git_head", "model", "features", "params")
-                if o.get(key) is not None
-            }
-        elif t == "finding":
-            out["findings"].append({
-                "fingerprint": o.get("fingerprint"),
-                "symbol_id": o.get("symbol_id") or "",
-                "path": o.get("path") or "?",
-                "lines": f"{o.get('start_line')}-{o.get('end_line')}",
-                "content": (o.get("content") or "")[:100],
-            })
-        elif t == "debrief":
-            out["units"] += 1
-            out["outcomes"][o.get("outcome") or "?"] += 1
-            tok = o.get("tokens") or {}
-            out["prompt_tokens"] += tok.get("prompt_tokens", 0)
-            out["completion_tokens"] += tok.get("completion_tokens", 0)
-            out["cache_read"] += tok.get("cache_read_tokens", 0)
-            out["rounds"] += (o.get("rounds") or {}).get("main_task", 0)
-        elif t == "session_end":
-            out["duration_s"] = o.get("duration_seconds") or 0.0
-            out["llm_failures"] = o.get("llm_failures") or 0
-    return out
+    """Aggregate persisted evidence without discarding partial sessions."""
+    return read_session(path).summary()
 
 
-def match_findings(base: list[dict], arm: list[dict]) -> dict:
-    # discard None fingerprints (pre-schema-v2 transcripts) — two unknowns must
-    # not count as the same finding
-    bf = {f["fingerprint"] for f in base if f["fingerprint"]}
-    af = {f["fingerprint"] for f in arm if f["fingerprint"]}
-    bl = {(f["path"], f["symbol_id"]) for f in base}
-    al = {(f["path"], f["symbol_id"]) for f in arm}
-    return {
-        "exact_common": len(bf & af),
-        "loose_common": len(bl & al),
-        "only_base": [f for f in base if f["fingerprint"] not in af and (f["path"], f["symbol_id"]) not in al],
-        "only_arm": [f for f in arm if f["fingerprint"] not in bf and (f["path"], f["symbol_id"]) not in bl],
-    }
+def compare_runs(results: dict, entries: list[dict], arms: list[tuple[str, list[str]]], runs: int) -> list[dict]:
+    """Compare corresponding repeats, retaining failed runs with a transcript."""
+    reports = []
+    for entry in entries:
+        for index in range(runs):
+            base = results.get((entry["name"], arms[0][0], index), {})
+            for arm, _ in arms[1:]:
+                candidate = results.get((entry["name"], arm, index), {})
+                if not base.get("session") or not candidate.get("session"):
+                    reports.append({"entry": entry["name"], "arm": arm, "run": index,
+                                    "error": "Comparison unavailable: session missing"})
+                    continue
+                report = compare(read_session(Path(base["session"])), read_session(Path(candidate["session"])))
+                for label, result in ((arms[0][0], base), (arm, candidate)):
+                    if result.get("error"):
+                        report["warnings"].append(f"{label} command failed: {result['error']}")
+                reports.append({"entry": entry["name"], "arm": arm, "run": index, **report})
+    return reports
 
 
 def main() -> int:
@@ -211,8 +182,8 @@ def main() -> int:
                 model=args.model,
                 concurrency=args.concurrency,
             )
-            sess = find_session(args.repo, tag) if ok else None
-            if not ok or sess is None:
+            sess = find_session(args.repo, tag)
+            if sess is None:
                 error = err or "session not found"
                 print(f"  ✗ {error}", flush=True)
                 results[(e["name"], arm_name, i)] = {"error": error}
@@ -231,6 +202,8 @@ def main() -> int:
                 continue
             r = collect(sess)
             r["session"] = str(sess)
+            if not ok:
+                r["error"] = err or "review command failed"
             results[(e["name"], arm_name, i)] = r
             runlog.write(json.dumps({
                 "entry": e["name"],
@@ -241,14 +214,16 @@ def main() -> int:
                 "model_override": args.model,
                 "concurrency": args.concurrency,
                 "feature_args": feat_args,
-                **{k: (dict(v) if isinstance(v, Counter) else v) for k, v in r.items()},
+                **r,
             }, ensure_ascii=False) + "\n")
             runlog.flush()
-            print(f"  ✓ units={r['units']} findings={len(r['findings'])} "
-                  f"prompt_tok={r['prompt_tokens']} dur={r['duration_s']:.0f}s", flush=True)
+            print(f"  {'✓' if ok else '✗'} units={r['units']} findings={len(r['findings'])} "
+                  f"prompt_tok={r['prompt_tokens']} dur={r['duration_s']}s", flush=True)
 
     # ── report ──
     base_arm = arms[0][0]
+    comparisons = compare_runs(results, entries, arms, args.runs)
+    (out_dir / "comparisons.json").write_text(json.dumps(comparisons, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     lines = [
         f"# replay report — corpus={args.corpus} arms={[a for a, _ in arms]} runs={args.runs}\n",
         f"- schedule: {args.schedule}",
@@ -263,28 +238,19 @@ def main() -> int:
         for arm_name, _ in arms:
             for i in range(args.runs):
                 r = results.get((e["name"], arm_name, i), {})
-                if "error" in r:
+                if "error" in r and "session" not in r:
                     lines.append(f"| {arm_name} | {i} | — | ERROR: {r['error'][:60]} | | | | |")
                     continue
                 oc = ", ".join(f"{k}×{v}" for k, v in sorted(r["outcomes"].items()))
+                if r.get("error"):
+                    oc += " (command failed; partial evidence)"
                 lines.append(f"| {arm_name} | {i} | {r['units']} | {oc} | {len(r['findings'])} "
-                             f"| {r['prompt_tokens']} | {r['rounds']} | {r['duration_s']:.0f} |")
-        # findings diff vs base (run 0 vs run 0)
-        base = results.get((e["name"], base_arm, 0), {}).get("findings")
-        if base is None:
-            continue
-        for arm_name, _ in arms[1:]:
-            arm_f = results.get((e["name"], arm_name, 0), {}).get("findings")
-            if arm_f is None:
+                             f"| {r['prompt_tokens']} | {r['rounds']} | {r['duration_s']} |")
+        for comparison in comparisons:
+            if comparison["entry"] != e["name"]:
                 continue
-            m = match_findings(base, arm_f)
-            lines.append(f"\n**{base_arm} vs {arm_name}**: 指纹同 {m['exact_common']}，"
-                         f"path+symbol 同 {m['loose_common']}；"
-                         f"仅 {base_arm} {len(m['only_base'])}，仅 {arm_name} {len(m['only_arm'])}")
-            for f in m["only_base"]:
-                lines.append(f"- 仅 {base_arm}: `{f['path']}:{f['lines']}` {f['content'][:80]}")
-            for f in m["only_arm"]:
-                lines.append(f"- 仅 {arm_name}: `{f['path']}:{f['lines']}` {f['content'][:80]}")
+            lines.append(f"\n### {base_arm} vs {comparison['arm']} · run {comparison['run']}\n")
+            lines.append(comparison["error"] if "error" in comparison else markdown(comparison))
 
     report = "\n".join(lines) + "\n"
     (out_dir / "REPORT.md").write_text(report, encoding="utf-8")

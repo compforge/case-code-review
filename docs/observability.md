@@ -73,6 +73,20 @@ Execution 的 duration 直接相加。
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
 
+### 两次运行的可比覆盖
+
+Runner 在选择和分组前写入 `review_input`，记录协议版本、仓库身份与捕获改动材料的摘要；
+`review_unit.targets` 保存 Fragment 前后两侧的实际编辑区间，Finding 与 Hypothesis 保存原代码片段、
+old/new 侧和原路径。这些是比较所需的生产事实，是否可比、如何匹配和分类由 eval 决定。
+
+两次 Session 的比较先检查输入，再以目标编辑区间对齐完成证据，不用 Unit ID 或文件名代替覆盖。
+Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；eval 必须继续检查 Assessment/Trial。
+缺少记录、超时或范围变化时保留 incomplete / unknown，不把没有交付 Finding 解释为修复。
+
+现有实验入口 `eval/replay.py` 对相同 repeat 的两臂生成问题、覆盖、阶段去向和成本对比；
+`eval/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
+比较结果是实验观测，不代替人工真值标签；使用方式及匹配限制见 `eval/README.md`。
+
 ### 请求时间线
 
 每个实际模型请求使用 `go-stdx/timeline` 记录请求、路由、模型尝试、HTTP 请求及连接、写出、

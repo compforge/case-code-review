@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"context"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
@@ -23,12 +25,15 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	history := session.New(filepath.Join(home, "repo"), "main", "model", session.SessionOptions{})
-	runner := &Runner{session: history}
+	runner := &Runner{session: history, changes: []change.Change{{NewPath: "a.go", Diff: "patch"}}}
+	runner.persistReviewInput(context.Background())
 	reviewUnit := unit.UnitOf(unit.Fragment{
-		Path: "a.go", Symbols: []string{"a.go::F"}, Insertions: 3, Deletions: 1,
+		Path: "a.go", OldPath: "old.go", Symbols: []string{"a.go::F"}, Insertions: 3, Deletions: 1,
+		Diff: "@@ -4,1 +4,3 @@\n-old\n+one\n+two\n+three\n",
 	})
 	hypothesis := unitreview.Hypothesis{
 		ID: "h-1", OriginUnit: reviewUnit.ID, Path: "a.go", Content: "bug",
+		Side: "old", OldPath: "old.go", ExistingCode: "old",
 	}
 	reviewUnit.AddHypothesis(hypothesis)
 	input := hypothesisreview.ReviewInput{
@@ -53,7 +58,7 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 	runner.persistTrialDecisions([]unit.Unit{reviewUnit}, []unit.TrialDecision{{
 		HypothesisID: "h-1", Passed: true, Delivered: true,
 	}})
-	runner.persistFindings([]finding.Finding{{HypothesisID: "h-1", Path: "a.go", Content: "bug"}}, []unit.Unit{reviewUnit})
+	runner.persistFindings([]finding.Finding{{HypothesisID: "h-1", Path: "a.go", Content: "bug", Side: "old", OldPath: "old.go", ExistingCode: "old"}}, []unit.Unit{reviewUnit})
 	history.Finalize()
 
 	paths, err := filepath.Glob(filepath.Join(home, ".casecodereview", "test-sessions", "*", history.SessionID+".jsonl"))
@@ -86,6 +91,21 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
+	}
+
+	if input := artifacts["review_input"]; input["version"] != float64(1) || input["change_digest"] != changeDigest(runner.changes) {
+		t.Fatalf("review_input = %+v", input)
+	}
+	target := artifacts["review_unit"]["targets"].([]any)[0].(map[string]any)
+	before := target["before_edits"].([]any)
+	after := target["after_edits"].([]any)
+	if len(before) != 1 || before[0].(map[string]any)["Start"] != float64(4) || len(after) != 1 || after[0].(map[string]any)["End"] != float64(6) {
+		t.Fatalf("target edits = %+v", target)
+	}
+	for _, record := range []map[string]any{artifacts["review_hypothesis"], delivered} {
+		if record["side"] != "old" || record["old_path"] != "old.go" || record["existing_code"] != "old" {
+			t.Fatalf("missing source identity: %+v", record)
+		}
 	}
 
 	if formation := artifacts["unit_formation"]; formation["duration_ms"] != float64(12) || formation["unit_count"] != float64(1) {
