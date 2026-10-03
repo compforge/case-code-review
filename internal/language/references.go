@@ -1,100 +1,192 @@
 package language
 
 import (
-	"context"
 	"os"
 	"path/filepath"
-	"regexp"
+	"sort"
 	"strings"
+
+	cg "github.com/compforge/codegraph"
 )
 
-// Reference is one source-level name used by a changed snippet. FQN is set
-// when imports resolve the name precisely; SourcePath/SourceName point at a
-// resolvable Python module for adoption-free doc extraction.
+// Reference is a review projection of a graph-proven use. SymbolID identifies a
+// retained declaration; FQN can identify an explicit external import binding.
 type Reference struct {
-	Name       string
-	FQN        string
-	SourcePath string
-	SourceName string
+	Name, SymbolID, FQN, SourcePath, SourceName string
 }
 
-var (
-	identifier = regexp.MustCompile(`[A-Za-z_$][A-Za-z0-9_$]*`)
-	goSelector = regexp.MustCompile(`\b([a-z][A-Za-z0-9_]*)\.([A-Z][A-Za-z0-9_]*)\b`)
-)
-
-// ReferencesIn extracts names from a changed snippet and enriches references
-// that the source file's imports resolve. It intentionally returns bare names
-// alongside precise FQNs: consumers decide whether an FQN hit is authoritative
-// enough to suppress same-name fallback.
-func (a *Analyzer) ReferencesIn(source Source, snippet string) []Reference {
-	lang, _ := Detect(source.Path)
-	facts, _ := a.extract(context.Background(), source)
-	var out []Reference
-	seen := map[Reference]bool{}
-	add := func(reference Reference) {
-		if reference.Name == "" || seen[reference] {
-			return
-		}
-		seen[reference] = true
-		out = append(out, reference)
+func (r *RepositoryIndex) Declaration(id string) (cg.Node, bool) {
+	if r == nil || r.Graph == nil {
+		return cg.Node{}, false
 	}
+	path, name, ok := SplitSymbolID(id)
+	if !ok {
+		return cg.Node{}, false
+	}
+	nodes := r.Graph.Find(path, "", name)
+	if len(nodes) != 1 || ReviewSymbolID(nodes[0]) == "" {
+		return cg.Node{}, false
+	}
+	return nodes[0], true
+}
 
-	switch lang {
-	case Go:
-		imports := map[string]string{}
-		for _, imp := range facts.Imports {
-			alias := imp.Alias
-			if alias == "" {
-				alias = imp.Binding
-			}
-			if alias != "" && alias != "_" && alias != "." {
-				imports[alias] = imp.Path
-			}
-		}
-		for _, match := range goSelector.FindAllStringSubmatch(snippet, -1) {
-			if path, ok := imports[match[1]]; ok {
-				add(Reference{Name: match[2], FQN: path + "." + match[2]})
-			}
-		}
-	case Python:
-		imports := map[string]importedSymbol{}
-		for _, imp := range facts.Imports {
-			if imp.From == "" {
+// Owners follows semantic membership first, including Go receivers in another
+// document, then lexical nesting. Presentation names never establish ownership.
+func (r *RepositoryIndex) Owners(id string) []string {
+	node, ok := r.Declaration(id)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, kind := range []cg.RelationKind{cg.Contains, cg.Encloses} {
+		for _, e := range r.Graph.RelationsTo(node.ID, kind) {
+			if !e.Confidence.AtLeast(cg.Scoped) {
 				continue
 			}
-			for _, binding := range imp.Bindings {
-				imports[binding.Local] = importedSymbol{module: imp.From, name: binding.Name}
+			n, ok := r.Graph.Node(e.Source)
+			if !ok {
+				continue
 			}
-			if len(imp.Bindings) == 0 {
-				for _, name := range imp.Names {
-					local := name
-					if imp.Alias != "" {
-						local = imp.Alias
-					}
-					imports[local] = importedSymbol{module: imp.From, name: name}
-				}
+			key := ReviewSymbolID(n)
+			if _, ok := r.Declaration(key); ok {
+				out = append(out, key)
 			}
 		}
-		roots := pythonModuleRoots(a.repoDir)
-		for _, name := range identifier.FindAllString(snippet, -1) {
-			if imported, ok := imports[name]; ok {
-				reference := Reference{Name: name, FQN: imported.module + "." + imported.name, SourceName: imported.name}
-				if path, ok := resolvePythonModuleFile(imported.module, roots); ok {
-					reference.SourcePath = path
-				}
-				add(reference)
-			}
+		if len(out) > 0 {
+			break
 		}
 	}
+	sort.Strings(out)
+	return out
+}
 
-	for _, name := range identifier.FindAllString(snippet, -1) {
-		add(Reference{Name: name})
+// ReferencesAt selects source uses by captured coordinates. It never tokenizes
+// diff text or guesses endpoints from bare names. Alias traversal is bounded by
+// the publication's nodes; missing and cyclic bindings remain unresolved.
+func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
+	r := a.Repository()
+	if r.Graph == nil || len(spans) == 0 {
+		return nil
+	}
+	var out []Reference
+	seen := map[Reference]bool{}
+	for _, use := range r.Graph.Nodes() {
+		if use.Kind != cg.Reference || use.Location == nil || use.Location.Path != path {
+			continue
+		}
+		selected := false
+		for _, span := range spans {
+			if use.Location.Line <= span.End && locationSpan(*use.Location).End >= span.Start {
+				selected = true
+				break
+			}
+		}
+		if !selected {
+			continue
+		}
+		queue := []string{}
+		for _, e := range r.Graph.RelationsFrom(use.ID, cg.References) {
+			if e.Confidence.AtLeast(cg.Scoped) {
+				queue = append(queue, e.Target)
+			}
+		}
+		visited := map[string]bool{}
+		for len(queue) > 0 {
+			id := queue[0]
+			queue = queue[1:]
+			if visited[id] {
+				continue
+			}
+			visited[id] = true
+			n, ok := r.Graph.Node(id)
+			if !ok {
+				continue
+			}
+			ref := Reference{Name: use.Name, SymbolID: ReviewSymbolID(n)}
+			if ref.SymbolID != "" {
+				if _, ok := r.Declaration(ref.SymbolID); !ok {
+					continue
+				}
+			}
+			aliases := r.Graph.RelationsFrom(id, cg.Aliases)
+			for _, e := range aliases {
+				if e.Confidence.AtLeast(cg.Scoped) {
+					queue = append(queue, e.Target)
+				}
+			}
+			// The import binding proves this public name, even when its declaration is
+			// outside the supplied materials. A receiver spelling alone proves no binding.
+			if len(aliases) == 0 && n.Kind == cg.Import && n.Language == "python" && n.Binding != nil {
+				b := n.Binding
+				if b.Form == "named" && b.ImportedName != "" && !strings.HasPrefix(b.Specifier, ".") {
+					ref.FQN = b.Specifier + "." + b.ImportedName
+					ref.SourceName = b.ImportedName
+					if a.ref == "" {
+						ref.SourcePath, _ = resolvePythonModuleFile(b.Specifier, pythonModuleRoots(a.repoDir))
+					}
+				}
+			}
+			if ref.SymbolID == "" && ref.FQN == "" {
+				continue
+			}
+			if !seen[ref] {
+				seen[ref] = true
+				out = append(out, ref)
+			}
+		}
 	}
 	return out
 }
 
-type importedSymbol struct{ module, name string }
+// UsesOf reads occurrence edges, following the reverse alias chain so a call
+// through a barrel/import still belongs to the final declaration. It does not
+// count declaration-level summary edges as additional source occurrences.
+func (r *RepositoryIndex) UsesOf(symbol string) []cg.Node {
+	target, ok := r.Declaration(symbol)
+	if !ok {
+		return nil
+	}
+	queue := []string{target.ID}
+	visited := map[string]bool{}
+	uses := map[string]cg.Node{}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		if visited[id] {
+			continue
+		}
+		visited[id] = true
+		for _, e := range r.Graph.RelationsTo(id, cg.Aliases, cg.References) {
+			if !e.Confidence.AtLeast(cg.Scoped) {
+				continue
+			}
+			n, ok := r.Graph.Node(e.Source)
+			if !ok {
+				continue
+			}
+			if e.Kind == cg.Aliases {
+				queue = append(queue, n.ID)
+			} else if n.Kind == cg.Reference && n.Location != nil {
+				uses[n.ID] = n
+			}
+		}
+	}
+	out := make([]cg.Node, 0, len(uses))
+	for _, n := range uses {
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Location, out[j].Location
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.StartByte != b.StartByte {
+			return a.StartByte < b.StartByte
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
 
 func pythonModuleRoots(repoDir string) []string {
 	if repoDir == "" {

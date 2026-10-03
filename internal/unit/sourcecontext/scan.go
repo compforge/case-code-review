@@ -7,7 +7,7 @@ import (
 // Scan projects the shared repository snapshot into CCR's relevance-ranking view.
 func Scan(analyzer *language.Analyzer) *Extraction {
 	index := analyzer.Repository()
-	extraction := &Extraction{Defs: map[string][]Def{}, Refs: index.References, Graph: index.Graph}
+	extraction := &Extraction{Defs: map[string][]Def{}, Graph: index.Graph}
 	for path, definitions := range index.Definitions {
 		for _, definition := range definitions {
 			extraction.Defs[path] = append(extraction.Defs[path], Def{

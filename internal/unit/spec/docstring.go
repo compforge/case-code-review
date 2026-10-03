@@ -11,7 +11,7 @@ import (
 // (adoption-free — no marker needed), given its symbol-id `<relpath>::<name>`:
 // a language-native source comment. "" when the language isn't supported, the
 // file isn't readable, or the symbol has no docstring.
-// Shared by the owner/used relations and the callgraph caller/callee walk.
+// Repository relations use the shared Analyzer publication instead.
 func SymbolDocstring(repoDir, symbolID string) string {
 	if repoDir == "" {
 		return ""

@@ -319,25 +319,25 @@ func (a *Runner) repositoryReferencePaths(u unit.Unit, limit int) []string {
 	if a.repoIndex == nil || limit <= 0 {
 		return nil
 	}
-	identifiers := make(map[string]bool)
-	for _, symbolID := range u.AllSymbols() {
-		if name := language.BareSymbolName(symbolID); name != "" {
-			identifiers[name] = true
-		}
-	}
 	type rankedPath struct {
 		path  string
 		score int
 	}
 	var ranked []rankedPath
-	for filePath, refs := range a.repoIndex.Refs {
-		score := 0
-		for name := range identifiers {
-			score += refs[name]
+	scores := map[string]int{}
+	seen := map[string]bool{}
+	index := &language.RepositoryIndex{Graph: a.repoIndex.Graph}
+	for _, id := range u.AllSymbols() {
+		for _, use := range index.UsesOf(id) {
+			if seen[use.ID] {
+				continue
+			}
+			seen[use.ID] = true
+			scores[use.Location.Path]++
 		}
-		if score > 0 {
-			ranked = append(ranked, rankedPath{path: filePath, score: score})
-		}
+	}
+	for path, score := range scores {
+		ranked = append(ranked, rankedPath{path, score})
 	}
 	sort.Slice(ranked, func(i, j int) bool {
 		if ranked[i].score != ranked[j].score {

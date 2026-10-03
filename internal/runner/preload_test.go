@@ -11,6 +11,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -161,9 +162,7 @@ func TestInitialFileContextUsesOutlineAndRepositoryReferences(t *testing.T) {
 		"repository.go":  "package p\n\nfunc RepositoryUser() { F() }\n",
 		"pyproject.toml": "[project]\nname = 'p'\n",
 	})
-	a.repoIndex = &sourcecontext.Extraction{Refs: map[string]map[string]int{
-		"repository.go": {"F": 2},
-	}}
+	a.repoIndex = sourcecontext.Scan(language.NewAnalyzer(a.args.RepoDir))
 	u := unit.UnitOf(unit.Fragment{Path: "a.go", Symbols: []string{"a.go::F"}})
 	u.Clues = []unit.Clue{
 		{Relation: unit.RelOwner, Ref: "owner.go::Owner"},

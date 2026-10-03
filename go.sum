@@ -52,8 +52,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/compforge/agentgo v0.0.2-0.20260826112438-691b2c90c5bb h1:KRIu0tlkWHRiH5FGrnuYR6xmdlA3OsBJfZ6XmZp0Kw8=
 github.com/compforge/agentgo v0.0.2-0.20260826112438-691b2c90c5bb/go.mod h1:EXHfA5VXaBoEB0aVUy3latIXgr+nyMJ/nUs06BL4R+Q=
-github.com/compforge/codegraph v0.10.6-0.20261003055813-81cd818b057a h1:cZxIV7/jhN/K48rBwpnemdlfaDzLdp8jE4P2RGWGVNE=
-github.com/compforge/codegraph v0.10.6-0.20261003055813-81cd818b057a/go.mod h1:Ephk/vEHG2QBNBtuinItOMd11g8Em5Rp2YgYSGEbR24=
+github.com/compforge/codegraph v0.10.6-0.20261003080441-f9a0d6097624 h1:RN8w8xm6sir3jm6qDvQlt2hkwtGgq5tjWOIIKAWVHRc=
+github.com/compforge/codegraph v0.10.6-0.20261003080441-f9a0d6097624/go.mod h1:Ephk/vEHG2QBNBtuinItOMd11g8Em5Rp2YgYSGEbR24=
 github.com/compforge/go-stdx v0.0.4-0.20260930072529-dae231fa3e72 h1:jBGvP5kixhayPo/xwdKkjCVUcVDgcApH0dW2TmbXCoc=
 github.com/compforge/go-stdx v0.0.4-0.20260930072529-dae231fa3e72/go.mod h1:Mt9pt4PEjEyQfLUqQq6yrx5xK/Mhw35P1u2zvPw/MeE=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

@@ -66,6 +66,10 @@ func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 		if relation.Kind != cg.References && relation.Kind != cg.Calls {
 			continue
 		}
+		source, ok := ex.Graph.Node(relation.Source)
+		if !ok || source.Kind == cg.Reference {
+			continue
+		}
 		target, ok := ex.Graph.Node(relation.Target)
 		if !ok || target.Location == nil {
 			continue

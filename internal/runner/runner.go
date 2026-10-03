@@ -261,16 +261,15 @@ func New(args Args) *Runner {
 		Link: f.Enabled(feature.Link),
 		Doc:  f.Enabled(feature.Doc),
 	}
-	finders := []unit.ClueFinder{spec.NewRelatedFinder(args.Specs, args.RepoDir, kinds)}
+	finders := []unit.ClueFinder{spec.NewRelatedFinder(args.Specs, analyzer, kinds)}
 	if f.Enabled(feature.History) {
 		finders = append(finders, history.Finder{Index: args.HistoryIndex})
 	}
 	// One CodeGraph snapshot per review, shared by clue finders and merge
-	// adjacency; lazily built on first Go neighbor query. Gate off -> nil
-	// handle -> every consumer stays on the grep heuristics.
+	// adjacency, owner/used contracts and documentation; built lazily on first use.
 
 	var costlyFinders []unit.ClueFinder
-	// caller/callee sit behind the cost gate (call-graph grep) and emit per the
+	// caller/callee sit behind the cost gate (graph traversal) and emit per the
 	// kind gates: inherited/depended-on specs when the spec kind is on and a spec
 	// index exists, direct neighbors' docstrings when the doc kind is on. The two
 	// payloads are peer marks (authored vs derived) — doc needs no spec.json, so a

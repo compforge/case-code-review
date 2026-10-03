@@ -79,7 +79,7 @@ func TestLanguageSyntaxStaysOutsideConsumers(t *testing.T) {
 }
 
 // Graph parsing and resolution are upstream responsibilities, including inside
-// the language adapter. Only upstream outline value types may cross the boundary.
+// the language adapter. Consumers derive every source view from graph values.
 func TestSourceAnalysisIsOwnedByCodeGraph(t *testing.T) {
 	forbidden := []string{`"go/ast"`, `"go/parser"`, `"go/types"`, `"golang.org/x/tools/go/packages"`, `"github.com/odvcencio/gotreesitter/grammars"`, `NewParser(`, `NewOutliner(`, `FactProgram`}
 	err := filepath.WalkDir("..", func(path string, entry os.DirEntry, err error) error {
@@ -94,6 +94,30 @@ func TestSourceAnalysisIsOwnedByCodeGraph(t *testing.T) {
 			if strings.Contains(string(content), token) {
 				t.Errorf("%s duplicates source-analysis ownership with %s", path, token)
 			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Extraction artifacts may be held only by material-production code. All review
+// projections must accept graph values, so a new feature cannot reopen a Facts path.
+func TestFactsStayInsideGraphProduction(t *testing.T) {
+	err := filepath.WalkDir("..", func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		if filepath.Clean(path) == filepath.Join("..", "language", "analyzer.go") || filepath.Clean(path) == filepath.Join("..", "language", "repository.go") {
+			return nil
+		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(content), "cg.Facts") || strings.Contains(string(content), "codegraph.Facts") {
+			t.Errorf("%s reads extraction artifacts outside graph production", path)
 		}
 		return nil
 	})

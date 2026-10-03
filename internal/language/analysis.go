@@ -9,7 +9,7 @@ import (
 )
 
 // Data and markup files remain reviewable at file scope, but should not enter
-// function-oriented repository scans or callgraph grep pathspecs.
+// function-oriented repository scans or graph source discovery.
 var fileScopeExtensions = map[string]bool{
 	".css": true, ".scss": true, ".sass": true, ".less": true,
 	".html": true, ".htm": true, ".xml": true,
@@ -108,8 +108,8 @@ type Call struct {
 // subtype to a supertype. Supertype remains unresolved: syntax backends can
 // prove the declaration but not necessarily which repository symbol the name
 // denotes. Span locates the referenced supertype, not the whole declaration.
-// A graph resolver can combine this fact with imports and repository definitions
-// while preserving the precise extends, implements, or base relation.
+// The role and ownership come from Reference nodes and occurs_in; missing
+// target bindings do not erase the source role.
 type SupertypeReference struct {
 	SubtypeID string
 	Kind      SupertypeKind
@@ -157,8 +157,8 @@ const (
 	QualityPartial Quality = "partial"
 )
 
-// Analysis is the parser-independent fact model consumed by ccr. Parser trees,
-// query captures, and backend-specific nodes must never cross this boundary.
+// Analysis is a detached review view of a published graph. It carries no
+// independent parsing or resolution facts.
 type Analysis struct {
 	Language            Language
 	Quality             Quality
@@ -167,7 +167,6 @@ type Analysis struct {
 	SupertypeReferences []SupertypeReference
 	Imports             []Import
 	Decorators          []string
-	References          map[string]int
 	outlineEntries      []outlineEntry
 }
 

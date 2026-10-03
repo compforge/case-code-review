@@ -109,8 +109,8 @@ func TestScanTreeSitterRepository_TypeScriptDefsRefsAndSkips(t *testing.T) {
 	if findDef(ex.Definitions["src/format.js"], "formatValue") == nil {
 		t.Errorf("JavaScript defs missing: %+v", ex.Definitions["src/format.js"])
 	}
-	if ex.References["src/view.tsx"]["run"] < 2 {
-		t.Errorf("view.tsx should reference run >=2 times, got %d", ex.References["src/view.tsx"]["run"])
+	if referenceCount(ex, "src/view.tsx", "run") < 2 {
+		t.Errorf("view.tsx should reference run >=2 times, got %d", referenceCount(ex, "src/view.tsx", "run"))
 	}
 }
 

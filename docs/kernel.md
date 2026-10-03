@@ -31,8 +31,8 @@ agent Review，再交给确定性的 Trial（Review 3）并聚合领域结果。
 symbol/file proximity 及语法绑定机制；
 Project Knowledge 一部分是 Repository / Component、可组合 FileRole（如 source + entrypoint / handler）
 和 manifest 等结构知识，另一部分是 `spec / case / link / rule / doc` 等作者声明的 Biz Knowledge。后者
-通过 Language 的注释、装饰器、symbol-id / fqn 等机制绑定到代码：Language 拥有“如何绑定”，Project
-Knowledge 拥有“声明表达什么”。这套模型也是 case-code-review 最初的核心与名称来源。
+通过 CodeGraph 的声明、修饰应用和绑定关系关联到代码：CodeGraph 拥有源码绑定，Language 适配
+review snapshot 和 symbol-id，Project Knowledge 拥有“声明表达什么”。这套模型也是 case-code-review 最初的核心与名称来源。
 
 长期看，一个 Repository 还应提供开发与 review 共同消费的
 记忆文件，使项目约定、历史决策和业务背景不必分别维护两份；具体存储协议不属于当前 Kernel 契约。
@@ -186,7 +186,7 @@ CCR 的效果提升不是单纯换模型或扩大 prompt，而依靠三项能力
    增加 prompt 或执行轮次。**trajectory 驱动的 Initial Context 演进**是其中一个具体闭环：工具与判断
    步骤暴露 Agent 后续主动获取的信息需求，跨 case 汇总后决定哪些材料应提前加入、提供 source、
    Outline 还是 reference，从而用初始 token 换掉更多模型轮次和工具调用；
-3. **持续增长的 Knowledge**：Language 通过 Outline、CodeGraph 和 proximity 等能力提供更可靠的源码结构、关系与绑定位置，
+3. **持续增长的 Knowledge**：Language 从 CodeGraph 的 Node + Relation 投影源码结构、关系与绑定位置，
    Project Knowledge 同时提供 Repository / Component / FileRole 等结构事实和
    `spec / case / link / rule / doc` 等业务契约，让 Unit formation 和两个 Review 获得更相关的事实。
 

@@ -26,15 +26,16 @@ review snapshot ─▶ Document ─▶ CodeGraph
 
 ### 单文件与仓库共用解析产物
 
-Analyzer 把明确的路径和内容交给 CodeGraph Extractor。单文件定义、源码导航、outline 和仓库图
-共享有界的 ExtractionCache；缓存按路径与内容区分版本。CCR 不建立第二套 parser 或类型检查后端。
+Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后再生成评审视图。Facts 只在提取和
+构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
+ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
 RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的源码集合，提供 Go module 根，
 将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
 
-工作区模式读取本地文件；commit/range 模式从评审目标 ref 枚举并读取文件。调用关系、usage 的行文本
-和调用邻居的文档都使用这份图输入，避免把当前工作区内容混入历史评审。每次 run 的图固定发布一次；
+工作区模式读取本地文件；commit/range 模式从评审目标 ref 枚举并读取文件。调用关系、usage 的行文本、
+owner/used 契约和调用邻居的文档都使用这份图输入，避免把当前工作区内容混入历史评审。每次 run 的图固定发布一次；
 新的源码版本需要新的 review 实例。
 
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
@@ -45,7 +46,9 @@ RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的�
 
 CodeGraph 的节点 ID 标识图内声明；CCR 的 `path::qualifiedName` 是连接 Unit、spec 和历史反馈的
 既有 join key。Language 通过声明的路径和 qualified name 转换身份，不从裸名称反向猜测目标。
-同名或重载声明在 CCR 身份下无法唯一对应时，关系消费保持保守。
+同名或重载声明在 CCR 身份下无法唯一对应时，关系消费保持保守。Reference、Import、Export
+是源码项，不能转换为声明 join key。owner 沿 contains 优先、encloses 补充查找，支持跨文件 Go
+接收者；qualified name 的分隔符只用于身份展示，不证明归属。
 
 CodeGraph location 的行号从 1 开始、字节结束位置不包含在范围中；Language 转换为 CCR 的闭区间
 行范围。声明头读取 Node.Signature；CCR 只压缩展示空白、限制长度。缺少签名时以符号名展示。
@@ -64,12 +67,26 @@ Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败
 不同用途承担不同的错误成本：
 
 - Repo map 对 CodeGraph 关系做按 diff 个性化的排序，可以使用低置信候选；它只是后续阅读的提示。
-- caller/callee 契约、usage 与 call-chain Unit 只消费 `Exact` 或 `Scoped` 关系。CCR 不用 grep 补齐
-  缺失边，也不把同名符号升级成确定调用。
+- caller/callee 契约与 call-chain Unit 消费声明间的 `Exact/Scoped` calls；repo map 使用声明关系，
+  排除 Reference 发出的源码位置边，避免把两个粒度重复计数。
+- used 契约按 diff 新侧增加行定位 Reference，沿 references 与 aliases 读取声明或显式导入绑定；
+  usage 反向遍历同一链路，并按源码行去重。必要环节均须达到 `Scoped`，不按裸名字匹配 catalog。
+- 删除行不能在目标快照中重新绑定；没有 hunk 坐标的内部 Fragment 只可使用已知声明范围。
+  未解析使用仍在图中，但不作为确定的契约或邻接关系。
 - 多个声明落到同一个 CCR 身份时，需要避免把候选集合解释成唯一目标。
 
 这些置信度表示上游支持的静态证据强度，不表示完整编译器类型检查。Go 接口实现的启发式关系、动态
 分派和未解析调用，不自动成为 Unit 合并依据。Git 文本搜索仍是 review 工具，搜索结果不写回源码图。
+
+## 文档与外部契约
+
+Documentation 的归属由 CodeGraph 确定，CCR 只处理注释定界符、首段和展示空白。同名方法使用
+声明身份区分；单文件展示消费局部图，关系上下文消费共享 RepositoryIndex 的节点文档。
+
+已证明的 Python 具名导入可用公开名称关联外部 contract catalog，即使目标源码不在图内。工作区
+模式可从依赖根补读文档材料，仍交给 CodeGraph 分析；历史 ref 模式不读取当前 venv 文档。
+外部 Go selector 缺少图中的目标绑定时，接收者拼写和导入路径不足以证明 used 契约，不再猜包名
+或补做绑定。源码覆盖缺口应交给 CodeGraph 改进，CCR 保留本轮分析限制。
 
 ## 能力边界
 
@@ -80,7 +97,7 @@ Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败
 - JavaScript/TypeScript 的箭头函数绑定以变量声明提供，其改动保留在文件级 residual 中；对象字面量
   中的 callable 不承诺独立符号或调用边。
 - 有歧义的扩展名沿用 CodeGraph 的语言选择。外部依赖未提供源码时，不承诺解析其真实包名或关系。
-- 普通注释与 docstring 的摘要属于评审展示；依赖目录发现和外部契约查找仍由 CCR 负责。
+- 普通文档摘要属于评审展示；依赖材料发现和外部 contract catalog 查找由 CCR 负责。
 
 新增源码能力应补在 CodeGraph；CCR 只增加所需的输入上下文、展示或消费策略，并以集成测试验证边界。
 

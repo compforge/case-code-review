@@ -31,7 +31,6 @@ type RepositoryIndex struct {
 	Report      cg.BuildReport
 	Gaps        []string
 	Definitions map[string][]IndexedDefinition
-	References  map[string]map[string]int
 	Sources     map[string]string
 }
 
@@ -50,7 +49,7 @@ func (a *Analyzer) Repository() *RepositoryIndex {
 }
 
 func (a *Analyzer) scanRepository() *RepositoryIndex {
-	out := &RepositoryIndex{Definitions: map[string][]IndexedDefinition{}, References: map[string]map[string]int{}, Sources: map[string]string{}}
+	out := &RepositoryIndex{Definitions: map[string][]IndexedDefinition{}, Sources: map[string]string{}}
 	if a.repoDir == "" {
 		return out
 	}
@@ -139,16 +138,6 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		}
 		for path := range out.Definitions {
 			sort.SliceStable(out.Definitions[path], func(i, j int) bool { return out.Definitions[path][i].Line < out.Definitions[path][j].Line })
-		}
-		for _, f := range facts {
-			if isRepositoryTestFile(filepath.Base(f.Path)) {
-				continue
-			}
-			references := map[string]int{}
-			for _, ref := range f.References {
-				references[ref.Name]++
-			}
-			out.References[f.Path] = references
 		}
 	}
 
