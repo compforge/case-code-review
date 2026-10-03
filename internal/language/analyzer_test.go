@@ -237,9 +237,9 @@ func TestDetectUsesCodeGraphLanguageSelection(t *testing.T) {
 	}
 }
 
-func TestTreeSitterSignatureIsBoundedAndUTF8Safe(t *testing.T) {
+func TestSignatureDisplayIsBoundedAndUTF8Safe(t *testing.T) {
 	content := "const render = () => " + strings.Repeat("界", 300)
-	got := sourceSignature(content, 0, uint32(len(content)))
+	got := displaySignature(content)
 	if !utf8.ValidString(got) {
 		t.Fatalf("signature is not valid UTF-8: %q", got)
 	}

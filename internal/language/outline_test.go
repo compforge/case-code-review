@@ -45,8 +45,8 @@ func (s *Service) Run() error { return nil }
 }
 interface Request { id: string; }
 `,
-			want:   []string{"- class class Service", "- method run(): void", "- interface interface Request"},
-			reject: []string{"do-not-keep", "- property"},
+			want:   []string{"- class class Service", "- method run(): void", "- interface interface Request", "- field private token: string", "- property id: string"},
+			reject: []string{"do-not-keep"},
 		},
 		{
 			path: "service.py",
@@ -57,7 +57,7 @@ interface Request { id: string; }
     def run(self):
         local = "not-an-attribute"
 `,
-			want:   []string{"- class class Service:", "- function def run(self):"},
+			want:   []string{"- class class Service:", "- method def run(self):"},
 			reject: []string{"do-not-keep", "not-an-attribute", "local", "- attribute"},
 		},
 	}
@@ -182,7 +182,7 @@ func TestPythonFileOutlineDoesNotRequirePythonRuntime(t *testing.T) {
 	}
 	got := outline.Render()
 	if !strings.Contains(got, "- class class Service:") ||
-		!strings.Contains(got, "  - function def run(self):") {
+		!strings.Contains(got, "  - method def run(self):") {
 		t.Fatalf("gotreesitter Python outline missing:\n%s", got)
 	}
 }
@@ -224,5 +224,35 @@ func TestMarkdownFileOutlineKeepsHeadingsOnly(t *testing.T) {
 		if strings.Contains(got, reject) {
 			t.Errorf("Markdown outline retained %q:\n%s", reject, got)
 		}
+	}
+}
+
+func TestGraphSignatureKeepsCompositeParameterTypes(t *testing.T) {
+	source := Source{Path: "contract.go", Content: "package p\nfunc Work(\n input map[string]struct{ Value int },\n) error { return nil }\n"}
+	analyzer := NewAnalyzer("")
+	analysis, err := analyzer.Analyze(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, ok := analysis.DefinitionByID("contract.go::Work")
+	if !ok || definition.Signature != "func Work( input map[string]struct{ Value int }, ) error" {
+		t.Fatal(definition)
+	}
+	outline, err := analyzer.FileOutline(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rendered := outline.Render(); !strings.Contains(rendered, definition.Signature) || strings.Contains(rendered, "return nil") {
+		t.Fatal(rendered)
+	}
+}
+
+func TestGraphOutlineRetainsNestedFunctions(t *testing.T) {
+	outline, err := NewAnalyzer("").FileOutline(context.Background(), Source{Path: "nested.ts", Content: "function outer() { function inner() {} }"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := outline.Render(); !strings.Contains(got, "  - function function inner()") {
+		t.Fatal(got)
 	}
 }

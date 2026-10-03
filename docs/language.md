@@ -3,13 +3,12 @@
 ## 理念与职责
 
 CCR 通过独立项目 [CodeGraph](https://github.com/compforge/codegraph) 分析源码：输入 Document，
-构造 symbol graph，并保留 outline 等可复用的解析产物。语法解析、声明抽取、名称绑定、关系与置信度
+构造 symbol graph，outline 从已发布图的节点与关系派生。语法解析、声明抽取、名称绑定、关系与置信度
 由 CodeGraph 持有；CCR 的 Language 层提供输入材料，并把结果适配为评审使用的身份、范围和展示。
 
 ```text
 review snapshot ─▶ Document ─▶ CodeGraph
                                   ├─ declarations / imports / references
-                                  ├─ outline
                                   └─ symbol graph + diagnostics
                                            ↓
                              Language 的身份与展示适配
@@ -49,13 +48,13 @@ CodeGraph 的节点 ID 标识图内声明；CCR 的 `path::qualifiedName` 是连
 同名或重载声明在 CCR 身份下无法唯一对应时，关系消费保持保守。
 
 CodeGraph location 的行号从 1 开始、字节结束位置不包含在范围中；Language 转换为 CCR 的闭区间
-行范围。图不提供完整签名时，CCR 从已确定的声明范围截取有界的首行作为导航标题，不把它当作类型签名。
+行范围。声明头读取 Node.Signature；CCR 只压缩展示空白、限制长度。缺少签名时以符号名展示。
 
 ### Outline 是导航投影
 
-FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 消费 CodeGraph 返回的
-`gotreesitter.OutlineSymbol`，不运行自己的 outline query。Go 的 type/field 展示可同时消费 CodeGraph
-已提供的声明；JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
+FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 只消费 Graph 的 Node 与 Relation：
+encloses 提供词法结构，contains 可将 Go 方法归到同文件接收者类型下，节点提供签名和位置。
+JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
 
 Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败时，保留已有的源码/路径回退；初始 outline
 尝试仍记录成功、失败与预算淘汰原因。展示层的取舍不会反向改变 symbol graph。

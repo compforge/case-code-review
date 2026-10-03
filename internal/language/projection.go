@@ -8,22 +8,15 @@ import (
 
 // projectAnalysis preserves CCR's symbol join keys and review presentation;
 // declarations, imports and reference evidence belong to CodeGraph.
-func projectAnalysis(source Source, facts cg.Facts) Analysis {
+func projectAnalysis(source Source, facts cg.Facts, graph *cg.Graph) Analysis {
 	a := Analysis{Language: Language(facts.Language), Quality: QualitySyntax, References: map[string]int{}}
 	if len(facts.Issues) > 0 {
 		a.Quality = QualityPartial
 	}
-	for _, d := range facts.Declarations {
-		kind, ok := reviewKind(d.Kind)
-		if !ok {
-			continue
+	for _, node := range graph.Find(facts.Path, "", "") {
+		if definition, ok := reviewDefinition(source.Path, node); ok {
+			a.Definitions = append(a.Definitions, definition)
 		}
-		name := d.QualifiedName
-		owner := ""
-		if i := strings.LastIndex(name, "."); i >= 0 {
-			owner = name[:i]
-		}
-		a.Definitions = append(a.Definitions, Definition{SymbolID: SymbolID(source.Path, "", name), Name: name, Owner: owner, Kind: kind, Span: locationSpan(d.Location), Signature: sourceSignature(source.Content, uint32(d.Location.StartByte), uint32(d.Location.EndByte))})
 	}
 	for _, call := range facts.Calls {
 		// Byte containment avoids assigning a call to a same-line sibling.
@@ -90,9 +83,8 @@ func projectAnalysis(source Source, facts cg.Facts) Analysis {
 		}
 	}
 	decorators(facts.Statements)
-	if symbols, report, err := facts.Outline(); err == nil && !report.Declined() {
-		a.outlineEntries = reviewOutlineEntries(source, facts, symbols)
-	}
+	a.outlineEntries = graphOutlineEntries(graph, facts.Path)
+
 	return a
 }
 
@@ -146,4 +138,16 @@ func expressionName(expr cg.Expression) string {
 		}
 	}
 	return ""
+}
+
+func reviewDefinition(path string, node cg.Node) (Definition, bool) {
+	kind, ok := reviewKind(node.Kind)
+	if !ok || node.Location == nil {
+		return Definition{}, false
+	}
+	owner := ""
+	if i := strings.LastIndex(node.QualifiedName, "."); i >= 0 {
+		owner = node.QualifiedName[:i]
+	}
+	return Definition{SymbolID: SymbolID(path, "", node.QualifiedName), Name: node.QualifiedName, Owner: owner, Kind: kind, Span: locationSpan(*node.Location), Signature: displaySignature(node.Signature)}, true
 }
