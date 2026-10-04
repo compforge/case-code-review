@@ -202,7 +202,7 @@ func TestLLMErrorWritesStructuredFailure(t *testing.T) {
 	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
 	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "file", Type: "file", Paths: []string{"foo.go"}})
 	sh.persist.WriteLLMError(
-		fs, "exec-1", MainTask, 1, "routing timed out",
+		fs, "exec-1", MainTask, 1, "request-1", "routing timed out",
 		&llm.ErrorDetails{
 			Kind: "llm", Phase: "routing", ErrorType: "timeout",
 			Code: "routing_budget_exhausted",
@@ -210,7 +210,6 @@ func TestLLMErrorWritesStructuredFailure(t *testing.T) {
 				"request_phase": "await_response",
 			},
 		},
-		3*time.Minute,
 	)
 	sh.Finalize()
 
@@ -240,7 +239,7 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 	fs := sh.GetOrCreateScope(scope)
 	sh.WriteContextProjected(scope, "exec-1", MainTask, 1, []agentgo.ContextItem{
 		{ContextKey: agentgo.ContextKey{Kind: "file", Identity: "foo.go"}, Representation: "source", Reason: "unit", Ref: "foo.go::F"},
-	})
+	}, "model-1")
 	rec := fs.AppendTaskRecord(MainTask, nil)
 	content := "I will inspect both files."
 	rec.SetResponse(&llm.ChatResponse{
@@ -259,7 +258,7 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 	}, 120*time.Millisecond)
 	rec.AddToolResultWithMetadata(
 		"call-1", "read_files", `{"reads":[{"file_path":"foo.go"}]}`, "File: foo.go", true, 8*time.Millisecond,
-		map[string]any{"cache_status": "hit"},
+		map[string]any{"cache_status": "hit"}, "tool-stage",
 	)
 	sh.Finalize()
 
@@ -271,7 +270,7 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 			initial = record
 		case "llm_response":
 			response = record
-		case "tool_call":
+		case "tool_result":
 			toolCall = record
 		}
 	}
@@ -287,7 +286,7 @@ func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
 	if response == nil || response["reasoning"] != "The paths are independent." || response["stop_reason"] != "tool_calls" {
 		t.Fatalf("response metadata = %+v", response)
 	}
-	if toolCall == nil || toolCall["tool_call_id"] != "call-1" || toolCall["duration_ms"] != float64(8) {
+	if toolCall == nil || toolCall["tool_call_id"] != "call-1" || toolCall["request_id"] != string(rec.StageID) {
 		t.Fatalf("tool metadata = %+v", toolCall)
 	}
 	metadata, ok := toolCall["metadata"].(map[string]any)

@@ -204,22 +204,29 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 `Session → Scope(Unit/Lane) → Execution` 组织：Scope 表示领域工作范围，Execution 表示一次真实
 AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
-每个 Execution 的 `execution_start`、`llm_request`、`llm_response`、`tool_call`、`context_projected`、
-`context_compacted` 和 `execution_end` 共享稳定身份。每条记录的 `elapsed_ms` 以 Session 启动为零点，
-用于并发排序与阶段时延计算；`context_compacted` 记录一次完整上下文改写的原因、提交状态、
-前后 token/消息数以及是否产生 summary checkpoint，不泄漏内部 Compactor 步骤。
-`execution_start` 是真实启动点；`execution_end` 是唯一完成事实，持久化 outcome、reason、turn/tool 统计和耗时；Viewer 不从终态工具、
-assistant 文本或 Unit debrief 反推 loop 是否完成。领域层仍把 Hypothesis、Lane assignment、Assessment
-和 Trial decision 作为 artifact 追加到相应 Scope。AgentGo 在每次模型调用前发出
-`context_projected`，记录实际可见 ContextItem；首次投影是 Initial Context 的 exposure denominator，
-后续投影则反映压缩和工具结果带来的变化。Eval 再从工具轨迹提取 ContextDemand，与首次投影连接，
-而不是把 CCR 专属诊断塞进工具结果。
+Execution 本身是 Session timeline 的 Stage，ID 与 `execution_id` 相同。Stage 保存源头起止时间，
+最终 fields 保存 outcome、reason 和 turn/tool 统计；只有这份完成事实决定 loop 的执行结论。
+`llm_request` / `llm_response` / `llm_error`、`tool_result`、`context_projected` 和 `context_compacted`
+是引用 Stage 的内容记录，不再重复存执行边界和耗时。响应按请求 Stage ID 关联；工具结果还携带
+`request_id` 和 `tool_call_id`，不能按返回顺序或工具名配对。
+
+`seq` 是 Session 追加顺序，`elapsed_ms` 是落盘时间，真实执行区间由 Stage 的源头时间决定。
+领域层仍把 Hypothesis、Lane assignment、Assessment、Trial decision 和 Finding 作为内容追加，并引用
+产生它们的阶段。`context_projected` 记录实际可见 ContextItem；首次投影是 Initial Context 的 exposure
+分母，后续投影反映压缩和工具结果带来的变化。`context_compacted` 记录改写原因、提交状态和前后规模，
+不泄漏内部 Compactor 步骤。Eval 从工具轨迹提取 ContextDemand，与首次投影连接。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化发生在
 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。
 
 Session 仍是本地执行记录，不替代 Forge 上的持久评论、代码仓或业务事实源。跨 CI revision 的
 prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然存在。
+
+Harness 将 AgentGo 的 turn、context preparation、model attempt、retry wait、tool queue 与 invocation
+事件投影为 Session timeline 的阶段。Middleware 只传播 stage 身份，时间来自 Event.Timestamp；内部
+summary 和普通模型调用共享执行路径。Harness 的 Execution 边界覆盖 Loop 前的准备与 Loop 后的收尾，
+其最终 outcome 写入 Execution Stage。只收到开始事件时保留未完成子阶段，不以 Execution 返回补造
+子阶段成功；观测缺口也不能覆盖已知的 Execution 业务结论。Session timeline 的所有权、增量协议和消费者分工见[整轮时间线](observability.md#整轮时间线)。
 
 ### 4.2 HTML Viewer 是诊断投影
 

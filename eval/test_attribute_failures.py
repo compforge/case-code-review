@@ -13,6 +13,14 @@ from attribute_failures import (
 )
 
 
+def execution_stage(fields: dict) -> dict:
+    return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
+        "id": fields["scope_id"], "revision": 2, "name": "execution", "parent_id": "operation:run",
+        "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
+        "status": "failed", "fields": fields,
+    }]}}
+
+
 def issue() -> dict:
     return {"id": "known-1", "path": "a.go", "line": 12}
 
@@ -98,13 +106,12 @@ class AttributeFailuresTest(unittest.TestCase):
     def test_attributes_interrupted_unit_to_execution(self):
         records = [
             {"type": "session_start"},
-            {
-                "type": "execution_end",
+            execution_stage({
                 "kind": "unit",
                 "scope_id": "unit-a",
                 "paths": ["a.go"],
                 "outcome": "truncated",
-            },
+            }),
         ]
         result = attribute_issue(issue(), records)
         self.assertEqual(result["stage"], EXECUTION)
@@ -126,12 +133,11 @@ class AttributeFailuresTest(unittest.TestCase):
                 "artifact_kind": "review_lane_assignment",
                 "data": {"hypothesis_id": "h-1", "lane_id": "lane-1"},
             },
-            {
-                "type": "execution_end",
+            execution_stage({
                 "kind": "lane",
                 "scope_id": "hypothesis_review:lane-1",
                 "outcome": "timed_out",
-            },
+            }),
         )
         result = attribute_issue(issue(), records)
         self.assertEqual(result["stage"], EXECUTION)

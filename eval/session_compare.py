@@ -7,6 +7,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
+from session_recording import read_records, execution_facts
 
 
 @dataclass(frozen=True)
@@ -148,49 +149,53 @@ def read_session(path: Path) -> SessionEvidence:
     raw_findings: list[dict] = []
     raw_hypotheses: dict[str, dict] = {}
     seen: set[str] = set()
-    with path.open(encoding="utf-8", errors="replace") as stream:
-        for number, line in enumerate(stream, 1):
-            try:
-                if "\ufffd" in line:
-                    session.gaps.append(f"line {number}: invalid UTF-8 or replacement character")
-                event = json.loads(line)
-                if not isinstance(event, dict):
-                    raise ValueError("record must be an object")
-                uuid = event.get("uuid")
-                if uuid and uuid in seen:
-                    continue
-                if uuid:
-                    seen.add(uuid)
-                kind = event.get("type")
-                if kind == "session_start":
-                    session.start = event
-                elif kind == "session_end":
-                    session.end = event
-                elif kind == "finding":
-                    raw_findings.append(event)
-                elif kind == "debrief":
-                    scope = event.get("scope_id") or f"legacy:{number}"
-                    if scope in session.debriefs:
-                        session.gaps.append(f"duplicate debrief: {scope}")
-                    else:
-                        session.debriefs[scope] = event
-                elif kind == "artifact":
-                    data = event["data"]
-                    artifact = event.get("artifact_kind")
-                    if artifact == "review_input":
-                        session.input = data
-                    elif artifact == "review_unit":
-                        session.targets.extend(Target.read(t, data["unit_id"]) for t in data.get("targets", []) or [])
-                    elif artifact == "review_hypothesis":
-                        raw_hypotheses[data["id"]] = data
-                    elif artifact == "review_assessment":
-                        session.assessments[(data["hypothesis_id"], data["submission_index"], data["lane_id"])] = data
-                    elif artifact == "trial_decision":
-                        session.decisions[data["hypothesis_id"]] = data
-                    elif artifact == "hypothesis_review_execution":
-                        session.executions[data["hypothesis_id"]] = data
-            except (ValueError, TypeError, KeyError, AttributeError) as error:
-                session.gaps.append(f"line {number}: {type(error).__name__}")
+    records, gaps = read_records(path)
+    session.gaps.extend(gaps)
+    for number, event in enumerate(records, 1):
+        try:
+            if not isinstance(event, dict):
+                raise ValueError("record must be an object")
+            uuid = event.get("uuid")
+            if uuid and uuid in seen:
+                continue
+            if uuid:
+                seen.add(uuid)
+            kind = event.get("type")
+            if kind == "session_start":
+                session.start = event
+            elif kind == "session_end":
+                session.end = event
+            elif kind == "finding":
+                raw_findings.append(event)
+            elif kind == "debrief":
+                scope = event.get("scope_id") or f"legacy:{number}"
+                if scope in session.debriefs:
+                    session.gaps.append(f"duplicate debrief: {scope}")
+                else:
+                    session.debriefs[scope] = event
+            elif kind == "artifact":
+                data = event["data"]
+                artifact = event.get("artifact_kind")
+                if artifact == "review_input":
+                    session.input = data
+                elif artifact == "review_unit":
+                    session.targets.extend(Target.read(t, data["unit_id"]) for t in data.get("targets", []) or [])
+                elif artifact == "review_hypothesis":
+                    raw_hypotheses[data["id"]] = data
+                elif artifact == "review_assessment":
+                    session.assessments[(data["hypothesis_id"], data["submission_index"], data["lane_id"])] = data
+                elif artifact == "trial_decision":
+                    session.decisions[data["hypothesis_id"]] = data
+                elif artifact == "hypothesis_review_execution":
+                    session.executions[data["hypothesis_id"]] = data
+        except (ValueError, TypeError, KeyError, AttributeError) as error:
+            session.gaps.append(f"line {number}: {type(error).__name__}")
+    try:
+        facts = execution_facts(records)
+        for hypothesis_id, association in session.executions.items():
+            session.executions[hypothesis_id] = facts.get(association.get("execution_id"), {})
+    except (ValueError, TypeError, KeyError, AttributeError) as error:
+        session.gaps.append(str(error))
     for hid, data in raw_hypotheses.items():
         try:
             session.hypotheses[hid] = Issue.read(data)

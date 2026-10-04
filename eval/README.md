@@ -288,7 +288,7 @@ uv run --project eval/reviewbench python eval/trajectory_judge.py \
 `trajectory_harness` 的通用重复调用/失败重试 Detector，以及 CCR 自己的相邻读取、同轮未批量读取
 和 search 后 read Detector；工具成功率、搜索范围、`read_files` 行覆盖率和 Unit 完成度仍由
 Verifier 按明确契约判定。报告按 `scope_kind` 分开 Review 1 Unit 与 Review 2 Lane：两者都以 Session
-`execution_end.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
+Execution Stage 的终态 `fields.outcome` 作为唯一执行完成信号；Review 1 另计 `hypothesis_yield`，Review 2 另计已接受和
 尚未提交的 Assessment，避免把“自然 clean”误判为未完成，也避免把“产出过结果”误判为完整执行。文件读取额外报告
 tool call 数、批内 range 请求数、占用的模型轮次、批量程度、新增行覆盖率、与初始 File Message 的重合率，以及相邻
 小范围可合并出的理论最少读取数。相邻读取按同一 tool call、同一 inference turn 和跨 turn 分层；跨 turn

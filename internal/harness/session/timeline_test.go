@@ -17,7 +17,7 @@ type waitingTimelineClient struct{ ready chan struct{} }
 
 func (c waitingTimelineClient) CompletionsWithCtx(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
 	recorder, _ := timeline.FromContext(ctx)
-	phase := recorder.Begin("await_response")
+	_, phase := timeline.BeginContext(ctx, recorder, "await_response")
 	if err := recorder.Flush(context.Background()); err != nil {
 		return nil, err
 	}
@@ -89,14 +89,27 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 		t.Fatal("provider did not start")
 	}
 	doc, records := readRequestTimeline(t, path)
-	if doc.Status != timeline.Running || len(doc.Stages) != 1 || doc.Stages[0].Status != timeline.Running {
+	if doc.Status != timeline.Running || len(doc.Stages) != 2 || doc.Stages[0].Status != timeline.Running {
 		t.Fatalf("running facts not persisted: %+v", doc)
 	}
-	for _, event := range records {
-		if event["type"] == "timeline_update" && (event["execution_id"] != "execution-1" || event["scope_id"] != "unit-1" || event["request_no"] != float64(1)) {
-			t.Fatalf("lost identity: %+v", event)
+	var request timeline.Stage
+	for _, stage := range doc.Stages {
+		if stage.Name == "llm.request" {
+			request = stage.Stage
 		}
 	}
+	executionID, _ := timeline.FieldValue[string](request.Fields, "execution_id")
+	scopeID, _ := timeline.FieldValue[string](request.Fields, "scope_id")
+	requestNo, _ := timeline.FieldValue[int](request.Fields, "request_no")
+	if executionID != "execution-1" || scopeID != "unit-1" || requestNo != 1 {
+		t.Fatalf("lost request identity: %+v", request)
+	}
+	for _, stage := range doc.Stages {
+		if stage.Name == "await_response" && stage.ParentID != request.ID {
+			t.Fatal("HTTP phase escaped request")
+		}
+	}
+
 	cancel()
 	select {
 	case err := <-done:
@@ -107,7 +120,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 		t.Fatal("request did not stop")
 	}
 	doc, records = readRequestTimeline(t, path)
-	if doc.Status != timeline.Canceled || doc.Stages[0].Status != timeline.Canceled {
+	if doc.Status != timeline.Running || doc.Stages[0].Status != timeline.Canceled {
 		t.Fatalf("terminal facts lost after cancellation: %+v", doc)
 	}
 	errorPersisted := false
@@ -118,6 +131,11 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	}
 	if !errorPersisted {
 		t.Fatal("terminal timeline did not flush the LLM error")
+	}
+	history.Finalize(context.Canceled)
+	doc, _ = readRequestTimeline(t, path)
+	if doc.Status != timeline.Canceled {
+		t.Fatalf("run result = %s", doc.Status)
 	}
 	if record.Error == "" {
 		t.Fatal("missing LLM error")

@@ -9,6 +9,20 @@
 <body>
 <nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Session {{.Session.Summary.SessionID | truncate 12}}</nav>
 <main>
+{{if .Session.RecordingWarning}}<p class="error">{{.Session.RecordingWarning}}</p>{{end}}
+{{if .Session.Timeline}}
+<details open><summary><strong>Run Timeline · {{.Session.Timeline.Status}}</strong></summary>
+<p>Offsets share the run start. Parent and parallel durations overlap; do not add them. Running stages have no recorded terminal result.</p>
+{{if .Session.Timeline.FinishedAt.IsZero}}<p>Run terminal state is not recorded (incomplete).</p>{{end}}
+{{if .Session.Timeline.Error}}<p>{{.Session.Timeline.Error}}</p>{{end}}
+<table class="timeline-table"><thead><tr><th>Stage</th><th>Start offset</th><th>Duration</th><th>Result</th><th>Identity / details</th></tr></thead><tbody>
+{{range timelineRows .Session.Timeline}}<tr>
+<td><code>{{.Label}}</code>{{if .MissingParent}} (parent not recorded){{end}}</td>
+<td>{{formatMillis .OffsetMS}}</td><td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</td>
+<td>{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</td><td>{{range $key,$value := .Fields}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
+</tr>{{end}}</tbody></table></details>
+{{end}}
+
 {{$review1 := reviewsOfStage .Session.Reviews "review1"}}
 {{$review2 := reviewsOfStage .Session.Reviews "review2"}}
 {{$scans := reviewsOfStage .Session.Reviews "scan"}}

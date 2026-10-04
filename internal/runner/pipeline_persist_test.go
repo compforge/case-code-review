@@ -46,19 +46,17 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 	}
 	reviewUnit.AddAssessment(assessment)
 
-	runner.persistFormedUnits([]unit.Unit{reviewUnit}, 12*time.Millisecond)
-	runner.persistUnitReviewStart(reviewUnit)
+	runner.persistFormedUnits(history.Context(context.Background()), []unit.Unit{reviewUnit})
 	runner.persistHypothesis(hypothesis)
 	runner.persistLaneAssignment(input, "lane_assigned")
-	runner.persistHypothesisReviewStart(input)
-	runner.persistAssessmentSubmission(input, hypothesisreview.AssessmentSubmission{Assessment: assessment})
+	runner.persistAssessmentSubmission(history.Context(context.Background()), input, hypothesisreview.AssessmentSubmission{Assessment: assessment})
 	runner.persistHypothesisReviewExecution(input, harness.ExecutionResult{
 		ID: "exec-2", State: harness.OutcomeCompleted, Duration: 25 * time.Millisecond,
 	})
-	runner.persistTrialDecisions([]unit.Unit{reviewUnit}, []unit.TrialDecision{{
+	runner.persistTrialDecisions(history.Context(context.Background()), []unit.Unit{reviewUnit}, []unit.TrialDecision{{
 		HypothesisID: "h-1", Passed: true, Delivered: true,
 	}})
-	runner.persistFindings([]finding.Finding{{HypothesisID: "h-1", Path: "a.go", Content: "bug", Side: "old", OldPath: "old.go", ExistingCode: "old"}}, []unit.Unit{reviewUnit})
+	runner.persistFindings(context.Background(), []finding.Finding{{HypothesisID: "h-1", Path: "a.go", Content: "bug", Side: "old", OldPath: "old.go", ExistingCode: "old"}}, []unit.Unit{reviewUnit})
 	history.Finalize()
 
 	paths, err := filepath.Glob(filepath.Join(home, ".casecodereview", "test-sessions", "*", history.SessionID+".jsonl"))
@@ -108,25 +106,21 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 		}
 	}
 
-	if formation := artifacts["unit_formation"]; formation["duration_ms"] != float64(12) || formation["unit_count"] != float64(1) {
+	if formation := artifacts["unit_formation"]; formation["unit_count"] != float64(1) {
 		t.Fatalf("unit_formation = %+v", formation)
 	}
 	if unitData := artifacts["review_unit"]; unitData["unit_id"] != reviewUnit.ID || unitData["insertions"] != float64(3) {
 		t.Fatalf("review_unit = %+v", unitData)
 	}
-	if reviewStart := artifacts["unit_review_start"]; reviewStart["unit_id"] != reviewUnit.ID || reviewStart["scope"] != string(unit.ScopeFunc) {
-		t.Fatalf("unit_review_start = %+v", reviewStart)
-	}
+
 	if assignment := artifacts["review_lane_assignment"]; assignment["origin_unit"] != reviewUnit.ID || assignment["hypothesis_id"] != "h-1" {
 		t.Fatalf("review_lane_assignment = %+v", assignment)
 	}
-	if reviewStart := artifacts["hypothesis_review_start"]; reviewStart["origin_unit"] != reviewUnit.ID || reviewStart["lane_id"] != "l-1" {
-		t.Fatalf("hypothesis_review_start = %+v", reviewStart)
-	}
+
 	if submitted := artifacts["review_assessment"]; submitted["origin_unit"] != reviewUnit.ID || submitted["lane_id"] != "l-1" {
 		t.Fatalf("review_assessment = %+v", submitted)
 	}
-	if execution := artifacts["hypothesis_review_execution"]; execution["execution_id"] != "exec-2" || execution["duration_ms"] != float64(25) {
+	if execution := artifacts["hypothesis_review_execution"]; execution["execution_id"] != "exec-2" || execution["duration_ms"] != nil {
 		t.Fatalf("hypothesis_review_execution = %+v", execution)
 	}
 	if decision := artifacts["trial_decision"]; decision["origin_unit"] != reviewUnit.ID || decision["assessment_submission_index"] != float64(1) {
@@ -162,7 +156,7 @@ func TestDeliverFindingPublishesPreparedFindingOnce(t *testing.T) {
 	reviewUnit.AddHypothesis(hypothesis)
 	reviewUnit.AddAssessment(hypothesisreview.Assessment{HypothesisID: "h-1", LaneID: "lane-1"})
 
-	got := runner.deliverFinding(finding.Finding{HypothesisID: "h-1", Path: "a.go", Content: "bug"}, []unit.Unit{reviewUnit})
+	got := runner.deliverFinding(context.Background(), finding.Finding{HypothesisID: "h-1", Path: "a.go", Content: "bug"}, []unit.Unit{reviewUnit})
 	if got.Fingerprint == "" {
 		t.Fatal("delivered finding lacks fingerprint")
 	}

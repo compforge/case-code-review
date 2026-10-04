@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime/debug"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/slicesx"
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
@@ -246,9 +248,6 @@ func New(args Args) *Runner {
 		ref = args.Commit
 	}
 	analyzer := language.NewSnapshotAnalyzer(args.RepoDir, ref, args.GitRunner)
-	analyzer.OnRepositoryBuilt = func(index *language.RepositoryIndex) {
-		args.Session.WriteArtifact("codegraph", codeGraphArtifact(index))
-	}
 
 	kinds := spec.KindGates{
 		Spec: f.Enabled(feature.SpecCase),
@@ -286,6 +285,7 @@ func New(args Args) *Runner {
 		costlyFinders: costlyFinders, // graph caller/callee clues with per-Unit limits
 		analyzer:      analyzer,
 	}
+	a.observeGraphBuild(context.Background(), analyzer, "after")
 	if args.MaxTokensBudget > 0 {
 		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
 			a.recordWarning("token_budget_reached", "", fmt.Sprintf("reported token usage %d reached budget %d; no new model calls", used, limit))
@@ -329,7 +329,16 @@ func New(args Args) *Runner {
 }
 
 // Run executes the full review pipeline: parse diffs -> plan per file -> LLM tool-loop -> collect comments.
-func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
+func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr error) {
+	ctx = a.session.Context(ctx)
+	defer func() {
+		if p := recover(); p != nil {
+			a.session.Finalize(fmt.Errorf("panic: %v", p))
+			panic(p)
+		}
+		a.session.Finalize(errors.Join(runErr, ctx.Err()))
+	}()
+	a.observeGraphBuild(ctx, a.analyzer, "after")
 	// Mirror this run's [ccr] warnings/errors into a log next to the session's
 	// JSONL transcript, so they survive a detached/background run where the
 	// terminal's stderr is gone. Best-effort: a failure here never blocks review.
@@ -343,12 +352,17 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	// Step 1: Parse diffs
-	ctx, diffSpan := telemetry.StartSpan(ctx, "diff.parse")
-	if err := a.loadChanges(ctx); err != nil {
+	diffCtx, finishDiff := session.Begin(ctx, "diff.load")
+	diffCtx, diffSpan := telemetry.StartSpan(diffCtx, "diff.parse")
+	if err := a.loadChanges(diffCtx); err != nil {
+		finishDiff(err)
 		diffSpan.End()
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
-	a.prepareFileSelections(ctx)
+	finishDiff(nil)
+	selectionCtx, finishSelection := session.Begin(ctx, "project.select")
+	a.prepareFileSelections(selectionCtx)
+	finishSelection(nil)
 	telemetry.SetAttr(diffSpan, "files.changed", len(a.changes))
 	telemetry.SetAttr(diffSpan, "lines.inserted", int64(a.totalInsertions))
 	telemetry.SetAttr(diffSpan, "lines.deleted", int64(a.totalDeletions))
@@ -373,7 +387,6 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 			fmt.Fprintln(console.Out(), "[ccr] No supported files changed. Skipping review.")
 		}
 		telemetry.Event(ctx, "no.files.changed")
-		a.session.Finalize()
 		return []finding.Finding{}, nil
 	}
 
@@ -391,7 +404,6 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	if len(comments) > 0 {
 		telemetry.RecordCommentsGenerated(ctx, int64(len(comments)))
 	}
-	a.session.Finalize()
 	return comments, err
 }
 
@@ -531,12 +543,13 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	// Locate selected edits in their source versions, then form bounded Units.
 	// The fan-out machinery below is granularity-agnostic.
-	formationStarted := time.Now()
+	formationCtx, finishFormation := session.Begin(ctx, "unit.formation")
 	units, err := a.splitUnits()
+	finishFormation(err)
 	if err != nil {
 		return nil, err
 	}
-	a.persistFormedUnits(units, time.Since(formationStarted))
+	a.persistFormedUnits(formationCtx, units)
 	unitByID := make(map[string]unit.Unit, len(units))
 	changeStatus := make(map[string]string, len(a.changes))
 	for _, changed := range a.changes {
@@ -569,11 +582,13 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				Review:       a.reviewHypothesis,
 				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
+					trialCtx, finishTrial := session.Begin(ctx, "trial.assess", timeline.Field{Key: "unit_id", Value: reviewUnit.ID}, timeline.Field{Key: "hypothesis_id", Value: hypothesis.ID})
+					defer finishTrial(nil)
 					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
-						a.persistTrialDecisions([]unit.Unit{reviewUnit}, []unit.TrialDecision{decision})
+						a.persistTrialDecisions(trialCtx, []unit.Unit{reviewUnit}, []unit.TrialDecision{decision})
 						if decision.Delivered {
-							a.deliverFinding(delivered, []unit.Unit{reviewUnit})
+							a.deliverFinding(trialCtx, delivered, []unit.Unit{reviewUnit})
 						}
 					}
 				},
@@ -601,7 +616,9 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var dispatched int64
 	for i := range units {
+		_, finishQueue := session.Begin(ctx, "unit.queue", timeline.Field{Key: "unit_id", Value: units[i].ID})
 		sem <- struct{}{} // acquire before rechecking usage from completed peers
+		finishQueue(ctx.Err())
 		if a.budget != nil && a.budget.Check() != nil {
 			<-sem
 			for _, skipped := range units[i:] {
@@ -686,6 +703,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		return nil, fmt.Errorf("all %d unit review(s) failed — inspect unit warnings for the cause", dispatched)
 	}
 
+	ctx, finishTrial := session.Begin(ctx, "trial.finalize")
+	defer finishTrial(nil)
 	var comments []finding.Finding
 	var decisions []unit.TrialDecision
 	persistAllDecisions := true
@@ -698,9 +717,9 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		}
 		if deliveryGate != nil {
 			finalFindings, finalDecisions := deliveryGate.Finalize(units)
-			a.persistTrialDecisions(units, finalDecisions)
+			a.persistTrialDecisions(ctx, units, finalDecisions)
 			for _, comment := range finalFindings {
-				a.deliverFinding(comment, units)
+				a.deliverFinding(ctx, comment, units)
 			}
 			comments, decisions = deliveryGate.Results()
 			persistAllDecisions = false
@@ -712,7 +731,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		comments, decisions = trial.Bypass(units)
 	}
 	if persistAllDecisions {
-		a.persistTrialDecisions(units, decisions)
+		a.persistTrialDecisions(ctx, units, decisions)
 	}
 	if deliveryGate != nil {
 		// Incremental delivery already performed the externally visible side
@@ -720,7 +739,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		comments = a.prepareFindings(comments)
 	} else {
 		for i := range comments {
-			comments[i] = a.deliverFinding(comments[i], units)
+			comments[i] = a.deliverFinding(ctx, comments[i], units)
 		}
 	}
 	a.persistBoardPosts()
@@ -737,10 +756,10 @@ func (a *Runner) prepareFindings(comments []finding.Finding) []finding.Finding {
 // deliverFinding establishes the public Finding boundary once. Keeping these
 // steps together prevents a streaming consumer from seeing a less complete
 // identity than the final JSON/session transcript.
-func (a *Runner) deliverFinding(comment finding.Finding, units []unit.Unit) finding.Finding {
+func (a *Runner) deliverFinding(ctx context.Context, comment finding.Finding, units []unit.Unit) finding.Finding {
 	prepared := a.prepareFindings([]finding.Finding{comment})[0]
 	a.args.Findings.Add(prepared)
-	a.persistFindings([]finding.Finding{prepared}, units)
+	a.persistFindings(ctx, []finding.Finding{prepared}, units)
 	if a.args.OnFinding != nil {
 		// The callback may immediately join this Finding to Session timing.
 		a.session.Flush()
@@ -783,7 +802,7 @@ func tagFingerprints(comments []finding.Finding) {
 // persistFindings writes the run's delivered post-Trial findings into the
 // session transcript, so eval never mistakes investigative tool calls for
 // public results.
-func (a *Runner) persistFindings(comments []finding.Finding, units []unit.Unit) {
+func (a *Runner) persistFindings(ctx context.Context, comments []finding.Finding, units []unit.Unit) {
 	originByHypothesis := make(map[string]string)
 	laneByHypothesis := make(map[string]string)
 	for _, reviewUnit := range units {
@@ -819,20 +838,18 @@ func (a *Runner) persistFindings(comments []finding.Finding, units []unit.Unit) 
 			Severity:     c.Severity,
 		})
 	}
-	a.session.WriteFindings(findings)
+	a.session.WriteFindingsContext(ctx, findings)
 }
 
-// persistFormedUnits records the shared Formation cost once, then the Unit roots
-// before any Review 1 goroutine is dispatched. Each review_unit record's
-// elapsed_ms is its ready point; the batch duration is never copied onto Units
-// where a consumer might incorrectly sum it as per-Unit cost.
-func (a *Runner) persistFormedUnits(units []unit.Unit, formationDuration time.Duration) {
-	a.session.WriteArtifact("unit_formation", map[string]any{
-		"duration_ms": formationDuration.Milliseconds(),
-		"unit_count":  len(units),
+// persistFormedUnits links formed Unit roots to the shared Formation stage
+// before Review 1 dispatch. Formation cost belongs to that stage, never to each
+// Unit where a consumer might sum the same interval multiple times.
+func (a *Runner) persistFormedUnits(ctx context.Context, units []unit.Unit) {
+	a.session.WriteArtifactContext(ctx, "unit_formation", map[string]any{
+		"unit_count": len(units),
 	})
 	for _, reviewUnit := range units {
-		a.session.WriteArtifact("review_unit", map[string]any{
+		a.session.WriteArtifactContext(ctx, "review_unit", map[string]any{
 			"unit_id":         reviewUnit.ID,
 			"scope":           reviewUnit.Scope,
 			"formed":          reviewUnit.Formed,
@@ -847,12 +864,6 @@ func (a *Runner) persistFormedUnits(units []unit.Unit, formationDuration time.Du
 			"deletions":       reviewUnit.Deletions(),
 		})
 	}
-}
-
-func (a *Runner) persistUnitReviewStart(reviewUnit unit.Unit) {
-	a.session.WriteArtifact("unit_review_start", map[string]any{
-		"unit_id": reviewUnit.ID, "scope": reviewUnit.Scope, "paths": reviewUnit.Paths(),
-	})
 }
 
 func (a *Runner) persistHypotheses(hypotheses []unitreview.Hypothesis) {
@@ -871,7 +882,8 @@ func unitHypotheses(units []unit.Unit) []unitreview.Hypothesis {
 }
 
 func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
-	a.session.WriteArtifact("review_hypothesis", map[string]any{
+	ctx := timeline.NewStageContext(a.session.Context(context.Background()), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID("review.unit/" + h.OriginUnit)})
+	a.session.WriteArtifactContext(ctx, "review_hypothesis", map[string]any{
 		"id": h.ID, "fingerprint": h.Fingerprint, "origin_unit": h.OriginUnit, "path": h.Path,
 		"content": h.Content, "existing_code": h.ExistingCode,
 		"side": h.Side, "old_path": h.OldPath,
@@ -884,6 +896,7 @@ func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
 }
 
 func (a *Runner) persistTrialDecisions(
+	ctx context.Context,
 	units []unit.Unit,
 	decisions []unit.TrialDecision,
 ) {
@@ -912,7 +925,7 @@ func (a *Runner) persistTrialDecisions(
 			artifact["lane_id"] = assessment.LaneID
 			artifact["assessment_submission_index"] = assessment.SubmissionIndex
 		}
-		a.session.WriteArtifact("trial_decision", artifact)
+		a.session.WriteArtifactContext(ctx, "trial_decision", artifact)
 	}
 }
 
@@ -1092,7 +1105,15 @@ func relationClueLabel(c unit.Clue) string {
 }
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
-func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
+func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) {
+	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithFields(timeline.Field{Key: "unit_id", Value: u.ID}))
+	defer func() {
+		if p := recover(); p != nil {
+			finish(fmt.Errorf("panic: %v", p))
+			panic(p)
+		}
+		finish(errors.Join(reviewErr, ctx.Err()))
+	}()
 	if u.BudgetExceeded {
 		reason := "indivisible target exceeds diff-token budget; review incomplete"
 		a.recordWarning("unit_incomplete", u.Path(), reason)
@@ -1115,7 +1136,6 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) error {
 	// under one scope keyed by Unit.ID, so the viewer groups them together and
 	// a cross-file Unit stays whole.
 	sc := session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
-	a.persistUnitReviewStart(u)
 
 	// Build change-files list excluding this Unit's own file(s) — all member paths
 	// for a cross-file call-chain Unit, the single path otherwise.

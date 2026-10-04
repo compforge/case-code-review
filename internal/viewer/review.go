@@ -64,7 +64,7 @@ type ReviewScope struct {
 }
 
 // ReviewExecution is one actual Harness/AgentGo run. Its terminal state comes
-// only from execution_end; Scope and tool names never imply completion.
+// only from the completed execution Stage; Scope and tool names never imply completion.
 type ReviewExecution struct {
 	ID           string
 	TaskType     TaskType

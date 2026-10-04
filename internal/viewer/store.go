@@ -237,14 +237,16 @@ func peekSession(path string) (SessionSummary, error) {
 
 // ViewSession holds fully parsed records for one session.
 type ViewSession struct {
-	Summary       SessionSummary
-	Diagnostics   SessionDiagnostics
-	TokenUsage    TokenUsageSummary
-	Compaction    CompactionSummary
-	ToolUsage     []ToolUsage
-	SystemPrompts []SystemPrompt // distinct system prompts, deduped by content
-	Artifacts     []ReviewArtifact
-	Reviews       []*ReviewScope
+	RecordingWarning string
+	Timeline         *timeline.Document
+	Summary          SessionSummary
+	Diagnostics      SessionDiagnostics
+	TokenUsage       TokenUsageSummary
+	Compaction       CompactionSummary
+	ToolUsage        []ToolUsage
+	SystemPrompts    []SystemPrompt // distinct system prompts, deduped by content
+	Artifacts        []ReviewArtifact
+	Reviews          []*ReviewScope
 }
 
 // CompactionSummary aggregates explicit ContextManager rewrites. Counting
@@ -313,6 +315,7 @@ const (
 
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
+	StageID     string
 	Timeline    *timeline.Document
 	ExecutionID string
 	Sequence    int
@@ -352,6 +355,7 @@ type ContextCompaction struct {
 
 // ToolCallInfo summarizes a single tool call.
 type ToolCallInfo struct {
+	StageID    string
 	ID         string
 	Name       string
 	Arguments  string
@@ -413,30 +417,21 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		return scope, execution
 	}
 
-	cardsFor := func(scope *ReviewScope, execution *ReviewExecution, taskType TaskType) []*TaskCard {
-		if execution != nil {
-			return execution.Tasks[taskType]
-		}
-		if scope != nil {
-			return scope.Tasks[taskType]
-		}
-		return nil
+	transcript, err := session.ReadTranscript(f)
+	if err != nil {
+		return nil, err
 	}
-
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
+	if transcript.Timeline.ID != "" {
+		vs.Timeline = &transcript.Timeline
+	}
+	stages := transcript.StageIndex()
+	requests := map[string]*TaskCard{}
 	latestAssessment := make(map[string]int)
 	signals := newSessionSignals()
 	hasCurrentSchema := false
 	sequence := 0
-	for scanner.Scan() {
+	for _, rec := range transcript.Records {
 		sequence++
-		var rec map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &rec); err != nil {
-			return nil, fmt.Errorf("decode session record: %w", err)
-		}
 		typ, _ := rec["type"].(string)
 
 		switch typ {
@@ -473,9 +468,10 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				continue
 			}
 			card := &TaskCard{
-				ExecutionID: stringValue(rec["execution_id"]), Request: request,
+				StageID: stringValue(rec["stage_id"]), ExecutionID: stringValue(rec["execution_id"]), Request: request,
 				TaskType: taskType, RequestNo: intValue(rec["request_no"]), Sequence: sequence,
 			}
+			requests[card.StageID] = card
 			scope.Tasks[taskType] = append(scope.Tasks[taskType], card)
 			scope.Calls = append(scope.Calls, card)
 			if execution != nil {
@@ -483,33 +479,20 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				execution.Calls = append(execution.Calls, card)
 			}
 
-		case "timeline_update":
-			scope, execution := executionFor(rec)
-			for _, card := range cardsFor(scope, execution, TaskType(stringValue(rec["taskType"]))) {
-				if card.RequestNo != intValue(rec["request_no"]) {
-					continue
-				}
-				if err := card.applyTimeline(rec); err != nil {
-					return nil, fmt.Errorf("load request timeline: %w", err)
-				}
-				break
-			}
-
 		case "llm_response":
-			taskType := TaskType(stringValue(rec["taskType"]))
-			scope, execution := executionFor(rec)
-			cards := cardsFor(scope, execution, taskType)
-			if len(cards) == 0 {
+			card := requests[stringValue(rec["stage_id"])]
+			if card == nil {
 				continue
 			}
-			card := cards[len(cards)-1]
 			if card.HasResponse {
 				continue
 			}
 			card.ResponseContent = stringValue(rec["content"])
 			card.Reasoning = stringValue(rec["reasoning"])
 			card.StopReason = stringValue(rec["stop_reason"])
-			card.DurationMs = int64(intValue(rec["duration_ms"]))
+			if stage, ok := stages[timeline.StageID(card.StageID)]; ok && !stage.FinishedAt.IsZero() {
+				card.DurationMs = stage.Duration(time.Time{}).Milliseconds()
+			}
 			card.Model = stringValue(rec["model"])
 			card.Error = stringValue(rec["error"])
 			card.HasResponse = true
@@ -533,26 +516,21 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "llm_error":
-			taskType := TaskType(stringValue(rec["taskType"]))
-			scope, execution := executionFor(rec)
-			cards := cardsFor(scope, execution, taskType)
-			if len(cards) == 0 {
+			card := requests[stringValue(rec["stage_id"])]
+			if card == nil {
 				continue
 			}
-			card := cards[len(cards)-1]
 			card.Error = stringValue(rec["error"])
-			card.DurationMs = int64(intValue(rec["duration_ms"]))
+			if stage, ok := stages[timeline.StageID(card.StageID)]; ok && !stage.FinishedAt.IsZero() {
+				card.DurationMs = stage.Duration(time.Time{}).Milliseconds()
+			}
 
-		case "tool_call":
-			taskType := TaskType(stringValue(rec["taskType"]))
-			scope, execution := executionFor(rec)
-			cards := cardsFor(scope, execution, taskType)
-			if len(cards) == 0 {
+		case "tool_result":
+			card := requests[stringValue(rec["request_id"])]
+			if card == nil {
 				continue
 			}
-			card := cards[len(cards)-1]
 			toolCallID := stringValue(rec["tool_call_id"])
-			toolName := stringValue(rec["tool_name"])
 			match := -1
 			for i := range card.ToolCalls {
 				call := &card.ToolCalls[i]
@@ -560,15 +538,15 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 					match = i
 					break
 				}
-				if toolCallID == "" && match == -1 && !call.HasResult && call.Name == toolName {
-					match = i
-				}
 			}
 			if match >= 0 {
 				card.ToolCalls[match].Result = stringValue(rec["result"])
 				card.ToolCalls[match].Ok = boolValue(rec["ok"], true)
 				card.ToolCalls[match].HasResult = true
-				card.ToolCalls[match].DurationMs = int64(intValue(rec["duration_ms"]))
+				card.ToolCalls[match].StageID = stringValue(rec["stage_id"])
+				if stage, ok := stages[timeline.StageID(card.ToolCalls[match].StageID)]; ok && !stage.FinishedAt.IsZero() {
+					card.ToolCalls[match].DurationMs = stage.Duration(time.Time{}).Milliseconds()
+				}
 			}
 
 		case "context_compacted":
@@ -588,18 +566,6 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			if compaction.Summarized {
 				vs.Compaction.Summarized++
 			}
-
-		case "execution_end":
-			_, execution := executionFor(rec)
-			if execution == nil {
-				return nil, fmt.Errorf("execution_end missing scope or execution_id")
-			}
-			execution.TaskType = TaskType(stringValue(rec["taskType"]))
-			execution.Outcome = stringValue(rec["outcome"])
-			execution.Reason = stringValue(rec["reason"])
-			execution.DurationMs = int64(intValue(rec["duration_ms"]))
-			execution.ToolCalls = intValue(rec["tool_calls"])
-			execution.ToolErrors = intValue(rec["tool_errors"])
 
 		case "artifact":
 			kind := stringValue(rec["artifact_kind"])
@@ -659,13 +625,26 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			signals.findings++
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+
+	for _, fact := range transcript.ExecutionFacts() {
+		_, execution := executionFor(fact)
+		if execution == nil {
+			continue
+		}
+		execution.TaskType = TaskType(stringValue(fact["taskType"]))
+		execution.Outcome, execution.Reason = stringValue(fact["outcome"]), stringValue(fact["reason"])
+		execution.DurationMs = int64(intValue(fact["duration_ms"]))
+		execution.ToolCalls, execution.ToolErrors = intValue(fact["tool_calls"]), intValue(fact["tool_errors"])
+	}
+	if transcript.TruncatedTail {
+		vs.RecordingWarning = "The final JSONL record is truncated; only the intact prefix is available."
+		signals.hasSessionEnd = false
 	}
 	if !hasCurrentSchema {
 		return nil, fmt.Errorf("session_start with schema %d is required", session.SchemaVersion)
 	}
 
+	vs.projectRequestTimelines()
 	laneScopes := make(map[string]*ReviewScope)
 	for _, scope := range vs.Reviews {
 		if scope.Kind == "lane" {

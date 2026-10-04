@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/go-stdx/timeline"
 
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -54,14 +55,14 @@ func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionReco
 	}
 }
 
-func (r *executionRecorder) recordCompaction(compaction session.ContextCompaction) {
+func (r *executionRecorder) recordCompaction(compaction session.ContextCompaction, stageID timeline.StageID) {
 	if r.session == nil {
 		return
 	}
-	r.session.WriteContextCompaction(r.scope, r.executionID, r.taskType, compaction)
+	r.session.WriteContextCompaction(r.scope, r.executionID, r.taskType, compaction, stageID)
 }
 
-func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem) {
+func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem, stageID timeline.StageID) {
 	if r.session == nil {
 		return
 	}
@@ -69,16 +70,7 @@ func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem) 
 	r.projectionNo++
 	projectionNo := r.projectionNo
 	r.mu.Unlock()
-	r.session.WriteContextProjected(r.scope, r.executionID, r.taskType, projectionNo, items)
-}
-
-func (r *executionRecorder) startExecution() {
-	if r.session == nil {
-		return
-	}
-	r.session.WriteExecutionStart(r.scope, session.ExecutionStart{
-		ID: r.executionID, TaskType: r.taskType,
-	})
+	r.session.WriteContextProjected(r.scope, r.executionID, r.taskType, projectionNo, items, stageID)
 }
 
 func (r *executionRecorder) beginModel(
@@ -92,18 +84,6 @@ func (r *executionRecorder) beginModel(
 		taskType = session.MainTask
 	}
 	return r.session.GetOrCreateScope(r.scope).AppendExecutionTaskRecord(r.executionID, taskType, messages)
-}
-
-func (r *executionRecorder) finishExecution(taskType session.TaskType, result ExecutionResult, duration time.Duration) {
-	if r.session == nil {
-		return
-	}
-	r.session.WriteExecutionEnd(r.scope, session.ExecutionEnd{
-		ID: r.executionID, TaskType: taskType,
-		Outcome: result.State, Reason: result.Reason,
-		Turns: result.Turns, ToolCalls: result.ToolCalls, ToolErrors: result.ToolErrors,
-		Duration: duration,
-	})
 }
 
 func (r *executionRecorder) finishModel(
@@ -177,7 +157,7 @@ func (r *executionRecorder) finishToolExecution(id string, duration time.Duratio
 	}
 }
 
-func (r *executionRecorder) finishTool(id, name string, result []byte, isError bool) {
+func (r *executionRecorder) finishTool(id, name string, result []byte, isError bool, stageID timeline.StageID) {
 	r.mu.Lock()
 	calls := r.calls[id]
 	if len(calls) == 0 {
@@ -195,7 +175,7 @@ func (r *executionRecorder) finishTool(id, name string, result []byte, isError b
 	if call.record == nil {
 		return
 	}
-	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration, nil)
+	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration, nil, stageID)
 }
 
 func toolResultText(raw []byte) string {

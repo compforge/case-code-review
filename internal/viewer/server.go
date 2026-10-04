@@ -98,6 +98,7 @@ func formatTime(t time.Time) string {
 func parseTemplate(name string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"formatDuration": formatDuration,
+		"timelineRows":   timelineRows,
 		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },
 		"formatInt":      formatInt,
 		"formatRatio": func(value, total int) string {

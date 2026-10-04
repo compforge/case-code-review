@@ -17,15 +17,16 @@ var ErrUnsupported = errors.New("unsupported source language")
 // Analyzer adapts CodeGraph's document analysis to CCR's review views.
 // One bounded extraction cache is shared by navigation and the repository graph.
 type Analyzer struct {
-	// OnRepositoryBuilt observes the one published analysis result. Set before use.
-	OnRepositoryBuilt func(*RepositoryIndex)
-	ref               string
-	git               *gitcmd.Runner
-	repoDir           string
-	extractor         *cg.Extractor
-	repositoryOnce    sync.Once
-	repository        *RepositoryIndex
-	documents         map[string]string // captured changed documents, configured before publication
+	// ObserveRepositoryBuild brackets the one graph build. Set before use; the
+	// returned observer receives its published result.
+	ObserveRepositoryBuild func() func(*RepositoryIndex)
+	ref                    string
+	git                    *gitcmd.Runner
+	repoDir                string
+	extractor              *cg.Extractor
+	repositoryOnce         sync.Once
+	repository             *RepositoryIndex
+	documents              map[string]string // captured changed documents, configured before publication
 }
 
 func NewAnalyzer(repoDir string) *Analyzer {

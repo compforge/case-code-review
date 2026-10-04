@@ -7,7 +7,6 @@ package main
 // wall time on small MRs — this is the first place to look when a review feels slow.
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,12 +15,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/viewer"
 )
 
 // statsEvent is the lean read-side of the session JSONL records (persist.go writes
 // them as maps; only the fields stats aggregates over are decoded).
 type statsEvent struct {
+	StageID    string  `json:"stage_id"`
 	Type       string  `json:"type"`
 	Timestamp  string  `json:"timestamp"`
 	DurationMS float64 `json:"duration_ms"`
@@ -49,23 +51,25 @@ type chainStat struct {
 }
 
 type sessionStats struct {
-	File      string               `json:"file"`
-	Repo      string               `json:"repo,omitempty"`
-	Branch    string               `json:"branch,omitempty"`
-	WallSec   float64              `json:"wall_sec"`
-	LLMCalls  int                  `json:"llm_calls"`
-	LLMErrors int                  `json:"llm_errors"`
-	LLMSumSec float64              `json:"llm_sum_sec"`
-	P50Sec    float64              `json:"llm_p50_sec"`
-	P90Sec    float64              `json:"llm_p90_sec"`
-	MaxSec    float64              `json:"llm_max_sec"`
-	Models    map[string]int       `json:"models,omitempty"`
-	TaskTypes map[string]int       `json:"task_types,omitempty"`
-	Tools     map[string]*toolStat `json:"tools,omitempty"`
-	Scopes    int                  `json:"scopes"`
-	RoundsP50 int                  `json:"rounds_p50"`
-	RoundsMax int                  `json:"rounds_max"`
-	Chains    []chainStat          `json:"slowest_chains,omitempty"`
+	RecordingIncomplete bool                 `json:"recording_incomplete,omitempty"`
+	UnmeasuredCalls     int                  `json:"unmeasured_calls,omitempty"`
+	File                string               `json:"file"`
+	Repo                string               `json:"repo,omitempty"`
+	Branch              string               `json:"branch,omitempty"`
+	WallSec             float64              `json:"wall_sec"`
+	LLMCalls            int                  `json:"llm_calls"`
+	LLMErrors           int                  `json:"llm_errors"`
+	LLMSumSec           float64              `json:"llm_sum_sec"`
+	P50Sec              float64              `json:"llm_p50_sec"`
+	P90Sec              float64              `json:"llm_p90_sec"`
+	MaxSec              float64              `json:"llm_max_sec"`
+	Models              map[string]int       `json:"models,omitempty"`
+	TaskTypes           map[string]int       `json:"task_types,omitempty"`
+	Tools               map[string]*toolStat `json:"tools,omitempty"`
+	Scopes              int                  `json:"scopes"`
+	RoundsP50           int                  `json:"rounds_p50"`
+	RoundsMax           int                  `json:"rounds_max"`
+	Chains              []chainStat          `json:"slowest_chains,omitempty"`
 }
 
 func runStats(args []string) error {
@@ -180,18 +184,25 @@ func analyzeSession(path string) (*sessionStats, error) {
 	chainLabel := map[string]string{}
 	rounds := map[string]int{}
 
-	// Session lines carry full prompts/responses and can run to megabytes —
-	// a default bufio.Scanner token limit would truncate the read.
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
+	transcript, err := session.ReadTranscript(f)
+	if err != nil {
+		return nil, err
+	}
+	st.RecordingIncomplete = transcript.TruncatedTail
+	stages := transcript.StageIndex()
+	for _, record := range transcript.Records {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return nil, err
 		}
 		var e statsEvent
-		if err := json.Unmarshal(line, &e); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		stage, hasTiming := stages[timeline.StageID(e.StageID)]
+		hasTiming = hasTiming && !stage.FinishedAt.IsZero()
+		if hasTiming {
+			e.DurationMS = float64(stage.Duration(time.Time{}).Milliseconds())
 		}
 		if t, err := time.Parse(time.RFC3339, e.Timestamp); err == nil {
 			if tsMin.IsZero() || t.Before(tsMin) {
@@ -208,10 +219,15 @@ func analyzeSession(path string) (*sessionStats, error) {
 			st.TaskTypes[e.TaskType]++
 			rounds[e.ScopeID]++
 		case "llm_response":
+			st.LLMCalls++
+			st.Models[e.Model]++
+			if !hasTiming {
+				st.UnmeasuredCalls++
+				continue
+			}
 			d := e.DurationMS / 1000
 			llmDurs = append(llmDurs, d)
 			st.LLMSumSec += d
-			st.Models[e.Model]++
 			chainSec[e.ScopeID] += d
 			chainCalls[e.ScopeID]++
 			if e.FilePath != "" {
@@ -219,7 +235,7 @@ func analyzeSession(path string) (*sessionStats, error) {
 			}
 		case "llm_error":
 			st.LLMErrors++
-		case "tool_call":
+		case "tool_result":
 			ts := st.Tools[e.ToolName]
 			if ts == nil {
 				ts = &toolStat{}
@@ -232,14 +248,13 @@ func analyzeSession(path string) (*sessionStats, error) {
 			}
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
-	}
 
 	if !tsMin.IsZero() {
 		st.WallSec = tsMax.Sub(tsMin).Seconds()
 	}
-	st.LLMCalls = len(llmDurs)
+	if !transcript.Timeline.StartedAt.IsZero() && !transcript.Timeline.FinishedAt.IsZero() {
+		st.WallSec = transcript.Timeline.FinishedAt.Sub(transcript.Timeline.StartedAt).Seconds()
+	}
 	sort.Float64s(llmDurs)
 	pick := func(q float64) float64 {
 		if len(llmDurs) == 0 {
@@ -274,6 +289,9 @@ func analyzeSession(path string) (*sessionStats, error) {
 }
 
 func printStats(st *sessionStats) {
+	if st.RecordingIncomplete || st.UnmeasuredCalls > 0 {
+		fmt.Printf("Recording: truncated_tail=%t, calls_without_end_time=%d\n", st.RecordingIncomplete, st.UnmeasuredCalls)
+	}
 	fmt.Printf("== %s\n", st.File)
 	if st.Repo != "" {
 		fmt.Printf("   repo %s  branch %s\n", st.Repo, st.Branch)

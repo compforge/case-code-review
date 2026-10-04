@@ -3,6 +3,7 @@ package scan
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -204,14 +205,24 @@ func (a *Runner) recordWarning(warningType, file, message string) {
 
 // Run executes the full-scan pipeline: enumerate → filter → token-filter →
 // dispatch one subtask per file → collect comments.
-func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
+func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr error) {
+	ctx = a.session.Context(ctx)
+	defer func() {
+		if p := recover(); p != nil {
+			a.session.Finalize(fmt.Errorf("panic: %v", p))
+			panic(p)
+		}
+		a.session.Finalize(errors.Join(runErr, ctx.Err()))
+	}()
 	if len(a.args.Template.MainTask.Messages) == 0 {
 		return nil, fmt.Errorf("scan template MAIN_TASK is missing or empty")
 	}
 
-	ctx, scanSpan := telemetry.StartSpan(ctx, "scan.enumerate")
+	scanCtx, finishEnumeration := session.Begin(ctx, "scan.enumerate")
+	scanCtx, scanSpan := telemetry.StartSpan(scanCtx, "scan.enumerate")
 	provider := NewProvider(a.args.RepoDir, a.args.Paths, a.args.GitRunner, a.args.MaxFileSizeBytes)
-	items, err := provider.Enumerate(ctx)
+	items, err := provider.Enumerate(scanCtx)
+	finishEnumeration(err)
 	if err != nil {
 		scanSpan.End()
 		return nil, fmt.Errorf("enumerate files: %w", err)
@@ -234,7 +245,6 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	if reviewable == 0 {
 		fmt.Fprintln(console.Out(), "[ccr] No reviewable files. Skipping scan.")
 		telemetry.Event(ctx, "scan.no.files")
-		a.session.Finalize()
 		return []finding.Finding{}, nil
 	}
 
@@ -265,7 +275,6 @@ func (a *Runner) Run(ctx context.Context) ([]finding.Finding, error) {
 	// Project-level summary runs after all batches; never blocks return.
 	a.maybeRunProjectSummary(ctx, comments)
 
-	a.session.Finalize()
 	return comments, err
 }
 

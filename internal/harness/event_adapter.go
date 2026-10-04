@@ -12,7 +12,7 @@ import (
 func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event) {
 	if event.Type == agentgo.EventContextProjected {
 		if recorder != nil {
-			recorder.recordContextProjected(event.ContextItems)
+			recorder.recordContextProjected(event.ContextItems, executionEventStage(recorder.executionID, "model", event))
 		}
 		return
 	}
@@ -24,7 +24,7 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 			Summarized: event.Compaction.Summarized,
 		}
 		if recorder != nil {
-			recorder.recordCompaction(*compaction)
+			recorder.recordCompaction(*compaction, executionEventStage(recorder.executionID, "context", event))
 		}
 		if sink != nil {
 			sink.OnExecutionEvent(ExecutionEvent{Type: EventContextCompacted, Compaction: compaction})

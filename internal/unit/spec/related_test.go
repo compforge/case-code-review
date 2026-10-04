@@ -432,7 +432,10 @@ func TestUsedContractsFollowChangedCoordinates(t *testing.T) {
 
 func TestRelatedFinderDisabledDoesNotBuildGraph(t *testing.T) {
 	analyzer := language.NewAnalyzer(t.TempDir())
-	analyzer.OnRepositoryBuilt = func(*language.RepositoryIndex) { t.Fatal("disabled clue kinds built graph") }
+	analyzer.ObserveRepositoryBuild = func() func(*language.RepositoryIndex) {
+		t.Fatal("disabled clue kinds built graph")
+		return nil
+	}
 	if got := NewRelatedFinder(Catalog{}, analyzer, KindGates{}).Find(unit.UnitOf(unit.Fragment{Path: "a.py"})); len(got) != 0 {
 		t.Fatal(got)
 	}

@@ -28,49 +28,45 @@ duration 不能直接相加成 Run 的 wall-clock time；Lane 排队也不是模
 
 ## 1. Session JSONL：共同事实源
 
-Session JSONL 是可观测性的基础。Harness recorder 在执行过程中追加事件，记录实际发生的行为，而不是
-模板渲染前的推测或运行结束后的摘要。它采用一个最小层级：
+Session JSONL 是持久执行事实，timeline 是其中的执行结构，不是另一份旁路计时日志。
+Stage 记录一次动作的身份、父子关系、源头时间、状态；内容记录保存请求、响应和结果，并引用产生它的 Stage。
 
 ```text
-Session
-  └─ Scope                    # Unit、Review 2 Lane 或 scan file
-       ├─ Execution           # 一次真实 AgentGo loop
-       │    ├─ execution_start
-       │    ├─ llm_request / llm_response
-       │    ├─ tool_call
-       │    ├─ context_projected
-       │    ├─ context_compacted
-       │    └─ execution_end  # 唯一终态事实
-       └─ Artifact            # Unit、Hypothesis、Lane、Assessment、Trial decision
+Session JSONL
+  ├─ session_start / session_end     # 输入身份、配置与最终汇总
+  ├─ timeline_update                # 原生 Operation / Stage 状态增量
+  │    └─ execution → model.attempt → llm.request
+  │                 → tool.execution → tool.invoke
+  └─ 内容记录 ── stage_id ──▶ Stage
+       ├─ llm_request / llm_response / llm_error
+       ├─ tool_result / context_projected / context_compacted
+       └─ artifact / finding
 ```
 
-Scope 是领域工作范围，不等于一次模型循环：一个 Unit 目前通常只有一个 Execution，一个 Lane 可以随
-Hypothesis 到达而连续拥有多个 Execution。每个 Execution 有稳定 `execution_id`；它的模型、工具和终态
-记录共享该身份。`execution_start` 给出真实启动点，只有 `execution_end` 决定该 Execution 是 completed、
-truncated、timed out 还是 failed；Viewer 不再从第一条 model request、`task_done`、最后一条 assistant
-文本或 Scope debrief 猜测起止状态。
+Scope 是领域工作范围，一个 Lane 可以包含多次 Execution；Execution 是一次真实 AgentGo loop，
+其 `execution_id` 同时是对应 Stage 的 ID。Execution Stage 的最终 fields 持有 outcome、reason、
+turn/tool 统计，Stage 本身持有起止时间。不存在另一套 `execution_start` / `execution_end` 完成事实；
+Viewer、export 和 eval 都不从最后一条 assistant 文本、终态工具或 Scope debrief 猜测 loop 是否完成。
 
-每条记录还带有从 `session_start` 单调递增的 `elapsed_ms`。RFC3339 `timestamp` 方便人阅读，
-`elapsed_ms` 才用于并发事件排序和阶段时延计算，避免秒级时间戳丢失短阶段，也避免把多个并发
-Execution 的 duration 直接相加。
+所有记录共用写入入口：`uuid` 标识记录，`seq` 表示追加顺序，`timestamp` / `elapsed_ms` 表示落盘时间。
+追加相邻不代表父子关系，不写 `parentUuid`；执行父子关系只来自 Stage 的 `parent_id`。
+`timeline_id` / `stage_id` 连接内容与执行，模型响应引用请求 Stage，工具结果还通过 `request_id` 和
+`tool_call_id` 连接发起它的模型请求与调用。并发返回不依赖相邻记录、工具名或返回顺序配对。
+Stage 可能在内容记录之后刷新落盘，读取时先合并原生 Update，再按 ID 连接。
 
-稳定事实包括：
+请求、工具、Execution 和 Formation 的耗时从对应 Stage 推导，不在内容记录中再存一份计时。
+`session_end` 和 debrief 保留领域汇总：前者的 duration 来自 Operation，后者的 duration 是模型调用耗时之和，
+不代表 Unit 的墙钟区间。Unit/Hypothesis/Assessment/Trial/Finding 保留业务身份和内容，通过 Stage 引用
+连接产生它们的工作；`hypothesis_review_execution` 只保存 Hypothesis 与 Execution 的关联，不复制完成结论。
 
-- run/scope、review snapshot、工具版本、feature、模型和业务身份；
-- 每个 Execution 的任务类型，以及每轮实际发送的 prompt、模型 response/reasoning、stop reason 和 usage；
-- tool call 参数、结果、耗时、成功状态及其所属 Execution；
-- 每次模型调用前实际可见的 ContextItem；首次 `context_projected` 作为 Initial Context exposure；
-- 每次 context compaction 的原因、提交状态、前后 token/消息数与 summary checkpoint 状态；
-- 累计 token 预算首次耗尽时的 `token_budget` artifact（已用量、上限）及停止原因；本地预算拒绝
-  使用 `policy/admission` 错误详情，不累加 provider 失败计数；
-- `execution_start` / `execution_end` 中的起点、outcome、reason、turn/tool 统计和总耗时；
-- `unit_formation` 的共享 Formation 成本、`review_unit` 的形成结果与 diff 规模，以及
-  `unit_review_start` 到 Unit debrief 的 Review 1 边界；
-- Hypothesis、Lane assignment、Review 2 start/Execution、Assessment、Trial decision 与 Finding 之间可 join
-  的 `unit_id`、`hypothesis_id`、`lane_id`、`execution_id`。
+事实还包括实际发送的 prompt、response/reasoning、stop reason、usage、工具参数及结果、每次模型调用前
+可见的 ContextItem，以及 context compaction 的原因、提交状态和前后规模。模型预算拒绝使用
+`policy/admission` 错误详情，不累加 provider 失败计数。首次 context projection 是 Initial Context exposure，
+并不由模型请求快照反推。
 
-追加式记录使异常退出或预算耗尽的运行仍可分析；Assessment 等中间结论也不会因为后续步骤未完成而
-整体丢失。Viewer 和 eval 都应从这份事实投影，不各自解释 AgentGo 内部对象或维护另一套执行记录。
+Go 消费方共用 Session reader：合并原生 timeline revisions，接受完整前缀后的截断末行并显式标记缺口；
+完整行损坏则报错。写入失败会报告并停止继续追加，避免其后的记录看似连续。Python eval 同样检查输入完整性，
+零值结束时间表示未结束，缺少结束事实不能当成零耗时或成功；损坏数据不参与完整覆盖判定。
 
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
@@ -89,17 +85,47 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 `eval/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
 比较结果是实验观测，不代替人工真值标签；使用方式及匹配限制见 `eval/README.md`。
 
-### 请求时间线
+### 整轮时间线
 
-每个实际模型请求使用 `go-stdx/timeline` 记录请求、路由、模型尝试、HTTP 请求及连接、写出、
-等待首字节和读取响应的阶段。Session recorder 将原生 Update 增量写入同一 JSONL，并携带
-Scope、Execution、task type 与 request number；Viewer 和 ATIF export 使用 timeline 的合并规则
-恢复阶段事实。阶段开始与转换即时刷新到文件，使没有收到响应的请求仍留下最后已观察到的阶段。
+Session 拥有一条 `go-stdx/timeline`：从创建 Session 到 Runner 收尾，diff 加载、项目选择、CodeGraph
+构建、Unit formation、Unit 等待与 Review 1、Lane 等待与 Review 2、Trial 以及辅助模型请求都向其贡献
+阶段。Runner 拥有评审阶段；Harness 拥有 Execution 和 AgentGo 事件适配；模型客户端拥有路由、fallback
+与 HTTP 阶段。子阶段只开始和结束自己的工作，Session 唯一负责整轮 Start / Finish。
 
-请求结果由调用方决定：一次模型尝试失败后 fallback 成功，请求仍然成功。HTTP 回调只表达客户端
-观察到的进度；等待首字节不能直接解释为服务端排队。并行或嵌套阶段的耗时不能相加作为请求总耗时。
-超时沿用 timeline 的取消状态，CCR 的结构化错误 code 区分调用方截止时间与路由预算耗尽。
-缺少结束记录时保留运行中事实，实际终态未知；进程退出码或信号需要由外部启动器观察。
+```text
+Session timeline
+  ├─ diff.load / project.select / codegraph.build / unit.formation
+  ├─ unit.queue → review.unit → execution → turn
+  │                              ├─ context.project / context.recover_overflow
+  │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
+  │                              ├─ retry.wait
+  │                              └─ tool.queue → tool.execution → tool.invoke
+  ├─ lane.queue → review.hypothesis → execution → turn …
+  └─ trial.assess / trial.finalize
+```
+
+图中箭头表达流转，实际父子关系由 stage ID 决定。Review 2 可在 Review 1 尚未结束时启动；两个 Review
+阶段和多个 Unit 可以重叠，不存在为了绘图而新增的全局阶段屏障。CodeGraph 在第一次真正构建时记录，
+后续查询复用同一图，不把缓存命中再算成构图。
+
+每次阶段转换将原生 `timeline.Update` 增量写入 Session JSONL。Update 属于整轮 Session；Unit、Lane、
+Hypothesis、CCR Execution 和请求身份保存在对应 stage fields。AgentGo 的逻辑执行 ID 以 CCR Execution
+为命名空间，物理尝试另带 Attempt，因此并发 loop 即使发出同名 tool call 也不碰撞。Middleware 把 stage
+身份传入真实调用，Event 以源头 Timestamp 记录开始和结束；消费者处理事件的延迟不算作模型或工具耗时。
+
+JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
+原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为
+整轮 wall-clock time；HTTP 等待首字节也不能直接解释为服务端排队。
+
+请求结果由请求调用方决定：fallback 成功可使请求成功，同时保留失败的 provider attempt。Session
+终态表示 Runner 是否正常返回，不替代领域 coverage、Execution outcome 或 Trial 结论。缺失结束事实的
+stage 保留 running，Viewer 明确显示 incomplete；即使整轮已返回，也不补造子阶段成功。取消后尽力刷新
+已经收到的事实；AgentGo 取消时未投递的事件和进程异常退出造成的缺口不能推断成成功。
+
+Viewer 的 Run Timeline 展示共享起点、层级、重叠和终态，请求卡片只投影同一 document 的请求子树。
+ATIF export 将完整原生 document 放在根 trajectory 的 `extra.timeline`，不按请求复制多份记录。
+每个 Execution 单独投影为 subagent trajectory，并保留所属 scope，避免同一 Lane 的多次 loop 相互覆盖。
+Session schema 变更时同步 recorder、Viewer、export 和 fixture；历史文件需要分析时使用离线迁移。
 
 ### 流式交付不是 Session tail
 

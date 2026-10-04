@@ -9,8 +9,10 @@ DIST_DIR    := ./dist
 INSTALL_DIR ?= $(HOME)/.local/bin
 TEST_FILES  ?=
 
-# Go tests compile at package scope, so focused test files select their packages.
-TEST_PACKAGES ?= $(if $(strip $(TEST_FILES)),$(sort $(foreach file,$(TEST_FILES),./$(patsubst %/,%,$(dir $(patsubst ./%,%,$(file)))))),./...)
+# Impact selection may include Python eval tests; this target owns only Go.
+# Go tests compile at package scope, so selected Go files select their packages.
+GO_TEST_FILES := $(filter %.go,$(TEST_FILES))
+TEST_PACKAGES ?= $(if $(strip $(TEST_FILES)),$(sort $(foreach file,$(GO_TEST_FILES),./$(patsubst %/,%,$(dir $(patsubst ./%,%,$(file)))))),./...)
 
 # Version info — VERSION is the release source of truth; commits identify the
 # exact build within that release line.
@@ -44,7 +46,11 @@ install: build
 	@echo "installed $(BINARY_NAME) $(VERSION) -> $(INSTALL_DIR)/$(BINARY_NAME)"
 
 test:
+ifneq ($(strip $(TEST_PACKAGES)),)
 	LC_ALL=C $(GO) test -v -race -count=1 $(TEST_PACKAGES)
+else
+	@echo "No Go tests selected."
+endif
 
 clean:
 	rm -rf $(DIST_DIR)

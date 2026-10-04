@@ -4,6 +4,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -51,6 +52,7 @@ type SessionHistory struct {
 	StartTime   time.Time
 	EndTime     time.Time
 	persist     *jsonlWriter
+	timeline    timeline.Timeline
 	Scopes      map[string]*ScopeSession
 	llmFailures int64
 	// diff totals for the session_end record (cost normalization denominators);
@@ -124,6 +126,7 @@ func (s Scope) Path() string {
 
 // TaskRecord captures a single LLM request-response cycle within a file subtask.
 type TaskRecord struct {
+	StageID         timeline.StageID
 	ExecutionID     string
 	Type            TaskType
 	RequestNo       int           // sequential number within this task type
@@ -133,28 +136,6 @@ type TaskRecord struct {
 	Duration        time.Duration
 	Error           string
 	scopeSession    *ScopeSession // back-reference for JSONL persistence
-}
-
-// ExecutionEnd is the terminal runtime fact for one Harness Execution. It is
-// intentionally domain-free: Unit coverage and review judgments stay outside
-// the Session protocol.
-type ExecutionEnd struct {
-	ID         string
-	TaskType   TaskType
-	Outcome    string
-	Reason     string
-	Turns      int
-	ToolCalls  int
-	ToolErrors int
-	Duration   time.Duration
-}
-
-// ExecutionStart identifies the point at which one Harness Execution begins.
-// Together with ExecutionEnd it makes queueing and overlap observable without
-// inferring start time from the first model request.
-type ExecutionStart struct {
-	ID       string
-	TaskType TaskType
 }
 
 // ContextCompaction is one aggregate ContextManager rewrite. It deliberately
@@ -251,6 +232,10 @@ type Finding struct {
 
 // WriteFindings persists the run's delivered findings, one "finding" record each.
 func (sh *SessionHistory) WriteFindings(findings []Finding) {
+	sh.WriteFindingsContext(context.Background(), findings)
+}
+
+func (sh *SessionHistory) WriteFindingsContext(ctx context.Context, findings []Finding) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
@@ -258,7 +243,7 @@ func (sh *SessionHistory) WriteFindings(findings []Finding) {
 		return
 	}
 	for _, f := range findings {
-		p.WriteFinding(f)
+		p.WriteFinding(f, sh.stageRef(ctx).StageID)
 	}
 }
 
@@ -278,60 +263,41 @@ func (sh *SessionHistory) Flush() {
 // Harness session storage its schema. Runner uses this for intermediate review
 // results so eval can inspect or replay stages independently.
 func (sh *SessionHistory) WriteArtifact(kind string, data map[string]any) {
+	sh.WriteArtifactContext(context.Background(), kind, data)
+}
+
+func (sh *SessionHistory) WriteArtifactContext(ctx context.Context, kind string, data map[string]any) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
 	if p == nil || kind == "" {
 		return
 	}
-	p.WriteArtifact(kind, data)
+	p.WriteArtifact(kind, data, sh.stageRef(ctx).StageID)
 }
 
 // WriteContextProjected persists the identifiable context actually exposed to
 // one model call. Projection 1 is the Initial Context denominator; subsequent
 // projections reveal compaction and tool-result changes without interpretation.
-func (sh *SessionHistory) WriteContextProjected(scope Scope, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem) {
+func (sh *SessionHistory) WriteContextProjected(scope Scope, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem, stageID timeline.StageID) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
 	if p == nil || executionID == "" || projectionNo < 1 {
 		return
 	}
-	p.WriteContextProjected(sh.GetOrCreateScope(scope), executionID, taskType, projectionNo, items)
-}
-
-// WriteExecutionEnd persists the authoritative terminal state for one
-// Execution. An Execution belongs to a Scope, but a Lane may own many of them.
-func (sh *SessionHistory) WriteExecutionEnd(scope Scope, end ExecutionEnd) {
-	sh.mu.Lock()
-	p := sh.persist
-	sh.mu.Unlock()
-	if p == nil || end.ID == "" {
-		return
-	}
-	p.WriteExecutionEnd(sh.GetOrCreateScope(scope), end)
-}
-
-// WriteExecutionStart persists the authoritative start of one Execution.
-func (sh *SessionHistory) WriteExecutionStart(scope Scope, start ExecutionStart) {
-	sh.mu.Lock()
-	p := sh.persist
-	sh.mu.Unlock()
-	if p == nil || start.ID == "" {
-		return
-	}
-	p.WriteExecutionStart(sh.GetOrCreateScope(scope), start)
+	p.WriteContextProjected(sh.GetOrCreateScope(scope), executionID, taskType, projectionNo, items, stageID)
 }
 
 // WriteContextCompaction persists one context rewrite in execution order.
-func (sh *SessionHistory) WriteContextCompaction(scope Scope, executionID string, taskType TaskType, compaction ContextCompaction) {
+func (sh *SessionHistory) WriteContextCompaction(scope Scope, executionID string, taskType TaskType, compaction ContextCompaction, stageID timeline.StageID) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
 	if p == nil || executionID == "" {
 		return
 	}
-	p.WriteContextCompaction(sh.GetOrCreateScope(scope), executionID, taskType, compaction)
+	p.WriteContextCompaction(sh.GetOrCreateScope(scope), executionID, taskType, compaction, stageID)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,
@@ -383,6 +349,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 		p.WriteSessionStart(sh.StartTime)
 	}
 
+	sh.startTimeline()
 	return sh
 }
 
@@ -422,8 +389,12 @@ func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
 
 // Finalize marks the session as complete, sets the end time, and persists
 // the final summary record.
-func (sh *SessionHistory) Finalize() {
+func (sh *SessionHistory) Finalize(operationErr ...error) {
 	sh.mu.Lock()
+	if !sh.EndTime.IsZero() {
+		sh.mu.Unlock()
+		return
+	}
 	sh.EndTime = time.Now()
 	p := sh.persist
 	duration := sh.EndTime.Sub(sh.StartTime)
@@ -441,6 +412,11 @@ func (sh *SessionHistory) Finalize() {
 	stats := diffStats{files: sh.diffFiles, insertions: sh.diffInsertions, deletions: sh.diffDeletions}
 	sh.mu.Unlock()
 
+	if sh.timeline != nil {
+		snapshot, err := sh.timeline.Finish(context.Background(), errors.Join(operationErr...))
+		duration = snapshot.Duration()
+		reportTimelineError(err)
+	}
 	if p != nil {
 		p.WriteSessionEnd(duration, filesReviewed, failures, stats)
 	}
@@ -474,6 +450,7 @@ func (ss *ScopeSession) appendTaskRecord(executionID string, taskType TaskType, 
 
 	rec := &TaskRecord{
 		ExecutionID:     executionID,
+		StageID:         timeline.StageID(uuid.V4()),
 		Type:            taskType,
 		RequestNo:       len(ss.TaskRecords[taskType]) + 1,
 		RequestMessages: copyMessages(messages),
@@ -482,7 +459,7 @@ func (ss *ScopeSession) appendTaskRecord(executionID string, taskType TaskType, 
 	ss.TaskRecords[taskType] = append(ss.TaskRecords[taskType], rec)
 
 	if p := ss.session.persist; p != nil {
-		p.WriteLLMRequest(ss, executionID, taskType, rec.RequestNo, copyMessagesForJSON(messages))
+		p.WriteLLMRequest(ss, executionID, taskType, rec.RequestNo, rec.StageID, messages)
 	}
 
 	return rec
@@ -501,24 +478,6 @@ func copyMessages(msgs []llm.Message) []llm.Message {
 		}
 	}
 	return cp
-}
-
-// copyMessagesForJSON produces a JSON-friendly slice for persistence.
-func copyMessagesForJSON(msgs []llm.Message) any {
-	type msg struct {
-		Role       string `json:"role"`
-		Content    any    `json:"content"`
-		ToolCallID string `json:"tool_call_id,omitempty"`
-	}
-	out := make([]msg, 0, len(msgs))
-	for _, m := range msgs {
-		out = append(out, msg{
-			Role:       m.Role,
-			Content:    m.Content,
-			ToolCallID: m.ToolCallID,
-		})
-	}
-	return out
 }
 
 // SetResponse records the LLM response in the most recent TaskRecord of the given type.
@@ -576,7 +535,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 					"arguments": tc.Function.Arguments,
 				})
 			}
-			p.WriteLLMResponse(ss, tr.ExecutionID, tr.Type, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage, duration)
+			p.WriteLLMResponse(ss, tr.ExecutionID, tr.Type, tr.StageID, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage)
 		}
 	}
 }
@@ -590,8 +549,8 @@ func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
 			p.WriteLLMError(
-				ss, tr.ExecutionID, tr.Type, tr.RequestNo,
-				err.Error(), llm.DescribeError(err), duration,
+				ss, tr.ExecutionID, tr.Type, tr.RequestNo, tr.StageID,
+				err.Error(), llm.DescribeError(err),
 			)
 		}
 		if !errors.Is(err, llm.ErrTokenBudget) {
@@ -615,14 +574,14 @@ func (sh *SessionHistory) LLMFailures() int64 {
 }
 
 // AddToolResult appends a tool call result to this task record and writes a
-// tool_call record to the JSONL stream.
+// tool_result record to the JSONL stream.
 func (tr *TaskRecord) AddToolResult(toolName, arguments, result string) {
-	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0, nil)
+	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0, nil, tr.StageID)
 }
 
 // AddToolResultWithMetadata records the stable call identity and execution
 // outcome so concurrent calls to the same tool remain distinguishable.
-func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any) {
+func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any, stageID timeline.StageID) {
 	tr.ToolResults = append(tr.ToolResults, ToolResultRecord{
 		ToolCallID: toolCallID,
 		ToolName:   toolName,
@@ -635,7 +594,16 @@ func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments,
 
 	if ss := tr.scopeSession; ss != nil {
 		if p := ss.session.persist; p != nil {
-			p.WriteToolCall(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, duration, metadata)
+			p.WriteToolResult(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, metadata, stageID, tr.StageID)
 		}
 	}
+}
+
+// A record without a narrower producer belongs to the Session operation.
+func (sh *SessionHistory) stageRef(ctx context.Context) timeline.StageRef {
+	ref, _ := timeline.StageFromContext(ctx)
+	if ref.StageID == "" {
+		ref = timeline.StageRef{TimelineID: sh.SessionID, StageID: timeline.StageID("operation:" + sh.SessionID)}
+	}
+	return ref
 }

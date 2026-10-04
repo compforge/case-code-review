@@ -36,11 +36,7 @@ func (a *Runner) captureGraphs(ctx context.Context) {
 		ref := a.changes[0].BeforeRef
 		a.beforeAnalyzer = language.NewSnapshotAnalyzer(a.args.RepoDir, ref, a.args.GitRunner)
 		a.beforeAnalyzer.SetDocuments(before)
-		if a.session != nil {
-			a.beforeAnalyzer.OnRepositoryBuilt = func(index *language.RepositoryIndex) {
-				a.session.WriteArtifact("codegraph_before", codeGraphArtifact(index))
-			}
-		}
+		a.observeGraphBuild(ctx, a.beforeAnalyzer, "before")
 		// Repository contracts follow their own snapshot. Current catalog entries
 		// must not masquerade as pre-change contracts with the same symbol name.
 		catalog := spec.Catalog{}

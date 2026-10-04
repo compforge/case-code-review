@@ -2,32 +2,83 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/compforge/go-stdx/uuid"
-
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-// Call records a request's incremental timeline and terminal model result.
-// A nil record supports executions that deliberately have no Session recorder.
+// Context binds the Session's single timeline without replacing a stage already
+// carried by this operation. Session owns Start/Finish; nested work owns stages.
+func (sh *SessionHistory) Context(ctx context.Context) context.Context {
+	if sh == nil || sh.timeline == nil {
+		return ctx
+	}
+	return timeline.NewContext(ctx, sh.timeline)
+}
+
+func (sh *SessionHistory) startTimeline() {
+	t, _ := timeline.New(sh.SessionID, timeline.WithStore(&sessionTimelineStore{MemoryStore: timeline.NewMemoryStore(), session: sh}))
+	sh.timeline = t
+	operation := "review"
+	if sh.ReviewMode == ReviewModeFullScan {
+		operation = "scan"
+	}
+	reportTimelineError(t.Start(context.Background(), operation))
+}
+
+// Begin flushes both transitions at the owning boundary. Recording failures
+// remain diagnostics; they do not change the operation's business result.
+func Begin(ctx context.Context, name string, fields ...timeline.Field) (context.Context, func(error)) {
+	return BeginStage(ctx, name, timeline.WithFields(fields...))
+}
+
+func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) (context.Context, func(error)) {
+	t, ok := timeline.FromContext(ctx)
+	if !ok {
+		return ctx, func(error) {}
+	}
+	ctx, stage := timeline.BeginContext(ctx, t, name, opts...)
+	FlushTimeline(ctx)
+	return ctx, func(err error) { stage.End(err); FlushTimeline(ctx) }
+}
+
+func FlushTimeline(ctx context.Context) {
+	if t, ok := timeline.FromContext(ctx); ok {
+		reportTimelineError(t.Flush(context.Background()))
+	}
+}
+
+func reportTimelineError(err error) {
+	if err != nil {
+		fmt.Fprintf(console.Err(), "[ccr timeline] persistence failed: %v\n", err)
+	}
+}
+
+// Call records a request under its execution, or under the Session for auxiliary
+// calls. Routing and HTTP instrumentation inherit this stage and recording store.
 func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request llm.ChatRequest) (*llm.ChatResponse, error) {
 	if tr == nil {
 		return client.CompletionsWithCtx(ctx, request)
 	}
-	store := &requestTimelineStore{MemoryStore: timeline.NewMemoryStore(), record: tr}
-	t, _ := timeline.New(uuid.V4(), timeline.WithStore(store))
-	if err := t.Start(context.Background(), "llm.request"); err != nil {
-		tr.timelineError(err)
+	if tr.scopeSession != nil {
+		ctx = tr.scopeSession.session.Context(ctx)
 	}
-	ctx = timeline.NewContext(ctx, t)
+	fields := []timeline.Field{{Key: "execution_id", Value: tr.ExecutionID}, {Key: "task_type", Value: tr.Type}, {Key: "request_no", Value: tr.RequestNo}}
+	if tr.scopeSession != nil {
+		fields = append(fields, timeline.Field{Key: "scope_id", Value: tr.scopeSession.ID})
+	}
 	started := time.Now()
+	var stage timeline.StageHandle
+	if t, ok := timeline.FromContext(ctx); ok {
+		ctx, stage = timeline.BeginContext(ctx, t, "llm.request", timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithFields(fields...))
+		FlushTimeline(ctx)
+	}
 	response, err := client.CompletionsWithCtx(ctx, request)
-	duration := time.Since(started)
+	finished := time.Now()
+	duration := finished.Sub(started)
 	if err == nil && (response == nil || len(response.Choices) == 0) {
 		err = fmt.Errorf("empty response")
 	}
@@ -36,16 +87,14 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	} else {
 		tr.SetResponse(response, duration)
 	}
-	// The terminal timeline flush also persists the preceding response/error.
-	// Cancellation must not discard the evidence explaining a timed-out call.
-	if _, collectErr := t.Finish(context.Background(), err); collectErr != nil {
-		tr.timelineError(collectErr)
+	// The stage flush includes its preceding response/error, even on cancellation.
+	if stage != nil {
+		stage.End(err, timeline.WithEndTime(finished))
+		FlushTimeline(ctx)
 	}
 	return response, err
 }
 
-// RecordingClient is used where the caller delegates message construction,
-// such as relocation. Recording starts before the provider call, not afterward.
 func (ss *ScopeSession) RecordingClient(client llm.LLMClient, taskType TaskType) llm.LLMClient {
 	return &recordingClient{scope: ss, client: client, taskType: taskType}
 }
@@ -57,51 +106,27 @@ type recordingClient struct {
 }
 
 func (c *recordingClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
-	record := c.scope.AppendTaskRecord(c.taskType, request.Messages)
-	return record.Call(ctx, c.client, request)
+	return c.scope.AppendTaskRecord(c.taskType, request.Messages).Call(ctx, c.client, request)
 }
 
-type requestTimelineStore struct {
+type sessionTimelineStore struct {
 	*timeline.MemoryStore
-	record *TaskRecord
+	session *SessionHistory
 }
 
-func (s *requestTimelineStore) Merge(ctx context.Context, id string, update timeline.Update) error {
+func (s *sessionTimelineStore) Merge(ctx context.Context, id string, update timeline.Update) error {
 	if err := s.MemoryStore.Merge(ctx, id, update); err != nil {
 		return err
 	}
-	ss := s.record.scopeSession
-	if ss != nil && ss.session.persist != nil {
-		return ss.session.persist.writeTimeline(ss, s.record, id, update)
+	if s.session.persist != nil {
+		return s.session.persist.writeTimeline(id, update)
 	}
 	return nil
 }
 
-func (tr *TaskRecord) timelineError(err error) {
-	fmt.Fprintf(console.Err(), "[ccr timeline] execution=%s task=%s request=%d persistence failed: %v\n", tr.ExecutionID, tr.Type, tr.RequestNo, err)
-}
-
-func (jw *jsonlWriter) writeTimeline(ss *ScopeSession, request *TaskRecord, id string, update timeline.Update) error {
+func (jw *jsonlWriter) writeTimeline(id string, update timeline.Update) error {
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
-	uid := uuid.V4()
-	rec := map[string]any{
-		"uuid": uid, "parentUuid": jw.lastUUID, "type": "timeline_update",
-		"sessionId": jw.sessionID, "timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-		"elapsed_ms": jw.elapsedMilliseconds(), "taskType": string(request.Type),
-		"request_no": request.RequestNo, "timeline_id": id, "update": update,
-	}
-	addScopeFields(rec, ss)
-	addExecutionField(rec, request.ExecutionID)
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	if _, err = jw.writer.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	jw.lastUUID = uid
-	// Begin and each transition must survive a process interruption. Buffered
-	// model prompts preceding this event become visible in the same flush.
-	return jw.writer.Flush()
+	_, err := jw.appendLocked(map[string]any{"type": "timeline_update", "timeline_id": id, "update": update})
+	return err
 }

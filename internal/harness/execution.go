@@ -223,7 +223,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	}
 
 	startedAt := time.Now()
-	e.recorder.startExecution()
+	ctx, timing := e.beginTimeline(ctx, startedAt)
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
@@ -234,8 +234,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		BeforeTurn:               e.turns.BeforeTurn,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
-		ModelMiddlewares:         []agentgo.ModelMiddleware{e.modelMiddleware()},
-		ToolMiddlewares:          []agentgo.ToolMiddleware{e.toolMiddleware()},
+		ModelMiddlewares:         []agentgo.ModelMiddleware{timing.model, e.modelMiddleware()},
+		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.toolMiddleware()},
 	}
 
 	history := e.continuationContext()
@@ -248,6 +248,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		config,
 	)
 	for event := range events {
+		timing.observe(event)
 		emitExecutionEvent(e.spec.Events, e.recorder, event)
 		switch event.Type {
 		case agentgo.EventError:
@@ -256,7 +257,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 			}
 		case agentgo.EventToolExecEnd:
 			if event.Tool != tool.TaskDone.Name() {
-				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError)
+				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError, timing.eventStage(event))
 			}
 		case agentgo.EventAgentEnd:
 			e.summary = event.Summary
@@ -265,11 +266,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	result, err := e.finish(ctx)
 	result.ID = e.id
 	result.Duration = time.Since(startedAt)
-	taskType := e.spec.TaskType
-	if taskType == "" {
-		taskType = session.MainTask
-	}
-	e.recorder.finishExecution(taskType, result, result.Duration)
+	timing.finish(result, err)
 	return result, err
 }
 
