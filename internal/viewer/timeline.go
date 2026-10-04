@@ -1,33 +1,11 @@
 package viewer
 
 import (
-	"encoding/json"
 	"sort"
 	"strings"
 
 	"github.com/compforge/go-stdx/timeline"
 )
-
-func (vs *ViewSession) applyTimeline(record map[string]any) error {
-	raw, err := json.Marshal(record["update"])
-	if err != nil {
-		return err
-	}
-	var update timeline.Update
-	if err := json.Unmarshal(raw, &update); err != nil {
-		return err
-	}
-	var current timeline.Document
-	if vs.Timeline != nil {
-		current = *vs.Timeline
-	}
-	document, _, err := timeline.MergeDocument(stringValue(record["timeline_id"]), current, update)
-	if err != nil {
-		return err
-	}
-	vs.Timeline = &document
-	return nil
-}
 
 // Request cards are views of the Session timeline, never independent recordings.
 func (vs *ViewSession) projectRequestTimelines() {
@@ -42,10 +20,7 @@ func (vs *ViewSession) projectRequestTimelines() {
 		if stage.Name != "llm.request" {
 			continue
 		}
-		scopeID, _ := timeline.FieldValue[string](stage.Fields, "scope_id")
-		executionID, _ := timeline.FieldValue[string](stage.Fields, "execution_id")
-		task, _ := timeline.FieldValue[string](stage.Fields, "task_type")
-		request, _ := timeline.FieldValue[int](stage.Fields, "request_no")
+
 		doc := timeline.Document{ID: string(stage.ID), RootStageID: stage.ID, OperationRecord: timeline.OperationRecord{Operation: stage.Name, StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, Status: stage.Status, Error: stage.Error}}
 		var appendChildren func(timeline.StageID)
 		seen := map[timeline.StageID]bool{}
@@ -61,11 +36,8 @@ func (vs *ViewSession) projectRequestTimelines() {
 		}
 		appendChildren(stage.ID)
 		for _, scope := range vs.Reviews {
-			if scope.ID != scopeID {
-				continue
-			}
 			for _, card := range scope.Calls {
-				if card.ExecutionID == executionID && string(card.TaskType) == task && card.RequestNo == request {
+				if card.StageID == string(stage.ID) {
 					card.Timeline = &doc
 				}
 			}

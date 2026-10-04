@@ -2,12 +2,10 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -34,11 +32,15 @@ func (sh *SessionHistory) startTimeline() {
 // Begin flushes both transitions at the owning boundary. Recording failures
 // remain diagnostics; they do not change the operation's business result.
 func Begin(ctx context.Context, name string, fields ...timeline.Field) (context.Context, func(error)) {
+	return BeginStage(ctx, name, timeline.WithFields(fields...))
+}
+
+func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) (context.Context, func(error)) {
 	t, ok := timeline.FromContext(ctx)
 	if !ok {
 		return ctx, func(error) {}
 	}
-	ctx, stage := timeline.BeginContext(ctx, t, name, timeline.WithFields(fields...))
+	ctx, stage := timeline.BeginContext(ctx, t, name, opts...)
 	FlushTimeline(ctx)
 	return ctx, func(err error) { stage.End(err); FlushTimeline(ctx) }
 }
@@ -68,10 +70,15 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	if tr.scopeSession != nil {
 		fields = append(fields, timeline.Field{Key: "scope_id", Value: tr.scopeSession.ID})
 	}
-	ctx, finish := Begin(ctx, "llm.request", fields...)
 	started := time.Now()
+	var stage timeline.StageHandle
+	if t, ok := timeline.FromContext(ctx); ok {
+		ctx, stage = timeline.BeginContext(ctx, t, "llm.request", timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithFields(fields...))
+		FlushTimeline(ctx)
+	}
 	response, err := client.CompletionsWithCtx(ctx, request)
-	duration := time.Since(started)
+	finished := time.Now()
+	duration := finished.Sub(started)
 	if err == nil && (response == nil || len(response.Choices) == 0) {
 		err = fmt.Errorf("empty response")
 	}
@@ -81,7 +88,10 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 		tr.SetResponse(response, duration)
 	}
 	// The stage flush includes its preceding response/error, even on cancellation.
-	finish(err)
+	if stage != nil {
+		stage.End(err, timeline.WithEndTime(finished))
+		FlushTimeline(ctx)
+	}
 	return response, err
 }
 
@@ -117,19 +127,6 @@ func (s *sessionTimelineStore) Merge(ctx context.Context, id string, update time
 func (jw *jsonlWriter) writeTimeline(id string, update timeline.Update) error {
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
-	uid := uuid.V4()
-	rec := map[string]any{
-		"uuid": uid, "parentUuid": jw.lastUUID, "type": "timeline_update",
-		"sessionId": jw.sessionID, "timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-		"elapsed_ms": jw.elapsedMilliseconds(), "timeline_id": id, "update": update,
-	}
-	data, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	if _, err = jw.writer.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	jw.lastUUID = uid
-	return jw.writer.Flush()
+	_, err := jw.appendLocked(map[string]any{"type": "timeline_update", "timeline_id": id, "update": update})
+	return err
 }

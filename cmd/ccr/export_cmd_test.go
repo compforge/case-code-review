@@ -11,15 +11,17 @@ import (
 )
 
 func TestExportSessionATIF(t *testing.T) {
-	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z"}
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z","schema_version":11}
 {"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"},"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"context_projected","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","projection_no":1,"items":[{"kind":"file","identity":"a.go","representation":"source","reason":"unit","ref":"a.go::F"}],"timestamp":"2026-07-02T10:00:00Z"}
-{"type":"llm_request","scope_id":"u1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z"}
-{"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"","reasoning":"The changed file needs one more check.","tool_calls":[{"id":"c1","name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"duration_ms":5000,"timestamp":"2026-07-02T10:00:06Z"}
-{"type":"tool_call","scope_id":"u1","tool_name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"metadata":{"cache_status":"hit"},"timestamp":"2026-07-02T10:00:06Z"}
-{"type":"llm_request","scope_id":"u1","request_no":2,"messages":[{"role":"system","content":"be a reviewer"}],"timestamp":"2026-07-02T10:00:07Z"}
-{"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","content":"looks fine","usage":{"prompt_tokens":200,"completion_tokens":20},"duration_ms":3000,"timestamp":"2026-07-02T10:00:10Z"}
-	{"type":"execution_end","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","taskType":"main_task","outcome":"completed","turns":2,"tool_calls":1,"duration_ms":8000,"timestamp":"2026-07-02T10:00:10Z"}
+{"type":"llm_request","scope_id":"u1","execution_id":"exec-1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z","stage_id":"request-1","timeline_id":"s1"}
+{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:05+00:00","status":"succeeded"}]}}
+{"type":"llm_response","scope_id":"u1","execution_id":"exec-1","filePath":"a.go","model":"m1","content":"","reasoning":"The changed file needs one more check.","tool_calls":[{"id":"c1","name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}"}],"usage":{"prompt_tokens":100,"completion_tokens":10},"timestamp":"2026-07-02T10:00:06Z","stage_id":"request-1","timeline_id":"s1"}
+{"type":"tool_result","scope_id":"u1","execution_id":"exec-1","tool_name":"read_files","arguments":"{\"reads\":[{\"file_path\":\"a.go\"}]}","result":"===== FILE_READ RESULT 1/1 =====\nFile: a.go (Total lines: 1)\nLINE_RANGE: 1-1\n1|package a","ok":true,"metadata":{"cache_status":"hit"},"timestamp":"2026-07-02T10:00:06Z","request_id":"request-1","tool_call_id":"c1","stage_id":"tool-1-c1","timeline_id":"s1"}
+{"type":"llm_request","scope_id":"u1","execution_id":"exec-1","request_no":2,"messages":[{"role":"system","content":"be a reviewer"}],"timestamp":"2026-07-02T10:00:07Z","stage_id":"request-2","timeline_id":"s1"}
+{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:03+00:00","status":"succeeded"}]}}
+{"type":"llm_response","scope_id":"u1","execution_id":"exec-1","filePath":"a.go","model":"m1","content":"looks fine","usage":{"prompt_tokens":200,"completion_tokens":20},"timestamp":"2026-07-02T10:00:10Z","stage_id":"request-2","timeline_id":"s1"}
+	{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"exec-1","parent_id":"operation:s1","name":"execution","started_at":"2026-08-02T00:00:00+00:00","status":"succeeded","fields":{"scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","outcome":"completed","turns":2,"tool_calls":1,"task_type":"main_task"},"finished_at":"2026-08-02T00:00:08+00:00"}]}}
 	{"type":"debrief","scope_id":"u1","filePath":"a.go","kind":"unit","initial_outline_attempts":[{"path":"b.go","language":"go","outcome":"admitted","bytes":42}],"timestamp":"2026-07-02T10:00:10Z"}
 	`
 	f := filepath.Join(t.TempDir(), "s.jsonl")
@@ -48,7 +50,7 @@ func TestExportSessionATIF(t *testing.T) {
 		t.Fatalf("want 1 subagent trajectory, got %d", len(traj.Subagents))
 	}
 	sub := traj.Subagents[0]
-	if sub.TrajectoryID != "u1" || sub.Extra["file_path"] != "a.go" {
+	if sub.TrajectoryID != "exec-1" || sub.Extra["file_path"] != "a.go" {
 		t.Fatalf("sub header: %+v", sub)
 	}
 	initialItems, ok := sub.Extra["initial_context"].([]map[string]any)
@@ -121,8 +123,9 @@ func TestParseRawToolCallShapes(t *testing.T) {
 }
 
 func TestExportSessionPreservesLLMFailure(t *testing.T) {
-	lines := `{"type":"session_start","sessionId":"s1","model":"m1","timestamp":"2026-07-02T10:00:00Z"}
-{"type":"llm_error","scope_id":"u1","error":"routing timed out","duration_ms":180000,"failure":{"kind":"llm","phase":"routing","error_type":"timeout","code":"routing_budget_exhausted","attributes":{"request_phase":"await_response","response_started":false}},"timestamp":"2026-07-02T10:03:00Z"}
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","timestamp":"2026-07-02T10:00:00Z","schema_version":11}
+{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:03:00+00:00","status":"succeeded"}]}}
+{"type":"llm_error","scope_id":"u1","error":"routing timed out","failure":{"kind":"llm","phase":"routing","error_type":"timeout","code":"routing_budget_exhausted","attributes":{"request_phase":"await_response","response_started":false}},"timestamp":"2026-07-02T10:03:00Z","stage_id":"request-2","timeline_id":"s1"}
 `
 	path := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
@@ -145,8 +148,8 @@ func TestExportSessionPreservesLLMFailure(t *testing.T) {
 
 func TestExportSessionKeepsUnfinishedRequestTimeline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	text := `{"type":"session_start","sessionId":"s1"}
-{"type":"llm_request","scope_id":"u1","kind":"unit","execution_id":"e1","taskType":"main_task","request_no":2,"messages":[]}
+	text := `{"type":"session_start","sessionId":"s1","schema_version":11}
+{"type":"llm_request","scope_id":"u1","kind":"unit","execution_id":"e1","taskType":"main_task","request_no":2,"messages":[],"stage_id":"request-3","timeline_id":"s1"}
 {"type":"timeline_update","scope_id":"u1","execution_id":"e1","taskType":"main_task","request_no":2,"timeline_id":"s1","update":{"Operation":{"revision":1,"operation":"review","started_at":"2026-10-01T00:00:00Z","status":"running"},"Stages":[{"revision":1,"id":"wait-1","parent_id":"operation:s1","name":"await_response","started_at":"2026-10-01T00:00:00Z","status":"running"}]}}
 `
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {

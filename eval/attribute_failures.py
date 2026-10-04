@@ -19,6 +19,7 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Iterable
+from session_recording import execution_facts, read_records
 
 
 DELIVERED = "delivered"
@@ -155,7 +156,7 @@ def _matching_units(issue: dict, records: list[dict]) -> list[str]:
     path = _norm_path(issue.get("path"))
     symbol_id = str(issue.get("symbol_id") or "")
     units: set[str] = set()
-    for record in records:
+    for record in [*records, *execution_facts(records).values()]:
         if record.get("kind") != "unit":
             continue
         scope_id = str(record.get("scope_id") or "")
@@ -171,8 +172,11 @@ def _scope_outcomes(records: list[dict], scope_ids: Iterable[str]) -> dict[str, 
         scope_id = str(record.get("scope_id") or "")
         if scope_id not in wanted:
             continue
-        if record.get("type") in {"execution_end", "debrief"}:
+        if record.get("type") == "debrief":
             outcomes[scope_id].append(str(record.get("outcome") or "unknown"))
+    for fact in execution_facts(records).values():
+        if fact.get("scope_id") in wanted:
+            outcomes[fact["scope_id"]].append(str(fact.get("outcome") or "unknown"))
     return dict(outcomes)
 
 
@@ -300,7 +304,7 @@ def attribute_issue(issue: dict, records: list[dict]) -> dict:
     }
     lane_scope_ids = {
         str(record.get("scope_id"))
-        for record in records
+        for record in [*records, *execution_facts(records).values()]
         if record.get("kind") == "lane"
         and (
             str(record.get("scope_id") or "") in lane_ids
@@ -426,7 +430,9 @@ def main() -> int:
     parser.add_argument("--out", type=Path, help="write attribution JSONL here")
     args = parser.parse_args()
 
-    records = read_jsonl(args.session)
+    records, gaps = read_records(args.session)
+    if gaps:
+        parser.error("; ".join(gaps))
     issues = select_expected_issues(read_jsonl(args.expected))
     results = attribute_issues(issues, records)
     if args.out:

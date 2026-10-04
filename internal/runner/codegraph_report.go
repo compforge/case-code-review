@@ -14,7 +14,6 @@ func codeGraphArtifact(index *language.RepositoryIndex) map[string]any {
 	}
 	return map[string]any{
 		"snapshot":           index.Report.Snapshot,
-		"duration_ms":        index.Duration.Milliseconds(),
 		"documents":          len(index.Report.Documents),
 		"parsed_documents":   len(index.Sources),
 		"nodes":              index.Report.Nodes,

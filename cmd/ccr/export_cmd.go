@@ -9,12 +9,13 @@ package main
 // leftovers (durations, tool ok flags, task types) tucked into `extra`.
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 )
 
 const atifSchemaVersion = "ATIF-v1.8"
@@ -85,6 +86,9 @@ type atifFinal struct {
 // exportEvent is the read-side of session records for export — richer than
 // statsEvent (full messages / tool calls / usage), still decode-what-we-need.
 type exportEvent struct {
+	StageID                string           `json:"stage_id"`
+	RequestID              string           `json:"request_id"`
+	ToolCallID             string           `json:"tool_call_id"`
 	TimelineID             string           `json:"timeline_id"`
 	TimelineUpdate         timeline.Update  `json:"update"`
 	Type                   string           `json:"type"`
@@ -207,11 +211,12 @@ func exportSession(path string) (*atifTrajectory, error) {
 		Steps:         []*atifStep{},
 	}
 	var reviewArtifacts []map[string]any
-	// Scope chains in first-seen order; each becomes a subagent trajectory.
+	// Each execution becomes a trajectory; auxiliary calls use their scope.
+	// A Lane may run several independent loops, so its final loop cannot stand
+	// in for the outcomes or context of earlier loops.
 	type chain struct {
 		steps         []*atifStep
-		last          *atifStep // last agent step — tool results attach here
-		pending       []string  // tool_call ids of `last`, consumed positionally
+		requests      map[string]*atifStep
 		extra         map[string]any
 		total         atifFinal
 		stepID        int
@@ -220,12 +225,16 @@ func exportSession(path string) (*atifTrajectory, error) {
 	}
 	chains := map[string]*chain{}
 	var order []string
+	debriefs := map[string]exportEvent{}
 
 	get := func(e exportEvent) *chain {
-		id := e.ScopeID
+		id := e.ExecutionID
+		if id == "" {
+			id = e.ScopeID
+		}
 		c := chains[id]
 		if c == nil {
-			c = &chain{extra: map[string]any{}}
+			c = &chain{extra: map[string]any{"scope_id": e.ScopeID}, requests: map[string]*atifStep{}}
 			if e.FilePath != "" {
 				c.extra["file_path"] = e.FilePath
 			}
@@ -241,18 +250,25 @@ func exportSession(path string) (*atifTrajectory, error) {
 		return c
 	}
 
-	// Session lines carry full prompts and can run to megabytes — a default
-	// bufio.Scanner token limit would truncate the read.
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
+	transcript, err := session.ReadTranscript(f)
+	if err != nil {
+		return nil, err
+	}
+	stages := transcript.StageIndex()
+	for _, record := range transcript.Records {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return nil, err
 		}
 		var e exportEvent
-		if err := json.Unmarshal(line, &e); err != nil {
-			continue
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		if stage, ok := stages[timeline.StageID(e.StageID)]; ok {
+			e.Timestamp = stage.StartedAt.Format(time.RFC3339Nano)
+			if !stage.FinishedAt.IsZero() {
+				e.DurationMS = float64(stage.Duration(time.Time{}).Milliseconds())
+			}
 		}
 		switch e.Type {
 		case "session_start":
@@ -284,7 +300,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		case "artifact":
 			reviewArtifacts = append(reviewArtifacts, map[string]any{
 				"kind": e.ArtifactKind,
-				"data": e.Data,
+				"data": e.Data, "stage_id": e.StageID,
 			})
 		case "context_projected":
 			c := get(e)
@@ -297,14 +313,6 @@ func exportSession(path string) (*atifTrajectory, error) {
 				c.sawProjection = true
 				c.extra["initial_context"] = e.Items
 			}
-		case "timeline_update":
-			current, _ := root.Extra["timeline"].(timeline.Document)
-			document, _, err := timeline.MergeDocument(e.TimelineID, current, e.TimelineUpdate)
-			if err != nil {
-				return nil, fmt.Errorf("export session timeline %s: %w", e.TimelineID, err)
-			}
-			root.Extra["timeline"] = document
-
 		case "llm_request":
 			c := get(e)
 			// Only the chain's FIRST request seeds steps: later requests replay the
@@ -333,9 +341,12 @@ func exportSession(path string) (*atifTrajectory, error) {
 					CachedTokens:     e.Usage.CacheReadTokens,
 					Extra:            map[string]any{"duration_ms": e.DurationMS},
 				},
-				Extra: map[string]any{"task_type": e.TaskType},
+				Extra: map[string]any{"task_type": e.TaskType, "stage_id": e.StageID},
 			}
-			c.pending = nil
+
+			if stage, ok := stages[timeline.StageID(e.StageID)]; !ok || stage.FinishedAt.IsZero() {
+				delete(st.Metrics.Extra, "duration_ms")
+			}
 			var toolCalls []map[string]any
 			_ = json.Unmarshal(e.ToolCalls, &toolCalls)
 			for _, tc := range toolCalls {
@@ -343,16 +354,16 @@ func exportSession(path string) (*atifTrajectory, error) {
 				st.ToolCalls = append(st.ToolCalls, atifToolCall{
 					ToolCallID: id, FunctionName: name, Arguments: argsObj,
 				})
-				c.pending = append(c.pending, id)
 			}
 			c.total.TotalPromptTokens += e.Usage.PromptTokens
 			c.total.TotalCompletionTokens += e.Usage.CompletionTokens
 			c.total.TotalCachedTokens += e.Usage.CacheReadTokens
 			c.steps = append(c.steps, st)
-			c.last = st
-		case "tool_call":
+			c.requests[e.StageID] = st
+		case "tool_result":
 			c := get(e)
-			if c.last == nil {
+			owner := c.requests[e.RequestID]
+			if owner == nil {
 				continue // tool result with no owning agent step — drop, not invent
 			}
 			res := atifObsResult{
@@ -365,22 +376,20 @@ func exportSession(path string) (*atifTrajectory, error) {
 			for key, value := range e.Metadata {
 				res.Extra[key] = value
 			}
-			// Results arrive in call order; pair them with the ids positionally.
-			used := 0
-			if c.last.Observation != nil {
-				used = len(c.last.Observation.Results)
+			res.SourceCallID = e.ToolCallID
+			res.Extra["stage_id"] = e.StageID
+			if owner.Observation == nil {
+				owner.Observation = &atifObs{}
 			}
-			if used < len(c.pending) {
-				res.SourceCallID = c.pending[used]
-			}
-			if c.last.Observation == nil {
-				c.last.Observation = &atifObs{}
-			}
-			c.last.Observation.Results = append(c.last.Observation.Results, res)
+			owner.Observation.Results = append(owner.Observation.Results, res)
+
 		case "llm_error":
 			c := get(e)
 			c.stepID++
-			extra := map[string]any{"llm_error": e.Error, "duration_ms": e.DurationMS}
+			extra := map[string]any{"llm_error": e.Error, "stage_id": e.StageID}
+			if stage, ok := stages[timeline.StageID(e.StageID)]; ok && !stage.FinishedAt.IsZero() {
+				extra["duration_ms"] = e.DurationMS
+			}
 			if len(e.Failure) > 0 {
 				extra["failure"] = e.Failure
 			}
@@ -388,28 +397,42 @@ func exportSession(path string) (*atifTrajectory, error) {
 				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent", Message: "",
 				Extra: extra,
 			})
-		case "execution_end":
-			c := get(e)
-			c.extra["execution_outcome"] = e.Outcome
-			if e.ExecutionID != "" {
-				c.extra["execution_id"] = e.ExecutionID
-			}
-			if e.Reason != "" {
-				c.extra["execution_reason"] = e.Reason
-			}
-			if e.Turns > 0 {
-				c.extra["execution_turns"] = e.Turns
-			}
 		case "debrief":
-			c := get(e)
-			if len(e.InitialOutlineAttempts) > 0 {
-				c.extra["initial_outline_attempts"] = e.InitialOutlineAttempts
-			}
+			debriefs[e.ScopeID] = e
 		}
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+
+	if root.Extra == nil {
+		root.Extra = map[string]any{}
 	}
+	if transcript.Timeline.ID != "" {
+		root.Extra["timeline"] = transcript.Timeline
+	}
+	if transcript.TruncatedTail {
+		root.Extra["recording_incomplete"] = "truncated final record"
+	}
+	for _, fact := range transcript.ExecutionFacts() {
+		raw, _ := json.Marshal(fact)
+		var e exportEvent
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		c := get(e)
+		c.extra["execution_outcome"] = e.Outcome
+		if e.ExecutionID != "" {
+			c.extra["execution_id"] = e.ExecutionID
+		}
+		if e.Reason != "" {
+			c.extra["execution_reason"] = e.Reason
+		}
+		if e.Turns > 0 {
+			c.extra["execution_turns"] = e.Turns
+		}
+		if duration, ok := fact["duration_ms"]; ok {
+			c.extra["execution_duration_ms"] = duration
+		}
+	}
+
 	if len(reviewArtifacts) > 0 {
 		if root.Extra == nil {
 			root.Extra = map[string]any{}
@@ -420,6 +443,9 @@ func exportSession(path string) (*atifTrajectory, error) {
 	rootFinal := atifFinal{}
 	for _, id := range order {
 		c := chains[id]
+		if debrief, ok := debriefs[c.extra["scope_id"].(string)]; ok && len(debrief.InitialOutlineAttempts) > 0 {
+			c.extra["initial_outline_attempts"] = debrief.InitialOutlineAttempts
+		}
 		c.total.TotalSteps = len(c.steps)
 		sub := atifTrajectory{
 			SchemaVersion: atifSchemaVersion,

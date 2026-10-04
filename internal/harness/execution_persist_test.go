@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/go-stdx/timeline"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
@@ -66,60 +67,54 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 	}
 	defer file.Close()
 
-	var executionID string
-	var executionStarts int
-	var executionEnds int
-	seen := map[string]int{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		var record map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			t.Fatal(err)
-		}
-		recordType, _ := record["type"].(string)
-		if recordType != "execution_start" && recordType != "llm_request" && recordType != "llm_response" && recordType != "tool_call" && recordType != "execution_end" {
-			continue
-		}
-		if _, ok := record["elapsed_ms"].(float64); !ok {
-			t.Fatalf("%s record has no elapsed_ms: %+v", recordType, record)
-		}
-		id, _ := record["execution_id"].(string)
-		if id == "" {
-			t.Fatalf("%s record has no execution_id: %+v", recordType, record)
-		}
-		if executionID == "" {
-			executionID = id
-		} else if id != executionID {
-			t.Fatalf("execution_id = %q, want %q for %s", id, executionID, recordType)
-		}
-		seen[recordType]++
-		if recordType == "execution_start" {
-			executionStarts++
-			if seen["llm_request"] != 0 {
-				t.Fatalf("execution_start appeared after llm_request: %+v", seen)
-			}
-		}
-		if recordType == "execution_end" {
-			executionEnds++
-			if record["outcome"] != string(OutcomeCompleted) || record["taskType"] != string(session.MainTask) {
-				t.Fatalf("unexpected execution_end: %+v", record)
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	transcript, err := session.ReadTranscript(file)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if executionEnds != 1 {
-		t.Fatalf("execution_end records = %d, want 1", executionEnds)
+	facts := transcript.ExecutionFacts()
+	if len(facts) != 1 || facts[0]["outcome"] != string(OutcomeCompleted) {
+		t.Fatalf("execution facts: %+v", facts)
 	}
-	if executionStarts != 1 {
-		t.Fatalf("execution_start records = %d, want 1", executionStarts)
+	stages := transcript.StageIndex()
+	seen := map[string]int{}
+	keptToolInvocations := false
+	for _, record := range transcript.Records {
+		kind, _ := record["type"].(string)
+		if kind == "execution_start" || kind == "execution_end" {
+			t.Fatal("duplicate lifecycle record", kind)
+		}
+		if kind != "llm_request" && kind != "llm_response" && kind != "tool_result" {
+			continue
+		}
+		if record["execution_id"] != result.ID {
+			t.Fatal("lost execution identity", record)
+		}
+		id, _ := record["stage_id"].(string)
+		if _, ok := stages[timeline.StageID(id)]; !ok {
+			t.Fatal("missing associated stage", record)
+		}
+		if _, ok := record["duration_ms"]; ok {
+			t.Fatal("duplicate timing", record)
+		}
+		if kind == "llm_request" {
+			for _, raw := range record["messages"].([]any) {
+				message := raw.(map[string]any)
+				if calls, ok := message["tool_calls"].([]any); ok && len(calls) > 0 {
+					keptToolInvocations = true
+				}
+			}
+		}
+		seen[kind]++
 	}
-	for _, recordType := range []string{"llm_request", "llm_response", "tool_call"} {
-		if seen[recordType] == 0 {
-			t.Fatalf("missing %s record: %+v", recordType, seen)
+	if !keptToolInvocations {
+		t.Fatal("prompt snapshot dropped assistant tool invocations")
+	}
+	for _, kind := range []string{"llm_request", "llm_response", "tool_result"} {
+		if seen[kind] == 0 {
+			t.Fatal("missing", kind)
 		}
 	}
+
 }
 
 func TestContextCompactionEventPersistsWithExecutionIdentity(t *testing.T) {

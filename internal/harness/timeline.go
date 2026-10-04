@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
@@ -17,25 +18,26 @@ type executionTimeline struct {
 	ctx      context.Context
 	timeline timeline.Timeline
 	id       string
+	started  time.Time
 	root     timeline.StageHandle
 	stages   map[timeline.StageID]timeline.StageHandle
 	parents  map[string]timeline.StageID
 }
 
-func (e *Execution) beginTimeline(ctx context.Context) (context.Context, *executionTimeline) {
+func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (context.Context, *executionTimeline) {
 	ctx = e.spec.Session.Context(ctx)
 	t, ok := timeline.FromContext(ctx)
 	if !ok {
 		return ctx, nil
 	}
-	ctx, root := timeline.BeginContext(ctx, t, "execution", timeline.WithStageID(timeline.StageID(e.id)), timeline.WithFields(
-		timeline.Field{Key: "execution_id", Value: e.id}, timeline.Field{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Field{Key: "task_type", Value: e.spec.TaskType}))
+	ctx, root := timeline.BeginContext(ctx, t, "execution", timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithFields(
+		timeline.Field{Key: "execution_id", Value: e.id}, timeline.Field{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Field{Key: "task_type", Value: e.recorder.taskType}, timeline.Field{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Field{Key: "scope", Value: e.spec.Scope.Type}, timeline.Field{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Field{Key: "filePath", Value: e.spec.Scope.Path()}))
 	session.FlushTimeline(ctx)
-	return ctx, &executionTimeline{ctx: ctx, timeline: t, id: e.id, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	return ctx, &executionTimeline{ctx: ctx, timeline: t, id: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
 
 func (r *executionTimeline) coordinate(kind string, e agentgo.Execution) timeline.StageID {
-	return timeline.StageID(fmt.Sprintf("%s/%s/%s/%d", r.id, kind, e.ID, e.Attempt))
+	return executionStageID(r.id, kind, e)
 }
 func (r *executionTimeline) turn(index int) timeline.StageID {
 	return timeline.StageID(fmt.Sprintf("%s/turn/%d", r.id, index))
@@ -128,12 +130,32 @@ func (r *executionTimeline) finish(result ExecutionResult, err error) {
 	if err == nil && r.ctx.Err() != nil {
 		err = r.ctx.Err()
 	}
-	if err == nil && len(r.stages) > 0 {
-		err = errors.New("execution ended with missing lifecycle facts")
-	}
 	if err == nil && result.State != OutcomeCompleted {
 		err = fmt.Errorf("%s: %s", result.State, result.Reason)
 	}
-	r.root.End(err, timeline.WithEndFields(timeline.Field{Key: "outcome", Value: result.State}, timeline.Field{Key: "incomplete_stages", Value: len(r.stages)}))
+	options := []timeline.EndOption{}
+	if !r.started.IsZero() && result.Duration > 0 {
+		options = append(options, timeline.WithEndTime(r.started.Add(result.Duration)))
+	}
+	options = append(options, timeline.WithEndFields(timeline.Field{Key: "outcome", Value: result.State}, timeline.Field{Key: "reason", Value: result.Reason}, timeline.Field{Key: "turns", Value: result.Turns}, timeline.Field{Key: "tool_calls", Value: result.ToolCalls}, timeline.Field{Key: "tool_errors", Value: result.ToolErrors}, timeline.Field{Key: "incomplete_stages", Value: len(r.stages)}))
+	r.root.End(err, options...)
 	session.FlushTimeline(r.ctx)
+}
+
+// eventStage is shared by runtime timing and content recording, including attempts.
+func (r *executionTimeline) eventStage(ev agentgo.Event) timeline.StageID {
+	if r == nil || ev.Execution == nil {
+		return ""
+	}
+	return r.coordinate("tool", *ev.Execution)
+}
+
+func executionStageID(executionID, kind string, e agentgo.Execution) timeline.StageID {
+	return timeline.StageID(fmt.Sprintf("%s/%s/%s/%d", executionID, kind, e.ID, e.Attempt))
+}
+func executionEventStage(executionID, kind string, ev agentgo.Event) timeline.StageID {
+	if ev.Execution == nil {
+		return timeline.StageID(executionID)
+	}
+	return executionStageID(executionID, kind, *ev.Execution)
 }

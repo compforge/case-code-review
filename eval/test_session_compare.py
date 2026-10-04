@@ -12,6 +12,14 @@ def artifact(kind, **data):
     return {"type": "artifact", "artifact_kind": kind, "data": data}
 
 
+def execution(outcome):
+    return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
+        "id": "exec", "name": "execution", "revision": 2,
+        "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
+        "fields": {"outcome": outcome},
+    }]}}
+
+
 def target(id="f", path="a.go", start=10, end=12, side="after", old_path=""):
     return {"id": id, "path": path, "old_path": old_path,
             f"{side}_edits": [{"Start": start, "End": end}]}
@@ -139,7 +147,7 @@ class SessionComparisonTest(unittest.TestCase):
     def test_false_trial_without_assessment_is_incomplete(self):
         before = self.session([*unit(), finding()])
         after = self.session([*unit(), *pipeline(assessed=False),
-                              artifact("hypothesis_review_execution", hypothesis_id="h", outcome="timeout")])
+                              artifact("hypothesis_review_execution", hypothesis_id="h", execution_id="exec"), execution("timeout")])
         item = compare(before, after)["absent"][0]
         self.assertEqual(item["status"], "not_reviewed")
         self.assertEqual(item["stage"]["state"], "incomplete")
@@ -174,7 +182,7 @@ class SessionComparisonTest(unittest.TestCase):
     def test_costs_count_scopes_once_and_only_units_as_units(self):
         lane = {"type": "debrief", "uuid": "lane", "kind": "lane", "scope_id": "l", "outcome": "completed",
                 "tokens": {"prompt_tokens": 20, "cache_write_tokens": 2}, "rounds": {"hypothesis_review": 2}}
-        session = self.session([*unit(), lane, lane, artifact("hypothesis_review_execution", hypothesis_id="h", duration_ms=100)])
+        session = self.session([*unit(), lane, lane, artifact("hypothesis_review_execution", hypothesis_id="h", execution_id="exec"), execution("completed")])
         summary = session.summary()
         self.assertEqual(summary["units"], 1)
         self.assertEqual(summary["prompt_tokens"], 30)

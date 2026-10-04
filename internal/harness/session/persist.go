@@ -2,7 +2,6 @@ package session
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/compforge/agentgo"
 
-	"github.com/compforge/go-stdx/uuid"
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -23,9 +22,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v10 records one native
-// Session timeline, with request and execution identities on stages.
-const SchemaVersion = 10
+// protocol instead of guessing old record semantics. v11 uses Stage identities
+// for execution lifecycle and associated content.
+const SchemaVersion = 11
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -48,7 +47,9 @@ type jsonlWriter struct {
 	opts       SessionOptions // manifest fields (features/version/params)
 	file       *os.File
 	writer     *bufio.Writer
-	lastUUID   string // tracks chain of records via parentUuid
+	sequence   uint64
+	writeErr   error
+	closed     bool
 	startTime  time.Time
 }
 
@@ -146,16 +147,6 @@ func (jw *jsonlWriter) open() error {
 	return nil
 }
 
-func (jw *jsonlWriter) writeRecordLocked(rec map[string]any) {
-	data, err := json.Marshal(rec)
-	if err != nil {
-		fmt.Fprintf(console.Err(), "[ccr session] failed to marshal record: %v\n", err)
-		return
-	}
-	jw.writer.Write(data)
-	jw.writer.WriteByte('\n')
-}
-
 func (jw *jsonlWriter) Flush() {
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
@@ -176,14 +167,9 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 	// WriteSessionStart runs before the Session is shared with workers; the
 	// monotonic zero point remains immutable for the writer's lifetime.
 	jw.startTime = startTime
-	uuid := uuid.V4()
+
 	rec := map[string]any{
-		"uuid":           uuid,
-		"parentUuid":     nil,
 		"type":           "session_start",
-		"sessionId":      jw.sessionID,
-		"timestamp":      startTime.UTC().Format(time.RFC3339),
-		"elapsed_ms":     int64(0),
 		"schema_version": SchemaVersion,
 		"cwd":            jw.repoDir,
 		"gitBranch":      jw.gitBranch,
@@ -223,32 +209,7 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
-}
-
-// WriteExecutionStart persists the point at which Harness starts driving one
-// AgentGo loop. It precedes context projection and model requests.
-func (jw *jsonlWriter) WriteExecutionStart(ss *ScopeSession, start ExecutionStart) string {
-	uuid := uuid.V4()
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"uuid":         uuid,
-		"parentUuid":   jw.lastUUID,
-		"type":         "execution_start",
-		"sessionId":    jw.sessionID,
-		"timestamp":    time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":   jw.elapsedMilliseconds(),
-		"execution_id": start.ID,
-		"taskType":     string(start.TaskType),
-	}
-	addScopeFields(rec, ss)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // addScopeFields stamps the scope identity onto a per-record map: scope_id/kind/
@@ -263,48 +224,34 @@ func addScopeFields(rec map[string]any, ss *ScopeSession) {
 }
 
 // WriteLLMRequest writes a request entry with the resolved messages.
-func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, messages any) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, stageID timeline.StageID, messages any) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":       uuid,
-		"parentUuid": jw.lastUUID,
 		"type":       "llm_request",
-		"sessionId":  jw.sessionID,
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms": jw.elapsedMilliseconds(),
 		"taskType":   string(taskType),
 		"request_no": requestNo,
 		"messages":   messages,
 	}
+	addStageFields(rec, jw.sessionID, stageID)
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteLLMResponse writes a response entry with model, content, optional
 // provider reasoning, stop reason, tool calls, and usage.
-func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, taskType TaskType, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage, duration time.Duration) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, taskType TaskType, stageID timeline.StageID, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":        uuid,
-		"parentUuid":  jw.lastUUID,
-		"type":        "llm_response",
-		"sessionId":   jw.sessionID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":  jw.elapsedMilliseconds(),
-		"taskType":    string(taskType),
-		"model":       model,
-		"content":     content,
-		"tool_calls":  toolCalls,
-		"duration_ms": duration.Milliseconds(),
+		"type":       "llm_response",
+		"taskType":   string(taskType),
+		"model":      model,
+		"content":    content,
+		"tool_calls": toolCalls,
 		"usage": map[string]int{
 			"prompt_tokens":      usage.PromptTokens,
 			"completion_tokens":  usage.CompletionTokens,
@@ -318,60 +265,45 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, ta
 	if stopReason != "" {
 		rec["stop_reason"] = stopReason
 	}
+	addStageFields(rec, jw.sessionID, stageID)
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteLLMError writes an llm_error entry recording a failed LLM request.
-func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, errorMsg string, failure *llm.ErrorDetails, duration time.Duration) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, stageID timeline.StageID, errorMsg string, failure *llm.ErrorDetails) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":        uuid,
-		"parentUuid":  jw.lastUUID,
-		"type":        "llm_error",
-		"sessionId":   jw.sessionID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":  jw.elapsedMilliseconds(),
-		"taskType":    string(taskType),
-		"request_no":  requestNo,
-		"error":       errorMsg,
-		"duration_ms": duration.Milliseconds(),
+		"type":       "llm_error",
+		"taskType":   string(taskType),
+		"request_no": requestNo,
+		"error":      errorMsg,
 	}
 	if failure != nil {
 		rec["failure"] = failure
 	}
+	addStageFields(rec, jw.sessionID, stageID)
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
-// WriteToolCall writes a tool call result entry.
-func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any) string {
-	uuid := uuid.V4()
+// WriteToolResult writes a tool call result entry.
+func (jw *jsonlWriter) WriteToolResult(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, metadata map[string]any, stageID, requestID timeline.StageID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":        uuid,
-		"parentUuid":  jw.lastUUID,
-		"type":        "tool_call",
-		"sessionId":   jw.sessionID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":  jw.elapsedMilliseconds(),
-		"taskType":    string(taskType),
-		"tool_name":   toolName,
-		"arguments":   arguments,
-		"result":      result,
-		"ok":          ok,
-		"duration_ms": duration.Milliseconds(),
+		"type":       "tool_result",
+		"taskType":   string(taskType),
+		"tool_name":  toolName,
+		"request_id": requestID,
+		"arguments":  arguments,
+		"result":     result,
+		"ok":         ok,
 	}
 	if toolCallID != "" {
 		rec["tool_call_id"] = toolCallID
@@ -379,56 +311,43 @@ func (jw *jsonlWriter) WriteToolCall(ss *ScopeSession, executionID string, taskT
 	if len(metadata) > 0 {
 		rec["metadata"] = metadata
 	}
+	addStageFields(rec, jw.sessionID, stageID)
 	addScopeFields(rec, ss)
 	addExecutionField(rec, executionID)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteContextProjected records the identifiable context exposed to one model
 // call. It is runtime exposure data, not a claim that every item was used.
-func (jw *jsonlWriter) WriteContextProjected(ss *ScopeSession, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteContextProjected(ss *ScopeSession, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem, stageID timeline.StageID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":          uuid,
-		"parentUuid":    jw.lastUUID,
 		"type":          "context_projected",
-		"sessionId":     jw.sessionID,
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":    jw.elapsedMilliseconds(),
 		"execution_id":  executionID,
 		"taskType":      string(taskType),
 		"projection_no": projectionNo,
-		"items":         items,
+		"stage_id":      stageID, "timeline_id": jw.sessionID,
+		"items": items,
 	}
 	addScopeFields(rec, ss)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteContextCompaction records one completed aggregate rewrite before the
 // compacted prompt is sent to the model.
-func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID string, taskType TaskType, compaction ContextCompaction) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID string, taskType TaskType, compaction ContextCompaction, stageID timeline.StageID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":            uuid,
-		"parentUuid":      jw.lastUUID,
-		"type":            "context_compacted",
-		"sessionId":       jw.sessionID,
-		"timestamp":       time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":      jw.elapsedMilliseconds(),
-		"execution_id":    executionID,
-		"taskType":        string(taskType),
-		"reason":          compaction.Reason,
-		"committed":       compaction.Committed,
+		"type":         "context_compacted",
+		"execution_id": executionID,
+		"taskType":     string(taskType),
+		"reason":       compaction.Reason,
+		"committed":    compaction.Committed,
+		"stage_id":     stageID, "timeline_id": jw.sessionID,
 		"tokens_before":   compaction.TokensBefore,
 		"tokens_after":    compaction.TokensAfter,
 		"messages_before": compaction.MessagesBefore,
@@ -436,9 +355,7 @@ func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID stri
 		"summarized":      compaction.Summarized,
 	}
 	addScopeFields(rec, ss)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 func addExecutionField(rec map[string]any, executionID string) {
@@ -447,52 +364,14 @@ func addExecutionField(rec map[string]any, executionID string) {
 	}
 }
 
-// WriteExecutionEnd persists the single terminal fact for one Harness
-// Execution. Scope is grouping context; only this record decides whether the
-// underlying AgentGo run completed, timed out, truncated, or failed.
-func (jw *jsonlWriter) WriteExecutionEnd(ss *ScopeSession, end ExecutionEnd) string {
-	uuid := uuid.V4()
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"uuid":         uuid,
-		"parentUuid":   jw.lastUUID,
-		"type":         "execution_end",
-		"sessionId":    jw.sessionID,
-		"timestamp":    time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":   jw.elapsedMilliseconds(),
-		"execution_id": end.ID,
-		"taskType":     string(end.TaskType),
-		"outcome":      end.Outcome,
-		"turns":        end.Turns,
-		"tool_calls":   end.ToolCalls,
-		"tool_errors":  end.ToolErrors,
-		"duration_ms":  end.Duration.Milliseconds(),
-	}
-	if end.Reason != "" {
-		rec["reason"] = end.Reason
-	}
-	addScopeFields(rec, ss)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
-}
-
 // WriteDebrief writes a unit's terminal "debrief" record (see Debrief).
 // Empty optional groups are omitted so the record stays greppable and small.
 func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
-	uuid := uuid.V4()
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":        uuid,
-		"parentUuid":  jw.lastUUID,
 		"type":        "debrief",
-		"sessionId":   jw.sessionID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"outcome":     d.Outcome,
 		"formed":      d.Formed,
 		"fragments":   d.Fragments,
@@ -540,48 +419,36 @@ func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
 		}
 	}
 	addScopeFields(rec, ss)
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	addStageFields(rec, jw.sessionID, timeline.StageID("operation:"+jw.sessionID))
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteBoardPost writes one "board_post" record — a bulletin published during
 // the run, for attribution and replay (the board is otherwise in-memory).
 func (jw *jsonlWriter) WriteBoardPost(from string, turn, level int, paths, symbols []string, text string) {
-	u := uuid.V4()
+
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":       u,
-		"parentUuid": jw.lastUUID,
-		"type":       "board_post",
-		"sessionId":  jw.sessionID,
-		"timestamp":  time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms": jw.elapsedMilliseconds(),
-		"from":       from,
-		"turn":       turn,
-		"level":      level,
-		"paths":      paths,
-		"symbols":    symbols,
-		"text":       text,
+		"type":    "board_post",
+		"from":    from,
+		"turn":    turn,
+		"level":   level,
+		"paths":   paths,
+		"symbols": symbols,
+		"text":    text,
 	}
+	addStageFields(rec, jw.sessionID, timeline.StageID("operation:"+jw.sessionID))
 	jw.writeRecordLocked(rec)
-	jw.lastUUID = u
 }
 
 // WriteFinding writes one delivered finding as a "finding" record (see Finding).
-func (jw *jsonlWriter) WriteFinding(f Finding) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteFinding(f Finding, stageID timeline.StageID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":        uuid,
-		"parentUuid":  jw.lastUUID,
 		"type":        "finding",
-		"sessionId":   jw.sessionID,
-		"timestamp":   time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":  jw.elapsedMilliseconds(),
 		"path":        f.Path,
 		"start_line":  f.StartLine,
 		"end_line":    f.EndLine,
@@ -618,32 +485,25 @@ func (jw *jsonlWriter) WriteFinding(f Finding) string {
 	if f.Severity != "" {
 		rec["severity"] = f.Severity
 	}
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	addStageFields(rec, jw.sessionID, stageID)
+	return jw.writeRecordLocked(rec)
 }
 
 // WriteArtifact stores an opaque domain artifact under a stable envelope. The
 // payload schema belongs to the caller; session persistence only supplies run
 // identity, ordering, and timestamps.
-func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any) string {
-	uuid := uuid.V4()
+func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any, stageID timeline.StageID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":          uuid,
-		"parentUuid":    jw.lastUUID,
 		"type":          "artifact",
 		"artifact_kind": kind,
-		"sessionId":     jw.sessionID,
-		"timestamp":     time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":    jw.elapsedMilliseconds(),
+		"stage_id":      stageID,
+		"timeline_id":   jw.sessionID,
 		"data":          data,
 	}
-	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
-	return uuid
+	return jw.writeRecordLocked(rec)
 }
 
 // diffStats carries the reviewed diff's totals into the session_end record —
@@ -655,17 +515,11 @@ type diffStats struct {
 
 // WriteSessionEnd writes the final session_end summary record and closes the file.
 func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []string, llmFailures int64, stats diffStats) {
-	uuid := uuid.V4()
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"uuid":             uuid,
-		"parentUuid":       jw.lastUUID,
 		"type":             "session_end",
-		"sessionId":        jw.sessionID,
-		"timestamp":        time.Now().UTC().Format(time.RFC3339),
-		"elapsed_ms":       jw.elapsedMilliseconds(),
 		"files_reviewed":   filesReviewed,
 		"duration_seconds": duration.Seconds(),
 		"llm_failures":     llmFailures,
@@ -676,11 +530,11 @@ func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []s
 		rec["diff_deletions"] = stats.deletions
 	}
 	jw.writeRecordLocked(rec)
-	jw.lastUUID = uuid
 
 	if jw.writer != nil {
 		jw.writer.Flush()
 	}
+	jw.closed = true
 	if jw.file != nil {
 		jw.file.Close()
 	}
@@ -692,6 +546,7 @@ func (jw *jsonlWriter) flushAndClose() {
 	if jw.writer != nil {
 		jw.writer.Flush()
 	}
+	jw.closed = true
 	if jw.file != nil {
 		jw.file.Close()
 	}

@@ -6,6 +6,8 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -27,7 +29,6 @@ func (a *Runner) reviewHypothesis(
 	if task == nil || len(task.Messages) == 0 || input.Hypothesis.ID == "" {
 		return hypothesisreview.ReviewResult{}
 	}
-	a.persistHypothesisReviewStart(input)
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			fmt.Fprintf(console.Out(), "[ccr] Hypothesis review panic for %s in %s: %v\n%s\n", input.Hypothesis.ID, input.LaneID, recovered, debug.Stack())
@@ -54,20 +55,12 @@ func (a *Runner) reviewHypothesis(
 		RecordUsage:             a.executor.RecordUsage,
 		RecordWarning:           a.recordWarning,
 		OnAssessment: func(submission hypothesisreview.AssessmentSubmission) {
-			a.persistAssessmentSubmission(input, submission)
+			a.persistAssessmentSubmission(ctx, input, submission)
 		},
 		Events: a.hypothesisReviewEvents(ctx),
 	}, input, continueFrom)
 	a.persistHypothesisReviewExecution(input, result.Execution)
 	return result
-}
-
-func (a *Runner) persistHypothesisReviewStart(input hypothesisreview.ReviewInput) {
-	a.session.WriteArtifact("hypothesis_review_start", map[string]any{
-		"hypothesis_id": input.Hypothesis.ID,
-		"origin_unit":   input.Hypothesis.OriginUnit,
-		"lane_id":       input.LaneID,
-	})
 }
 
 func collectReviewClues(units []unit.Unit) []unit.Clue {
@@ -97,11 +90,12 @@ func (a *Runner) persistLaneAssignment(input hypothesisreview.ReviewInput, reaso
 }
 
 func (a *Runner) persistAssessmentSubmission(
+	ctx context.Context,
 	input hypothesisreview.ReviewInput,
 	submission hypothesisreview.AssessmentSubmission,
 ) {
 	assessment := submission.Assessment
-	a.session.WriteArtifact("review_assessment", map[string]any{
+	a.session.WriteArtifactContext(ctx, "review_assessment", map[string]any{
 		"lane_id":          assessment.LaneID,
 		"origin_unit":      input.Hypothesis.OriginUnit,
 		"submission_index": assessment.SubmissionIndex,
@@ -125,14 +119,12 @@ func (a *Runner) persistHypothesisReviewExecution(
 	if execution.ID == "" {
 		return
 	}
-	a.session.WriteArtifact("hypothesis_review_execution", map[string]any{
+	ctx := timeline.NewStageContext(a.session.Context(context.Background()), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID(execution.ID)})
+	a.session.WriteArtifactContext(ctx, "hypothesis_review_execution", map[string]any{
 		"execution_id":  execution.ID,
 		"hypothesis_id": input.Hypothesis.ID,
 		"origin_unit":   input.Hypothesis.OriginUnit,
 		"lane_id":       input.LaneID,
-		"outcome":       execution.State,
-		"reason":        execution.Reason,
-		"duration_ms":   execution.Duration.Milliseconds(),
 	})
 }
 

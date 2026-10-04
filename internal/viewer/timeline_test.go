@@ -23,9 +23,9 @@ func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeViewerSession(t, root, "repo", "session-1", sessionStart("session-1"),
-		`{"type":"execution_start","execution_id":"exec-1","scope_id":"unit-1","kind":"unit","scope":"file","taskType":"main_task"}`,
-		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":1,"messages":[{"role":"user","content":"first"}]}`,
-		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":2,"messages":[{"role":"user","content":"second"}]}`,
+		`{"type":"timeline_update","timeline_id":"session-1","update":{"Stages":[{"revision":1,"id":"exec-1","parent_id":"operation:session-1","name":"execution","started_at":"2026-08-02T00:00:00+00:00","status":"running","fields":{"execution_id":"exec-1","scope_id":"unit-1","kind":"unit","scope":"file","task_type":"main_task"}}]}}`,
+		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":1,"messages":[{"role":"user","content":"first"}],"stage_id":"request-1","timeline_id":"session-1"}`,
+		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":2,"messages":[{"role":"user","content":"second"}],"stage_id":"request-2","timeline_id":"session-1"}`,
 		string(raw),
 	)
 	view, err := LoadSession(root, "repo", "session-1")

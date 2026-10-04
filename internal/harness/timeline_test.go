@@ -134,8 +134,11 @@ func TestExecutionTimelineUsesSourceTimeAndLeavesMissingEndIncomplete(t *testing
 				t.Fatal("invented missing turn completion")
 			}
 		case "execution":
-			if stage.Status != timeline.Failed {
-				t.Fatal("missing event evidence looked complete")
+			if string(stage.Fields["incomplete_stages"]) != "1" || string(stage.Fields["outcome"]) != `"completed"` {
+				t.Fatalf("lost known outcome or incomplete children: %+v", stage.Fields)
+			}
+			if stage.Status != timeline.Succeeded {
+				t.Fatal("missing observations changed the known execution result")
 			}
 		}
 	}
