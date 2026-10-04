@@ -23,9 +23,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v9 records incremental
-// native timeline updates for model requests, fallback attempts and HTTP phases.
-const SchemaVersion = 9
+// protocol instead of guessing old record semantics. v10 records one native
+// Session timeline, with request and execution identities on stages.
+const SchemaVersion = 10
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,

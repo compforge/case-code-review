@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path"
 	"regexp"
 	"strings"
 	"sync"
 
 	"github.com/compforge/go-stdx/slicesx"
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -56,10 +59,15 @@ type reviewCandidate struct {
 	directory     string
 }
 
+type queuedReview struct {
+	input      hypothesisreview.ReviewInput
+	finishWait func(error)
+}
+
 type reviewLane struct {
 	id           string
 	candidates   []reviewCandidate
-	inputs       chan hypothesisreview.ReviewInput
+	inputs       chan queuedReview
 	contextIDs   map[string]bool
 	priorResults []hypothesisreview.Assessment
 	evidence     []hypothesisreview.EvidenceReceipt
@@ -155,7 +163,7 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	if lane == nil {
 		lane = &reviewLane{
 			id:         laneID(candidate.hypothesis.ID),
-			inputs:     make(chan hypothesisreview.ReviewInput, len(p.units)+1),
+			inputs:     make(chan queuedReview, len(p.units)+1),
 			contextIDs: make(map[string]bool),
 		}
 		*lanes = append(*lanes, lane)
@@ -168,25 +176,49 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	if p.config.OnAssigned != nil {
 		p.config.OnAssigned(input, "lane_assigned")
 	}
-	lane.inputs <- input
+	_, finishWait := session.Begin(p.config.Context, "lane.queue", timeline.Field{Key: "lane_id", Value: lane.id}, timeline.Field{Key: "hypothesis_id", Value: input.Hypothesis.ID})
+	lane.inputs <- queuedReview{input: input, finishWait: finishWait}
 }
 
 func (p *lanePool) runLane(lane *reviewLane) {
 	defer p.laneWG.Done()
-	for input := range lane.inputs {
+	// Cancellation ends known waits, including entries that never acquired a slot.
+	defer func() {
+		for pending := range lane.inputs {
+			pending.finishWait(p.config.Context.Err())
+		}
+	}()
+	for queued := range lane.inputs {
+		input := queued.input
 		lane.takeContextDelta(&input)
 		input.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
 		input.PriorEvidence = append(input.PriorEvidence, lane.evidence...)
 		select {
 		case p.sem <- struct{}{}:
 		case <-p.config.Context.Done():
+			queued.finishWait(p.config.Context.Err())
 			return
 		}
+		if err := p.config.Context.Err(); err != nil {
+			<-p.sem
+			queued.finishWait(err)
+			return
+		}
+		queued.finishWait(nil)
+		reviewCtx, finishReview := session.Begin(p.config.Context, "review.hypothesis", timeline.Field{Key: "lane_id", Value: lane.id}, timeline.Field{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Field{Key: "unit_id", Value: input.Unit.ID})
 		result := hypothesisreview.ReviewResult{}
 		if p.config.Review != nil {
-			result = p.config.Review(p.config.Context, input, lane.continuation)
+			result = p.config.Review(reviewCtx, input, lane.continuation)
 		}
 		<-p.sem
+		var reviewErr error
+		if result.Execution.State != harness.OutcomeCompleted {
+			reviewErr = fmt.Errorf("incomplete review: %s %s", result.Execution.State, result.Execution.Reason)
+		}
+		if reviewCtx.Err() != nil {
+			reviewErr = reviewCtx.Err()
+		}
+		finishReview(reviewErr)
 		if result.Execution.State != "" {
 			execution := result.Execution
 			lane.continuation = &execution

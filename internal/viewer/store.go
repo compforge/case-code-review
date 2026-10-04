@@ -237,6 +237,7 @@ func peekSession(path string) (SessionSummary, error) {
 
 // ViewSession holds fully parsed records for one session.
 type ViewSession struct {
+	Timeline      *timeline.Document
 	Summary       SessionSummary
 	Diagnostics   SessionDiagnostics
 	TokenUsage    TokenUsageSummary
@@ -484,15 +485,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "timeline_update":
-			scope, execution := executionFor(rec)
-			for _, card := range cardsFor(scope, execution, TaskType(stringValue(rec["taskType"]))) {
-				if card.RequestNo != intValue(rec["request_no"]) {
-					continue
-				}
-				if err := card.applyTimeline(rec); err != nil {
-					return nil, fmt.Errorf("load request timeline: %w", err)
-				}
-				break
+			if err := vs.applyTimeline(rec); err != nil {
+				return nil, fmt.Errorf("load session timeline: %w", err)
 			}
 
 		case "llm_response":
@@ -666,6 +660,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		return nil, fmt.Errorf("session_start with schema %d is required", session.SchemaVersion)
 	}
 
+	vs.projectRequestTimelines()
 	laneScopes := make(map[string]*ReviewScope)
 	for _, scope := range vs.Reviews {
 		if scope.Kind == "lane" {

@@ -221,6 +221,12 @@ Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板
 Session 仍是本地执行记录，不替代 Forge 上的持久评论、代码仓或业务事实源。跨 CI revision 的
 prior delivery 应从 Forge 获取；不能假设上一次容器的 JSONL 仍然存在。
 
+Harness 将 AgentGo 的 turn、context preparation、model attempt、retry wait、tool queue 与 invocation
+事件投影为 Session timeline 的阶段。Middleware 只传播 stage 身份，时间来自 Event.Timestamp；内部
+summary 和普通模型调用共享执行路径。Harness 的 Execution 边界覆盖 Loop 前的准备与 Loop 后的收尾，
+其最终 outcome 仍由 `execution_end` 决定。只收到开始事件时保留未完成阶段，不以 Execution 返回补造
+成功终态。Session timeline 的所有权、增量协议和消费者分工见[整轮时间线](observability.md#整轮时间线)。
+
 ### 4.2 HTML Viewer 是诊断投影
 
 Viewer 只读取稳定 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补层级：

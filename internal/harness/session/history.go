@@ -4,6 +4,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -51,6 +52,7 @@ type SessionHistory struct {
 	StartTime   time.Time
 	EndTime     time.Time
 	persist     *jsonlWriter
+	timeline    timeline.Timeline
 	Scopes      map[string]*ScopeSession
 	llmFailures int64
 	// diff totals for the session_end record (cost normalization denominators);
@@ -383,6 +385,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 		p.WriteSessionStart(sh.StartTime)
 	}
 
+	sh.startTimeline()
 	return sh
 }
 
@@ -422,8 +425,12 @@ func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
 
 // Finalize marks the session as complete, sets the end time, and persists
 // the final summary record.
-func (sh *SessionHistory) Finalize() {
+func (sh *SessionHistory) Finalize(operationErr ...error) {
 	sh.mu.Lock()
+	if !sh.EndTime.IsZero() {
+		sh.mu.Unlock()
+		return
+	}
 	sh.EndTime = time.Now()
 	p := sh.persist
 	duration := sh.EndTime.Sub(sh.StartTime)
@@ -441,6 +448,10 @@ func (sh *SessionHistory) Finalize() {
 	stats := diffStats{files: sh.diffFiles, insertions: sh.diffInsertions, deletions: sh.diffDeletions}
 	sh.mu.Unlock()
 
+	if sh.timeline != nil {
+		_, err := sh.timeline.Finish(context.Background(), errors.Join(operationErr...))
+		reportTimelineError(err)
+	}
 	if p != nil {
 		p.WriteSessionEnd(duration, filesReviewed, failures, stats)
 	}

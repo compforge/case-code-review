@@ -147,7 +147,7 @@ func TestExportSessionKeepsUnfinishedRequestTimeline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	text := `{"type":"session_start","sessionId":"s1"}
 {"type":"llm_request","scope_id":"u1","kind":"unit","execution_id":"e1","taskType":"main_task","request_no":2,"messages":[]}
-{"type":"timeline_update","scope_id":"u1","execution_id":"e1","taskType":"main_task","request_no":2,"timeline_id":"request-1","update":{"Operation":{"revision":1,"operation":"llm.request","started_at":"2026-10-01T00:00:00Z","status":"running"},"Stages":[{"revision":1,"id":"wait-1","parent_id":"operation:request-1","name":"await_response","started_at":"2026-10-01T00:00:00Z","status":"running"}]}}
+{"type":"timeline_update","scope_id":"u1","execution_id":"e1","taskType":"main_task","request_no":2,"timeline_id":"s1","update":{"Operation":{"revision":1,"operation":"review","started_at":"2026-10-01T00:00:00Z","status":"running"},"Stages":[{"revision":1,"id":"wait-1","parent_id":"operation:s1","name":"await_response","started_at":"2026-10-01T00:00:00Z","status":"running"}]}}
 `
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 		t.Fatal(err)
@@ -156,12 +156,7 @@ func TestExportSessionKeepsUnfinishedRequestTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entries := trajectory.Subagents[0].Extra["request_timelines"].(map[string]any)
-	entry := entries["request-1"].(map[string]any)
-	if entry["execution_id"] != "e1" || entry["request_no"] != 2 {
-		t.Fatalf("identity=%v", entry)
-	}
-	doc := entry["timeline"].(timeline.Document)
+	doc := trajectory.Extra["timeline"].(timeline.Document)
 	if doc.Status != timeline.Running || len(doc.Stages) != 1 || doc.Stages[0].Status != timeline.Running {
 		t.Fatalf("document=%+v", doc)
 	}

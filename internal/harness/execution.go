@@ -223,6 +223,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	}
 
 	startedAt := time.Now()
+	ctx, timing := e.beginTimeline(ctx)
 	e.recorder.startExecution()
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
@@ -234,8 +235,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		BeforeTurn:               e.turns.BeforeTurn,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
-		ModelMiddlewares:         []agentgo.ModelMiddleware{e.modelMiddleware()},
-		ToolMiddlewares:          []agentgo.ToolMiddleware{e.toolMiddleware()},
+		ModelMiddlewares:         []agentgo.ModelMiddleware{timing.model, e.modelMiddleware()},
+		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.toolMiddleware()},
 	}
 
 	history := e.continuationContext()
@@ -248,6 +249,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		config,
 	)
 	for event := range events {
+		timing.observe(event)
 		emitExecutionEvent(e.spec.Events, e.recorder, event)
 		switch event.Type {
 		case agentgo.EventError:
@@ -270,6 +272,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		taskType = session.MainTask
 	}
 	e.recorder.finishExecution(taskType, result, result.Duration)
+	timing.finish(result, err)
 	return result, err
 }
 

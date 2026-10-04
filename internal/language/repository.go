@@ -39,11 +39,15 @@ func ScanRepository(repoDir string) *RepositoryIndex { return NewAnalyzer(repoDi
 
 func (a *Analyzer) Repository() *RepositoryIndex {
 	a.repositoryOnce.Do(func() {
+		var observe func(*RepositoryIndex)
+		if a.ObserveRepositoryBuild != nil {
+			observe = a.ObserveRepositoryBuild()
+		}
 		start := time.Now()
 		a.repository = a.scanRepository()
 		a.repository.Duration = time.Since(start)
-		if a.OnRepositoryBuilt != nil {
-			a.OnRepositoryBuilt(a.repository)
+		if observe != nil {
+			observe(a.repository)
 		}
 	})
 	return a.repository

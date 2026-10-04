@@ -298,23 +298,13 @@ func exportSession(path string) (*atifTrajectory, error) {
 				c.extra["initial_context"] = e.Items
 			}
 		case "timeline_update":
-			c := get(e)
-			entries, _ := c.extra["request_timelines"].(map[string]any)
-			if entries == nil {
-				entries = make(map[string]any)
-				c.extra["request_timelines"] = entries
-			}
-			entry, _ := entries[e.TimelineID].(map[string]any)
-			if entry == nil {
-				entry = map[string]any{"execution_id": e.ExecutionID, "task_type": e.TaskType, "request_no": e.RequestNo}
-				entries[e.TimelineID] = entry
-			}
-			current, _ := entry["timeline"].(timeline.Document)
+			current, _ := root.Extra["timeline"].(timeline.Document)
 			document, _, err := timeline.MergeDocument(e.TimelineID, current, e.TimelineUpdate)
 			if err != nil {
-				return nil, fmt.Errorf("export request timeline %s: %w", e.TimelineID, err)
+				return nil, fmt.Errorf("export session timeline %s: %w", e.TimelineID, err)
 			}
-			entry["timeline"] = document
+			root.Extra["timeline"] = document
+
 		case "llm_request":
 			c := get(e)
 			// Only the chain's FIRST request seeds steps: later requests replay the

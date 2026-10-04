@@ -51,8 +51,8 @@ truncated、timed out 还是 failed；Viewer 不再从第一条 model request、
 文本或 Scope debrief 猜测起止状态。
 
 每条记录还带有从 `session_start` 单调递增的 `elapsed_ms`。RFC3339 `timestamp` 方便人阅读，
-`elapsed_ms` 才用于并发事件排序和阶段时延计算，避免秒级时间戳丢失短阶段，也避免把多个并发
-Execution 的 duration 直接相加。
+`elapsed_ms` 用于记录排序；阶段时延与并发关系使用 timeline 的源头时间，避免将消费延迟
+当成执行时间，或把多个并发 Execution 的 duration 直接相加。
 
 稳定事实包括：
 
@@ -89,17 +89,46 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 `eval/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
 比较结果是实验观测，不代替人工真值标签；使用方式及匹配限制见 `eval/README.md`。
 
-### 请求时间线
+### 整轮时间线
 
-每个实际模型请求使用 `go-stdx/timeline` 记录请求、路由、模型尝试、HTTP 请求及连接、写出、
-等待首字节和读取响应的阶段。Session recorder 将原生 Update 增量写入同一 JSONL，并携带
-Scope、Execution、task type 与 request number；Viewer 和 ATIF export 使用 timeline 的合并规则
-恢复阶段事实。阶段开始与转换即时刷新到文件，使没有收到响应的请求仍留下最后已观察到的阶段。
+Session 拥有一条 `go-stdx/timeline`：从创建 Session 到 Runner 收尾，diff 加载、项目选择、CodeGraph
+构建、Unit formation、Unit 等待与 Review 1、Lane 等待与 Review 2、Trial 以及辅助模型请求都向其贡献
+阶段。Runner 拥有评审阶段；Harness 拥有 Execution 和 AgentGo 事件适配；模型客户端拥有路由、fallback
+与 HTTP 阶段。子阶段只开始和结束自己的工作，Session 唯一负责整轮 Start / Finish。
 
-请求结果由调用方决定：一次模型尝试失败后 fallback 成功，请求仍然成功。HTTP 回调只表达客户端
-观察到的进度；等待首字节不能直接解释为服务端排队。并行或嵌套阶段的耗时不能相加作为请求总耗时。
-超时沿用 timeline 的取消状态，CCR 的结构化错误 code 区分调用方截止时间与路由预算耗尽。
-缺少结束记录时保留运行中事实，实际终态未知；进程退出码或信号需要由外部启动器观察。
+```text
+Session timeline
+  ├─ diff.load / project.select / codegraph.build / unit.formation
+  ├─ unit.queue → review.unit → execution → turn
+  │                              ├─ context.project / context.recover_overflow
+  │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
+  │                              ├─ retry.wait
+  │                              └─ tool.queue → tool.execution → tool.invoke
+  ├─ lane.queue → review.hypothesis → execution → turn …
+  └─ trial.assess / trial.finalize
+```
+
+图中箭头表达流转，实际父子关系由 stage ID 决定。Review 2 可在 Review 1 尚未结束时启动；两个 Review
+阶段和多个 Unit 可以重叠，不存在为了绘图而新增的全局阶段屏障。CodeGraph 在第一次真正构建时记录，
+后续查询复用同一图，不把缓存命中再算成构图。
+
+每次阶段转换将原生 `timeline.Update` 增量写入 Session JSONL。Update 属于整轮 Session；Unit、Lane、
+Hypothesis、CCR Execution 和请求身份保存在对应 stage fields。AgentGo 的逻辑执行 ID 以 CCR Execution
+为命名空间，物理尝试另带 Attempt，因此并发 loop 即使发出同名 tool call 也不碰撞。Middleware 把 stage
+身份传入真实调用，Event 以源头 Timestamp 记录开始和结束；消费者处理事件的延迟不算作模型或工具耗时。
+
+JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
+原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为
+整轮 wall-clock time；HTTP 等待首字节也不能直接解释为服务端排队。
+
+请求结果由请求调用方决定：fallback 成功可使请求成功，同时保留失败的 provider attempt。Session
+终态表示 Runner 是否正常返回，不替代领域 coverage、Execution outcome 或 Trial 结论。缺失结束事实的
+stage 保留 running，Viewer 明确显示 incomplete；即使整轮已返回，也不补造子阶段成功。取消后尽力刷新
+已经收到的事实；AgentGo 取消时未投递的事件和进程异常退出造成的缺口不能推断成成功。
+
+Viewer 的 Run Timeline 展示共享起点、层级、重叠和终态，请求卡片只投影同一 document 的请求子树。
+ATIF export 将完整原生 document 放在根 trajectory 的 `extra.timeline`，不按请求复制多份记录。
+Session schema 变更时同步 recorder、Viewer、export 和 fixture；历史文件需要分析时使用离线迁移。
 
 ### 流式交付不是 Session tail
 
