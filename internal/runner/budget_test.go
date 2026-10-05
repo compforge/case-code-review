@@ -71,3 +71,25 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 		})
 	}
 }
+
+func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
+	client := &budgetClient{}
+	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client,
+		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})
+	defer history.Finalize()
+	a.changes = []change.Change{{NewPath: "large.txt", Diff: "@@ -0,0 +1 @@\n+" + strings.Repeat("word ", 10000) + "\n", Insertions: 1}}
+	units, err := a.splitUnits()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(units) != 1 || !units[0].BudgetExceeded {
+		t.Fatalf("expected one file exceeding merge budget: %+v", units)
+	}
+	if err := a.reviewUnit(t.Context(), units[0]); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("whole-file review was skipped by merge budget: %d calls", client.calls)
+	}
+}

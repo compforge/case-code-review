@@ -62,8 +62,8 @@ func TestSplitUnits_IndependentChangesRespectFileCount(t *testing.T) {
 
 func TestSplitUnits_MultipleFilesRetainAllTargets(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 2), goDiff("q.go", 1))
-	if len(units) != 2 || countScope(units, unit.ScopeFunc) != 1 {
-		t.Fatalf("want 2 Units, one single-function, got %d (%d func)", len(units), countScope(units, unit.ScopeFunc))
+	if len(units) != 2 || countScope(units, unit.ScopeFile) != 2 {
+		t.Fatalf("want 2 file Units, got %d (%d file)", len(units), countScope(units, unit.ScopeFile))
 	}
 }
 

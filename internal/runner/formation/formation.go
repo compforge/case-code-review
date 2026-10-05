@@ -14,7 +14,7 @@ import (
 )
 
 // Config supplies the rules and knowledge sources needed to form Units. The
-// zero value keeps relation grouping off and uses default per-Unit budgets.
+// zero value keeps relation grouping off and uses default cross-file merge budgets.
 type Config struct {
 	RepoDir         string
 	Changes         []change.Change
@@ -27,10 +27,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form returns Units with graph-backed context, at most one per input file in
-// aggregate. Clues are gathered only after each Unit's scope is final.
+// Form starts with one Unit per changed file, then merges related files within
+// budget. Clues are gathered only after each Unit's scope is final.
 //
-// +spec=`Every target edit belongs to exactly one Unit and Unit count never exceeds changed target file count`
+// +spec=`Each changed file belongs to exactly one Unit; graph-backed merging can only reduce the number of review loops`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)

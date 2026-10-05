@@ -44,7 +44,7 @@ func targetUnit(t *testing.T, us []unit.Unit, symbol string) unit.Unit {
 	t.Fatalf("target %s absent", symbol)
 	return unit.Unit{}
 }
-func TestGraphFormationPreservesUsefulGroupingAndIndependentResiduals(t *testing.T) {
+func TestGraphFormationMergesWholeFilesThroughChangedCalls(t *testing.T) {
 	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){ B() }\nfunc Other(){}\n", "b.go": "package p\nfunc B(){}\n"}
 	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){ B() }"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
 	changes[0].Diff += "@@ -3 +3 @@\n-func Other(){panic(0)}\n+func Other(){}\n"
@@ -55,7 +55,7 @@ func TestGraphFormationPreservesUsefulGroupingAndIndependentResiduals(t *testing
 	a := targetUnit(t, us, "a.go::A")
 	b := targetUnit(t, us, "b.go::B")
 	other := targetUnit(t, us, "a.go::Other")
-	if a.ID != b.ID || a.ID == other.ID || len(a.Grouping) == 0 {
+	if a.ID != b.ID || a.ID != other.ID || len(a.Grouping) == 0 {
 		t.Fatalf("wrong partition: %+v", us)
 	}
 	if len(a.Paths()) != 2 {

@@ -19,8 +19,13 @@ func addedFile(path, text string) change.Change {
 func assertCoverage(t *testing.T, changes []change.Change, units []unit.Unit) {
 	t.Helper()
 	files := map[string][]unit.Fragment{}
+	owners := map[string]string{}
 	for _, u := range units {
 		for _, f := range u.Fragments {
+			if previous, ok := owners[f.Path]; ok && previous != u.ID {
+				t.Fatalf("file %s was split across Units", f.Path)
+			}
+			owners[f.Path] = u.ID
 			files[f.Path] = append(files[f.Path], f)
 		}
 	}
@@ -55,10 +60,10 @@ func TestImportsAndResidualsDoNotMultiplyReviewLoops(t *testing.T) {
 	}
 }
 
-func TestFileCountCoalescingPreservesCrossFileCalls(t *testing.T) {
+func TestFileUnitsMergeThroughChangedCalls(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example\n",
-		"a.go":   "package p\nfunc A(){ B() }\nfunc C(){ D() }\nfunc Other(){}\n",
+		"a.go":   "package p\nfunc A(){ B() }\nfunc C(){ D() }\nfunc Other(){}\nfunc Extra(){}\n",
 		"b.go":   "package p\nfunc B(){}\nfunc D(){}\nfunc Another(){}\n",
 	}
 	changes := []change.Change{addedFile("a.go", files["a.go"]), addedFile("b.go", files["b.go"])}
@@ -69,10 +74,13 @@ func TestFileCountCoalescingPreservesCrossFileCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCoverage(t, changes, us)
+	if len(us) != 1 {
+		t.Fatalf("related files must merge as a whole: %+v", us)
+	}
 	for _, pair := range [][2]string{{"a.go::A", "b.go::B"}, {"a.go::C", "b.go::D"}} {
 		a, b := targetUnit(t, us, pair[0]), targetUnit(t, us, pair[1])
 		if a.ID != b.ID || len(a.Grouping) == 0 {
-			t.Fatalf("file-count coalescing broke a graph-backed call group: %v", pair)
+			t.Fatalf("file merge lost a graph-backed call group: %v", pair)
 		}
 	}
 	config.Changes = []change.Change{changes[1], changes[0]}
@@ -92,7 +100,7 @@ func TestFileCountCoalescingPreservesCrossFileCalls(t *testing.T) {
 	}
 }
 
-func TestFileCountCoalescingRetainsRenamedAndDeletedEdits(t *testing.T) {
+func TestFileUnitsRetainRenamedAndDeletedEdits(t *testing.T) {
 	files := map[string]string{"new.go": "package p\nfunc A(){}\nfunc B(){}\n"}
 	renamed := addedFile("new.go", files["new.go"])
 	renamed.IsNew, renamed.IsRenamed, renamed.OldPath = false, true, "old.go"
@@ -115,4 +123,59 @@ func TestFileCountCoalescingRetainsRenamedAndDeletedEdits(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestFileMergeBudgetRetainsCrossUnitCallEvidence(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example\n",
+		"a.go":   "package p\nfunc A(){ B() }\nfunc Other(){}\n",
+		"b.go":   "package p\nfunc B(){}\nfunc Another(){}\n",
+	}
+	changes := []change.Change{addedFile("a.go", files["a.go"]), addedFile("b.go", files["b.go"])}
+	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true, GroupDiffTokens: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(us) != 2 {
+		t.Fatalf("merge budget should retain two whole-file Units: %+v", us)
+	}
+	assertCoverage(t, changes, us)
+	for _, u := range us {
+		if len(u.Boundaries) == 0 || len(u.Clues) == 0 || !u.BudgetExceeded || u.Scope != unit.ScopeFile {
+			t.Fatalf("oversize file lost grouping diagnostics or call boundary: %+v", u)
+		}
+	}
+}
+
+func TestDisablingGraphGroupingKeepsOneUnitPerFile(t *testing.T) {
+	files := map[string]string{"a.go": "package p\nfunc A(){B()}\nfunc Other(){}\n", "b.go": "package p\nfunc B(){}\n"}
+	changes := []change.Change{addedFile("a.go", files["a.go"]), addedFile("b.go", files["b.go"])}
+	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(us) != 2 {
+		t.Fatalf("disabled grouping must keep file scopes: %+v", us)
+	}
+	assertCoverage(t, changes, us)
+}
+
+func TestUnchangedCalleeDoesNotMergeUnrelatedEditsInItsFile(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example\n",
+		"a.go":   "package p\nfunc A(){B()}\n",
+		"b.go":   "package p\nfunc B(){}\nfunc Other(){}\n",
+	}
+	changes := []change.Change{
+		edit("a.go", files["a.go"], 2, "func A(){}", "func A(){B()}"),
+		edit("b.go", files["b.go"], 3, "func Other(){panic(0)}", "func Other(){}"),
+	}
+	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(us) != 2 {
+		t.Fatalf("the call target was not changed; files must stay separate: %+v", us)
+	}
+	assertCoverage(t, changes, us)
 }

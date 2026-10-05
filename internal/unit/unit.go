@@ -68,10 +68,12 @@ type Unit struct {
 	// Clues are the deduped project and language facts assembled for this Unit
 	// after formation, across the self/owner/caller/callee/used/project relations.
 	// See docs/unit-model.md.
-	Clues          []Clue
-	Grouping       []GroupingEvidence
-	Boundaries     []GroupingEvidence
-	DiffTokens     int
+	Clues      []Clue
+	Grouping   []GroupingEvidence
+	Boundaries []GroupingEvidence
+	DiffTokens int
+	// BudgetExceeded means the whole-file diff exceeds the cross-file merge
+	// budget. It remains a review target, governed by Execution's own limits.
 	BudgetExceeded bool
 	// review is shared by value-copied Units and accumulates immutable evidence
 	// plus accepted outputs as the Unit moves through Review 1, Review 2 and Trial.
