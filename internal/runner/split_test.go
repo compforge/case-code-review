@@ -10,7 +10,7 @@ import (
 )
 
 // goDiff builds a change.Change for a Go file of n trivial functions (f0..f{n-1})
-// with a one-line change in each, so AutoSplitter yields n function Units.
+// with a one-line change in each, so AutoSplitter yields n function Fragments.
 func goDiff(path string, n int) change.Change {
 	var s strings.Builder
 	s.WriteString("package p\n\n")
@@ -46,10 +46,10 @@ func countScope(units []unit.Unit, s unit.Scope) int {
 	return n
 }
 
-func TestSplitUnits_IndependentChangesInOneFileRemainSeparate(t *testing.T) {
+func TestSplitUnits_IndependentChangesRespectFileCount(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 3))
-	if len(units) != 3 {
-		t.Fatalf("want 3 independent changes, got %d", len(units))
+	if len(units) != 1 || len(units[0].AllSymbols()) != 3 {
+		t.Fatalf("want one Unit retaining 3 symbols, got %+v", units)
 	}
 	seen := map[string]bool{}
 	for _, u := range units {
@@ -60,17 +60,17 @@ func TestSplitUnits_IndependentChangesInOneFileRemainSeparate(t *testing.T) {
 	}
 }
 
-func TestSplitUnits_MultipleFilesBelowWatermarkKeepFunctions(t *testing.T) {
+func TestSplitUnits_MultipleFilesRetainAllTargets(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 2), goDiff("q.go", 1))
-	if len(units) != 3 || countScope(units, unit.ScopeFunc) != 3 {
-		t.Fatalf("want 3 function units, got %d (%d func)", len(units), countScope(units, unit.ScopeFunc))
+	if len(units) != 2 || countScope(units, unit.ScopeFunc) != 1 {
+		t.Fatalf("want 2 Units, one single-function, got %d (%d func)", len(units), countScope(units, unit.ScopeFunc))
 	}
 }
 
 func TestSplitUnits_LargeChangeDoesNotDiscardSymbolScopes(t *testing.T) {
 	units := splitWith(t, goDiff("p.go", 12))
-	if len(units) != 12 {
-		t.Fatalf("want 12 independent changes, got %d", len(units))
+	if len(units) != 1 {
+		t.Fatalf("want one Unit retaining all symbol scopes, got %d", len(units))
 	}
 	symbols := map[string]bool{}
 	for _, u := range units {

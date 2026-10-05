@@ -47,9 +47,14 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 	})
 	groups := make([][]int, len(fragments))
 	owner := make([]int, len(fragments))
+	paths := map[string]bool{}
+	sizes := make([]int, len(fragments))
+	groupCount := len(fragments)
 	for i := range fragments {
 		groups[i] = []int{i}
 		owner[i] = i
+		paths[fragments[i].Path] = true
+		sizes[i] = len(fragments[i].Diff)
 	}
 	fits := func(ids []int) bool {
 		if len(ids) > maxGroupFragments {
@@ -66,24 +71,26 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 		}
 		return len(paths) <= maxGroupFiles && lines <= maxGroupLines && llm.CountTokens((unit.Unit{Fragments: fs}).Diff()) <= tokenLimit
 	}
-	merge := func(a, b int) bool {
+	merge := func(a, b int, bounded bool) bool {
 		a, b = owner[a], owner[b]
 		if a == b {
 			return true
 		}
 		ids := append(append([]int(nil), groups[a]...), groups[b]...)
-		if !fits(ids) {
+		if bounded && !fits(ids) {
 			return false
 		}
 		groups[a] = ids
 		groups[b] = nil
+		sizes[a] += sizes[b]
+		groupCount--
 		for _, i := range ids {
 			owner[i] = a
 		}
 		return true
 	}
 	for _, e := range edges {
-		merge(e.from, e.to)
+		merge(e.from, e.to, true)
 	}
 	// Without graph ownership, retain a bounded per-file fallback. Knowing only
 	// that two functions share a file is not a semantic grouping decision.
@@ -91,9 +98,20 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 		for j := 0; j < i; j++ {
 			a, b := fragments[i], fragments[j]
 			if a.Path == b.Path && (!related || (len(a.Before)+len(a.After) == 0 && len(b.Before)+len(b.After) == 0)) {
-				merge(i, j)
+				merge(i, j, true)
 			}
 		}
+	}
+	// Graph-backed groups come first. When they would create more loops than
+	// changed files, coalesce groups sharing a file, smallest combined patch
+	// first. A shared path always exists while groupCount > distinct paths.
+	// This preserves existing call groups and every edit, including imports and
+	// residuals, without inventing a source relation between unrelated symbols.
+	// The count cap takes precedence over size budgets; oversize Units remain
+	// explicit below and the runner reports them incomplete rather than clean.
+	for groupCount > len(paths) {
+		left, right := smallestFilePair(fragments, owner, sizes)
+		merge(left, right, false)
 	}
 	var out []unit.Unit
 	for _, ids := range groups {
@@ -121,6 +139,43 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// Only the two smallest distinct groups per file can be the next merge. Scan
+// memberships once per merge instead of comparing every fragment pair; large
+// files can contain hundreds of independent declarations or import bindings.
+func smallestFilePair(fs []unit.Fragment, owner, sizes []int) (int, int) {
+	type pair struct{ first, second int }
+	byFile := map[string]pair{}
+	less := func(a, b int) bool { return b < 0 || sizes[a] < sizes[b] || sizes[a] == sizes[b] && a < b }
+	for i, f := range fs {
+		p, ok := byFile[f.Path]
+		if !ok {
+			p = pair{-1, -1}
+		}
+		id := owner[i]
+		if id == p.first || id == p.second {
+			continue
+		}
+		if less(id, p.first) {
+			p = pair{id, p.first}
+		} else if less(id, p.second) {
+			p.second = id
+		}
+		byFile[f.Path] = p
+	}
+	left, right, size := -1, -1, 0
+	for _, p := range byFile {
+		if p.second < 0 {
+			continue
+		}
+		a, b := min(p.first, p.second), max(p.first, p.second)
+		combined := sizes[a] + sizes[b]
+		if left < 0 || combined < size || combined == size && (a < left || a == left && b < right) {
+			left, right, size = a, b, combined
+		}
+	}
+	return left, right
 }
 
 func graphCandidates(fs []unit.Fragment, a *language.Analyzer, before bool) []candidate {

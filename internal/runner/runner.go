@@ -1098,7 +1098,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 		finish(errors.Join(reviewErr, ctx.Err()))
 	}()
 	if u.BudgetExceeded {
-		reason := "indivisible target exceeds diff-token budget; review incomplete"
+		reason := "Unit exceeds diff-token budget; review incomplete"
 		a.recordWarning("unit_incomplete", u.Path(), reason)
 		a.session.CloseScope(session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}, session.Debrief{Formed: string(u.Formed), Outcome: "incomplete", Reason: reason})
 		return fmt.Errorf("%s", reason)

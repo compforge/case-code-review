@@ -63,7 +63,9 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
 2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，以高置信图关系形成有界分组。每条目标改动恰好归入一个 Fragment；
-   缺少图事实时保留未绑定目标，预算切断的关系保留为上下文。上下文能力不由 Unit 的展示形状决定。
+   Unit 总数不超过进入 formation 的改动文件数，超出时合并共享文件的组并保留已形成的调用组。
+   缺少图事实时保留未绑定目标，预算切断的关系保留为上下文；无法在预算内评审的目标显式报告 incomplete。
+   上下文能力不由 Unit 的展示形状决定。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；

@@ -136,7 +136,7 @@ func FragmentID(f Fragment) string {
 	return reviewID("fragment", f.Path, f.OldPath, anchorKey(f.Before), anchorKey(f.After), f.Diff)
 }
 
-// NewRelatedUnit gives graph-grouped and budget-split Units collision-resistant
+// NewRelatedUnit gives graph-grouped and file-coalesced Units collision-resistant
 // identities. Fragments keep their exact diffs; scope only describes the view.
 func NewRelatedUnit(fs []Fragment) Unit {
 	fragments := append([]Fragment(nil), fs...)

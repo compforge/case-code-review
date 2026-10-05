@@ -24,7 +24,7 @@ A **Unit** brings related changes into a complete, bounded review context. It ca
 
 CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships. For example, a changed caller and callee can be reviewed together; unrelated functions in the same file can remain separate. Deleted code is interpreted against the pre-change source.
 
-Each Unit has a size budget. Large groups are split while retaining their connecting relationships as context; unsupported source remains reviewable without inferred relationships. Fewer repeated explorations are useful, but coverage and coherent review boundaries determine the grouping.
+The number of Units never exceeds the number of changed files selected for review. Related changes share a Unit; when finer groups would exceed that limit, groups sharing a file are combined while retaining every target edit. Size budgets constrain grouping, and targets that remain too large are explicitly reported as incomplete.
 
 ### Review 1 discovers; Review 2 verifies; Review 3 gates
 

@@ -27,7 +27,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form returns the Units and their graph-backed context. Clues are gathered only after each Unit's scope is final.
+// Form returns Units with graph-backed context, at most one per input file in
+// aggregate. Clues are gathered only after each Unit's scope is final.
+//
+// +spec=`Every target edit belongs to exactly one Unit and Unit count never exceeds changed target file count`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)
@@ -46,18 +49,12 @@ func Form(config Config) ([]unit.Unit, error) {
 		if err != nil {
 			return nil, fmt.Errorf("split units for %s: %w", d.Path(), err)
 		}
-		// Check the partition before budget cuts. Context lines may repeat, edits may not.
+		// Context lines may repeat, edits may not. Fragment granularity describes
+		// source ownership; it must not force another review loop for every node.
 		if err := validateEdits(d, fs); err != nil {
 			return nil, err
 		}
-		var bounded []unit.Fragment
-		for _, f := range fs {
-			bounded = append(bounded, unit.BoundFragment(f, tokenLimit, maxGroupLines)...)
-		}
-		if err := validateEdits(d, bounded); err != nil {
-			return nil, err
-		}
-		fragments = append(fragments, bounded...)
+		fragments = append(fragments, fs...)
 	}
 	units := groupFragments(fragments, config.Analyzer, config.Before, config.CallChain, tokenLimit)
 	for i := range units {

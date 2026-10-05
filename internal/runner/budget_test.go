@@ -37,7 +37,9 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 				tpl.PlanTask = &conversation
 			}
 			a := New(Args{RepoDir: repo, Template: tpl, LLMClient: client, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100})
-			a.changes = []change.Change{goDiff("p.go", 3)}
+			// Queue independent files: multiple symbols in one file share the
+			// file-count allowance and no longer guarantee multiple executions.
+			a.changes = []change.Change{goDiff("p.go", 1), goDiff("q.go", 1), goDiff("r.go", 1)}
 			if _, err := a.dispatchUnits(t.Context()); err != nil {
 				t.Fatal(err)
 			}
