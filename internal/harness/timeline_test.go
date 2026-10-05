@@ -36,7 +36,7 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			reviewCtx, finish := session.Begin(ctx, "review.unit", timeline.Field{Key: "unit_id", Value: fmt.Sprint(i)})
+			reviewCtx, finish := session.Begin(ctx, "review.unit", timeline.Attribute{Key: "unit_id", Value: fmt.Sprint(i)})
 			client := tracedTestClient{&scriptedClient{responses: []*llm.ChatResponse{
 				toolCallResponseID("same-call", "inspect", `{}`, nil),
 				toolCallResponseID("same-done", "task_done", `{}`, nil),
@@ -134,8 +134,8 @@ func TestExecutionTimelineUsesSourceTimeAndLeavesMissingEndIncomplete(t *testing
 				t.Fatal("invented missing turn completion")
 			}
 		case "execution":
-			if string(stage.Fields["incomplete_stages"]) != "1" || string(stage.Fields["outcome"]) != `"completed"` {
-				t.Fatalf("lost known outcome or incomplete children: %+v", stage.Fields)
+			if string(stage.Attributes["incomplete_stages"]) != "1" || string(stage.Attributes["outcome"]) != `"completed"` {
+				t.Fatalf("lost known outcome or incomplete children: %+v", stage.Attributes)
 			}
 			if stage.Status != timeline.Succeeded {
 				t.Fatal("missing observations changed the known execution result")

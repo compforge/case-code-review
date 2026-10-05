@@ -41,7 +41,7 @@ func newRequestTrace(ctx context.Context) *requestTrace { return &requestTrace{c
 
 func (p *requestTrace) middleware(req *http.Request, next func(*http.Request) (*http.Response, error)) (*http.Response, error) {
 	p.attempts++
-	ctx, stage := beginStage(p.ctx, "http.request", append(remainingBudget(req.Context()), timeline.Field{Key: "http_attempt", Value: p.attempts})...)
+	ctx, stage := beginStage(p.ctx, "http.request", append(remainingBudget(req.Context()), timeline.Attribute{Key: "http_attempt", Value: p.attempts})...)
 	a := &httpAttempt{ctx: ctx, stage: stage}
 	p.current = a
 	a.transition(requestPhaseConnectionPool)
@@ -50,7 +50,7 @@ func (p *requestTrace) middleware(req *http.Request, next func(*http.Request) (*
 		DNSStart:     func(httptrace.DNSStartInfo) { a.transition(requestPhaseConnect) },
 		ConnectStart: func(string, string) { a.transition(requestPhaseConnect) },
 		GotConn: func(info httptrace.GotConnInfo) {
-			a.transition(requestPhaseWriteRequest, timeline.Field{Key: "connection_reused", Value: info.Reused})
+			a.transition(requestPhaseWriteRequest, timeline.Attribute{Key: "connection_reused", Value: info.Reused})
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
 			if info.Err != nil {
@@ -84,7 +84,7 @@ func (p *requestTrace) middleware(req *http.Request, next func(*http.Request) (*
 	return resp, err
 }
 
-func (a *httpAttempt) transition(name string, fields ...timeline.Field) {
+func (a *httpAttempt) transition(name string, attributes ...timeline.Attribute) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	// A response can arrive while the transport is still reporting the write.
@@ -95,12 +95,12 @@ func (a *httpAttempt) transition(name string, fields ...timeline.Field) {
 	if a.phase != nil {
 		endStage(a.ctx, a.phase, nil)
 	}
-	_, a.phase = beginStage(a.ctx, name, fields...)
+	_, a.phase = beginStage(a.ctx, name, attributes...)
 	a.name = name
 }
 
 func (a *httpAttempt) wroteRequest() {
-	a.stage.SetFields(timeline.Field{Key: "request_written", Value: true})
+	a.stage.SetAttributes(timeline.Attribute{Key: "request_written", Value: true})
 	a.transition(requestPhaseAwaitResponse)
 	if t, ok := timeline.FromContext(a.ctx); ok {
 		flushTimeline(t)
@@ -171,7 +171,7 @@ func (p *requestTrace) attributes() map[string]any {
 			break
 		}
 	}
-	attrs["request_written"], _ = timeline.FieldValue[bool](request.Fields, "request_written")
+	attrs["request_written"], _ = timeline.AttributeValue[bool](request.Attributes, "request_written")
 	for _, stage := range snapshot.Stages {
 		if stage.ParentID != request.ID {
 			continue
@@ -181,7 +181,7 @@ func (p *requestTrace) attributes() map[string]any {
 		}
 		switch stage.Name {
 		case requestPhaseWriteRequest:
-			attrs["connection_reused"], _ = timeline.FieldValue[bool](stage.Fields, "connection_reused")
+			attrs["connection_reused"], _ = timeline.AttributeValue[bool](stage.Attributes, "connection_reused")
 			attrs["got_connection_ms"] = stage.StartedAt.Sub(request.StartedAt).Milliseconds()
 		case requestPhaseAwaitResponse:
 			attrs["request_written"] = true

@@ -55,7 +55,10 @@ def execution_facts(records: list[dict]) -> dict[str, dict]:
             stages[identity] = stage
     result = {}
     for identity, stage in stages.items():
-        facts = dict(stage.get("fields") or {})
+        attributes = stage.get("attributes")
+        if attributes is None:
+            attributes = stage.get("fields")  # Sessions recorded before the upstream rename.
+        facts = dict(attributes or {})
         if not _finished(stage):
             facts.pop("outcome", None)
         else:

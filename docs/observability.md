@@ -44,7 +44,7 @@ Session JSONL
 ```
 
 Scope 是领域工作范围，一个 Lane 可以包含多次 Execution；Execution 是一次真实 AgentGo loop，
-其 `execution_id` 同时是对应 Stage 的 ID。Execution Stage 的最终 fields 持有 outcome、reason、
+其 `execution_id` 同时是对应 Stage 的 ID。Execution Stage 的最终 attributes 持有 outcome、reason、
 turn/tool 统计，Stage 本身持有起止时间。不存在另一套 `execution_start` / `execution_end` 完成事实；
 Viewer、export 和 eval 都不从最后一条 assistant 文本、终态工具或 Scope debrief 猜测 loop 是否完成。
 
@@ -109,9 +109,11 @@ Session timeline
 后续查询复用同一图，不把缓存命中再算成构图。
 
 每次阶段转换将原生 `timeline.Update` 增量写入 Session JSONL。Update 属于整轮 Session；Unit、Lane、
-Hypothesis、CCR Execution 和请求身份保存在对应 stage fields。AgentGo 的逻辑执行 ID 以 CCR Execution
+Hypothesis、CCR Execution 和请求身份保存在对应 stage attributes。AgentGo 的逻辑执行 ID 以 CCR Execution
 为命名空间，物理尝试另带 Attempt，因此并发 loop 即使发出同名 tool call 也不碰撞。Middleware 把 stage
 身份传入真实调用，Event 以源头 Timestamp 记录开始和结束；消费者处理事件的延迟不算作模型或工具耗时。
+
+属性统一写入原生 `attributes`；Go Session reader 和 Python eval 读取器兼容历史阶段的 `fields`。
 
 JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
 原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为

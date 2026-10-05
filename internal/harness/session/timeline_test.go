@@ -98,9 +98,9 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 			request = stage.Stage
 		}
 	}
-	executionID, _ := timeline.FieldValue[string](request.Fields, "execution_id")
-	scopeID, _ := timeline.FieldValue[string](request.Fields, "scope_id")
-	requestNo, _ := timeline.FieldValue[int](request.Fields, "request_no")
+	executionID, _ := timeline.AttributeValue[string](request.Attributes, "execution_id")
+	scopeID, _ := timeline.AttributeValue[string](request.Attributes, "scope_id")
+	requestNo, _ := timeline.AttributeValue[int](request.Attributes, "request_no")
 	if executionID != "execution-1" || scopeID != "unit-1" || requestNo != 1 {
 		t.Fatalf("lost request identity: %+v", request)
 	}

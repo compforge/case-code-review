@@ -41,7 +41,7 @@ func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
 
 func TestTranscriptNativeStageRevisions(t *testing.T) {
 	start := time.Now().UTC()
-	stage := timeline.Stage{ID: "execution", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running, Fields: map[string]json.RawMessage{"outcome": json.RawMessage(`"completed"`)}}
+	stage := timeline.Stage{ID: "execution", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"outcome": json.RawMessage(`"completed"`)}}
 	var stream bytes.Buffer
 	enc := json.NewEncoder(&stream)
 	write := func(revision uint64) {
@@ -69,6 +69,25 @@ func TestTranscriptNativeStageRevisions(t *testing.T) {
 	facts := transcript.ExecutionFacts()
 	if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["duration_ms"] != float64(7) {
 		t.Fatalf("facts=%v", facts)
+	}
+}
+
+func TestTranscriptReadsAttributesAndLegacyFields(t *testing.T) {
+	for _, key := range []string{"attributes", "fields"} {
+		t.Run(key, func(t *testing.T) {
+			raw := `{"type":"timeline_update","timeline_id":"run","update":{"Stages":[{"revision":2,"id":"exec","name":"execution","started_at":"2026-10-01T00:00:00Z","finished_at":"2026-10-01T00:00:01Z","status":"succeeded","` + key + `":{"execution_id":"exec","outcome":"completed","turns":3}}]}}`
+			transcript, err := ReadTranscript(strings.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts := transcript.ExecutionFacts()
+			if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["turns"] != float64(3) || facts[0]["duration_ms"] != float64(1000) {
+				t.Fatalf("lost execution facts: %v", facts)
+			}
+			if transcript.Timeline.Stages[0].Revision != 2 {
+				t.Fatal("lost stage revision")
+			}
+		})
 	}
 }
 

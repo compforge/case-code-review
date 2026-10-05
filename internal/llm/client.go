@@ -346,7 +346,7 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 
 	params := c.buildOpenAIParams(model, req)
 
-	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Field{Key: "model", Value: model}, timeline.Field{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
+	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Attribute{Key: "model", Value: model}, timeline.Attribute{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
 	progress := newRequestTrace(ctx)
 	defer func() { progress.finish(resultErr); endStage(ctx, stage, resultErr) }()
 	opts := []openaiopt.RequestOption{openaiopt.WithMiddleware(progress.middleware)}
@@ -567,7 +567,7 @@ func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatReques
 		return nil, err
 	}
 
-	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Field{Key: "model", Value: model}, timeline.Field{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
+	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Attribute{Key: "model", Value: model}, timeline.Attribute{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
 	progress := newRequestTrace(ctx)
 	defer func() { progress.finish(resultErr); endStage(ctx, stage, resultErr) }()
 	opts := []option.RequestOption{option.WithMiddleware(progress.middleware)}

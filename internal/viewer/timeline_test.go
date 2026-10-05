@@ -17,7 +17,7 @@ func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 		Operation: &timeline.OperationRecord{Revision: 1, Operation: "review", StartedAt: start, Status: timeline.Running},
 		Stages:    []timeline.StageUpdate{{Revision: 1, Stage: timeline.Stage{ID: "wait-1", ParentID: "request-1", Name: "await_response", StartedAt: start, Status: timeline.Running}}},
 	}
-	update.Stages = append(update.Stages, timeline.StageUpdate{Revision: 1, Stage: timeline.Stage{ID: "request-1", ParentID: "operation:session-1", Name: "llm.request", StartedAt: start, Status: timeline.Running, Fields: map[string]json.RawMessage{"scope_id": json.RawMessage(`"unit-1"`), "execution_id": json.RawMessage(`"exec-1"`), "request_no": json.RawMessage(`1`), "task_type": json.RawMessage(`"main_task"`)}}})
+	update.Stages = append(update.Stages, timeline.StageUpdate{Revision: 1, Stage: timeline.Stage{ID: "request-1", ParentID: "operation:session-1", Name: "llm.request", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"scope_id": json.RawMessage(`"unit-1"`), "execution_id": json.RawMessage(`"exec-1"`), "request_no": json.RawMessage(`1`), "task_type": json.RawMessage(`"main_task"`)}}})
 	raw, err := json.Marshal(map[string]any{"type": "timeline_update", "execution_id": "exec-1", "scope_id": "unit-1", "taskType": "main_task", "request_no": 1, "timeline_id": "session-1", "update": update})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	start := time.Now().Add(-time.Second)
 	doc := &timeline.Document{ID: "run", RootStageID: "operation:run", OperationRecord: timeline.OperationRecord{StartedAt: start, Status: timeline.Running}, Stages: []timeline.StageUpdate{
-		{Stage: timeline.Stage{ID: "child", ParentID: "parent", Name: "model.attempt", StartedAt: start.Add(10 * time.Millisecond), FinishedAt: start.Add(30 * time.Millisecond), Status: timeline.Succeeded}},
+		{Stage: timeline.Stage{ID: "child", ParentID: "parent", Name: "model.attempt", StartedAt: start.Add(10 * time.Millisecond), FinishedAt: start.Add(30 * time.Millisecond), Status: timeline.Succeeded, Attributes: map[string]json.RawMessage{"attempt": json.RawMessage(`3`)}}},
 		{Stage: timeline.Stage{ID: "parent", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running}},
 	}}
 	rows := timelineRows(doc)
@@ -76,7 +76,7 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	if err := tmpl.Execute(&out, map[string]any{"Session": &ViewSession{Timeline: doc}, "EncodedRepo": "repo", "RepoName": "repo"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Run Timeline", "model.attempt", "incomplete"} {
+	for _, text := range []string{"Run Timeline", "model.attempt", "incomplete", "attempt: 3"} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("missing rendered %s", text)
 		}

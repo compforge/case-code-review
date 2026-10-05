@@ -17,7 +17,7 @@ def execution_stage(fields: dict) -> dict:
     return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
         "id": fields["scope_id"], "revision": 2, "name": "execution", "parent_id": "operation:run",
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
-        "status": "failed", "fields": fields,
+        "status": "failed", "attributes": fields,
     }]}}
 
 

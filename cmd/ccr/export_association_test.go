@@ -26,7 +26,7 @@ func TestExportExecutionAndToolIdentity(t *testing.T) {
 	}
 	for i, id := range []string{"e1", "e2"} {
 		outcome := []string{"completed", "timeout"}[i]
-		records = append(records, map[string]any{"type": "timeline_update", "timeline_id": "run", "update": map[string]any{"Stages": []map[string]any{{"id": id, "name": "execution", "revision": 2, "parent_id": "operation:run", "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z", "status": "succeeded", "fields": map[string]any{"execution_id": id, "scope_id": "lane", "outcome": outcome}}}}})
+		records = append(records, map[string]any{"type": "timeline_update", "timeline_id": "run", "update": map[string]any{"Stages": []map[string]any{{"id": id, "name": "execution", "revision": 2, "parent_id": "operation:run", "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z", "status": "succeeded", "attributes": map[string]any{"execution_id": id, "scope_id": "lane", "outcome": outcome}}}}})
 	}
 	file := filepath.Join(t.TempDir(), "run.jsonl")
 	f, err := os.Create(file)

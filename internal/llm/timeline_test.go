@@ -74,7 +74,7 @@ func TestRequestTimelinePreservesFailedFallbackAndSuccessfulResult(t *testing.T)
 		t.Fatalf("stages=%v", counts)
 	}
 	for _, attempt := range attempts {
-		if _, ok := timeline.FieldValue[int64](attempt.Fields, "remaining_budget_ms"); !ok {
+		if _, ok := timeline.AttributeValue[int64](attempt.Attributes, "remaining_budget_ms"); !ok {
 			t.Fatalf("missing budget: %+v", attempt)
 		}
 	}

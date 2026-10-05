@@ -16,7 +16,7 @@ def execution(outcome):
     return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
         "id": "exec", "name": "execution", "revision": 2,
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
-        "fields": {"outcome": outcome},
+        "attributes": {"outcome": outcome},
     }]}}
 
 

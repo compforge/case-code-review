@@ -176,7 +176,7 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	if p.config.OnAssigned != nil {
 		p.config.OnAssigned(input, "lane_assigned")
 	}
-	_, finishWait := session.Begin(p.config.Context, "lane.queue", timeline.Field{Key: "lane_id", Value: lane.id}, timeline.Field{Key: "hypothesis_id", Value: input.Hypothesis.ID})
+	_, finishWait := session.Begin(p.config.Context, "lane.queue", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID})
 	lane.inputs <- queuedReview{input: input, finishWait: finishWait}
 }
 
@@ -205,7 +205,7 @@ func (p *lanePool) runLane(lane *reviewLane) {
 			return
 		}
 		queued.finishWait(nil)
-		reviewCtx, finishReview := session.Begin(p.config.Context, "review.hypothesis", timeline.Field{Key: "lane_id", Value: lane.id}, timeline.Field{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Field{Key: "unit_id", Value: input.Unit.ID})
+		reviewCtx, finishReview := session.Begin(p.config.Context, "review.hypothesis", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Attribute{Key: "unit_id", Value: input.Unit.ID})
 		result := hypothesisreview.ReviewResult{}
 		if p.config.Review != nil {
 			result = p.config.Review(reviewCtx, input, lane.continuation)

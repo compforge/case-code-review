@@ -31,8 +31,8 @@ func (sh *SessionHistory) startTimeline() {
 
 // Begin flushes both transitions at the owning boundary. Recording failures
 // remain diagnostics; they do not change the operation's business result.
-func Begin(ctx context.Context, name string, fields ...timeline.Field) (context.Context, func(error)) {
-	return BeginStage(ctx, name, timeline.WithFields(fields...))
+func Begin(ctx context.Context, name string, attributes ...timeline.Attribute) (context.Context, func(error)) {
+	return BeginStage(ctx, name, timeline.WithAttributes(attributes...))
 }
 
 func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) (context.Context, func(error)) {
@@ -66,14 +66,14 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	if tr.scopeSession != nil {
 		ctx = tr.scopeSession.session.Context(ctx)
 	}
-	fields := []timeline.Field{{Key: "execution_id", Value: tr.ExecutionID}, {Key: "task_type", Value: tr.Type}, {Key: "request_no", Value: tr.RequestNo}}
+	attributes := []timeline.Attribute{{Key: "execution_id", Value: tr.ExecutionID}, {Key: "task_type", Value: tr.Type}, {Key: "request_no", Value: tr.RequestNo}}
 	if tr.scopeSession != nil {
-		fields = append(fields, timeline.Field{Key: "scope_id", Value: tr.scopeSession.ID})
+		attributes = append(attributes, timeline.Attribute{Key: "scope_id", Value: tr.scopeSession.ID})
 	}
 	started := time.Now()
 	var stage timeline.StageHandle
 	if t, ok := timeline.FromContext(ctx); ok {
-		ctx, stage = timeline.BeginContext(ctx, t, "llm.request", timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithFields(fields...))
+		ctx, stage = timeline.BeginContext(ctx, t, "llm.request", timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
 		FlushTimeline(ctx)
 	}
 	response, err := client.CompletionsWithCtx(ctx, request)

@@ -30,8 +30,8 @@ func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (conte
 	if !ok {
 		return ctx, nil
 	}
-	ctx, root := timeline.BeginContext(ctx, t, "execution", timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithFields(
-		timeline.Field{Key: "execution_id", Value: e.id}, timeline.Field{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Field{Key: "task_type", Value: e.recorder.taskType}, timeline.Field{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Field{Key: "scope", Value: e.spec.Scope.Type}, timeline.Field{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Field{Key: "filePath", Value: e.spec.Scope.Path()}))
+	ctx, root := timeline.BeginContext(ctx, t, "execution", timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
+		timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
 	session.FlushTimeline(ctx)
 	return ctx, &executionTimeline{ctx: ctx, timeline: t, id: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
@@ -62,7 +62,7 @@ func (r *executionTimeline) observe(ev agentgo.Event) {
 	var id, parent timeline.StageID
 	var name string
 	var begin bool
-	fields := []timeline.Field{{Key: "execution_id", Value: r.id}}
+	attributes := []timeline.Attribute{{Key: "execution_id", Value: r.id}}
 	if ev.Execution != nil {
 		e := *ev.Execution
 		parent = r.turn(e.TurnIndex)
@@ -71,7 +71,7 @@ func (r *executionTimeline) observe(ev agentgo.Event) {
 				parent = p
 			}
 		}
-		fields = append(fields, timeline.Field{Key: "agent_execution_id", Value: e.ID}, timeline.Field{Key: "attempt", Value: e.Attempt}, timeline.Field{Key: "turn", Value: e.TurnIndex})
+		attributes = append(attributes, timeline.Attribute{Key: "agent_execution_id", Value: e.ID}, timeline.Attribute{Key: "attempt", Value: e.Attempt}, timeline.Attribute{Key: "turn", Value: e.TurnIndex})
 		switch ev.Type {
 		case agentgo.EventModelExecStart, agentgo.EventModelExecEnd:
 			id, name, begin = r.coordinate("model", e), "model.attempt", ev.Type == agentgo.EventModelExecStart
@@ -96,16 +96,16 @@ func (r *executionTimeline) observe(ev agentgo.Event) {
 			r.parents[e.ID] = id
 		}
 		if ev.Tool != "" {
-			fields = append(fields, timeline.Field{Key: "tool", Value: ev.Tool})
+			attributes = append(attributes, timeline.Attribute{Key: "tool", Value: ev.Tool})
 		}
 	} else if ev.Type == agentgo.EventTurnStart || ev.Type == agentgo.EventTurnEnd {
 		id, parent, name, begin = r.turn(ev.TurnIndex), r.root.ID(), "turn", ev.Type == agentgo.EventTurnStart
-		fields = append(fields, timeline.Field{Key: "turn", Value: ev.TurnIndex})
+		attributes = append(attributes, timeline.Attribute{Key: "turn", Value: ev.TurnIndex})
 	} else {
 		return
 	}
 	if begin {
-		r.stages[id] = r.timeline.Begin(name, timeline.WithStageID(id), timeline.WithParent(parent), timeline.WithStartTime(ev.Timestamp), timeline.WithFields(fields...))
+		r.stages[id] = r.timeline.Begin(name, timeline.WithStageID(id), timeline.WithParent(parent), timeline.WithStartTime(ev.Timestamp), timeline.WithAttributes(attributes...))
 	} else {
 		r.end(id, ev)
 	}
@@ -118,7 +118,7 @@ func (r *executionTimeline) end(id timeline.StageID, ev agentgo.Event) {
 		if err == nil && ev.IsError {
 			err = errors.New("tool returned an error result")
 		}
-		stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndFields(timeline.Field{Key: "disposition", Value: ev.Disposition}))
+		stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndAttributes(timeline.Attribute{Key: "disposition", Value: ev.Disposition}))
 		delete(r.stages, id)
 	}
 	// Missing starts/ends remain missing evidence; do not invent successful work.
@@ -137,7 +137,7 @@ func (r *executionTimeline) finish(result ExecutionResult, err error) {
 	if !r.started.IsZero() && result.Duration > 0 {
 		options = append(options, timeline.WithEndTime(r.started.Add(result.Duration)))
 	}
-	options = append(options, timeline.WithEndFields(timeline.Field{Key: "outcome", Value: result.State}, timeline.Field{Key: "reason", Value: result.Reason}, timeline.Field{Key: "turns", Value: result.Turns}, timeline.Field{Key: "tool_calls", Value: result.ToolCalls}, timeline.Field{Key: "tool_errors", Value: result.ToolErrors}, timeline.Field{Key: "incomplete_stages", Value: len(r.stages)}))
+	options = append(options, timeline.WithEndAttributes(timeline.Attribute{Key: "outcome", Value: result.State}, timeline.Attribute{Key: "reason", Value: result.Reason}, timeline.Attribute{Key: "turns", Value: result.Turns}, timeline.Attribute{Key: "tool_calls", Value: result.ToolCalls}, timeline.Attribute{Key: "tool_errors", Value: result.ToolErrors}, timeline.Attribute{Key: "incomplete_stages", Value: len(r.stages)}))
 	r.root.End(err, options...)
 	session.FlushTimeline(r.ctx)
 }
