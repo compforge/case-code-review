@@ -44,7 +44,7 @@ func targetUnit(t *testing.T, us []unit.Unit, symbol string) unit.Unit {
 	t.Fatalf("target %s absent", symbol)
 	return unit.Unit{}
 }
-func TestGraphFormationPreservesUsefulGroupingAndIndependentResiduals(t *testing.T) {
+func TestGraphFormationExtractsChangedCallsAndKeepsUnrelatedRemainder(t *testing.T) {
 	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){ B() }\nfunc Other(){}\n", "b.go": "package p\nfunc B(){}\n"}
 	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){ B() }"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
 	changes[0].Diff += "@@ -3 +3 @@\n-func Other(){panic(0)}\n+func Other(){}\n"
@@ -55,7 +55,7 @@ func TestGraphFormationPreservesUsefulGroupingAndIndependentResiduals(t *testing
 	a := targetUnit(t, us, "a.go::A")
 	b := targetUnit(t, us, "b.go::B")
 	other := targetUnit(t, us, "a.go::Other")
-	if a.ID != b.ID || a.ID == other.ID || len(a.Grouping) == 0 {
+	if len(us) != 2 || a.ID != b.ID || a.ID == other.ID || len(a.Grouping) == 0 {
 		t.Fatalf("wrong partition: %+v", us)
 	}
 	if len(a.Paths()) != 2 {
@@ -172,7 +172,7 @@ func TestGraphFormationPartitionsLargeGraphDeterministically(t *testing.T) {
 		t.Fatal("input order changed partition", ids, next)
 	}
 }
-func TestGraphFormationTokenBudgetAndCoverage(t *testing.T) {
+func TestGraphFormationFileCountTakesPrecedenceOverTokenBudget(t *testing.T) {
 	var added strings.Builder
 	for i := 0; i < 20; i++ {
 		fmt.Fprintf(&added, "+line_%d_%s\n", i, strings.Repeat("abc ", 20))
@@ -184,13 +184,10 @@ func TestGraphFormationTokenBudgetAndCoverage(t *testing.T) {
 	}
 	var fs []unit.Fragment
 	for _, u := range us {
-		if u.DiffTokens > 150 {
-			t.Fatal("unbounded group", u.DiffTokens)
-		}
 		fs = append(fs, u.Fragments...)
 	}
-	if len(us) < 2 {
-		t.Fatal("oversized target not split")
+	if len(us) != 1 || !us[0].BudgetExceeded || us[0].DiffTokens <= 150 {
+		t.Fatalf("oversize file must remain one explicitly over-budget Unit: %+v", us)
 	}
 	if err := validateEdits(d, fs); err != nil {
 		t.Fatal(err)
@@ -245,7 +242,7 @@ func TestIndivisibleOversizeTargetIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 1 || !us[0].BudgetExceeded || len(us[0].Fragments[0].Gaps) == 0 {
+	if len(us) != 1 || !us[0].BudgetExceeded || !strings.Contains(us[0].Diff(), strings.Repeat("abc ", 200)) {
 		t.Fatalf("oversize target silently accepted: %+v", us)
 	}
 }

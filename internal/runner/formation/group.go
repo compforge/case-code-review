@@ -1,6 +1,7 @@
 package formation
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -11,7 +12,6 @@ import (
 
 const DefaultGroupDiffTokens = 8000
 const maxGroupFiles = 5
-const maxGroupFragments = 8
 const maxGroupLines int64 = 300
 
 type candidate struct {
@@ -19,15 +19,20 @@ type candidate struct {
 	evidence unit.GroupingEvidence
 }
 
-// groupFragments groups only supplied targets. The graph remains the source of
-// relationships; this derived partition is CCR policy, never new code facts.
-func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer, related bool, tokenLimit int) []unit.Unit {
-	sort.Slice(fragments, func(i, j int) bool { return unit.FragmentID(fragments[i]) < unit.FragmentID(fragments[j]) })
-	var edges []candidate
-	if related {
-		edges = append(edges, graphCandidates(fragments, after, false)...)
-		edges = append(edges, graphCandidates(fragments, before, true)...)
+// RelationGrouper reorganizes file groups around changed source dependencies.
+// Disabled keeps the initial file groups, preserving the existing feature gate.
+type RelationGrouper struct{ Disabled bool }
+
+func (RelationGrouper) Name() string { return "relations" }
+func (g RelationGrouper) Group(ctx context.Context, in GroupingInput) (GroupingResult, error) {
+	if err := ctx.Err(); err != nil {
+		return GroupingResult{}, err
 	}
+	if g.Disabled {
+		return GroupingResult{Groups: in.Groups}, nil
+	}
+	fragments := flattenGroups(in.Groups)
+	edges := append(graphCandidates(fragments, in.After, false), graphCandidates(fragments, in.Before, true)...)
 	sort.Slice(edges, func(i, j int) bool {
 		a, b := edges[i], edges[j]
 		if a.evidence.Link.Touched != b.evidence.Link.Touched {
@@ -51,28 +56,13 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 		groups[i] = []int{i}
 		owner[i] = i
 	}
-	fits := func(ids []int) bool {
-		if len(ids) > maxGroupFragments {
-			return false
-		}
-		paths := map[string]bool{}
-		var fs []unit.Fragment
-		var lines int64
-		for _, i := range ids {
-			f := fragments[i]
-			paths[f.Path] = true
-			lines += f.Insertions + f.Deletions
-			fs = append(fs, f)
-		}
-		return len(paths) <= maxGroupFiles && lines <= maxGroupLines && llm.CountTokens((unit.Unit{Fragments: fs}).Diff()) <= tokenLimit
-	}
-	merge := func(a, b int) bool {
+	merge := func(a, b int, bounded bool) bool {
 		a, b = owner[a], owner[b]
 		if a == b {
 			return true
 		}
 		ids := append(append([]int(nil), groups[a]...), groups[b]...)
-		if !fits(ids) {
+		if bounded && !fitsGroup(selectFragments(fragments, ids), in.DiffTokens) {
 			return false
 		}
 		groups[a] = ids
@@ -83,39 +73,83 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 		return true
 	}
 	for _, e := range edges {
-		merge(e.from, e.to)
-	}
-	// Without graph ownership, retain a bounded per-file fallback. Knowing only
-	// that two functions share a file is not a semantic grouping decision.
-	for i := range fragments {
-		for j := 0; j < i; j++ {
-			a, b := fragments[i], fragments[j]
-			if a.Path == b.Path && (!related || (len(a.Before)+len(a.After) == 0 && len(b.Before)+len(b.After) == 0)) {
-				merge(i, j)
-			}
+		if err := ctx.Err(); err != nil {
+			return GroupingResult{}, err
 		}
+		merge(e.from, e.to, true)
 	}
-	var out []unit.Unit
-	for _, ids := range groups {
+	// Extract graph-backed cross-file groups first. Everything left in each
+	// file shares its default review scope: unrelated declarations, imports and
+	// residual edits do not each get a separate loop. In particular A->B must
+	// not pull an unrelated C from A's file into the cross-file group.
+	byFile := map[string]int{}
+	for root, ids := range groups {
 		if len(ids) == 0 {
 			continue
 		}
-		var fs []unit.Fragment
-		for _, i := range ids {
-			fs = append(fs, fragments[i])
+		path := fragments[ids[0]].Path
+		sameFile := true
+		for _, i := range ids[1:] {
+			if fragments[i].Path != path {
+				sameFile = false
+				break
+			}
 		}
-		u := unit.NewRelatedUnit(fs)
+		if !sameFile {
+			continue
+		}
+		if previous, ok := byFile[path]; ok {
+			merge(previous, root, false)
+		} else {
+			byFile[path] = root
+		}
+	}
+
+	var out []Group
+	for _, ids := range groups {
+		if len(ids) > 0 {
+			out = append(out, selectFragments(fragments, ids))
+		}
+	}
+	var evidence []unit.GroupingEvidence
+	for _, edge := range edges {
+		evidence = append(evidence, edge.evidence)
+	}
+	return GroupingResult{Groups: out, Relations: evidence}, nil
+}
+
+func selectFragments(fs []unit.Fragment, ids []int) Group {
+	out := make(Group, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, fs[id])
+	}
+	return out
+}
+
+// Materialize once, after all regrouping. Evidence always describes the final
+// partition, including relationships reunited by a later namespace pass.
+func materialize(groups []Group, edges []unit.GroupingEvidence, tokenLimit int) []unit.Unit {
+	owner := map[string]int{}
+	for i, group := range groups {
+		for _, f := range group {
+			owner[unit.FragmentID(f)] = i
+		}
+	}
+	var out []unit.Unit
+	for i, group := range groups {
+		u := unit.NewRelatedUnit(group)
 		for _, e := range edges {
-			if owner[e.from] == owner[ids[0]] && owner[e.to] == owner[ids[0]] {
-				u.Grouping = append(u.Grouping, e.evidence)
-			} else if owner[e.from] == owner[ids[0]] || owner[e.to] == owner[ids[0]] {
-				u.Boundaries = append(u.Boundaries, e.evidence)
+			a, b := owner[e.FromFragment], owner[e.ToFragment]
+			if a == i && b == i {
+				u.Grouping = append(u.Grouping, e)
+			} else if a == i || b == i {
+				u.Boundaries = append(u.Boundaries, e)
 			}
 		}
 		u.DiffTokens = llm.CountTokens(u.Diff())
 		u.BudgetExceeded = u.DiffTokens > tokenLimit
-		if len(u.Grouping) == 0 && len(fs) > 1 {
-			u.Formed = unit.FormedCoalesce
+		if len(u.Paths()) == 1 {
+			u.Scope, u.Formed = unit.ScopeFile, unit.FormedFile
 		}
 		out = append(out, u)
 	}

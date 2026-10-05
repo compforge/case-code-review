@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -13,17 +14,17 @@ type countingFinder struct{ n *int }
 func (f countingFinder) Find(unit.Unit) []unit.Clue { *f.n++; return nil }
 
 func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
-	// Independent targets receive context even when they share one file.
+	// Coalesced targets receive context for their final shared Unit.
 	var under int
 	au := &Runner{
 		splitter:      unit.AutoSplitter{},
 		changes:       []change.Change{goDiff("p.go", 3)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&under}},
 	}
-	if _, err := au.splitUnits(); err != nil {
+	if _, err := au.splitUnits(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if under != 3 {
+	if under != 1 {
 		t.Errorf("small change: finder should run for each final Unit, got %d", under)
 	}
 
@@ -34,10 +35,10 @@ func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
 		changes:       []change.Change{goDiff("p.go", 12)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&over}},
 	}
-	if _, err := ao.splitUnits(); err != nil {
+	if _, err := ao.splitUnits(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if over != 12 {
+	if over != 1 {
 		t.Errorf("large change: finder should still run for each final Unit, got %d calls", over)
 	}
 }

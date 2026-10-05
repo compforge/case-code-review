@@ -66,7 +66,7 @@ func TestCapturedGraphAndOldContractsSurviveWorkspaceChanges(t *testing.T) {
 	// Current source no longer matches the captured diff. It must not create a
 	// new call in the graph used to assess that diff.
 	write("a.go", "package p\nfunc A(){ Surprise() }\nfunc Surprise(){}\n")
-	us, err := a.splitUnits()
+	us, err := a.splitUnits(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

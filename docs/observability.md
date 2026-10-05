@@ -116,6 +116,7 @@ Session 拥有一条 `go-stdx/timeline`：从创建 Session 到 Runner 收尾，
 ```text
 Session timeline
   ├─ diff.load / project.select / codegraph.build / unit.formation
+  │                                                └─ unit.grouping.relations / unit.grouping.namespace
   ├─ unit.queue → review.unit → execution → turn
   │                              ├─ context.project / context.recover_overflow
   │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
@@ -128,6 +129,11 @@ Session timeline
 图中箭头表达流转，实际父子关系由 stage ID 决定。Review 2 可在 Review 1 尚未结束时启动；两个 Review
 阶段和多个 Unit 可以重叠，不存在为了绘图而新增的全局阶段屏障。CodeGraph 在第一次真正构建时记录，
 后续查询复用同一图，不把缓存命中再算成构图。
+
+`unit_grouping` artifact 通过 Stage ID 关联每个归拢阶段，保留输入／输出组数、namespace 合并依据（snapshot、Node ID 与 CodeGraph 原生证明路径）、
+预算阻止的候选数量与缺少共同 namespace 的组数。`unit_formation.grouping` 和 dry-run JSON 的
+`grouping` 提供整轮数量目标、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法达到数量目标，
+所有目标仍进入评审。耗时读取对应 timeline stage。
 
 每次阶段转换将原生 `timeline.Update` 增量写入 Session JSONL。Update 属于整轮 Session；Unit、Lane、
 Hypothesis、CCR Execution 和请求身份保存在对应 stage attributes。AgentGo 的逻辑执行 ID 以 CCR Execution

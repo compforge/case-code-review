@@ -15,7 +15,7 @@ import (
 type Scope string
 
 const (
-	// ScopeFile groups a whole file's change (residual / unparseable / coalesced).
+	// ScopeFile groups edits remaining in one file after cross-file extraction.
 	ScopeFile Scope = "file"
 	// ScopeFunc is a single function's change.
 	ScopeFunc Scope = "func"
@@ -30,7 +30,7 @@ type Formation string
 
 const (
 	FormedFunc     Formation = "func"     // a lone function fragment
-	FormedFile     Formation = "file"     // whole-file fragment: residual / unparseable / multi-symbol
+	FormedFile     Formation = "file"     // file-local edits: residual / unparseable / remaining symbols
 	FormedCoalesce Formation = "coalesce" // cost governor merged a file's fragments
 	FormedGraph    Formation = "graph"
 )
@@ -68,10 +68,12 @@ type Unit struct {
 	// Clues are the deduped project and language facts assembled for this Unit
 	// after formation, across the self/owner/caller/callee/used/project relations.
 	// See docs/unit-model.md.
-	Clues          []Clue
-	Grouping       []GroupingEvidence
-	Boundaries     []GroupingEvidence
-	DiffTokens     int
+	Clues      []Clue
+	Grouping   []GroupingEvidence
+	Boundaries []GroupingEvidence
+	DiffTokens int
+	// BudgetExceeded means the Unit diff exceeds the cross-file merge
+	// budget. It remains a review target, governed by Execution's own limits.
 	BudgetExceeded bool
 	// review is shared by value-copied Units and accumulates immutable evidence
 	// plus accepted outputs as the Unit moves through Review 1, Review 2 and Trial.

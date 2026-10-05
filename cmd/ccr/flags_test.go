@@ -58,3 +58,13 @@ func TestReviewTokenBudgetFlag(t *testing.T) {
 		t.Fatal("negative budget accepted")
 	}
 }
+
+func TestReviewMaxUnitsFlag(t *testing.T) {
+	opts, err := parseReviewFlags([]string{"--max-units", "12"})
+	if err != nil || opts.maxUnits != 12 {
+		t.Fatalf("maxUnits=%d err=%v", opts.maxUnits, err)
+	}
+	if _, err := parseReviewFlags([]string{"--max-units", "-1"}); err == nil {
+		t.Fatal("negative max units accepted")
+	}
+}

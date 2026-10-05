@@ -128,6 +128,7 @@ type reviewOptions struct {
 	model           string // --model: override resolved LLM model for this review
 	concurrency     int
 	perFileTimeout  int
+	maxUnits        int
 	maxTokensBudget int
 	maxTools        int
 	maxGitProcs     int
@@ -152,6 +153,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text, json, or jsonl")
 	a.StringSliceVar(&opts.features, "feature", "toggle a feature gate: name=on|off (repeatable); run 'ccr review --help' for the list")
 	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "soft limit on reported input+output tokens across the run; stops new model calls (0 = unlimited)")
+	a.IntVar(&opts.maxUnits, "max-units", 0, "target review Unit count after grouping (0 = selected-file count; namespace and size constraints may prevent reaching it)")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
@@ -174,6 +176,9 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 		return opts, nil
 	}
 
+	if opts.maxUnits < 0 {
+		return opts, fmt.Errorf("--max-units must be non-negative")
+	}
 	if opts.maxTokensBudget < 0 {
 		return opts, fmt.Errorf("--max-tokens-budget must be non-negative")
 	}
@@ -271,6 +276,7 @@ Flags:
   -c, --commit string     single commit hash or tag to review (vs its parent)
   -f, --format string     output format: text, json, or jsonl (default "text")
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env
+  --max-units int         target review Unit count (0 = selected-file count; best effort)
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)
   --from string           source ref to start diff from (e.g., 'main')

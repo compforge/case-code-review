@@ -57,6 +57,13 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 CodeGraph location 的行号从 1 开始、字节结束位置不包含在范围中；Language 转换为 CCR 的闭区间
 行范围。声明头读取 Node.Signature；CCR 只压缩展示空白、限制长度。缺少签名时以符号名展示。
 
+### Namespace 查询
+
+RepositoryIndex 将带 snapshot 的源码 Anchor 或 Document ID 交给 CodeGraph 的 `CommonNamespaces`。
+语言相关的 package/module 归属、嵌套规则和查询预算由上游负责；CCR 只选择允许参与分组的
+Package、Module、Namespace 种类与 Exact 置信度，并保留上游的距离和证明路径。
+不在 Language 层通过目录、同名或自写 BFS 补出组织关系；查询错误与缺少归属分别处理。
+
 ### Outline 是导航投影
 
 FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 只消费 Graph 的 Node 与 Relation：

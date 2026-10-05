@@ -37,7 +37,9 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 				tpl.PlanTask = &conversation
 			}
 			a := New(Args{RepoDir: repo, Template: tpl, LLMClient: client, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100})
-			a.changes = []change.Change{goDiff("p.go", 3)}
+			// Queue independent files: multiple symbols in one file share the
+			// file-count allowance and no longer guarantee multiple executions.
+			a.changes = []change.Change{goDiff("p.go", 1), goDiff("q.go", 1), goDiff("r.go", 1)}
 			if _, err := a.dispatchUnits(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -67,5 +69,27 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 				t.Fatalf("local budget counted as provider failure")
 			}
 		})
+	}
+}
+
+func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
+	client := &budgetClient{}
+	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client,
+		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})
+	defer history.Finalize()
+	a.changes = []change.Change{{NewPath: "large.txt", Diff: "@@ -0,0 +1 @@\n+" + strings.Repeat("word ", 10000) + "\n", Insertions: 1}}
+	units, err := a.splitUnits(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(units) != 1 || !units[0].BudgetExceeded {
+		t.Fatalf("expected one file exceeding merge budget: %+v", units)
+	}
+	if err := a.reviewUnit(t.Context(), units[0]); err != nil {
+		t.Fatal(err)
+	}
+	if client.calls != 1 {
+		t.Fatalf("whole-file review was skipped by merge budget: %d calls", client.calls)
 	}
 }
