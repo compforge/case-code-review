@@ -4,6 +4,7 @@
 package formation
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,10 @@ import (
 // Config supplies the rules and knowledge sources needed to form Units. The
 // zero value keeps relation grouping off and uses default cross-file merge budgets.
 type Config struct {
+	Context         context.Context
+	MaxUnits        int
+	OnStep          func(context.Context, GroupingStep)
+	OnGrouped       func(GroupingReport)
 	RepoDir         string
 	Changes         []change.Change
 	Splitter        unit.Splitter
@@ -27,10 +32,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form extracts graph-related changed targets into cross-file Units and groups
-// remaining edits by file. Clues are gathered after the final scope is known.
+// Form starts with file groups and applies GroupChain before creating Units.
+// Clues are gathered only after the final scope is known.
 //
-// +spec=`Each target edit belongs to exactly one Unit; changed cross-file dependencies are grouped before file-local remainders, within a file-count allowance`
+// +spec=`Each target edit belongs to exactly one Unit; changed cross-file dependencies are grouped before file-local remainders, with explicit grouping limits`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)
@@ -56,7 +61,24 @@ func Form(config Config) ([]unit.Unit, error) {
 		}
 		fragments = append(fragments, fs...)
 	}
-	units := groupFragments(fragments, config.Analyzer, config.Before, config.CallChain, tokenLimit)
+	groups := fileGroups(fragments)
+	maxUnits := len(groups)
+	if config.MaxUnits > 0 {
+		maxUnits = min(maxUnits, config.MaxUnits)
+	}
+	ctx := config.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	chain := GroupChain{Groupers: []Grouper{RelationGrouper{Disabled: !config.CallChain}, NamespaceGrouper{}}, OnStep: config.OnStep}
+	result, report, err := chain.Group(ctx, GroupingInput{Groups: groups, After: config.Analyzer, Before: config.Before, MaxUnits: maxUnits, DiffTokens: tokenLimit})
+	if err != nil {
+		return nil, err
+	}
+	if config.OnGrouped != nil {
+		config.OnGrouped(report)
+	}
+	units := materialize(result.Groups, result.Relations, tokenLimit)
 	for i := range units {
 		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders)
 		units[i].Clues = append(units[i].Clues, boundaryClues(units[i].Boundaries)...)

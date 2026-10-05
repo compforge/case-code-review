@@ -1,6 +1,7 @@
 package formation
 
 import (
+	"context"
 	"sort"
 	"strings"
 
@@ -18,15 +19,20 @@ type candidate struct {
 	evidence unit.GroupingEvidence
 }
 
-// groupFragments groups only supplied targets. The graph remains the source of
-// relationships; this derived partition is CCR policy, never new code facts.
-func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer, related bool, tokenLimit int) []unit.Unit {
-	sort.Slice(fragments, func(i, j int) bool { return unit.FragmentID(fragments[i]) < unit.FragmentID(fragments[j]) })
-	var edges []candidate
-	if related {
-		edges = append(edges, graphCandidates(fragments, after, false)...)
-		edges = append(edges, graphCandidates(fragments, before, true)...)
+// RelationGrouper reorganizes file groups around changed source dependencies.
+// Disabled keeps the initial file groups, preserving the existing feature gate.
+type RelationGrouper struct{ Disabled bool }
+
+func (RelationGrouper) Name() string { return "relations" }
+func (g RelationGrouper) Group(ctx context.Context, in GroupingInput) (GroupingResult, error) {
+	if err := ctx.Err(); err != nil {
+		return GroupingResult{}, err
 	}
+	if g.Disabled {
+		return GroupingResult{Groups: in.Groups}, nil
+	}
+	fragments := flattenGroups(in.Groups)
+	edges := append(graphCandidates(fragments, in.After, false), graphCandidates(fragments, in.Before, true)...)
 	sort.Slice(edges, func(i, j int) bool {
 		a, b := edges[i], edges[j]
 		if a.evidence.Link.Touched != b.evidence.Link.Touched {
@@ -46,26 +52,9 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 	})
 	groups := make([][]int, len(fragments))
 	owner := make([]int, len(fragments))
-	paths := map[string]bool{}
-	sizes := make([]int, len(fragments))
-	groupCount := len(fragments)
-	for i, f := range fragments {
+	for i := range fragments {
 		groups[i] = []int{i}
 		owner[i] = i
-		paths[f.Path] = true
-		sizes[i] = len(f.Diff)
-	}
-	fits := func(ids []int) bool {
-		paths := map[string]bool{}
-		var fs []unit.Fragment
-		var lines int64
-		for _, i := range ids {
-			f := fragments[i]
-			paths[f.Path] = true
-			lines += f.Insertions + f.Deletions
-			fs = append(fs, f)
-		}
-		return len(paths) <= maxGroupFiles && lines <= maxGroupLines && llm.CountTokens((unit.Unit{Fragments: fs}).Diff()) <= tokenLimit
 	}
 	merge := func(a, b int, bounded bool) bool {
 		a, b = owner[a], owner[b]
@@ -73,19 +62,20 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 			return true
 		}
 		ids := append(append([]int(nil), groups[a]...), groups[b]...)
-		if bounded && !fits(ids) {
+		if bounded && !fitsGroup(selectFragments(fragments, ids), in.DiffTokens) {
 			return false
 		}
 		groups[a] = ids
 		groups[b] = nil
-		sizes[a] += sizes[b]
-		groupCount--
 		for _, i := range ids {
 			owner[i] = a
 		}
 		return true
 	}
 	for _, e := range edges {
+		if err := ctx.Err(); err != nil {
+			return GroupingResult{}, err
+		}
 		merge(e.from, e.to, true)
 	}
 	// Extract graph-backed cross-file groups first. Everything left in each
@@ -114,28 +104,46 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 			byFile[path] = root
 		}
 	}
-	// Multiple independent cross-file groups plus leftovers can exceed the
-	// file-count allowance. Only then coalesce groups sharing a file, keeping
-	// each extracted group intact. This is scheduling policy, not a graph edge.
-	for groupCount > len(paths) {
-		left, right := smallestFilePair(fragments, owner, sizes)
-		merge(left, right, false)
+
+	var out []Group
+	for _, ids := range groups {
+		if len(ids) > 0 {
+			out = append(out, selectFragments(fragments, ids))
+		}
+	}
+	var evidence []unit.GroupingEvidence
+	for _, edge := range edges {
+		evidence = append(evidence, edge.evidence)
+	}
+	return GroupingResult{Groups: out, Relations: evidence}, nil
+}
+
+func selectFragments(fs []unit.Fragment, ids []int) Group {
+	out := make(Group, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, fs[id])
+	}
+	return out
+}
+
+// Materialize once, after all regrouping. Evidence always describes the final
+// partition, including relationships reunited by a later namespace pass.
+func materialize(groups []Group, edges []unit.GroupingEvidence, tokenLimit int) []unit.Unit {
+	owner := map[string]int{}
+	for i, group := range groups {
+		for _, f := range group {
+			owner[unit.FragmentID(f)] = i
+		}
 	}
 	var out []unit.Unit
-	for _, ids := range groups {
-		if len(ids) == 0 {
-			continue
-		}
-		var fs []unit.Fragment
-		for _, i := range ids {
-			fs = append(fs, fragments[i])
-		}
-		u := unit.NewRelatedUnit(fs)
+	for i, group := range groups {
+		u := unit.NewRelatedUnit(group)
 		for _, e := range edges {
-			if owner[e.from] == owner[ids[0]] && owner[e.to] == owner[ids[0]] {
-				u.Grouping = append(u.Grouping, e.evidence)
-			} else if owner[e.from] == owner[ids[0]] || owner[e.to] == owner[ids[0]] {
-				u.Boundaries = append(u.Boundaries, e.evidence)
+			a, b := owner[e.FromFragment], owner[e.ToFragment]
+			if a == i && b == i {
+				u.Grouping = append(u.Grouping, e)
+			} else if a == i || b == i {
+				u.Boundaries = append(u.Boundaries, e)
 			}
 		}
 		u.DiffTokens = llm.CountTokens(u.Diff())
@@ -147,43 +155,6 @@ func groupFragments(fragments []unit.Fragment, after, before *language.Analyzer,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
-}
-
-// Only the two smallest distinct groups per file can be the next merge. Scan
-// memberships once per merge instead of comparing every fragment pair; large
-// files can contain hundreds of independent declarations or import bindings.
-func smallestFilePair(fs []unit.Fragment, owner, sizes []int) (int, int) {
-	type pair struct{ first, second int }
-	byFile := map[string]pair{}
-	less := func(a, b int) bool { return b < 0 || sizes[a] < sizes[b] || sizes[a] == sizes[b] && a < b }
-	for i, f := range fs {
-		p, ok := byFile[f.Path]
-		if !ok {
-			p = pair{-1, -1}
-		}
-		id := owner[i]
-		if id == p.first || id == p.second {
-			continue
-		}
-		if less(id, p.first) {
-			p = pair{id, p.first}
-		} else if less(id, p.second) {
-			p.second = id
-		}
-		byFile[f.Path] = p
-	}
-	left, right, size := -1, -1, 0
-	for _, p := range byFile {
-		if p.second < 0 {
-			continue
-		}
-		a, b := min(p.first, p.second), max(p.first, p.second)
-		combined := sizes[a] + sizes[b]
-		if left < 0 || combined < size || combined == size && (a < left || a == left && b < right) {
-			left, right, size = a, b, combined
-		}
-	}
-	return left, right
 }
 
 func graphCandidates(fs []unit.Fragment, a *language.Analyzer, before bool) []candidate {

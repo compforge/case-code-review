@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
@@ -54,6 +56,7 @@ func countClues(clues []unit.Clue) map[string]int {
 func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, error) {
 	if a.session != nil {
 		defer a.session.Flush()
+		ctx = a.session.Context(ctx)
 	}
 	if err := a.loadChanges(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("load diffs: %w", err)
@@ -61,7 +64,12 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	a.prepareFileSelections(ctx)
 	preview := a.buildPreview()
 	a.changes = a.filterDiffs(a.changes)
-	units, err := a.splitUnits()
+	formationCtx, finish := session.Begin(ctx, "unit.formation")
+	units, err := a.splitUnits(formationCtx)
+	if err == nil && a.session != nil {
+		a.persistFormedUnits(formationCtx, units)
+	}
+	finish(err)
 	if err != nil {
 		return nil, nil, "", fmt.Errorf("split units: %w", err)
 	}
@@ -101,3 +109,6 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	}
 	return preview, out, repoMap, nil
 }
+
+// GroupingReport explains the strategies and count target used in this run.
+func (a *Runner) GroupingReport() formation.GroupingReport { return a.grouping }

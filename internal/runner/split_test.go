@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func goDiff(path string, n int) change.Change {
 func splitWith(t *testing.T, diffs ...change.Change) []unit.Unit {
 	t.Helper()
 	a := &Runner{splitter: unit.AutoSplitter{}, changes: diffs}
-	units, err := a.splitUnits()
+	units, err := a.splitUnits(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -62,8 +62,8 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    `spec / case / link / rule / doc` 等 Biz Knowledge；CodeGraph 拥有源码解析与关系绑定，Language 负责 CodeGraph 接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，按已改动目标的高置信图关系提取跨文件组，其余改动按文件收拢。
-   Fragment 保留源码身份和范围；Unit 数量超过改动文件数时，合并共享文件的组，保持已提取的关联组完整。
+2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，按文件建立初始组，再由 `Grouper` / `GroupChain` 依次组织关系组，超限时沿 namespace 祖先归拢。
+   Fragment 保留源码身份和范围；链统一检查覆盖与数量目标，后续归拢保持已提取的关联组完整；缺少共同 namespace 或受大小预算约束时显式报告超限，不丢弃目标或推测组织关系。
    缺少图事实时保留未绑定目标，预算切断的关系保留为上下文；无法在预算内评审的目标显式报告 incomplete。
    上下文能力不由 Unit 的展示形状决定。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性

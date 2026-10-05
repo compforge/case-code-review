@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,7 +67,7 @@ func TestDogfoodContextAssembly(t *testing.T) {
 		},
 	}
 
-	units, err := a.splitUnits()
+	units, err := a.splitUnits(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

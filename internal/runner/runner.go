@@ -100,6 +100,8 @@ type Args struct {
 
 	// Concurrency limit for per-file subtasks. Defaults to number of CPUs.
 	MaxConcurrency int
+	// MaxUnits is a grouping target; zero uses the selected-file count.
+	MaxUnits int
 
 	// Concurrent task timeout in minutes. 0 means no timeout.
 	ConcurrentTaskTimeout int
@@ -185,6 +187,7 @@ type Runner struct {
 	// callgraph lookup, comment tagging, and ranged source preload.
 	analyzer       *language.Analyzer
 	beforeAnalyzer *language.Analyzer
+	grouping       formation.GroupingReport
 	// board is the Review Team's shared case board for this run (nil when the
 	// review_team gate is off). See docs/unit_review.md.
 	board          *board.Registry
@@ -228,6 +231,7 @@ func New(args Args) *Runner {
 			Params: map[string]any{
 				"group_diff_tokens": formation.DefaultGroupDiffTokens,
 				"max_tokens_budget": args.MaxTokensBudget,
+				"max_units":         args.MaxUnits,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -527,7 +531,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	// Locate selected edits in their source versions, then form bounded Units.
 	// The fan-out machinery below is granularity-agnostic.
 	formationCtx, finishFormation := session.Begin(ctx, "unit.formation")
-	units, err := a.splitUnits()
+	units, err := a.splitUnits(formationCtx)
 	finishFormation(err)
 	if err != nil {
 		return nil, err
@@ -830,6 +834,7 @@ func (a *Runner) persistFindings(ctx context.Context, comments []finding.Finding
 func (a *Runner) persistFormedUnits(ctx context.Context, units []unit.Unit) {
 	a.session.WriteArtifactContext(ctx, "unit_formation", map[string]any{
 		"unit_count": len(units),
+		"grouping":   a.grouping,
 	})
 	for _, reviewUnit := range units {
 		a.session.WriteArtifactContext(ctx, "review_unit", map[string]any{
@@ -932,7 +937,7 @@ func (a *Runner) tagSymbolIDs(comments []finding.Finding) {
 
 // splitUnits delegates Unit creation to Formation, then registers the stable
 // scopes with the optional run-level Review Team board.
-func (a *Runner) splitUnits() ([]unit.Unit, error) {
+func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 	finders := append([]unit.ClueFinder(nil), a.finders...)
 	finders = append(finders, componentFinder{
 		selections: a.fileSelections,
@@ -943,6 +948,19 @@ func (a *Runner) splitUnits() ([]unit.Unit, error) {
 		groupDiffTokens = min(groupDiffTokens, max(1, a.args.Template.MaxTokens/2))
 	}
 	units, err := formation.Form(formation.Config{
+		Context:  ctx,
+		MaxUnits: a.args.MaxUnits,
+		OnGrouped: func(report formation.GroupingReport) {
+			a.grouping = report
+			if report.LimitExceeded && a.executor != nil {
+				a.recordWarning("unit_grouping_limit", "", fmt.Sprintf("%d Units remain above grouping target %d; source relationships or size budgets prevent further grouping", report.FinalUnits, report.MaxUnits))
+			}
+		},
+		OnStep: func(stepCtx context.Context, step formation.GroupingStep) {
+			if a.session != nil {
+				a.session.WriteArtifactContext(stepCtx, "unit_grouping", map[string]any{"step": step})
+			}
+		},
 		RepoDir:         a.args.RepoDir,
 		Changes:         a.changes,
 		Splitter:        a.splitter,

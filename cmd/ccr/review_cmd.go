@@ -106,6 +106,7 @@ func runReview(args []string) error {
 		Findings:              rt.Findings,
 		WorkerPool:            harness.NewWorkerPool(opts.concurrency),
 		MaxConcurrency:        opts.concurrency,
+		MaxUnits:              opts.maxUnits,
 		ConcurrentTaskTimeout: opts.perFileTimeout,
 		Model:                 rt.Model,
 		Background:            opts.background,
@@ -261,6 +262,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		Background:   opts.background,
 		Features:     features,
 		Version:      versionString(),
+		MaxUnits:     opts.maxUnits,
 	})
 
 	preview, units, repoMap, err := ag.DryRun(context.Background())
@@ -268,10 +270,13 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		return fmt.Errorf("dry-run failed: %w", err)
 	}
 	if opts.outputFormat == "json" {
-		return outputDryRunJSON(preview, units, repoMap, features.Resolved(), ag.CodeGraphReports())
+		return outputDryRunJSON(preview, units, repoMap, features.Resolved(), ag.CodeGraphReports(), ag.GroupingReport())
 	}
 	outputPreviewText(preview) // which files are reviewed/excluded (the --preview view)
 	outputDryRunText(units)    // each unit's assembled context
+	if report := ag.GroupingReport(); report.LimitExceeded {
+		fmt.Printf("Grouping target not reached: %d Units remain (target %d); source relationships or size budgets prevent further grouping.\n", report.FinalUnits, report.MaxUnits)
+	}
 	dryRunSection("Repo Symbol Map (run-level)", repoMap)
 	return nil
 }

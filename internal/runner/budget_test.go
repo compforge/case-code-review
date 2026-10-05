@@ -79,7 +79,7 @@ func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})
 	defer history.Finalize()
 	a.changes = []change.Change{{NewPath: "large.txt", Diff: "@@ -0,0 +1 @@\n+" + strings.Repeat("word ", 10000) + "\n", Insertions: 1}}
-	units, err := a.splitUnits()
+	units, err := a.splitUnits(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/suggestdiff"
 )
 
@@ -382,19 +383,20 @@ type dryRunMetrics struct {
 }
 
 type dryRunJSON struct {
-	Analysis map[string]any       `json:"analysis"`
-	Features map[string]bool      `json:"features"` // resolved feature gates — self-describes the run for A/B
-	Preview  *runner.Preview      `json:"preview"`
-	Metrics  dryRunMetrics        `json:"metrics"`
-	Units    []runner.UnitContext `json:"units"`
-	RepoMap  string               `json:"repo_map,omitempty"` // run-level ranked symbol map (shared by all units)
+	Grouping formation.GroupingReport `json:"grouping"`
+	Analysis map[string]any           `json:"analysis"`
+	Features map[string]bool          `json:"features"` // resolved feature gates — self-describes the run for A/B
+	Preview  *runner.Preview          `json:"preview"`
+	Metrics  dryRunMetrics            `json:"metrics"`
+	Units    []runner.UnitContext     `json:"units"`
+	RepoMap  string                   `json:"repo_map,omitempty"` // run-level ranked symbol map (shared by all units)
 }
 
 // outputDryRunJSON emits the dry-run as JSON: the resolved feature gates, the file
 // preview, a structural metrics summary, and each unit's assembled context.
 // Deterministic (no LLM), so it's the free layer for A/B-comparing what a feature
 // changes — and it records which gates were active.
-func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoMap string, features map[string]bool, analysis map[string]any) error {
+func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoMap string, features map[string]bool, analysis map[string]any, grouping formation.GroupingReport) error {
 	m := dryRunMetrics{
 		UnitCount:    len(units),
 		ScopeCounts:  map[string]int{},
@@ -414,7 +416,7 @@ func outputDryRunJSON(preview *runner.Preview, units []runner.UnitContext, repoM
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(dryRunJSON{Analysis: analysis, Features: features, Preview: preview, Metrics: m, Units: units, RepoMap: repoMap})
+	return enc.Encode(dryRunJSON{Grouping: grouping, Analysis: analysis, Features: features, Preview: preview, Metrics: m, Units: units, RepoMap: repoMap})
 }
 
 func dryRunSection(title, body string) {

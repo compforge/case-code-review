@@ -9,7 +9,7 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agentgo v0.0.2-0.20261004021436-106928a3053e
-	github.com/compforge/codegraph v0.10.6-0.20261003080441-f9a0d6097624
+	github.com/compforge/codegraph v0.10.6-0.20261005151343-4676567a57cf
 	github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/openai/openai-go/v3 v3.39.0

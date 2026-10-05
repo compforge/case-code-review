@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -20,7 +21,7 @@ func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
 		changes:       []change.Change{goDiff("p.go", 3)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&under}},
 	}
-	if _, err := au.splitUnits(); err != nil {
+	if _, err := au.splitUnits(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if under != 1 {
@@ -34,7 +35,7 @@ func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
 		changes:       []change.Change{goDiff("p.go", 12)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&over}},
 	}
-	if _, err := ao.splitUnits(); err != nil {
+	if _, err := ao.splitUnits(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if over != 1 {
