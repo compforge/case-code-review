@@ -2,6 +2,7 @@ package hypothesisreview
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -196,7 +197,7 @@ func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
 	}
 }
 
-func TestReviewTimeoutPersistsSystemInsufficientAssessment(t *testing.T) {
+func TestReviewTimeoutRemainsUnassessed(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
 	var submissions []AssessmentSubmission
 	var warnings []string
@@ -223,23 +224,14 @@ func TestReviewTimeoutPersistsSystemInsufficientAssessment(t *testing.T) {
 	if result.Execution.State != harness.OutcomeTimeout {
 		t.Fatalf("execution = %+v, want timeout", result.Execution)
 	}
-	if len(result.Assessments) != 1 {
-		t.Fatalf("assessments = %+v, want one system fallback", result.Assessments)
+
+	if len(result.Assessments) != 0 || len(submissions) != 0 {
+		t.Fatalf("timeout fabricated judgment: %+v %+v", result.Assessments, submissions)
 	}
-	assessment := result.Assessments[0]
-	if assessment.HypothesisID != hypothesis.ID || assessment.Support != Insufficient ||
-		assessment.Attribution != AttributionUnknown || assessment.Value != ValueUnknown ||
-		assessment.Novelty != Novel || assessment.ReviewerAlias != "system" {
-		t.Fatalf("fallback assessment = %+v", assessment)
+	if !slices.Contains(warnings, "hypothesis_unassessed") {
+		t.Fatalf("missing unassessed warning: %v", warnings)
 	}
-	if len(submissions) != 1 || submissions[0].Assessment.HypothesisID != hypothesis.ID {
-		t.Fatalf("persisted submissions = %+v", submissions)
-	}
-	for _, warning := range warnings {
-		if warning == "hypothesis_unassessed" {
-			t.Fatalf("timeout fallback was still reported unassessed: %v", warnings)
-		}
-	}
+
 }
 
 func TestRenderReviewPromptDoesNotRepeatRetainedLaneHistory(t *testing.T) {

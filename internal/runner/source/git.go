@@ -9,6 +9,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/pathutil"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -35,6 +36,8 @@ type Provider struct {
 
 	// Commit mode parameter
 	commit string // single commit hash/ref
+
+	Before, After *sourceview.Snapshot
 
 	base      string
 	baseKnown bool
@@ -219,6 +222,23 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 			d.OldContentKnown = true
 		}
 	}
+	p.Before = sourceview.New(p.repoDir, base, base, nil, p.runner)
+	overlay := map[string]sourceview.File{}
+	if p.mode == ModeWorkspace {
+		for _, d := range diffs {
+			if d.IsDeleted || d.IsRenamed {
+				overlay[d.OldPath] = sourceview.File{Deleted: true}
+			}
+			if !d.IsDeleted {
+				overlay[d.NewPath] = sourceview.File{Content: d.NewFileContent, Unavailable: d.NewContentMissing}
+			}
+		}
+	}
+	tree, identity := ref, ref
+	if p.mode == ModeWorkspace {
+		tree, identity = base, "review-worktree"
+	}
+	p.After = sourceview.New(p.repoDir, tree, identity, overlay, p.runner)
 	return p.filterDiffs(diffs), nil
 }
 

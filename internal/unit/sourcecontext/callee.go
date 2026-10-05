@@ -36,17 +36,19 @@ func (f CalleeFinder) Find(u unit.Unit) []unit.Clue {
 	if f.Analyzer == nil {
 		f.Analyzer = language.NewAnalyzer(f.RepoDir)
 	}
+	index := f.Analyzer.Repository()
+	nodes := u.GraphNodes(index)
 	var doc *docRider
 	if f.Kinds.Doc {
 		doc = &docRider{analyzer: f.Analyzer, relation: unit.RelCallee}
 	}
-	cfg := walkCfg{idx: f.Index, depth: f.Depth, max: max, spec: emitSpec, doc: doc}
-	return walkNeighbors(cfg, u.AllSymbols(), f.callees, func(id string) unit.Clue {
+	cfg := walkCfg{graph: index, idx: f.Index, depth: f.Depth, max: max, spec: emitSpec, doc: doc}
+	return walkNeighbors(cfg, nodes, f.callees, func(id string) unit.Clue {
 		return unit.Clue{
 			Kind:     unit.ClueSpec,
 			Relation: unit.RelCallee,
-			Text:     f.Index.Render([]string{id}),
-			Ref:      id,
+			Text:     f.Index.Render([]string{index.ContractKey(id)}),
+			Ref:      index.NodeLabel(id),
 		}
 	})
 }
@@ -56,5 +58,5 @@ func (f CalleeFinder) callees(funcID string) []string {
 	if analyzer == nil {
 		analyzer = language.NewAnalyzer(f.RepoDir)
 	}
-	return analyzer.Repository().CallNeighbors(funcID, false)
+	return analyzer.Repository().CallNodeNeighbors(funcID, false)
 }

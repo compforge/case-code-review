@@ -237,6 +237,7 @@ func peekSession(path string) (SessionSummary, error) {
 
 // ViewSession holds fully parsed records for one session.
 type ViewSession struct {
+	Cost             session.CostReport
 	RecordingWarning string
 	Timeline         *timeline.Document
 	Summary          SessionSummary
@@ -636,8 +637,10 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		execution.DurationMs = int64(intValue(fact["duration_ms"]))
 		execution.ToolCalls, execution.ToolErrors = intValue(fact["tool_calls"]), intValue(fact["tool_errors"])
 	}
+	if gaps := transcript.IncompleteReasons(); len(gaps) > 0 {
+		vs.RecordingWarning = strings.Join(gaps, "; ")
+	}
 	if transcript.TruncatedTail {
-		vs.RecordingWarning = "The final JSONL record is truncated; only the intact prefix is available."
 		signals.hasSessionEnd = false
 	}
 	if !hasCurrentSchema {
@@ -687,11 +690,6 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			fileIdx[rollupKey] = usage
 			fileOrder = append(fileOrder, rollupKey)
 		}
-		vs.TokenUsage.TotalPromptTokens += scope.Metrics.PromptTokens
-		vs.TokenUsage.TotalCompletionTokens += scope.Metrics.CompletionTokens
-		vs.TokenUsage.TotalCacheReadTokens += scope.Metrics.CacheReadTokens
-		vs.TokenUsage.TotalCacheWriteTokens += scope.Metrics.CacheWriteTokens
-		vs.TokenUsage.RequestCount += scope.Metrics.LLMCalls
 		usage.PromptTokens += scope.Metrics.PromptTokens
 		usage.CompletionTokens += scope.Metrics.CompletionTokens
 		usage.CacheReadTokens += scope.Metrics.CacheReadTokens
@@ -700,6 +698,12 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			mergeTool(sessionTools, tool)
 		}
 	}
+	vs.Cost = transcript.Costs()
+	vs.TokenUsage.TotalPromptTokens = vs.Cost.Total.Tokens.PromptTokens
+	vs.TokenUsage.TotalCompletionTokens = vs.Cost.Total.Tokens.CompletionTokens
+	vs.TokenUsage.TotalCacheReadTokens = vs.Cost.Total.Tokens.CacheReadTokens
+	vs.TokenUsage.TotalCacheWriteTokens = vs.Cost.Total.Tokens.CacheWriteTokens
+	vs.TokenUsage.RequestCount = vs.Cost.Total.Calls
 	vs.Reviews = supportedReviews
 	for _, path := range fileOrder {
 		vs.TokenUsage.FileTokenBreakdown = append(vs.TokenUsage.FileTokenBreakdown, *fileIdx[path])

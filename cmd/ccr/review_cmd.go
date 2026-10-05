@@ -16,7 +16,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/history"
-	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
 
 func runReview(args []string) error {
@@ -82,12 +81,6 @@ func runReview(args []string) error {
 		rt.Findings, fileReader, baseReader, features.Enabled(feature.SearchSymbolContext),
 	)
 
-	// Loads the --spec path plus auto-discovered .casecodereview/spec.json layers, mirroring
-	// how rules are resolved. Nil when no layer exists.
-	specs, err := spec.Load(cc.RepoDir, opts.specPath)
-	if err != nil {
-		return fmt.Errorf("load spec: %w", err)
-	}
 	historyIndex, err := history.Load(opts.historyPath)
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
@@ -117,7 +110,7 @@ func runReview(args []string) error {
 		Model:                 rt.Model,
 		Background:            opts.background,
 		BizID:                 opts.bizID,
-		Specs:                 specs,
+		SpecPath:              opts.specPath,
 		HistoryIndex:          historyIndex,
 		GitRunner:             cc.GitRunner,
 		Features:              features,
@@ -247,10 +240,6 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	if opts.outputFormat == "json" {
 		defer console.Quiet()()
 	}
-	specs, err := spec.Load(cc.RepoDir, opts.specPath)
-	if err != nil {
-		return fmt.Errorf("load spec: %w", err)
-	}
 	historyIndex, err := history.Load(opts.historyPath)
 	if err != nil {
 		return fmt.Errorf("load history: %w", err)
@@ -266,7 +255,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		Commit:       opts.commit,
 		FileFilter:   cc.FileFilter,
 		GitRunner:    cc.GitRunner,
-		Specs:        specs,
+		SpecPath:     opts.specPath,
 		HistoryIndex: historyIndex,
 		SystemRule:   cc.Resolver,
 		Background:   opts.background,

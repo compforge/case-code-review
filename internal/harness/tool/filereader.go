@@ -13,6 +13,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/pathutil"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 )
 
 // ReviewMode represents the active review mode.
@@ -53,8 +54,9 @@ func (m ReviewMode) RefValue(toRef, commit string) (string, bool) {
 
 // FileReader resolves file contents according to the active review mode.
 type FileReader struct {
-	RepoDir string
-	Mode    ReviewMode
+	Snapshot *sourceview.Snapshot
+	RepoDir  string
+	Mode     ReviewMode
 	// Ref is the git ref to use for ModeRange (--to) or ModeCommit (--commit).
 	// Empty for ModeWorkspace.
 	Ref    string
@@ -66,6 +68,9 @@ type FileReader struct {
 // - Workspace: reads directly from the filesystem.
 // - Range / Commit: uses `git show <Ref>:<path>` to read at the given ref.
 func (fr *FileReader) Read(ctx context.Context, path string) (string, error) {
+	if fr.Snapshot != nil {
+		return fr.Snapshot.Read(ctx, path)
+	}
 	switch fr.Mode {
 	case ModeWorkspace:
 		return fr.readFromDisk(path)
@@ -137,6 +142,13 @@ func (fr *FileReader) readFromGitShow(parentCtx context.Context, path string) (s
 // ReadLines returns a window of lines from the file plus the total line count.
 // startLine is 1-based; maxLines is the maximum number of lines to collect.
 func (fr *FileReader) ReadLines(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
+	if fr.Snapshot != nil {
+		content, err := fr.Snapshot.Read(ctx, path)
+		if err != nil {
+			return nil, 0, err
+		}
+		return scanLines(strings.NewReader(content), startLine, maxLines)
+	}
 	switch fr.Mode {
 	case ModeWorkspace:
 		return fr.readLinesFromDisk(path, startLine, maxLines)

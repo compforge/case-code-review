@@ -51,6 +51,8 @@ type chainStat struct {
 }
 
 type sessionStats struct {
+	Cost                session.CostReport   `json:"cost"`
+	RecordingGaps       []string             `json:"recording_gaps,omitempty"`
 	RecordingIncomplete bool                 `json:"recording_incomplete,omitempty"`
 	UnmeasuredCalls     int                  `json:"unmeasured_calls,omitempty"`
 	File                string               `json:"file"`
@@ -85,8 +87,8 @@ func runStats(args []string) error {
 		case "-h", "--help":
 			fmt.Println(`Usage: ccr stats [session.jsonl | dir]... [--format text|json]
 
-Analyze session transcripts: LLM latency percentiles, tool usage, rounds per
-unit and the slowest unit chains. With no path, analyzes the most recent
+Analyze session transcripts: time and token cost by pipeline stage, failed and
+unfinished calls, LLM latency, tool usage and the slowest unit chains. With no path, analyzes the most recent
 session under ~/.casecodereview/sessions.`)
 			return nil
 		default:
@@ -188,7 +190,9 @@ func analyzeSession(path string) (*sessionStats, error) {
 	if err != nil {
 		return nil, err
 	}
-	st.RecordingIncomplete = transcript.TruncatedTail
+	st.Cost = transcript.Costs()
+	st.RecordingGaps = transcript.IncompleteReasons()
+	st.RecordingIncomplete = len(st.RecordingGaps) > 0
 	stages := transcript.StageIndex()
 	for _, record := range transcript.Records {
 		raw, err := json.Marshal(record)
@@ -218,7 +222,10 @@ func analyzeSession(path string) (*sessionStats, error) {
 		case "llm_request":
 			st.TaskTypes[e.TaskType]++
 			rounds[e.ScopeID]++
-		case "llm_response":
+		case "llm_response", "llm_error":
+			if e.Type == "llm_error" {
+				st.LLMErrors++
+			}
 			st.LLMCalls++
 			st.Models[e.Model]++
 			if !hasTiming {
@@ -233,8 +240,6 @@ func analyzeSession(path string) (*sessionStats, error) {
 			if e.FilePath != "" {
 				chainLabel[e.ScopeID] = e.FilePath
 			}
-		case "llm_error":
-			st.LLMErrors++
 		case "tool_result":
 			ts := st.Tools[e.ToolName]
 			if ts == nil {
@@ -290,7 +295,7 @@ func analyzeSession(path string) (*sessionStats, error) {
 
 func printStats(st *sessionStats) {
 	if st.RecordingIncomplete || st.UnmeasuredCalls > 0 {
-		fmt.Printf("Recording: truncated_tail=%t, calls_without_end_time=%d\n", st.RecordingIncomplete, st.UnmeasuredCalls)
+		fmt.Printf("Recording: %s; calls_without_end_time=%d\n", strings.Join(st.RecordingGaps, "; "), st.UnmeasuredCalls)
 	}
 	fmt.Printf("== %s\n", st.File)
 	if st.Repo != "" {
@@ -302,6 +307,8 @@ func printStats(st *sessionStats) {
 		fmt.Printf(" · %d llm error(s)", st.LLMErrors)
 	}
 	fmt.Println()
+	printCost(st.Cost)
+
 	if st.WallSec > 0 {
 		fmt.Printf("   effective concurrency %.1fx\n", st.LLMSumSec/st.WallSec)
 	}

@@ -23,7 +23,8 @@ Kernel 由两类 Knowledge、Unit 和 Harness 组成：
 | **Unit** | 哪些改动应一起审，本次 run 已获得哪些事实快照和阶段结论 | 运行 agent loop、决定阶段策略 |
 | **Harness** | 一次 agent execution 如何有界运行、完成并被观测 | 理解 Unit、Hypothesis、Finding |
 
-Runner 是薄编排层：选择 review snapshot，调用 Project / Language / Unit 形成输入，用 Harness 执行两个
+Runner 固定各消费方共同读取的 before/after 源码视图（包括仓库契约），调用 Project / Language / Unit
+形成输入，用 Harness 执行两个
 agent Review，再交给确定性的 Trial（Review 3）并聚合领域结果。领域行为通过 execution spec、tool、hook
 和 event 适配 Harness，而不是塞进执行内核。
 

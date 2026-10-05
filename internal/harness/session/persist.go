@@ -259,6 +259,10 @@ func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, ta
 			"cache_write_tokens": usage.CacheWriteTokens,
 		},
 	}
+	rec["usage_source"] = "reported"
+	if usage.Estimated {
+		rec["usage_source"] = "estimated"
+	}
 	if reasoning != "" {
 		rec["reasoning"] = reasoning
 	}

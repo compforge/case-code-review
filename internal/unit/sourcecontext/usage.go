@@ -29,6 +29,11 @@ func FindUsages(analyzer *language.Analyzer, symbolIDs []string, excludePaths ma
 	var out []Usage
 	seen := map[string]bool{}
 	for _, id := range symbolIDs {
+		node, ok := index.Declaration(id)
+		if !ok {
+			continue
+		}
+		label := language.ReviewSymbolID(node)
 		var candidates []Usage
 		for _, use := range index.UsesOf(id) {
 			loc := use.Location
@@ -44,7 +49,7 @@ func FindUsages(analyzer *language.Analyzer, symbolIDs []string, excludePaths ma
 			if loc.Line < 1 || loc.Line > len(lines) {
 				continue
 			}
-			candidates = append(candidates, Usage{Symbol: id, File: loc.Path, Line: loc.Line, Text: strings.TrimSpace(lines[loc.Line-1])})
+			candidates = append(candidates, Usage{Symbol: label, File: loc.Path, Line: loc.Line, Text: strings.TrimSpace(lines[loc.Line-1])})
 		}
 		sort.Slice(candidates, func(i, j int) bool {
 			if candidates[i].File != candidates[j].File {

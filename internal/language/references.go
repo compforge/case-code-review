@@ -13,11 +13,15 @@ import (
 // retained declaration; FQN can identify an explicit external import binding.
 type Reference struct {
 	Name, SymbolID, FQN, SourcePath, SourceName string
+	NodeID                                      string
 }
 
 func (r *RepositoryIndex) Declaration(id string) (cg.Node, bool) {
 	if r == nil || r.Graph == nil {
 		return cg.Node{}, false
+	}
+	if node, ok := r.Graph.Node(id); ok && ReviewSymbolID(node) != "" {
+		return node, true
 	}
 	path, name, ok := SplitSymbolID(id)
 	if !ok {
@@ -38,22 +42,9 @@ func (r *RepositoryIndex) Owners(id string) []string {
 		return nil
 	}
 	var out []string
-	for _, kind := range []cg.RelationKind{cg.Contains, cg.Encloses} {
-		for _, e := range r.Graph.RelationsTo(node.ID, kind) {
-			if !e.Confidence.AtLeast(cg.Scoped) {
-				continue
-			}
-			n, ok := r.Graph.Node(e.Source)
-			if !ok {
-				continue
-			}
-			key := ReviewSymbolID(n)
-			if _, ok := r.Declaration(key); ok {
-				out = append(out, key)
-			}
-		}
-		if len(out) > 0 {
-			break
+	for _, id := range r.OwnerNodeIDs(node.ID) {
+		if key := r.ContractKey(id); key != "" {
+			out = append(out, key)
 		}
 	}
 	sort.Strings(out)
@@ -102,12 +93,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 			if !ok {
 				continue
 			}
-			ref := Reference{Name: use.Name, SymbolID: ReviewSymbolID(n)}
-			if ref.SymbolID != "" {
-				if _, ok := r.Declaration(ref.SymbolID); !ok {
-					continue
-				}
-			}
+			ref := Reference{Name: use.Name, NodeID: n.ID, SymbolID: r.ContractKey(n.ID)}
 			aliases := r.Graph.RelationsFrom(id, cg.Aliases)
 			for _, e := range aliases {
 				if e.Confidence.AtLeast(cg.Scoped) {
@@ -126,7 +112,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 					}
 				}
 			}
-			if ref.SymbolID == "" && ref.FQN == "" {
+			if ReviewSymbolID(n) == "" && ref.FQN == "" {
 				continue
 			}
 			if !seen[ref] {

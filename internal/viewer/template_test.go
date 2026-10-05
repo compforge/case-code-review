@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 )
 
 func TestSessionAndReviewTemplatesRender(t *testing.T) {
@@ -69,6 +70,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 		Artifacts:         []ReviewArtifact{{Kind: "review_hypothesis", HypothesisID: "h-1", Data: `{"id":"h-1"}`}},
 	}
 	vs := &ViewSession{
+		Cost: session.CostReport{Total: session.Cost{UnknownUsage: 1}, Stages: []session.StageCost{{Stage: timeline.Stage{ID: "request", Name: "llm.request", Status: timeline.Running}, DurationMS: 1000, SelfMS: 1000, Cost: session.Cost{Pending: 1, UnknownUsage: 1}}}},
 		Summary: SessionSummary{
 			SessionID: "session-1", CWD: "/repo", BizID: "github:org/repo#148",
 			HasDiffStats: true, DiffFileCount: 4, FileCount: 2,

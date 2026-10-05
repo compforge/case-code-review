@@ -10,6 +10,7 @@ import (
 
 	cg "github.com/compforge/codegraph"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 )
 
 var ErrUnsupported = errors.New("unsupported source language")
@@ -20,6 +21,7 @@ type Analyzer struct {
 	// ObserveRepositoryBuild brackets the one graph build. Set before use; the
 	// returned observer receives its published result.
 	ObserveRepositoryBuild func() func(*RepositoryIndex)
+	snapshot               *sourceview.Snapshot
 	ref                    string
 	git                    *gitcmd.Runner
 	repoDir                string
@@ -195,3 +197,7 @@ func (a *Analyzer) Capture(ref string, documents map[string]string) {
 	a.ref = ref
 	a.documents = documents
 }
+
+// SetSnapshot shares the run-owned input view with tools and contract loading.
+// Configure before publishing the graph.
+func (a *Analyzer) SetSnapshot(snapshot *sourceview.Snapshot) { a.snapshot = snapshot }

@@ -38,25 +38,27 @@ func (f CallerFinder) Find(u unit.Unit) []unit.Clue {
 	if f.Analyzer == nil {
 		f.Analyzer = language.NewAnalyzer(f.RepoDir)
 	}
+	index := f.Analyzer.Repository()
+	nodes := u.GraphNodes(index)
 	var doc *docRider
 	if f.Kinds.Doc {
 		doc = &docRider{analyzer: f.Analyzer, relation: unit.RelCaller}
 	}
 	var starts []string
-	for _, sym := range u.AllSymbols() {
-		e := f.Index[sym]
+	for _, sym := range nodes {
+		e := f.Index[index.ContractKey(sym)]
 		if e.Spec == "" && len(e.Cases) == 0 {
 			starts = append(starts, sym)
 		}
 	}
 	var clues []unit.Clue
 	if emitSpec {
-		clues = walkNeighbors(walkCfg{idx: f.Index, depth: f.Depth, max: max, spec: true, exclude: u.AllSymbols()}, starts, f.callers, func(id string) unit.Clue {
-			return unit.Clue{Kind: unit.ClueSpec, Relation: unit.RelCaller, Text: f.Index.Render([]string{id}), Ref: id}
+		clues = walkNeighbors(walkCfg{graph: index, idx: f.Index, depth: f.Depth, max: max, spec: true, exclude: nodes}, starts, f.callers, func(id string) unit.Clue {
+			return unit.Clue{Kind: unit.ClueSpec, Relation: unit.RelCaller, Text: f.Index.Render([]string{index.ContractKey(id)}), Ref: index.NodeLabel(id)}
 		})
 	}
 	if doc != nil {
-		clues = append(clues, walkNeighbors(walkCfg{max: max, doc: doc}, u.AllSymbols(), f.callers, nil)...)
+		clues = append(clues, walkNeighbors(walkCfg{graph: index, max: max, doc: doc}, nodes, f.callers, nil)...)
 	}
 	return clues
 }
@@ -66,5 +68,5 @@ func (f CallerFinder) callers(funcID string) []string {
 	if analyzer == nil {
 		analyzer = language.NewAnalyzer(f.RepoDir)
 	}
-	return analyzer.Repository().CallNeighbors(funcID, true)
+	return analyzer.Repository().CallNodeNeighbors(funcID, true)
 }

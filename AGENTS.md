@@ -59,7 +59,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 ## 关键约定
 
 1. **Knowledge owner 唯一**：Project Knowledge 包含 Repository / Component / FileRole 等结构事实和
-   `spec / case / link / rule / doc` 等 Biz Knowledge；CodeGraph 拥有源码解析与关系绑定，Language 负责输入快照和 CCR 身份适配；
+   `spec / case / link / rule / doc` 等 Biz Knowledge；CodeGraph 拥有源码解析与关系绑定，Language 负责 CodeGraph 接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
 2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，以高置信图关系形成有界分组。每条目标改动恰好归入一个 Fragment；
@@ -69,7 +69,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
    Session 唯一持有整轮 timeline：Stage 是执行身份、层级与生命周期事实，内容记录通过 Stage ID 关联，不并存另一套边界和计时。
-   Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，保留缺口和并发关系。
+   Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
 5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
    只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
    Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。

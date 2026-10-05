@@ -179,15 +179,34 @@ class SessionComparisonTest(unittest.TestCase):
         self.assertEqual(result["target_coverage"][0]["status"], "incomplete")
         self.assertIsNone(result["costs"]["duration_s"]["delta"])
 
-    def test_costs_count_scopes_once_and_only_units_as_units(self):
-        lane = {"type": "debrief", "uuid": "lane", "kind": "lane", "scope_id": "l", "outcome": "completed",
-                "tokens": {"prompt_tokens": 20, "cache_write_tokens": 2}, "rounds": {"hypothesis_review": 2}}
-        session = self.session([*unit(), lane, lane, artifact("hypothesis_review_execution", hypothesis_id="h", execution_id="exec"), execution("completed")])
+    def test_costs_include_lane_and_unclosed_calls_without_debrief(self):
+        response = {"type": "llm_response", "uuid": "r", "stage_id": "r1", "scope_id": "l",
+                    "usage": {"prompt_tokens": 20, "completion_tokens": 5, "cache_write_tokens": 2}}
+        session = self.session([*unit(), {"type": "llm_request", "stage_id": "r1"}, response, response,
+                                {"type": "llm_request", "stage_id": "unfinished"},
+                                {"type": "llm_error", "stage_id": "failed"}], closed=False)
         summary = session.summary()
         self.assertEqual(summary["units"], 1)
-        self.assertEqual(summary["prompt_tokens"], 30)
+        self.assertEqual(summary["prompt_tokens"], 20)
+        self.assertEqual(summary["completion_tokens"], 5)
         self.assertEqual(summary["rounds"], 3)
         self.assertEqual(summary["cache_write"], 2)
+        self.assertEqual(summary["unknown_usage"], 2)
+        self.assertEqual(summary["pending_calls"], 1)
+
+    def test_system_timeout_fallback_is_not_a_completed_assessment(self):
+        before = self.session([*unit(), finding()])
+        events = pipeline(support="insufficient")
+        for event in events:
+            if event.get("artifact_kind") == "review_assessment":
+                event["data"]["reviewer_alias"] = "system"
+        after = self.session([*unit(), *events,
+                              artifact("hypothesis_review_execution", hypothesis_id="h", execution_id="exec"),
+                              execution("timeout")])
+        absent = compare(before, after)["absent"][0]
+        self.assertEqual(absent["coverage"], "incomplete")
+        self.assertEqual(absent["status"], "not_reviewed")
+        self.assertEqual(absent["stage"]["execution_outcome"], "timeout")
 
     def test_legacy_findings_recover_snippet_from_hypothesis(self):
         f = finding()

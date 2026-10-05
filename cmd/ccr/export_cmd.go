@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
@@ -408,8 +409,9 @@ func exportSession(path string) (*atifTrajectory, error) {
 	if transcript.Timeline.ID != "" {
 		root.Extra["timeline"] = transcript.Timeline
 	}
-	if transcript.TruncatedTail {
-		root.Extra["recording_incomplete"] = "truncated final record"
+	root.Extra["cost"] = transcript.Costs()
+	if gaps := transcript.IncompleteReasons(); len(gaps) > 0 {
+		root.Extra["recording_incomplete"] = strings.Join(gaps, "; ")
 	}
 	for _, fact := range transcript.ExecutionFacts() {
 		raw, _ := json.Marshal(fact)

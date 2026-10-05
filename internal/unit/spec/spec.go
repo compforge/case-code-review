@@ -5,6 +5,7 @@
 package spec
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"strings"
 )
 
@@ -76,6 +79,16 @@ func Parse(data []byte) (Index, error) {
 // discovery is best-effort and never fails a review. Returns the zero Catalog
 // when nothing exists.
 func Load(repoDir, customPath string) (Catalog, error) {
+	return load(context.Background(), repoDir, customPath, nil)
+}
+
+// LoadSnapshot reads repository contracts from the same source view as the graph.
+// Global and explicitly supplied contracts remain declared external inputs.
+func LoadSnapshot(ctx context.Context, repoDir, customPath string, view *sourceview.Snapshot) (Catalog, error) {
+	return load(ctx, repoDir, customPath, view)
+}
+
+func load(ctx context.Context, repoDir, customPath string, view *sourceview.Snapshot) (Catalog, error) {
 	local := Index{}
 	found := false
 
@@ -85,7 +98,20 @@ func Load(repoDir, customPath string) (Catalog, error) {
 			return Catalog{}, err
 		}
 	}
-	if repoDir != "" {
+	if view != nil {
+		data, err := view.Read(ctx, ".casecodereview/spec.json")
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return Catalog{}, err
+		}
+		if err == nil {
+			idx, err := Parse([]byte(data))
+			if err != nil {
+				return Catalog{}, err
+			}
+			mergeInto(local, idx)
+			found = true
+		}
+	} else if repoDir != "" {
 		if err := mergeOptional(local, filepath.Join(repoDir, ".casecodereview", "spec.json"), &found); err != nil {
 			return Catalog{}, err
 		}

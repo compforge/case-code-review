@@ -141,6 +141,22 @@
 </div>
 {{end}}
 
+<p class="section-note">Usage: {{.Session.Cost.Total.EstimatedUsage}} estimated · {{.Session.Cost.Total.UnknownUsage}} unknown · {{.Session.Cost.Total.Pending}} calls still awaiting a result. Unknown usage is not zero cost.</p>
+{{if .Session.Cost.Stages}}
+<details>
+    <summary>Time and token cost by stage</summary>
+    <p class="section-note">Elapsed includes child work; self time excludes overlapping child intervals. Tokens include descendant requests, so parent and child rows must not be added together. Running durations are lower bounds at the last recorded observation.</p>
+    <table>
+        <thead><tr><th>Stage</th><th>Status</th><th>Elapsed (ms)</th><th>Self (ms)</th><th>Input</th><th>Output</th><th>Cache read/write</th><th>Unknown usage</th></tr></thead>
+        <tbody>
+        {{range .Session.Cost.Stages}}
+        <tr title="{{.Stage.ID}}; parent={{.Stage.ParentID}}; {{.Stage.Error}}"><td>{{.Stage.Name}}</td><td>{{.Stage.Status}}</td><td>{{printf "%.1f" .DurationMS}}</td><td>{{printf "%.1f" .SelfMS}}</td><td>{{.Cost.Tokens.PromptTokens}}</td><td>{{.Cost.Tokens.CompletionTokens}}</td><td>{{.Cost.Tokens.CacheReadTokens}} / {{.Cost.Tokens.CacheWriteTokens}}</td><td>{{.Cost.UnknownUsage}}</td></tr>
+        {{end}}
+        </tbody>
+    </table>
+</details>
+{{end}}
+
 <h3>Review 1 <span class="heading-count">{{len $review1}}</span></h3>
 <p class="section-note">以 Unit 为 Scope 发散 Hypothesis；点进 Unit 查看其中的 Execution 与每轮真实 Prompt Snapshot。</p>
 {{if $review1}}

@@ -139,15 +139,8 @@ func Review(
 	if result.State != harness.OutcomeCompleted {
 		warn(config, "hypothesis_review_incomplete", fmt.Sprintf("hypothesis %s in lane %s ended incomplete (%s)", input.Hypothesis.ID, input.LaneID, result.Reason))
 	}
-	if result.State == harness.OutcomeTimeout && !collector.Complete() {
-		// Novelty has no unknown value. Novel is safe here because insufficient
-		// support deterministically blocks Trial while preserving all four axes.
-		assessmentHook.Accept(Assessment{
-			Support: Insufficient, Attribution: AttributionUnknown,
-			Value: ValueUnknown, Novelty: Novel,
-			Reason: "System fallback: Review 2 timed out before a valid assessment was submitted.",
-		}, "system")
-	}
+	// An interrupted execution without a submission is unassessed. Creating an
+	// Assessment here would turn missing judgment into an apparent rejection.
 
 	assessments := collector.Assessments()
 	if len(assessments) == 0 {

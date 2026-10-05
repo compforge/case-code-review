@@ -40,13 +40,12 @@ type RelationCollector interface {
 type selfCollector struct{ analyzer *language.Analyzer }
 
 func (c selfCollector) Related(u unit.Unit) []RelatedSymbol {
+	index := c.analyzer.Repository()
 	var out []RelatedSymbol
-	for _, sym := range u.AllSymbols() {
-		name := sym
-		if parsed, ok := language.SymbolName(sym); ok {
-			name = parsed
-		}
-		out = append(out, RelatedSymbol{ID: sym, Relation: unit.RelSelf, Name: name, Ref: sym, Doc: c.analyzer.RepositoryDoc(sym)})
+	for _, id := range u.GraphNodes(index) {
+		label := index.NodeLabel(id)
+		name, _ := language.SymbolName(label)
+		out = append(out, RelatedSymbol{ID: index.ContractKey(id), Relation: unit.RelSelf, Name: name, Ref: label, Doc: index.NodeDoc(id)})
 	}
 	return out
 }
@@ -59,20 +58,21 @@ func (c selfCollector) Related(u unit.Unit) []RelatedSymbol {
 type ownerCollector struct{ analyzer *language.Analyzer }
 
 func (c ownerCollector) Related(u unit.Unit) []RelatedSymbol {
-	own := map[string]bool{}
-	for _, id := range u.AllSymbols() {
+	index := c.analyzer.Repository()
+	own, seen := map[string]bool{}, map[string]bool{}
+	for _, id := range u.GraphNodes(index) {
 		own[id] = true
 	}
-	seen := map[string]bool{}
 	var out []RelatedSymbol
-	for _, id := range u.AllSymbols() {
-		for _, owner := range c.analyzer.Repository().Owners(id) {
+	for _, id := range u.GraphNodes(index) {
+		for _, owner := range index.OwnerNodeIDs(id) {
 			if own[owner] || seen[owner] {
 				continue
 			}
 			seen[owner] = true
-			name, _ := language.SymbolName(owner)
-			out = append(out, RelatedSymbol{ID: owner, Relation: unit.RelOwner, Name: name, Ref: owner, Doc: c.analyzer.RepositoryDoc(owner)})
+			label := index.NodeLabel(owner)
+			name, _ := language.SymbolName(label)
+			out = append(out, RelatedSymbol{ID: index.ContractKey(owner), Relation: unit.RelOwner, Name: name, Ref: label, Doc: index.NodeDoc(owner)})
 		}
 	}
 	return out
@@ -108,7 +108,7 @@ func newUsedCollector(cat Catalog, analyzer *language.Analyzer) usedCollector {
 }
 func (c usedCollector) Related(u unit.Unit) []RelatedSymbol {
 	own := map[string]bool{}
-	for _, id := range u.AllSymbols() {
+	for _, id := range u.GraphNodes(c.analyzer.Repository()) {
 		own[id] = true
 	}
 	seen := map[string]bool{}
@@ -117,8 +117,9 @@ func (c usedCollector) Related(u unit.Unit) []RelatedSymbol {
 		spans := changedSourceSpans(f, c.analyzer.Repository())
 		for _, ref := range c.analyzer.ReferencesAt(f.Path, spans) {
 			rs := RelatedSymbol{ID: ref.SymbolID, Relation: unit.RelUsed, Name: ref.Name, Ref: ref.SymbolID}
-			if rs.ID != "" {
-				rs.Doc = c.analyzer.RepositoryDoc(rs.ID)
+			if label := c.analyzer.Repository().NodeLabel(ref.NodeID); label != "" {
+				rs.Ref = label
+				rs.Doc = c.analyzer.Repository().NodeDoc(ref.NodeID)
 			} else {
 				rs.Ref = ref.FQN
 				rs.DocFile, rs.DocName = ref.SourcePath, ref.SourceName
@@ -126,8 +127,8 @@ func (c usedCollector) Related(u unit.Unit) []RelatedSymbol {
 					rs.ID, rs.Entry = hit.id, &hit.entry
 				}
 			}
-			key := rs.ID + "\x00" + rs.Ref
-			if own[rs.ID] || seen[key] {
+			key := ref.NodeID + "\x00" + rs.Ref
+			if own[ref.NodeID] || seen[key] {
 				continue
 			}
 			seen[key] = true

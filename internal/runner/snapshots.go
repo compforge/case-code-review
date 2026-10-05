@@ -7,6 +7,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
+	"github.com/qiankunli/case-code-review/internal/unit/history"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
@@ -59,4 +60,35 @@ func (a *Runner) captureGraphs(ctx context.Context) {
 		splitter.Before = a.beforeAnalyzer
 		a.splitter = splitter
 	}
+}
+
+func (a *Runner) configureFinders(catalog spec.Catalog) {
+	f, analyzer := a.features, a.analyzer
+	kinds := spec.KindGates{
+		Spec: f.Enabled(feature.SpecCase),
+		Rule: f.Enabled(feature.Rule),
+		Link: f.Enabled(feature.Link),
+		Doc:  f.Enabled(feature.Doc),
+	}
+	finders := []unit.ClueFinder{spec.NewRelatedFinder(catalog, analyzer, kinds)}
+	if f.Enabled(feature.History) {
+		finders = append(finders, history.Finder{Index: a.args.HistoryIndex})
+	}
+	// One CodeGraph snapshot per review, shared by clue finders and merge
+	// adjacency, owner/used contracts and documentation; built lazily on first use.
+
+	var costlyFinders []unit.ClueFinder
+	// caller/callee sit behind the cost gate (graph traversal) and emit per the
+	// kind gates: inherited/depended-on specs when the spec kind is on and a spec
+	// index exists, direct neighbors' docstrings when the doc kind is on. The two
+	// payloads are peer marks (authored vs derived) — doc needs no spec.json, so a
+	// repo that never adopted spec-case still gets caller/callee context.
+	// Resolution is intra-repo, hence the local index.
+	if f.Enabled(feature.CallerCallee) && (kinds.Spec || kinds.Doc) {
+		costlyFinders = append(costlyFinders,
+			sourcecontext.CallerFinder{RepoDir: a.args.RepoDir, Index: catalog.Local, Kinds: kinds, Analyzer: analyzer},
+			sourcecontext.CalleeFinder{RepoDir: a.args.RepoDir, Index: catalog.Local, Kinds: kinds, Analyzer: analyzer},
+		)
+	}
+	a.finders, a.costlyFinders = finders, costlyFinders
 }

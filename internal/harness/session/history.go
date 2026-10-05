@@ -155,10 +155,11 @@ type ContextCompaction struct {
 // Uses actual token counts from the API response when available,
 // falling back to local estimation via tiktoken.
 type TokenUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	Estimated        bool `json:"estimated,omitempty"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	CacheReadTokens  int  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int  `json:"cache_write_tokens,omitempty"`
 }
 
 // ResponseRecord holds the parsed LLM response.
@@ -509,6 +510,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 	}
 
 	usage := &TokenUsage{
+		Estimated:        resp.Usage == nil,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		CacheReadTokens:  cacheReadTokens,

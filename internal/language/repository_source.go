@@ -17,6 +17,15 @@ type repositoryEntry struct {
 
 func (a *Analyzer) repositoryEntries(ctx context.Context) ([]repositoryEntry, string, error) {
 	var entries []repositoryEntry
+	if a.snapshot != nil {
+		files, err := a.snapshot.Entries(ctx)
+		for _, f := range files {
+			if !skipRepositoryPath(f.Path) {
+				entries = append(entries, repositoryEntry{path: f.Path, size: f.Size})
+			}
+		}
+		return entries, a.snapshot.ID, err
+	}
 	if a.ref != "" {
 		resolved, err := a.git.Output(ctx, a.repoDir, "rev-parse", "--verify", "--end-of-options", a.ref+"^{commit}")
 		if err != nil {
@@ -86,6 +95,10 @@ func skipRepositoryPath(path string) bool {
 }
 
 func (a *Analyzer) readRepositoryFile(ctx context.Context, snapshot, path string) ([]byte, error) {
+	if a.snapshot != nil {
+		content, err := a.snapshot.Read(ctx, path)
+		return []byte(content), err
+	}
 	if content, ok := a.documents[path]; ok {
 		return []byte(content), nil
 	}

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from datetime import UTC, datetime
@@ -11,12 +10,13 @@ from typing import Callable, Iterable
 from urllib.parse import unquote, urlparse
 
 from trajectory_harness import Recording, RecordingQuery, RecordingRef
+from session_recording import Recording as SessionRecording
 
 Exporter = Callable[[Path], str]
 
 
 class CCRSessionSource:
-    """Discover closed local CCR sessions and fetch their ATIF export."""
+    """Discover intact evidence from closed and unfinished local CCR sessions and fetch their ATIF export."""
 
     def __init__(
         self,
@@ -45,8 +45,8 @@ class CCRSessionSource:
             inspected = _inspect_session(path)
             if inspected is None:
                 continue
-            manifest, closed = inspected
-            if not closed or not self._matches_repository(
+            manifest, closed, gaps = inspected
+            if not self._matches_repository(
                 str(manifest.get("cwd") or "")
             ):
                 continue
@@ -59,7 +59,9 @@ class CCRSessionSource:
                 "tool_version": str(manifest.get("tool_version") or ""),
                 "biz_id": str(manifest.get("biz_id") or ""),
                 "git_head": str(manifest.get("git_head") or ""),
-                "closed": True,
+                "closed": closed,
+                "recording_incomplete": not closed or bool(gaps),
+                "recording_gaps": gaps,
             }
             if not _matches_query(query, started_at, attributes):
                 continue
@@ -134,43 +136,14 @@ class CCRSessionSource:
         return False
 
 
-def _inspect_session(path: Path) -> tuple[dict, bool] | None:
+def _inspect_session(path: Path) -> tuple[dict, bool, list[str]] | None:
     try:
-        manifest: dict = {}
-        with path.open(encoding="utf-8") as stream:
-            for line in stream:
-                if not line.strip():
-                    continue
-                record = json.loads(line)
-                if record.get("type") == "session_start":
-                    manifest = record
-                    break
-        if not manifest:
+        recording = SessionRecording.read(path)
+        if not recording.start:
             return None
-        last = json.loads(_last_nonempty_line(path))
-        return manifest, last.get("type") == "session_end"
-    except (OSError, UnicodeError, ValueError):
+        return recording.start, recording.end is not None, recording.gaps
+    except OSError:
         return None
-
-
-def _last_nonempty_line(path: Path, chunk_size: int = 8192) -> str:
-    """Read the terminal record without scanning a potentially large session."""
-
-    with path.open("rb") as stream:
-        position = stream.seek(0, os.SEEK_END)
-        buffer = b""
-        while position > 0:
-            read_size = min(chunk_size, position)
-            position -= read_size
-            stream.seek(position)
-            buffer = stream.read(read_size) + buffer
-            lines = buffer.splitlines()
-            candidates = lines if position == 0 else lines[1:]
-            for line in reversed(candidates):
-                if line.strip():
-                    return line.decode("utf-8")
-            buffer = lines[0] if lines else buffer
-    raise ValueError("session contains no records")
 
 
 def _timestamp(value: object) -> datetime | None:

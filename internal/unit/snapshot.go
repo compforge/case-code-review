@@ -63,3 +63,37 @@ func (f Fragment) ChangedSpans(before bool) []language.Span {
 	}
 	return spans
 }
+
+// GraphNodes selects the captured side's native identities. Name-based inputs
+// exist only for explicitly constructed Units without graph anchors; an invalid
+// captured anchor never falls back to a same-named declaration.
+func (u Unit) GraphNodes(index *language.RepositoryIndex) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	for _, f := range u.Fragments {
+		anchors := f.After
+		if f.BeforeView {
+			anchors = f.Before
+		}
+		if len(anchors) > 0 {
+			for _, a := range anchors {
+				if n, ok := index.AnchorNode(a); ok {
+					add(n.ID)
+				}
+			}
+		} else {
+			for _, symbol := range f.Symbols {
+				if n, ok := index.Declaration(symbol); ok {
+					add(n.ID)
+				}
+			}
+		}
+	}
+	return out
+}
