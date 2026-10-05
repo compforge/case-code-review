@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.Review.Stage.Label}} - CCR Viewer</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/timeline.js" defer></script>
 </head>
 <body>
 <nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; <a href="/r/{{.EncodedRepo}}/{{.Session.Summary.SessionID}}">Session {{.Session.Summary.SessionID | truncate 12}}</a> &rsaquo; {{.Review.Stage.Label}}</nav>
@@ -115,13 +116,7 @@
                 <div class="conversation-section">
                     <div class="conversation-section-label">Request: {{$node.Timeline.Status}}</div>
                     {{if $node.Timeline.FinishedAt.IsZero}}<p>Request terminal state is not recorded. Running stages show the last observed phase.</p>{{end}}
-                    <table class="timeline-table"><thead><tr><th>Stage</th><th>Result</th><th>Duration</th><th>Details</th></tr></thead><tbody>
-                    {{range timelineRows $node.Timeline}}<tr>
-                        <td><code>{{.Label}}</code></td><td>{{.Status}}</td>
-                        <td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</td>
-                        <td>{{range $key, $value := .Attributes}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Code}}<div>{{.Code}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
-                    </tr>{{end}}
-                    </tbody></table>
+                    {{template "timeline" $node.Timeline}}
                 </div>
                 {{end}}
                 {{if eq $node.Kind "prompt"}}

@@ -168,6 +168,11 @@ Session JSONL 是本地执行事实源，不是对外发布协议。需要在长
 Viewer 读取 Session JSONL，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
 看到了什么、loop 如何推进、最终决策如何形成，以及哪里发生中断或空转。
 
+Session 页面通过 Session / Timeline 两个 tab 分开呈现概览与计时，避免大型阶段树挤占审查入口。
+Timeline 使用可折叠阶段树和共享时间轴；attributes、错误与阶段身份按需展开，不参与主行列宽。
+未记录结束时间的阶段只显示起点标记和 incomplete，不向当前时间延长，也不补造耗时或成功状态。
+请求卡片复用同一展示方式，时间轴相对该请求起点。
+
 Viewer 保留两个互补层级：
 
 1. **Session Overview**：token、时间、模型、工具调用、完成状态，以及
