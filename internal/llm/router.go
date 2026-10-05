@@ -90,14 +90,14 @@ func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (re
 		defer cancel()
 	}
 
-	ctx, routingStage := beginStage(ctx, "llm.routing", append(remainingBudget(ctx), timeline.Field{Key: "budget_ms", Value: r.callTimeout.Milliseconds()})...)
+	ctx, routingStage := beginStage(ctx, "llm.routing", append(remainingBudget(ctx), timeline.Attribute{Key: "budget_ms", Value: r.callTimeout.Milliseconds()})...)
 	defer func() { endStage(ctx, routingStage, resultErr) }()
 
 	var lastErr error
 	order := r.order()
 	for attemptIndex, i := range order {
-		fields := append(remainingBudget(ctx), timeline.Field{Key: "endpoint", Value: r.members[i].alias}, timeline.Field{Key: "attempt", Value: attemptIndex + 1})
-		attemptCtx, stage := beginStage(ctx, "llm.attempt", fields...)
+		attributes := append(remainingBudget(ctx), timeline.Attribute{Key: "endpoint", Value: r.members[i].alias}, timeline.Attribute{Key: "attempt", Value: attemptIndex + 1})
+		attemptCtx, stage := beginStage(ctx, "llm.attempt", attributes...)
 		resp, err := r.members[i].client.CompletionsWithCtx(attemptCtx, req)
 		endStage(attemptCtx, stage, err)
 		if err == nil {

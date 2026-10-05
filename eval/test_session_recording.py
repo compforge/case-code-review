@@ -7,6 +7,24 @@ from session_recording import execution_facts, read_records
 
 
 class SessionRecordingTests(unittest.TestCase):
+    def test_attributes_and_legacy_fields_preserve_execution_outcome(self):
+        for attributes in (
+            {"attributes": {"outcome": "completed"}},
+            {"fields": {"outcome": "completed"}},
+            {"attributes": None, "fields": {"outcome": "completed"}},
+            {"attributes": {"outcome": "completed"}, "fields": {"outcome": "failed"}},
+        ):
+            with self.subTest(attributes=attributes):
+                stage = {"id": "exec", "name": "execution", "revision": 2,
+                         "started_at": "2026-10-01T00:00:00Z",
+                         "finished_at": "2026-10-01T00:00:01Z", **attributes}
+                record = {"type": "timeline_update", "update": {"Stages": [stage]}}
+                facts = execution_facts([record])["exec"]
+                self.assertEqual(facts["outcome"], "completed")
+                self.assertEqual(facts["duration_ms"], 1000)
+        stage["attributes"] = {}
+        self.assertNotIn("outcome", execution_facts([record])["exec"])
+
     def test_zero_go_time_is_running_and_revisions_merge(self):
         stage = {"id": "exec", "name": "execution", "revision": 1,
                  "started_at": "2026-10-01T00:00:00Z",

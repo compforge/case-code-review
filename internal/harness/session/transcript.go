@@ -88,7 +88,7 @@ func (t *Transcript) ExecutionFacts() []map[string]any {
 			continue
 		}
 		record := map[string]any{}
-		for key, raw := range stage.Fields {
+		for key, raw := range stage.Attributes {
 			var value any
 			if err := json.Unmarshal(raw, &value); err != nil {
 				continue

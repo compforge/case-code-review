@@ -54,8 +54,8 @@ github.com/compforge/agentgo v0.0.2-0.20261004021436-106928a3053e h1:btnoumuZIwu
 github.com/compforge/agentgo v0.0.2-0.20261004021436-106928a3053e/go.mod h1:EXHfA5VXaBoEB0aVUy3latIXgr+nyMJ/nUs06BL4R+Q=
 github.com/compforge/codegraph v0.10.6-0.20261003080441-f9a0d6097624 h1:RN8w8xm6sir3jm6qDvQlt2hkwtGgq5tjWOIIKAWVHRc=
 github.com/compforge/codegraph v0.10.6-0.20261003080441-f9a0d6097624/go.mod h1:Ephk/vEHG2QBNBtuinItOMd11g8Em5Rp2YgYSGEbR24=
-github.com/compforge/go-stdx v0.0.4-0.20260930072529-dae231fa3e72 h1:jBGvP5kixhayPo/xwdKkjCVUcVDgcApH0dW2TmbXCoc=
-github.com/compforge/go-stdx v0.0.4-0.20260930072529-dae231fa3e72/go.mod h1:Mt9pt4PEjEyQfLUqQq6yrx5xK/Mhw35P1u2zvPw/MeE=
+github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea h1:dpB7bkdTkg041/6y2hbJFeGn0edA+znFAxVgKOPZxVo=
+github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea/go.mod h1:Mt9pt4PEjEyQfLUqQq6yrx5xK/Mhw35P1u2zvPw/MeE=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.10.0 h1:+/GIL799phkJqYW+3YbOd8LCcbHzT0Pbo8zl70MHsq0=

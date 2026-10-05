@@ -30,7 +30,7 @@ func TestRequestTraceDistinguishesPoolAndConnect(t *testing.T) {
 
 func TestAnnotateRequestTimeoutBeforeResponse(t *testing.T) {
 	progress := testRequestTrace(t)
-	progress.current.transition(requestPhaseWriteRequest, timeline.Field{Key: "connection_reused", Value: false})
+	progress.current.transition(requestPhaseWriteRequest, timeline.Attribute{Key: "connection_reused", Value: false})
 	progress.current.transition(requestPhaseAwaitResponse)
 
 	err := annotateRequestError(context.Background(), context.DeadlineExceeded, progress)
@@ -55,7 +55,7 @@ func TestAnnotateRequestTimeoutBeforeResponse(t *testing.T) {
 
 func TestAnnotateRequestTimeoutWhileReadingResponse(t *testing.T) {
 	progress := testRequestTrace(t)
-	progress.current.transition(requestPhaseWriteRequest, timeline.Field{Key: "connection_reused", Value: true})
+	progress.current.transition(requestPhaseWriteRequest, timeline.Attribute{Key: "connection_reused", Value: true})
 	progress.current.transition(requestPhaseAwaitResponse)
 	progress.current.transition(requestPhaseResponseRead)
 

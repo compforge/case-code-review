@@ -25,12 +25,12 @@ func beginRequest(ctx context.Context) (context.Context, func(error)) {
 	}
 }
 
-func beginStage(ctx context.Context, name string, fields ...timeline.Field) (context.Context, timeline.StageHandle) {
+func beginStage(ctx context.Context, name string, attributes ...timeline.Attribute) (context.Context, timeline.StageHandle) {
 	t, ok := timeline.FromContext(ctx)
 	if !ok {
 		return ctx, timeline.Noop("").Begin(name)
 	}
-	ctx, stage := timeline.BeginContext(ctx, t, name, timeline.WithFields(fields...))
+	ctx, stage := timeline.BeginContext(ctx, t, name, timeline.WithAttributes(attributes...))
 	flushTimeline(t)
 	return ctx, stage
 }
@@ -46,9 +46,9 @@ func endStage(ctx context.Context, stage timeline.StageHandle, err error) {
 	}
 }
 
-func remainingBudget(ctx context.Context) []timeline.Field {
+func remainingBudget(ctx context.Context) []timeline.Attribute {
 	if deadline, ok := ctx.Deadline(); ok {
-		return []timeline.Field{{Key: "remaining_budget_ms", Value: max(int64(0), time.Until(deadline).Milliseconds())}}
+		return []timeline.Attribute{{Key: "remaining_budget_ms", Value: max(int64(0), time.Until(deadline).Milliseconds())}}
 	}
 	return nil
 }

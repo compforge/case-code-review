@@ -205,7 +205,7 @@ Session 使用追加式事件记录，不要求运行结束后才能生成完整
 AgentGo loop。一个 Lane 可以包含多次连续 Execution，因此两者不能合并成同一层。
 
 Execution 本身是 Session timeline 的 Stage，ID 与 `execution_id` 相同。Stage 保存源头起止时间，
-最终 fields 保存 outcome、reason 和 turn/tool 统计；只有这份完成事实决定 loop 的执行结论。
+最终 attributes 保存 outcome、reason 和 turn/tool 统计；只有这份完成事实决定 loop 的执行结论。
 `llm_request` / `llm_response` / `llm_error`、`tool_result`、`context_projected` 和 `context_compacted`
 是引用 Stage 的内容记录，不再重复存执行边界和耗时。响应按请求 Stage ID 关联；工具结果还携带
 `request_id` 和 `tool_call_id`，不能按返回顺序或工具名配对。

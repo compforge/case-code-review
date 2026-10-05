@@ -15,7 +15,7 @@ func (a *Runner) observeGraphBuild(ctx context.Context, analyzer *language.Analy
 	}
 	ctx = timeline.NewStageContext(a.session.Context(ctx), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID("operation:" + a.session.SessionID)})
 	analyzer.ObserveRepositoryBuild = func() func(*language.RepositoryIndex) {
-		stageCtx, finish := session.Begin(a.session.Context(ctx), "codegraph.build", timeline.Field{Key: "version", Value: version})
+		stageCtx, finish := session.Begin(a.session.Context(ctx), "codegraph.build", timeline.Attribute{Key: "version", Value: version})
 		return func(index *language.RepositoryIndex) {
 			var err error
 			if len(index.Gaps) > 0 {

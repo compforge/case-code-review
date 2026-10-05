@@ -19,7 +19,7 @@
 {{range timelineRows .Session.Timeline}}<tr>
 <td><code>{{.Label}}</code>{{if .MissingParent}} (parent not recorded){{end}}</td>
 <td>{{formatMillis .OffsetMS}}</td><td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</td>
-<td>{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</td><td>{{range $key,$value := .Fields}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
+<td>{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</td><td>{{range $key,$value := .Attributes}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
 </tr>{{end}}</tbody></table></details>
 {{end}}
 

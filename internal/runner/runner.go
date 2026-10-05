@@ -582,7 +582,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				Review:       a.reviewHypothesis,
 				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
-					trialCtx, finishTrial := session.Begin(ctx, "trial.assess", timeline.Field{Key: "unit_id", Value: reviewUnit.ID}, timeline.Field{Key: "hypothesis_id", Value: hypothesis.ID})
+					trialCtx, finishTrial := session.Begin(ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
 					defer finishTrial(nil)
 					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
@@ -616,7 +616,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var dispatched int64
 	for i := range units {
-		_, finishQueue := session.Begin(ctx, "unit.queue", timeline.Field{Key: "unit_id", Value: units[i].ID})
+		_, finishQueue := session.Begin(ctx, "unit.queue", timeline.Attribute{Key: "unit_id", Value: units[i].ID})
 		sem <- struct{}{} // acquire before rechecking usage from completed peers
 		finishQueue(ctx.Err())
 		if a.budget != nil && a.budget.Check() != nil {
@@ -1106,7 +1106,7 @@ func relationClueLabel(c unit.Clue) string {
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
 func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) {
-	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithFields(timeline.Field{Key: "unit_id", Value: u.ID}))
+	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {
 		if p := recover(); p != nil {
 			finish(fmt.Errorf("panic: %v", p))

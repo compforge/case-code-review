@@ -119,7 +119,7 @@
                     {{range timelineRows $node.Timeline}}<tr>
                         <td><code>{{.Label}}</code></td><td>{{.Status}}</td>
                         <td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</td>
-                        <td>{{range $key, $value := .Fields}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Code}}<div>{{.Code}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
+                        <td>{{range $key, $value := .Attributes}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Code}}<div>{{.Code}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
                     </tr>{{end}}
                     </tbody></table>
                 </div>
