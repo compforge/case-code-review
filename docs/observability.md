@@ -71,6 +71,26 @@ Go 消费方共用 Session reader：合并原生 timeline revisions，接受完�
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
 
+### 时间与 token 成本归属
+
+`ccr stats <session.jsonl> --format json` 从共同 Session reader 输出整轮成本和各 Stage 的成本。
+每个模型调用按请求 Stage ID 计一次，再沿父子关系归入所属 Execution、Unit/Lane 和评审阶段。
+成本读取实际请求及响应记录，Review 2、辅助调用和没有 debrief 的中断运行都参与统计。
+Viewer 的全局统计与阶段成本表、ATIF 的 `extra.cost` 提供同一投影，eval 的 comparison/replay 使用相同的请求身份与 usage 口径。
+
+时间同时展示阶段经过时长和扣除直接子阶段区间并集后的自身时长，避免并行子任务相加超过父阶段。
+自身时长包含尚未细分的编排或等待，不能直接解释为 CPU 时间。未结束阶段截至最后一条观测计算下界，
+保留 running 状态；失败请求的已知耗时也进入统计。定位超时时先沿 Stage 的 outcome/reason/error 和
+父子链查找失败或未闭合位置，再区分模型请求、工具、重试等待及编排时间。
+
+Token 保留输入、输出和缓存分量，明确区分服务端报告、缺失报告时的估算和完全未知的 usage。
+父阶段包含后代调用的 token，父子行不能再次相加。调用失败或请求尚未返回时，unknown usage
+不表示零成本；模型请求内部的 transport attempt 没有独立 usage 时，也不能虚构各次尝试的计费拆分。
+工具本身的耗时属于工具 Stage，其结果被后续模型消费的 token 属于对应模型请求。
+
+Session discovery 保留未闭合和末行截断的完整前缀，通过 closed、recording_incomplete 与缺口字段供实验筛选。
+缺少 session_end 表示终态未知，不能据此断言失败，也不能把这类样本悄悄移出运行健康统计。
+
 ### 两次运行的可比覆盖
 
 Runner 在选择和分组前写入 `review_input`，记录协议版本、仓库身份与捕获改动材料的摘要；
@@ -79,6 +99,7 @@ old/new 侧和原路径。这些是比较所需的生产事实，是否可比、
 
 两次 Session 的比较先检查输入，再以目标编辑区间对齐完成证据，不用 Unit ID 或文件名代替覆盖。
 Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；eval 必须继续检查 Assessment/Trial。
+超时前已经提交的有效 Assessment 继续参与判断；没有提交就是未评估，系统兜底不能充当判断证据。
 缺少记录、超时或范围变化时保留 incomplete / unknown，不把没有交付 Finding 解释为修复。
 
 现有实验入口 `eval/replay.py` 对相同 repeat 的两臂生成问题、覆盖、阶段去向和成本对比；

@@ -34,8 +34,10 @@ RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的�
 将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
 
-Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区模式优先使用捕获的改动内容，
-其余文件在发布时读取；commit/range 模式从固定的目标 commit 读取。删除或重命名涉及的旧侧关系从基线
+Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区以固定基线叠加捕获的改动内容，
+未改文件按需从基线读取；commit/range 模式从固定的目标 commit 读取。graph、源码预加载、读取与搜索工具、
+仓库内契约共用这一输入视图，保留删除、重命名和捕获失败，运行中的编辑不会改变已选输入。全局契约和
+显式 `--spec` 是单独加载的外部输入。删除或重命名涉及的旧侧关系从基线
 单独构图。同一侧的调用关系、usage 行文本、owner/used 契约和声明文档共享一次发布，新旧侧保留版本标识。
 改动文件优先进入有界的源码集合，Go module 元数据先于源码读取。新的源码版本需要新的 review 实例。
 
@@ -46,9 +48,9 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 
 ### 评审身份与源码范围
 
-CodeGraph 的节点 ID 标识图内声明；CCR 的 `path::qualifiedName` 是连接 Unit、spec 和历史反馈的
-既有 join key。Language 通过声明的路径和 qualified name 转换身份，不从裸名称反向猜测目标。
-同名或重载声明在 CCR 身份下无法唯一对应时，关系消费保持保守。Reference、Import、Export
+源码关联使用 `(snapshot, node_id)`：Fragment 保留定位得到的节点，self、owner、caller/callee 和 usage
+沿同一 publication 的节点与关系读取，文档不经名称查回。`path::qualifiedName` 用于展示、spec 和历史反馈的
+地址匹配；只有目录地址能唯一绑定声明时才关联作者契约。同名声明可以分别保留图事实，缺失节点不能靠名称补猜。Reference、Import、Export
 是源码项，不能转换为声明 join key。owner 沿 contains 优先、encloses 补充查找，支持跨文件 Go
 接收者；qualified name 的分隔符只用于身份展示，不证明归属。
 

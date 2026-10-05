@@ -7,7 +7,7 @@ from collections import Counter, defaultdict, deque
 from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
-from session_recording import read_records, execution_facts
+from session_recording import Recording, execution_facts
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,7 @@ class SessionEvidence:
     decisions: dict[str, dict] = field(default_factory=dict)
     executions: dict[str, dict] = field(default_factory=dict)
     debriefs: dict[str, dict] = field(default_factory=dict)
+    recording: Recording = field(default_factory=lambda: Recording([], []))
     end: dict | None = None
     gaps: list[str] = field(default_factory=list)
 
@@ -99,7 +100,7 @@ class SessionEvidence:
             return {"state": "duplicate", "reason": "Trial passed; duplicate delivery suppressed"}
         assessment = self.assessments.get((hypothesis_id, decision.get("assessment_submission_index", 0),
                                            decision.get("lane_id", "")))
-        if assessment is not None:
+        if assessment is not None and assessment.get("reviewer_alias") != "system":
             axes = {k: assessment.get(k) for k in ("support", "attribution", "value", "novelty")}
             return {"state": "filtered", "assessment": axes, "reason": assessment.get("reason", ""),
                     "submission_index": decision["assessment_submission_index"],
@@ -123,12 +124,10 @@ class SessionEvidence:
         return "completed" if self.end is not None else "incomplete"
 
     def summary(self) -> dict:
-        costs = Counter()
+        costs = self.recording.costs()
         outcomes = Counter()
         units = 0
         for event in self.debriefs.values():
-            costs.update(event.get("tokens") or {})
-            costs["rounds"] += sum((event.get("rounds") or {}).values())
             if event.get("kind") == "unit":
                 units += 1
                 outcomes[event.get("outcome", "unknown")] += 1
@@ -139,6 +138,8 @@ class SessionEvidence:
             "rounds": costs["rounds"], "duration_s": (self.end or {}).get("duration_seconds"),
             "llm_failures": (self.end or {}).get("llm_failures"),
             "closed": self.end is not None, "gaps": self.gaps,
+            "unknown_usage": costs["unknown_usage"], "estimated_usage": costs["estimated_usage"],
+            "pending_calls": costs["pending_calls"], "error_calls": costs["error_calls"],
             "generation": {key: self.start[key] for key in
                            ("tool_version", "git_head", "model", "features", "params") if key in self.start},
         }
@@ -149,8 +150,9 @@ def read_session(path: Path) -> SessionEvidence:
     raw_findings: list[dict] = []
     raw_hypotheses: dict[str, dict] = {}
     seen: set[str] = set()
-    records, gaps = read_records(path)
-    session.gaps.extend(gaps)
+    session.recording = Recording.read(path)
+    records = session.recording.records
+    session.gaps.extend(session.recording.gaps)
     for number, event in enumerate(records, 1):
         try:
             if not isinstance(event, dict):
@@ -314,9 +316,12 @@ def compare(before: SessionEvidence, after: SessionEvidence) -> dict:
     if before.end is None or after.end is None:
         warnings.append("An unclosed session has partial evidence and cost only")
     left, right = before.summary(), after.summary()
+    if left["unknown_usage"] or right["unknown_usage"]:
+        warnings.append("Some calls have no usage; recorded token totals are partial, not complete cost")
     costs = {k: {"before": left[k], "after": right[k],
                  "delta": right[k] - left[k] if left[k] is not None and right[k] is not None else None}
-             for k in ("prompt_tokens", "completion_tokens", "cache_read", "cache_write", "rounds", "duration_s")}
+             for k in ("prompt_tokens", "completion_tokens", "cache_read", "cache_write", "rounds", "duration_s",
+                       "unknown_usage", "estimated_usage", "pending_calls", "error_calls")}
     return {
         "before": before.path, "after": after.path, "same_captured_changes": same_input(before, after),
         "persisting": [{"before": asdict(before.findings[p["before"]]),

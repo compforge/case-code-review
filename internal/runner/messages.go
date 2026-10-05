@@ -380,7 +380,7 @@ func (a *Runner) renderUsageSites(u unit.Unit) (string, int, []string) {
 	if !a.features.Enabled(feature.UsageSites) {
 		return "", 0, nil
 	}
-	symbols := u.AllSymbols()
+	symbols := u.GraphNodes(a.sourceAnalyzer().Repository())
 	if len(symbols) == 0 {
 		return "", 0, nil
 	}

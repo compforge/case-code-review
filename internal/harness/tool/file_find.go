@@ -68,6 +68,16 @@ func (p *FileFindProvider) Execute(ctx context.Context, args map[string]any) (st
 // listGitFiles returns tracked and untracked files (respecting .gitignore) via git ls-files.
 // In range/commit mode it uses git ls-tree to list files at the reviewed ref.
 func (p *FileFindProvider) listGitFiles(parentCtx context.Context) ([]string, error) {
+	if p.FileReader.Snapshot != nil {
+		entries, err := p.FileReader.Snapshot.Entries(parentCtx)
+		var paths []string
+		for _, entry := range entries {
+			if !shouldSkipFile(entry.Path) {
+				paths = append(paths, entry.Path)
+			}
+		}
+		return paths, err
+	}
 	ctx, cancel := context.WithTimeout(parentCtx, fileFindTimeout)
 	defer cancel()
 

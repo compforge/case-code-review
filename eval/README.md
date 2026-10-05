@@ -532,8 +532,13 @@ python3 eval/session_compare.py <baseline.jsonl> <candidate.jsonl> \
   digest 只标识捕获的改动材料与引用，不证明工作区所有上下文相同；跨 revision 的 rename/行号迁移不在本轮范围内。
 - 对未再交付的问题，关联本次 Hypothesis、Trial 指向的 Assessment submission，展示过滤的四轴原因、
   重复抑制、复核未完成，或未找到匹配 Hypothesis。`passed_trial=false` 本身不是“已反驳”的证据。
-- 成本累加各 Scope 的 debrief（包括 Lane），Unit 数只统计 Unit Scope；wall time 使用 session_end，
+- 成本按请求 Stage ID 汇总 llm_request/response/error，覆盖 Review 2 和未产生 debrief 的调用；Unit 数仍由 Unit debrief 统计。
+  输入、输出、缓存分量单列，估算、缺失 usage 和仍在运行的调用显式计数。wall time 使用 session_end，
   不累加并发 Execution 耗时。未闭合 Session 的已落盘成本只是部分成本，未知 wall time 保留为空。
+- Session source 默认纳入未闭合和末行截断的运行；完整实验样本用 RecordingQuery 的
+  `attributes={"closed": True, "recording_incomplete": False}` 筛选，运行健康统计保留全部状态。
+- Review 2 超时且没有有效 Assessment 时保持未评估；历史系统兜底不算完成证据。
+  已在超时前提交的有效判断和 Finding 继续保留。
 
 固定 corpus 的准入应同时满足：merge-parent 范围在目标仓库可解析；dry-run 能形成预期 Unit；健康
 smoke 完整结束；轨迹实际产生本实验所需的行为分母。优化 search 时，应优先选少量单 Unit 且有

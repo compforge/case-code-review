@@ -186,50 +186,16 @@ func isRepositoryTestFile(name string) bool {
 // CallNeighbors admits only scoped or exact CodeGraph call evidence.
 // Missing/partial graph evidence leaves Units separate; it never triggers name guessing.
 func (r *RepositoryIndex) CallNeighbors(symbol string, incoming bool) []string {
-	if r.Graph == nil {
-		return nil
-	}
-	path, name, ok := SplitSymbolID(symbol)
+
+	node, ok := r.Declaration(symbol)
 	if !ok {
 		return nil
 	}
-	seen := map[string]bool{}
-	nodes := r.Graph.Find(path, "", name)
-	// CCR join keys cannot distinguish overloaded/redefined declarations.
-	if len(nodes) != 1 {
-		return nil
-	}
-	for _, node := range nodes {
-		edges := r.Graph.RelationsFrom(node.ID, cg.Calls)
-		if incoming {
-			edges = r.Graph.RelationsTo(node.ID, cg.Calls)
+	var result []string
+	for _, id := range r.CallNodeNeighbors(node.ID, incoming) {
+		if key := r.ContractKey(id); key != "" {
+			result = append(result, key)
 		}
-		for _, edge := range edges {
-			if !edge.Confidence.AtLeast(cg.Scoped) {
-				continue
-			}
-			id := edge.Target
-			if incoming {
-				id = edge.Source
-			}
-			neighbor, ok := r.Graph.Node(id)
-			if !ok {
-				continue
-			}
-			if kind, ok := reviewKind(neighbor.Kind); !ok || (kind != KindFunction && kind != KindMethod) {
-				continue
-			}
-			if neighbor.Location == nil || len(r.Graph.Find(neighbor.Location.Path, "", neighbor.QualifiedName)) != 1 {
-				continue
-			}
-			if id := ReviewSymbolID(neighbor); id != "" && id != symbol {
-				seen[id] = true
-			}
-		}
-	}
-	result := make([]string, 0, len(seen))
-	for id := range seen {
-		result = append(result, id)
 	}
 	sort.Strings(result)
 	return result

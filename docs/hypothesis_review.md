@@ -90,7 +90,7 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 若 execution 超时或失败：
 
 - 已提交 Assessment 仍然保留；
-- 超时且尚未提交时，由 Runner 持久化一条 system-authored `insufficient` Assessment，保留可解释的收敛结果；
+- 超时且尚未提交时保留 unassessed 与执行终态；系统不代替 reviewer 生成 Assessment，避免未完成复核被解释为否决；
 - 其它失败中未评估的 Hypothesis 产生明确 warning；
 - 未评估项不能通过 Trial，也不能把 0 Finding 解释为 clean。
 

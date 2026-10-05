@@ -35,7 +35,7 @@ class CCRSessionSourceTest(unittest.TestCase):
             refs = source.select(
                 RecordingQuery(
                     started_at_or_after=datetime(2026, 8, 1, tzinfo=UTC),
-                    attributes={"model": "example-model"},
+                    attributes={"model": "example-model", "closed": True},
                 )
             )
 
@@ -44,6 +44,19 @@ class CCRSessionSourceTest(unittest.TestCase):
             recording = source.fetch(refs[0])
             self.assertEqual(exported, [closed.resolve()])
             self.assertIn('"session_id":"session-1"', recording.text)
+
+    def test_select_keeps_unclosed_and_torn_sessions_as_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            path = root / "torn.jsonl"
+            _write_session(path, root, session_id="torn", closed=False)
+            with path.open("ab") as stream:
+                stream.write(b'{"type":')
+            refs = CCRSessionSource(root).select()
+            self.assertEqual(len(refs), 1)
+            self.assertFalse(refs[0].attributes["closed"])
+            self.assertTrue(refs[0].attributes["recording_incomplete"])
+            self.assertIn("truncated", refs[0].attributes["recording_gaps"][0])
 
     def test_rejects_fetch_outside_sessions_root(self) -> None:
         from trajectory_harness import RecordingRef

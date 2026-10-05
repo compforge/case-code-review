@@ -21,6 +21,7 @@ type docRider struct {
 
 // walkCfg bundles a neighbor walk's knobs (params were sprawling).
 type walkCfg struct {
+	graph      *language.RepositoryIndex
 	idx        spec.Index // local spec index; may be nil in doc-only mode
 	depth, max int
 	exclude    []string
@@ -74,17 +75,17 @@ func walkNeighbors(cfg walkCfg, start []string, neighborFn neighborFunc, mkClue 
 				}
 				visited[nb] = true
 				if d == 0 && cfg.doc != nil && len(docClues) < cfg.max {
-					if text := cfg.doc.analyzer.RepositoryDoc(nb); text != "" {
+					if text := cfg.graph.NodeDoc(nb); text != "" {
 						docClues = append(docClues, unit.Clue{
 							Kind:     unit.ClueDoc,
 							Relation: cfg.doc.relation,
 							Text:     text,
-							Ref:      nb,
+							Ref:      cfg.graph.NodeLabel(nb),
 						})
 					}
 				}
 				if cfg.spec {
-					if e, ok := cfg.idx[nb]; ok && (e.Spec != "" || len(e.Cases) > 0) {
+					if e, ok := cfg.idx[cfg.graph.ContractKey(nb)]; ok && (e.Spec != "" || len(e.Cases) > 0) {
 						specClues = append(specClues, mkClue(nb))
 						if len(specClues) >= cfg.max {
 							return append(specClues, docClues...)

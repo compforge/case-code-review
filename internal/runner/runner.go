@@ -116,11 +116,7 @@ type Args struct {
 	// It never changes review behavior or enters model prompts.
 	BizID string
 
-	// Specs is the loaded spec knowledge: this repo's entries by symbol-id plus
-	// dependency entries by fqn (two address spaces — see spec.Catalog). A review
-	// Unit's related symbols are looked up here and injected as the contract
-	// checklist via {{spec_cases}}. Zero value when no spec is configured.
-	Specs spec.Catalog
+	SpecPath string // optional external contract input; repository contracts follow the source snapshot
 
 	// HistoryIndex is the loaded --history (symbol-id -> prior findings). A unit's
 	// covered functions are looked up here and injected via {{prior_findings}} so
@@ -248,43 +244,15 @@ func New(args Args) *Runner {
 		ref = args.Commit
 	}
 	analyzer := language.NewSnapshotAnalyzer(args.RepoDir, ref, args.GitRunner)
-
-	kinds := spec.KindGates{
-		Spec: f.Enabled(feature.SpecCase),
-		Rule: f.Enabled(feature.Rule),
-		Link: f.Enabled(feature.Link),
-		Doc:  f.Enabled(feature.Doc),
-	}
-	finders := []unit.ClueFinder{spec.NewRelatedFinder(args.Specs, analyzer, kinds)}
-	if f.Enabled(feature.History) {
-		finders = append(finders, history.Finder{Index: args.HistoryIndex})
-	}
-	// One CodeGraph snapshot per review, shared by clue finders and merge
-	// adjacency, owner/used contracts and documentation; built lazily on first use.
-
-	var costlyFinders []unit.ClueFinder
-	// caller/callee sit behind the cost gate (graph traversal) and emit per the
-	// kind gates: inherited/depended-on specs when the spec kind is on and a spec
-	// index exists, direct neighbors' docstrings when the doc kind is on. The two
-	// payloads are peer marks (authored vs derived) — doc needs no spec.json, so a
-	// repo that never adopted spec-case still gets caller/callee context.
-	// Resolution is intra-repo, hence the local index.
-	if f.Enabled(feature.CallerCallee) && (kinds.Spec || kinds.Doc) {
-		costlyFinders = append(costlyFinders,
-			sourcecontext.CallerFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Kinds: kinds, Analyzer: analyzer},
-			sourcecontext.CalleeFinder{RepoDir: args.RepoDir, Index: args.Specs.Local, Kinds: kinds, Analyzer: analyzer},
-		)
-	}
 	a := &Runner{
 		args:     args,
 		session:  args.Session,
 		features: f,
 		// Graph ownership locates edits; Formation owns their bounded partition.
-		splitter:      unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
-		finders:       finders,       // cheap spec.json / history clues, gated per kind
-		costlyFinders: costlyFinders, // graph caller/callee clues with per-Unit limits
-		analyzer:      analyzer,
+		splitter: unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
+		analyzer: analyzer,
 	}
+	a.configureFinders(spec.Catalog{})
 	a.observeGraphBuild(context.Background(), analyzer, "after")
 	if args.MaxTokensBudget > 0 {
 		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
@@ -478,7 +446,22 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 
 	a.changes = parsed
 	a.persistReviewInput(ctx)
+	catalog, err := spec.LoadSnapshot(ctx, a.args.RepoDir, a.args.SpecPath, provider.After)
+	if err != nil {
+		return fmt.Errorf("load snapshot contracts: %w", err)
+	}
+	a.configureFinders(catalog)
+	a.analyzer.SetSnapshot(provider.After)
+	if reader := a.fileReader(); reader != nil {
+		reader.Snapshot = provider.After
+		if reader.Mode != tool.ModeWorkspace {
+			reader.Ref = provider.After.Ref
+		}
+	}
 	a.captureGraphs(ctx)
+	if a.beforeAnalyzer != nil {
+		a.beforeAnalyzer.SetSnapshot(provider.Before)
+	}
 	if p, ok := a.args.Tools.Get(tool.FileReadBase.Name()); ok {
 		if base, ok := p.(*tool.FileReadProvider); ok {
 			base.SetRef(provider.BaseRef(ctx))

@@ -294,6 +294,9 @@ func (p *CodeSearchProvider) runGitGrep(parentCtx context.Context, cmdArgs []str
 	ctx, cancel := context.WithTimeout(parentCtx, gitGrepTimeout)
 	defer cancel()
 
+	if p.FileReader.Snapshot != nil {
+		return p.FileReader.Snapshot.Grep(ctx, cmdArgs, p.FileReader.Ref)
+	}
 	if p.FileReader.Runner != nil {
 		stdout, stderr, err := p.FileReader.Runner.RunSplit(ctx, p.FileReader.RepoDir, cmdArgs...)
 		if ctx.Err() != nil && err != nil {
@@ -343,7 +346,7 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 	// We ask git whether this is a work tree rather than parsing its error text
 	// (exit 128 + stderr substrings are locale-dependent and over-match). Skip on
 	// ctx cancellation/timeout, and never retry ref-based search (needs a repo).
-	if err != nil && p.FileReader.Ref == "" && ctx.Err() == nil && !p.insideGitWorkTree(ctx) {
+	if err != nil && p.FileReader.Snapshot == nil && p.FileReader.Ref == "" && ctx.Err() == nil && !p.insideGitWorkTree(ctx) {
 		noIndex = true
 		cmdArgs = p.buildGrepArgsLimited(searchText, caseSensitive, usePerlRegexp, true, pathspec, maxCount)
 		outStr, errStr, err = p.runGitGrep(ctx, cmdArgs)
@@ -364,6 +367,9 @@ func (p *CodeSearchProvider) gitGrepLimitedWithContext(
 		}
 	}
 
+	if outStr == "" && err == nil {
+		return p.emptySearchResult(ctx, searchText, usePerlRegexp, pathspec, noIndex), nil
+	}
 	lines := strings.Split(strings.TrimRight(outStr, "\n"), "\n")
 	truncated := len(lines) >= maxCount
 	if len(lines) > maxCount {

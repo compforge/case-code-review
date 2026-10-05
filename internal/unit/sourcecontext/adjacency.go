@@ -16,7 +16,7 @@ func CallAdjacency(analyzer *language.Analyzer, funcIDs []string) map[string][]s
 	for _, id := range funcIDs {
 		set[id] = true
 	}
-	cf := CalleeFinder{Analyzer: analyzer} // Index unused by callees()
+	index := analyzer.Repository()
 	adj := map[string][]string{}
 	seen := map[[2]string]bool{}
 	addEdge := func(a, b string) {
@@ -32,7 +32,7 @@ func CallAdjacency(analyzer *language.Analyzer, funcIDs []string) map[string][]s
 		adj[b] = append(adj[b], a)
 	}
 	for _, x := range funcIDs {
-		for _, y := range cf.callees(x) {
+		for _, y := range index.CallNeighbors(x, false) {
 			if y != x && set[y] {
 				addEdge(x, y)
 			}

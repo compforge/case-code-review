@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,9 @@ func TestRelatedFinder_SelfMarks(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := unit.UnitOf(unit.Fragment{Path: "a.go", Symbols: []string{"a.go::Foo"}})
-	clues := NewRelatedFinder(Catalog{Local: idx}, language.NewAnalyzer(""), allGates).Find(u)
+	repo := t.TempDir()
+	write(t, filepath.Join(repo, "a.go"), "package p\nfunc Foo(){}\n")
+	clues := NewRelatedFinder(Catalog{Local: idx}, language.NewAnalyzer(repo), allGates).Find(u)
 
 	byKind := map[unit.ClueKind][]unit.Clue{}
 	for _, c := range clues {
@@ -438,5 +441,42 @@ func TestRelatedFinderDisabledDoesNotBuildGraph(t *testing.T) {
 	}
 	if got := NewRelatedFinder(Catalog{}, analyzer, KindGates{}).Find(unit.UnitOf(unit.Fragment{Path: "a.py"})); len(got) != 0 {
 		t.Fatal(got)
+	}
+}
+
+func TestGraphIdentityRetainsSameNamedDeclarations(t *testing.T) {
+	repo := t.TempDir()
+	source := "def same():\n    \"\"\"First declaration.\"\"\"\n    pass\n\ndef same():\n    \"\"\"Second declaration.\"\"\"\n    pass\n"
+	write(t, filepath.Join(repo, "a.py"), source)
+	analyzer := language.NewAnalyzer(repo)
+	anchors, err := analyzer.Anchors(context.Background(), language.Source{Path: "a.py", Content: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, ok := language.AnchorAt(anchors, 3)
+	if !ok {
+		t.Fatal("missing first anchor")
+	}
+	second, ok := language.AnchorAt(anchors, 7)
+	if !ok {
+		t.Fatal("missing second anchor")
+	}
+	if first.NodeID == second.NodeID {
+		t.Fatal("fixture lost distinct graph nodes")
+	}
+	finder := NewRelatedFinder(Catalog{Local: Index{"a.py::same": {Spec: "ambiguous authored contract"}}}, analyzer, allGates)
+	for _, tc := range []struct {
+		anchor language.Anchor
+		want   string
+	}{{first, "First declaration."}, {second, "Second declaration."}} {
+		u := unit.UnitOf(unit.Fragment{Path: "a.py", Symbols: []string{"a.py::same"}, After: []language.Anchor{tc.anchor}})
+		clues := finder.Find(u)
+		if len(clues) != 1 || clues[0].Kind != unit.ClueDoc || clues[0].Text != tc.want {
+			t.Fatalf("native identity lost: %+v", clues)
+		}
+		u.Fragments[0].After[0].Snapshot = "another-snapshot"
+		if got := finder.Find(u); len(got) != 0 {
+			t.Fatalf("cross-snapshot name fallback: %+v", got)
+		}
 	}
 }
