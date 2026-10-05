@@ -27,10 +27,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form starts with one Unit per changed file, then merges related files within
-// budget. Clues are gathered only after each Unit's scope is final.
+// Form extracts graph-related changed targets into cross-file Units and groups
+// remaining edits by file. Clues are gathered after the final scope is known.
 //
-// +spec=`Each changed file belongs to exactly one Unit; graph-backed merging can only reduce the number of review loops`
+// +spec=`Each target edit belongs to exactly one Unit; changed cross-file dependencies are grouped before file-local remainders, within a file-count allowance`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)

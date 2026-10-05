@@ -19,13 +19,8 @@ func addedFile(path, text string) change.Change {
 func assertCoverage(t *testing.T, changes []change.Change, units []unit.Unit) {
 	t.Helper()
 	files := map[string][]unit.Fragment{}
-	owners := map[string]string{}
 	for _, u := range units {
 		for _, f := range u.Fragments {
-			if previous, ok := owners[f.Path]; ok && previous != u.ID {
-				t.Fatalf("file %s was split across Units", f.Path)
-			}
-			owners[f.Path] = u.ID
 			files[f.Path] = append(files[f.Path], f)
 		}
 	}
@@ -60,7 +55,7 @@ func TestImportsAndResidualsDoNotMultiplyReviewLoops(t *testing.T) {
 	}
 }
 
-func TestFileUnitsMergeThroughChangedCalls(t *testing.T) {
+func TestCrossFileExtractionPreservesCallGroupsAndCountAllowance(t *testing.T) {
 	files := map[string]string{
 		"go.mod": "module example\n",
 		"a.go":   "package p\nfunc A(){ B() }\nfunc C(){ D() }\nfunc Other(){}\nfunc Extra(){}\n",
@@ -74,8 +69,8 @@ func TestFileUnitsMergeThroughChangedCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertCoverage(t, changes, us)
-	if len(us) != 1 {
-		t.Fatalf("related files must merge as a whole: %+v", us)
+	if len(us) > 2 {
+		t.Fatalf("extracted groups exceeded the two-file allowance: %+v", us)
 	}
 	for _, pair := range [][2]string{{"a.go::A", "b.go::B"}, {"a.go::C", "b.go::D"}} {
 		a, b := targetUnit(t, us, pair[0]), targetUnit(t, us, pair[1])
@@ -176,6 +171,19 @@ func TestUnchangedCalleeDoesNotMergeUnrelatedEditsInItsFile(t *testing.T) {
 	}
 	if len(us) != 2 {
 		t.Fatalf("the call target was not changed; files must stay separate: %+v", us)
+	}
+	assertCoverage(t, changes, us)
+}
+
+func TestOnlyChangedCallerAndCalleeFormOneUnit(t *testing.T) {
+	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){B()}\n", "b.go": "package p\nfunc B(){}\n"}
+	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){B()}"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
+	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(us) != 1 || len(us[0].Fragments) != 2 || len(us[0].Grouping) == 0 {
+		t.Fatalf("caller and callee should be the only Unit: %+v", us)
 	}
 	assertCoverage(t, changes, us)
 }
