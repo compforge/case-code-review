@@ -39,6 +39,10 @@ func TestHypothesisMessageCompactionKeepsClaim(t *testing.T) {
 	if !strings.Contains(compact, "shared/context.go") {
 		t.Fatalf("compacted input dropped evidence paths: %s", compact)
 	}
+	fixed := message.FixedContext()
+	if fixed.TextContent() != compact || fixed.Raw().TextContent() != full {
+		t.Fatal("fixed hypothesis projection lost its claim or raw source")
+	}
 	terminal, _ := message.Compact(0)
 	if got := terminal.TextContent(); got != compact {
 		t.Fatalf("Review input compacted below the complete hypothesis: %q", got)

@@ -745,7 +745,7 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	}
 }
 
-func TestContextCompactsFromTailAndCommitsProjection(t *testing.T) {
+func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 	content := func(path string) string {
 		return fmt.Sprintf("File: %s (Total lines: 80)\n%s", path, strings.Repeat("1|source evidence for review\n", 80))
 	}
@@ -778,13 +778,13 @@ func TestContextCompactsFromTailAndCommitsProjection(t *testing.T) {
 	if projection.Compaction == nil || projection.Compaction.Reason != agentgo.CompactReasonThreshold || !projection.Compaction.Committed {
 		t.Fatalf("projection lost AgentGo compaction details: %+v", projection.Compaction)
 	}
-	for i := 2; i < 4; i++ {
+	for i := 3; i < 5; i++ {
 		if text := committed[i].TextContent(); strings.Contains(text, "compacted to a reference") {
-			t.Fatalf("message %d compacted before tail: %q", i, text)
+			t.Fatalf("message %d compacted before oldest: %q", i, text)
 		}
 	}
-	if text := committed[4].TextContent(); !strings.Contains(text, "compacted to a reference") {
-		t.Fatalf("tail compaction = %q, want reference", text)
+	if text := committed[2].TextContent(); !strings.Contains(text, "compacted to a reference") {
+		t.Fatalf("oldest compaction = %q, want reference", text)
 	}
 
 	second, err := manager.Project(context.Background(), committed)
