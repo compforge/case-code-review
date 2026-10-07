@@ -52,13 +52,13 @@ type ExecutionSpec struct {
 	FileEvictEnabled bool
 	WrapUpPrompt     string
 	// WrapUpAfterTurns ends open-ended investigation after this many complete
-	// turns. Zero preserves the default behavior of reserving only the final
-	// turns or deadline window for completion.
+	// turns. Zero disables this investigation limit; turn, deadline, and token
+	// reserves still apply when WrapUpPrompt is set.
 	WrapUpAfterTurns int
-	// WrapUpAllowedTools are result-submission tools advertised alongside the
-	// completion tool on the first wrap-up request. A final corrective request
-	// advertises only the completion tool. Nil leaves tool visibility unchanged
-	// for callers that only need a textual reminder.
+	// WrapUpAllowedTools are the result tools permitted during the first
+	// wrap-up request. Tool schemas stay stable; middleware enforces this policy.
+	// The final corrective request permits only the completion tool, if present.
+	// Nil leaves tool execution unchanged for text-only reminders.
 	WrapUpAllowedTools []string
 	// CompletionTool is the domain-selected terminal tool. Empty defaults to
 	// task_done unless NaturalCompletion is enabled. A non-default tool completes
@@ -117,7 +117,7 @@ type Execution struct {
 	wrapUpAllowed        map[string]bool
 	wrapUpResultAccepted atomic.Bool
 	// wrapUpRequestCount advances once per logical model call after wrap-up.
-	// AgentGo retries reuse the same call options, so retries do not consume the
+	// AgentGo retries retain the attempt coordinate, so retries do not consume the
 	// single corrective request.
 	wrapUpRequestCount atomic.Int32
 	// wrapUpFinalTurnGranted bounds a model that ignores the hard close: after
@@ -191,6 +191,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	}
 	e.contextManager = newContextManager(spec, contextModel)
 	e.turns = newTurnController(spec)
+	e.model.observeUsage = e.turns.observeUsage
 	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed, e.completionTool)
 	if len(spec.WrapUpAllowedTools) > 0 {
 		e.wrapUpAllowed = make(map[string]bool, len(spec.WrapUpAllowedTools))
@@ -200,10 +201,6 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		if e.completionTool != "" {
 			e.wrapUpAllowed[e.completionTool] = true
 		}
-		// AgentGo keeps one immutable execution tool registry. Projecting schemas
-		// at the model adapter changes what the model can choose without changing
-		// the local execution lookup; middleware remains the enforcement fallback.
-		e.model.toolProjection = e.projectWrapUpTools
 	}
 	return e, nil
 }
@@ -232,7 +229,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		ToolResultMessageFactory: e.toolResultMessage,
 		CommitContext:            e.replaceContext,
 		CommitMessage:            e.appendContext,
-		BeforeTurn:               e.turns.BeforeTurn,
+		BeforeTurn:               e.beforeTurn,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
 		ModelMiddlewares:         []agentgo.ModelMiddleware{timing.model, e.modelMiddleware()},
@@ -280,67 +277,50 @@ func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
 		if execution.Kind != agentgo.ExecutionKindModel {
 			return next(ctx, execution)
 		}
-		execution.Options = append(execution.Options, e.modelCallOptions(execution)...)
+		e.prepareWrapUpRequest(execution)
 		return next(ctx, execution)
 	}
 }
 
-func (e *Execution) modelCallOptions(execution agentgo.ModelExecution) []agentgo.CallOption {
-	if !e.turns.WrapUpIssued() {
-		return nil
+// beforeTurn commits mode reminders through the native hook, preserving the
+// static system/tool prefix and keeping the actual instruction in the transcript.
+func (e *Execution) beforeTurn(ctx context.Context, turn agentgo.BeforeTurnContext) ([]agentgo.AgentMessage, error) {
+	messages, err := e.turns.BeforeTurn(ctx, turn)
+	if err != nil {
+		return nil, err
 	}
-	wrapUpRequest := int32(0)
-	if len(e.wrapUpAllowed) > 0 {
-		// Model middleware runs for every physical retry. Advance the wrap-up
-		// request only on the first attempt so retries preserve the logical call.
-		if execution.Attempt <= 1 {
-			wrapUpRequest = e.wrapUpRequestCount.Add(1)
-		} else {
-			wrapUpRequest = e.wrapUpRequestCount.Load()
-		}
-		if wrapUpRequest > 1 {
-			// A result-only first response may naturally continue without consulting
-			// StopGuard. Mark this request as the one final correction either way.
-			e.wrapUpFinalTurnGranted.Store(true)
-		}
+	if len(e.wrapUpAllowed) > 0 && e.wrapUpRequestCount.Load() > 0 && !e.wrapUpFinalTurnGranted.Load() {
+		messages = append(messages, msg.Text("user", e.finalWrapUpPrompt()))
 	}
+	return messages, nil
+}
+
+func (e *Execution) prepareWrapUpRequest(execution agentgo.ModelExecution) {
+	if !e.turns.WrapUpIssued() || len(e.wrapUpAllowed) == 0 {
+		return
+	}
+	// Physical retries preserve the logical turn. Do not alter tools or
+	// tool_choice to express the mode: both can invalidate provider caches.
+	if execution.Attempt <= 1 {
+		e.wrapUpRequestCount.Add(1)
+	}
+	if e.wrapUpRequestCount.Load() > 1 {
+		e.wrapUpFinalTurnGranted.Store(true)
+	}
+}
+
+func (e *Execution) finalWrapUpPrompt() string {
 	if e.naturalCompletion {
-		return nil
+		return "Final completion turn. Investigation is closed. Finish now without another tool call."
 	}
-	// The first wrap-up request must still be able to flush result tools before
-	// completion. Only the single corrective turn targets the terminal tool
-	// itself; forcing it earlier would skip valid final results such as comments.
-	if (wrapUpRequest > 1 || e.wrapUpFinalTurnGranted.Load()) && e.completionTool != "" {
-		return []agentgo.CallOption{agentgo.WithToolChoice(map[string]any{
-			"type": "tool",
-			"name": e.completionTool,
-		})}
-	}
-	return []agentgo.CallOption{agentgo.WithToolChoice("required")}
+	return "Final completion turn. Do not investigate or submit more results. " + e.completionPrompt
 }
 
-func (e *Execution) projectWrapUpTools(tools []agentgo.ToolSpec) []agentgo.ToolSpec {
-	request := e.wrapUpRequestCount.Load()
-	if request == 0 {
-		return tools
+func (e *Execution) wrapUpToolAllowed(name string) bool {
+	if e.wrapUpRequestCount.Load() > 1 {
+		return e.completionTool != "" && name == e.completionTool
 	}
-	if request == 1 {
-		return filterToolSpecs(tools, e.wrapUpAllowed)
-	}
-	if e.completionTool == "" {
-		return nil
-	}
-	return filterToolSpecs(tools, map[string]bool{e.completionTool: true})
-}
-
-func filterToolSpecs(tools []agentgo.ToolSpec, allowed map[string]bool) []agentgo.ToolSpec {
-	out := make([]agentgo.ToolSpec, 0, len(allowed))
-	for _, spec := range tools {
-		if allowed[spec.Name] {
-			out = append(out, spec)
-		}
-	}
-	return out
+	return e.wrapUpAllowed[name]
 }
 
 func (e *Execution) shouldStopAfterTool(name string) bool {
@@ -355,7 +335,7 @@ func (e *Execution) shouldStopAfterTool(name string) bool {
 	}
 	// A blocked investigation call, or an invalid completion call during
 	// wrap-up, should immediately enter the single corrective final turn.
-	return name == e.completionTool || (len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[name])
+	return name == e.completionTool || (len(e.wrapUpAllowed) > 0 && !e.wrapUpToolAllowed(name))
 }
 
 func (e *Execution) stopGuard(_ context.Context, stop agentgo.StopInfo) agentgo.StopDecision {
@@ -371,7 +351,7 @@ func (e *Execution) stopGuard(_ context.Context, stop agentgo.StopInfo) agentgo.
 		return agentgo.StopDecision{InjectMessage: e.completionPrompt}
 	}
 	if e.wrapUpFinalTurnGranted.CompareAndSwap(false, true) {
-		return agentgo.StopDecision{InjectMessage: e.spec.WrapUpPrompt + "\n" + e.completionPrompt}
+		return agentgo.StopDecision{InjectMessage: e.spec.WrapUpPrompt + "\n" + e.finalWrapUpPrompt()}
 	}
 	e.wrapUpForcedStop.Store(true)
 	return agentgo.StopDecision{Allow: true}
@@ -425,10 +405,12 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		defer func() {
 			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
-		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpAllowed[call.Name] {
-			return handledToolResult(call, json.RawMessage(
-				"Investigation is closed. Do not repeat results already accepted. Submit only supported results that have not yet been accepted; if none remain, finish without another tool call.",
-			)), nil
+		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpToolAllowed(call.Name) {
+			guidance := "Investigation is closed. Do not repeat results already accepted. Submit only supported results that have not yet been accepted. " + e.completionPrompt
+			if e.wrapUpRequestCount.Load() > 1 || e.naturalCompletion {
+				guidance = e.finalWrapUpPrompt()
+			}
+			return handledToolResult(call, json.RawMessage(guidance)), nil
 		}
 		if call.Name == e.completionTool && e.spec.CompletionCheck != nil {
 			complete, guidance := e.spec.CompletionCheck(ctx)

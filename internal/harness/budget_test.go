@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -83,5 +84,69 @@ func TestCompressionBudgetStopsBeforeCallingSummaryModel(t *testing.T) {
 	_, err = execution.contextManager.Compact(t.Context(), []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}, agentgo.CompactReasonThreshold)
 	if !errors.Is(err, llm.ErrTokenBudget) || len(client.Requests()) != 1 {
 		t.Fatalf("compression error=%v calls=%d", err, len(client.Requests()))
+	}
+}
+
+// Replay the reported per-turn costs from #119. Its original turn 13 close was
+// rejected at admission. The controller must close on turn 12 while calls are
+// still admitted, even though the twelve-investigation-turn limit has not fired.
+func TestTokenBudgetClosesBeforeInvestigationLimit(t *testing.T) {
+	costs := [][2]int64{{7624, 1529}, {8824, 1068}, {11276, 309}, {14235, 1483}, {15858, 3862}, {20868, 1982}, {22240, 3075}, {26687, 3780}, {31765, 3084}, {33947, 3964}, {35653, 6573}}
+	client := &scriptedClient{}
+	for i, cost := range costs {
+		client.responses = append(client.responses, toolCallResponseID(fmt.Sprintf("call-%d", i), "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, &llm.UsageInfo{PromptTokens: cost[0], CompletionTokens: cost[1]}))
+	}
+	client.responses = append(client.responses, toolCallResponse("submit_result", `{}`, &llm.UsageInfo{PromptTokens: 38000, CompletionTokens: 500}))
+	budget := llm.NewBudgetClient(client, 300000, nil)
+	provider := &fileReadProvider{body: "ok"}
+	registry := tool.NewRegistry()
+	registry.Register(provider)
+	registry.Freeze()
+	accepted := 0
+	result, err := runExecution(t.Context(), ExecutionSpec{
+		LLMClient: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
+		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")}, Tools: registry,
+		WrapUpPrompt: "stop investigating now", WrapUpAfterTurns: 12, WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true,
+		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+			if request.Tool.Name() != "submit_result" {
+				return tool.TaskCheckpoint{}, false
+			}
+			accepted++
+			return tool.CompleteWith("accepted"), true
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := client.Requests()
+	if result.State != OutcomeCompleted || len(requests) != 12 || provider.calls != 11 || accepted != 1 {
+		t.Fatalf("result=%+v requests=%d reads=%d accepted=%d", result, len(requests), provider.calls, accepted)
+	}
+	for i, request := range requests {
+		if strings.Contains(requestText(request), "stop investigating now") != (i == 11) {
+			t.Fatalf("wrong close timing on turn %d", i+1)
+		}
+	}
+	assertStableToolRequests(t, requests)
+	if remaining, limited := budget.Remaining(); !limited || remaining <= 0 {
+		t.Fatalf("remaining=%d limited=%v", remaining, limited)
+	}
+}
+
+func TestAlreadyExhaustedBudgetDoesNotInventCompletion(t *testing.T) {
+	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("read_files", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
+	budget := llm.NewBudgetClient(client, 100, nil)
+	if _, err := budget.CompletionsWithCtx(t.Context(), llm.ChatRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runExecution(t.Context(), ExecutionSpec{
+		LLMClient: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
+		WrapUpPrompt: "finish now", NaturalCompletion: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != OutcomeTruncated || result.Reason != llm.ErrTokenBudget.Error() || len(client.Requests()) != 1 {
+		t.Fatalf("result=%+v requests=%d", result, len(client.Requests()))
 	}
 }
