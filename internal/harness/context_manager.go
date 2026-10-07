@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -62,61 +63,21 @@ func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextMana
 		// actual trim/summary mechanics to agentgo.
 		reserve := max(window/5, 1)
 		manager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{
-			ContextWindow:   window,
-			ReserveTokens:   reserve,
-			CommitOnProject: true,
-			Compactor:       newContextCompactor(spec, model, window, reserve),
+			ContextWindow: window,
+			ReserveTokens: reserve,
+			Compactor:     newContextCompactor(spec, model, window, reserve),
 		})
 	}
 	return manager
 }
 
-func (m *contextManager) Project(
-	ctx context.Context,
-	messages []agentgo.AgentMessage,
-) (agentgo.ContextProjection, error) {
-	input := append([]agentgo.AgentMessage(nil), messages...)
-	view, usage, changed := m.rewrite(input, false)
-	projection := agentgo.ContextProjection{Messages: view, Usage: usage}
-	if m.engine != nil {
-		engineProjection, err := m.engine.Project(ctx, view)
-		if err != nil {
-			if errors.Is(err, llm.ErrTokenBudget) || errors.Is(err, compactor.ErrBudget) {
-				return agentgo.ContextProjection{}, err
-			}
-			// Compression is a context optimization, not permission to discard
-			// an otherwise runnable review turn. The engine keeps its own
-			// failure circuit breaker; this turn falls back to the deterministic
-			// dedup/evict view.
-			projection.Messages = view
-			if changed {
-				projection.CommitMessages = view
-				projection.ShouldCommit = true
-			}
-			projection.Messages = appendVisibleFileInventory(projection.Messages)
-			projection.Usage = m.estimateUsage(projection.Messages)
-			m.remember(messages, projection.Messages, projection.Usage, "project_fallback", changed)
-			return projection, nil
-		}
-		projection.Messages = engineProjection.Messages
-		projection.Usage = engineProjection.Usage
-		projection.Compaction = engineProjection.Compaction
-		if engineProjection.ShouldCommit {
-			projection.CommitMessages = engineProjection.CommitMessages
-			projection.ShouldCommit = true
-			changed = true
-		} else if changed {
-			projection.CommitMessages = view
-			projection.ShouldCommit = true
-		}
-	} else if changed {
-		projection.CommitMessages = view
-		projection.ShouldCommit = true
-	}
-	projection.Messages = appendVisibleFileInventory(projection.Messages)
-	projection.Usage = m.estimateUsage(projection.Messages)
-	m.remember(messages, projection.Messages, projection.Usage, "project", changed)
-	return projection, nil
+// Transform prepares only a request view. Raw evidence and the runtime baseline
+// are unchanged; the loop owns explicit compaction commits.
+func (m *contextManager) Transform(ctx context.Context, messages []agentgo.AgentMessage) ([]agentgo.AgentMessage, error) {
+	view, _, changed := m.rewrite(messages)
+	view = appendVisibleFileInventory(view)
+	m.remember(messages, view, m.estimateUsage(view), "transform", changed)
+	return view, nil
 }
 
 func (m *contextManager) Compact(
@@ -124,11 +85,22 @@ func (m *contextManager) Compact(
 	messages []agentgo.AgentMessage,
 	reason agentgo.CompactReason,
 ) (agentgo.ContextCommitResult, error) {
-	view, usage, changed := m.rewrite(messages, true)
+	view, usage, changed := m.rewrite(messages)
+	if reason == agentgo.CompactReasonThreshold && (m.window <= 0 || usage.Tokens <= m.window-max(m.window/5, 1)) {
+		return agentgo.ContextCommitResult{Messages: messages, Usage: usage}, nil
+	}
+	// Only independent per-message limits enter compaction. Cross-message
+	// references are request-local and must be rebuilt after compaction.
+	view, _ = normalizeContextMessages(messages)
+	view = msg.LimitToolMessages(view)
+	changed = false
 	if m.engine != nil {
 		result, err := m.engine.Compact(ctx, view, reason)
 		if err != nil {
-			return agentgo.ContextCommitResult{}, err
+			if errors.Is(err, llm.ErrTokenBudget) || errors.Is(err, compactor.ErrBudget) || reason != agentgo.CompactReasonThreshold {
+				return agentgo.ContextCommitResult{}, err
+			}
+			return agentgo.ContextCommitResult{Messages: messages, Usage: usage}, nil
 		}
 		if result.Changed {
 			m.remember(messages, result.Messages, result.Usage, "compact", true)
@@ -148,7 +120,9 @@ func (m *contextManager) RecoverOverflow(
 	messages []agentgo.AgentMessage,
 	cause error,
 ) (agentgo.ContextRecoveryResult, error) {
-	view, usage, changed := m.rewrite(messages, true)
+	view, _ := normalizeContextMessages(messages)
+	view = msg.LimitToolMessages(view)
+	usage, changed := m.estimateUsage(view), false
 	if m.engine != nil {
 		result, err := m.engine.RecoverOverflow(ctx, view, cause)
 		if err != nil {
@@ -211,13 +185,15 @@ func (m *contextManager) ContextWindow() int { return m.window }
 
 func (m *contextManager) rewrite(
 	messages []agentgo.AgentMessage,
-	_ bool,
 ) ([]agentgo.AgentMessage, *agentgo.ContextUsage, bool) {
 	view, changed := normalizeContextMessages(messages)
+	limited := msg.LimitToolMessages(view)
+	changed = changed || !reflect.DeepEqual(view, limited)
+	view = limited
 	if m.dedupEnabled {
-		var compacted int
-		view, compacted = msg.DedupFiles(view)
-		changed = changed || compacted > 0
+		next := msg.TransformSource(view)
+		changed = changed || !reflect.DeepEqual(view, next)
+		view = next
 	}
 
 	if changed {

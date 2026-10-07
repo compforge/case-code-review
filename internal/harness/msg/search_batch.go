@@ -15,6 +15,7 @@ type SearchBatch struct {
 	messageMeta
 	items          []searchBatchItem
 	toolCallID     string
+	sharedSource   string
 	representation searchBatchRepresentation
 }
 
@@ -64,7 +65,8 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 			items[i].result.SearchedFiles = outcome.SearchedFiles
 		}
 	}
-	*b = SearchBatch{messageMeta: result.messageMeta(), items: items, toolCallID: result.ToolCallID}
+	_, sharedSource := tool.SplitCodeSearchSource(result.Content)
+	*b = SearchBatch{sharedSource: sharedSource, messageMeta: result.messageMeta(), items: items, toolCallID: result.ToolCallID}
 	return true
 }
 
@@ -97,7 +99,11 @@ func (b *SearchBatch) render(representation searchBatchRepresentation) llm.Messa
 			parts[i] = item.raw
 		}
 	}
-	return llm.NewToolResultMessage(b.toolCallID, tool.EncodeCodeSearchResults(parts))
+	content := tool.EncodeCodeSearchResults(parts)
+	if representation == searchBatchFull {
+		content = tool.AppendCodeSearchSource(content, b.sharedSource)
+	}
+	return llm.NewToolResultMessage(b.toolCallID, content)
 }
 
 func (b *SearchBatch) ToolName() string { return CodeSearchToolName }
@@ -123,7 +129,7 @@ func (b *SearchBatch) Results() []*SearchResult {
 }
 
 func (b *SearchBatch) clone() *SearchBatch {
-	copyBatch := &SearchBatch{messageMeta: b.messageMeta, toolCallID: b.toolCallID, representation: b.representation, items: make([]searchBatchItem, len(b.items))}
+	copyBatch := &SearchBatch{sharedSource: b.sharedSource, messageMeta: b.messageMeta, toolCallID: b.toolCallID, representation: b.representation, items: make([]searchBatchItem, len(b.items))}
 	for i, item := range b.items {
 		copyBatch.items[i].raw = item.raw
 		if item.result != nil {

@@ -613,7 +613,7 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 		t.Fatal("baseline result was not promoted")
 	}
 	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
-	projection, err := manager.Project(context.Background(), []agentgo.AgentMessage{baseline})
+	projection, err := manager.Compact(context.Background(), []agentgo.AgentMessage{baseline}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -681,7 +681,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 }
 
 func TestSearchSymbolContextIsVisibleToFileReadDedup(t *testing.T) {
-	content := tool.EncodeCodeSearchResults([]string{
+	content := tool.MergeCodeSearchResults([]string{
 		"File: pkg/a.go\nMatch lines: 1\n4|func A() {}\n" +
 			`Symbol context: {"status":"expanded","hit_count":1,"resolved_hits":1,"candidate_count":1}` + "\n" +
 			`Symbol: {"symbol_id":"pkg/a.go::A","kind":"function","path":"pkg/a.go","start_line":3,"end_line":5,"hit_lines":[4]}` + "\n" +
@@ -767,12 +767,12 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
 
-	projection, err := manager.Project(context.Background(), messages)
+	projection, err := manager.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	committed := projection.CommitMessages
-	if !projection.ShouldCommit || len(committed) != len(messages) {
+	committed := projection.Messages
+	if !projection.Changed || len(committed) != len(messages) {
 		t.Fatalf("projection did not commit compaction: %+v", projection)
 	}
 	if projection.Compaction == nil || projection.Compaction.Reason != agentgo.CompactReasonThreshold || !projection.Compaction.Committed {
@@ -787,11 +787,11 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 		t.Fatalf("oldest compaction = %q, want reference", text)
 	}
 
-	second, err := manager.Project(context.Background(), committed)
+	second, err := manager.Compact(context.Background(), committed, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstWire := agentgo.ToMessages(projection.CommitMessages)
+	firstWire := agentgo.ToMessages(projection.Messages)
 	secondWire := agentgo.ToMessages(second.Messages)
 	if firstWire[0].TextContent() != secondWire[0].TextContent() ||
 		firstWire[1].TextContent() != secondWire[1].TextContent() {
@@ -836,7 +836,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 		ContextWindow:    full * 2,
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
-	fullProjection, err := roomy.Project(context.Background(), messages)
+	fullProjection, err := roomy.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -855,23 +855,23 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
 
-	projection, err := manager.Project(context.Background(), messages)
+	projection, err := manager.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !projection.ShouldCommit || len(projection.CommitMessages) != len(messages) {
+	if !projection.Changed || len(projection.Messages) != len(messages) {
 		t.Fatalf("first projection did not commit: %+v", projection)
 	}
-	text := projection.CommitMessages[2].TextContent()
+	text := projection.Messages[2].TextContent()
 	if !strings.Contains(text, "File outline: large.go") || strings.Contains(text, "source evidence") ||
 		strings.Contains(text, "compacted to a reference") {
 		t.Fatalf("first projection selected the wrong File representation: %q", text)
 	}
-	raw := projection.CommitMessages[2].Raw()
+	raw := projection.Messages[2].Raw()
 	if text := raw.TextContent(); !strings.Contains(text, "source evidence") || strings.Contains(text, "File outline:") {
 		t.Fatalf("AgentMessage.Raw did not return the full File: %q", text)
 	}
-	if text := projection.CommitMessages[2].TextContent(); !strings.Contains(text, "File outline: large.go") {
+	if text := projection.Messages[2].TextContent(); !strings.Contains(text, "File outline: large.go") {
 		t.Fatalf("Raw changed the committed projection: %q", text)
 	}
 }

@@ -118,18 +118,32 @@ wire 来源，因此只定义 `ToLLM`。
 provider 并行读取，并按请求顺序装回同一条结果。ContextManager 可以只剔除其中已覆盖的成员，执行
 剩余成员后再按原顺序合并，因此批量不会削弱范围复用，也不需要保留另一套单文件入口。
 
+进入模型上下文的单条工具结果最多 **32 KiB（UTF-8 字节）**。超限结果显式标注原始大小与
+缩小查询/读取范围的建议，并以 `ToolView` 保留 call ID 与原始 AgentMessage；`Raw()` 仍返回完整工具结果。
+截断视图不声明完整文件覆盖，后续读取仍可补齐源码。此上限作用于 Transform，不裁剪 Runner 收集的领域结果。
+Session 的工具记录保留 provider 返回值，模型请求记录反映实际进入上下文的有界投影。
+
+`search_code` 在 provider 内先做批次合并：每条 query 保留顺序、文件、命中行号、空结果和错误；
+共享源码区按文件与行号去重，重叠的命中行、附近上下文、symbol source 只输出一次。
+每行最多 1 KiB，整个批次最多 32 KiB；一半预算预留给各 query 的独立摘要，其余供共享源码使用，
+超出时明确标记裁剪。原有 200 条命中和 400 行上下文的采集限制仍适用。
+只有正文逐行完整保留的 symbol range 才能参与后续读取去重；压缩到摘要后共享正文与 range receipt
+一并移除。旧 Session 中没有共享源码区的批次仍可解码。
+
 ### 3.2 上下文生命周期统一在 ContextManager
 
 上下文不是只增不减的聊天数组。Harness 统一处理：
 
 - 注入：system/task、静态源码消息、跨 turn provider 输出；
-- 去重：后一次覆盖读取替代早期重复 file content；
+- 去重：按版本、文件、行号与实际正文复用已有证据，只展示重叠读取的新增部分；
 - 复用：当 `read_files` 请求范围仍完整可见时返回轻量提示，不再次执行相同读取；
 - 淘汰：优先移除可重取、低价值的大块内容；
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
-ContextManager 从完整消息开始，预算趋紧时调用 `compactor.ZoneCompactor`。接入层
+ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图，批次与历史使用同一套
+覆盖判断，raw 不变。临时引用不会提交到历史；Compact/RecoverOverflow 只提交独立的压缩结果，
+再重新 Transform，保证被引用正文被压缩后可以恢复展示。预算趋紧时调用 `compactor.ZoneCompactor`。接入层
 `context_compactor.go` 负责注入执行配置、模型和摘要 prompt；分区与压缩策略位于 `compactor` 包。
 
 分区按消息职责和完整轮次计算，不在消息上维护可变 Zone：

@@ -127,6 +127,7 @@ func EncodeCodeSearchResults(results []string) string {
 
 // DecodeCodeSearchResults splits the stable batch envelope.
 func DecodeCodeSearchResults(result string) ([]string, bool) {
+	result, _ = SplitCodeSearchSource(result)
 	matches := codeSearchBatchHeader.FindAllStringIndex(result, -1)
 	if len(matches) == 0 || matches[0][0] != 0 {
 		return nil, false
@@ -214,7 +215,7 @@ func (p *CodeSearchProvider) Execute(ctx context.Context, args map[string]any) (
 		}()
 	}
 	wg.Wait()
-	return EncodeCodeSearchResults(results), nil
+	return MergeCodeSearchResults(results), nil
 }
 
 func (p *CodeSearchProvider) executeOne(

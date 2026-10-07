@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
@@ -91,5 +92,45 @@ func TestSearchBatchCondensesSymbolSourceToAnchors(t *testing.T) {
 		!strings.Contains(text, "func Alpha() — a.go:L9-L11") ||
 		strings.Contains(text, "Symbol source:") {
 		t.Fatalf("condensed symbol search = %q", text)
+	}
+}
+
+func TestSearchBatchSharedSourceRoundTripAndCompaction(t *testing.T) {
+	content := tool.MergeCodeSearchResults([]string{
+		"File: a.go\nMatch lines: 1\n10|func Alpha() {}\n" +
+			`Symbol source: {"path":"a.go","start_line":10,"end_line":10,"total_lines":10}` + "\n10|func Alpha() {}",
+		"Error: invalid regex",
+	})
+	message := FromLLM(LLMToolResult{Tool: CodeSearchToolName, ToolCallID: "search-shared",
+		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha"}, map[string]any{"query": "("}}}, Content: content})
+	batch, ok := message.(*SearchBatch)
+	if !ok || batch.ToLLM().ToolCallID != "search-shared" || batch.TextContent() != content {
+		t.Fatalf("roundtrip: %v", message)
+	}
+	if len(tool.CodeSearchSourceRanges(batch.TextContent())) != 1 {
+		t.Fatal("lost visible source")
+	}
+	compacted, _ := batch.Compact(0)
+	if len(tool.CodeSearchSourceRanges(compacted.TextContent())) != 0 || strings.Contains(compacted.TextContent(), "10|func") {
+		t.Fatal("compacted source still advertised")
+	}
+	if compacted.Raw().TextContent() != content {
+		t.Fatal("Raw lost shared source")
+	}
+}
+
+func TestOversizedToolResultsAreBoundedReceipts(t *testing.T) {
+	for _, name := range []string{"read_files", "read_base_files", "read_diffs", "file_find", "custom_tool"} {
+		message := FromLLM(LLMToolResult{Tool: name, ToolCallID: "large",
+			Content: "FILE_PATH: a.go\nLINE_RANGE: 1-1\nTOTAL_LINES: 1\n1|" + strings.Repeat("中", tool.MaxResultBytes)})
+		raw := message
+		message = LimitToolMessages([]agentgo.AgentMessage{message})[0]
+		receipt, ok := message.(*ToolView)
+		if !ok {
+			t.Fatalf("%s: clipped result promoted to %T", name, message)
+		}
+		if len(message.TextContent()) > tool.MaxResultBytes || message.Raw().TextContent() != raw.TextContent() || receipt.ToolName() != name {
+			t.Fatalf("%s: budget/pairing lost", name)
+		}
 	}
 }
