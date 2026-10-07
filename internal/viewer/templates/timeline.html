@@ -1,0 +1,38 @@
+{{define "timeline"}}
+{{$view := layoutTimeline .}}
+<div class="timeline-view">
+    <div class="timeline-toolbar">
+        <span><strong>{{len $view.Rows}}</strong> stages · <strong>{{$view.Incomplete}}</strong> incomplete</span>
+        <div><button type="button" data-timeline-expand>Expand all</button> <button type="button" data-timeline-collapse>Collapse all</button></div>
+    </div>
+    <p class="section-note">Shared time axis · parent and parallel intervals overlap. Hollow markers have no recorded end.</p>
+    <div class="timeline-scroll" tabindex="0" aria-label="Stage timeline, scroll horizontally for more">
+        <div class="timeline-grid">
+            <div class="timeline-columns timeline-axis"><span>Stage</span><span>Result</span><span>Start</span><span>Duration</span><span class="timeline-scale"><span>0</span><span>{{formatMillis $view.WindowMS}}</span></span><span>Details</span></div>
+            {{range $view.Rows}}
+            <div class="timeline-stage" data-depth="{{.Depth}}">
+                <div class="timeline-columns timeline-row">
+                    <div class="timeline-name" style="--depth: {{.Depth}}">
+                        {{if .HasChildren}}<button type="button" class="timeline-toggle" aria-expanded="true" aria-label="Toggle children of {{.Name}}">▾</button>{{else}}<span class="timeline-leaf"></span>{{end}}
+                        <code title="{{.Name}}">{{.Name}}</code>
+                        {{if .MissingParent}}<span title="Parent not recorded">⚠</span>{{end}}
+                    </div>
+                    <span class="timeline-status status-{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}">{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</span>
+                    <span class="timeline-number">{{formatMillis .OffsetMS}}</span>
+                    <span class="timeline-number">{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</span>
+                    <div class="timeline-track" aria-hidden="true"><span class="timeline-bar status-{{.Status}} {{if .FinishedAt.IsZero}}timeline-unfinished{{end}}" style="left: {{printf "%.5f" .StartPercent}}%; width: {{printf "%.5f" .WidthPercent}}%"></span></div>
+                    <button type="button" class="timeline-inspect" aria-expanded="false" aria-label="Details for {{.Name}}">Details</button>
+                </div>
+                <div class="timeline-details" hidden>
+                    <dl><dt>Stage ID</dt><dd><code>{{.ID}}</code></dd><dt>Parent ID</dt><dd><code>{{.ParentID}}</code></dd>
+                    {{if .MissingParent}}<dt>Recording</dt><dd>parent not recorded</dd>{{end}}
+                    {{if .Code}}<dt>Code</dt><dd>{{.Code}}</dd>{{end}}
+                    {{if .Error}}<dt>Error</dt><dd class="error">{{.Error}}</dd>{{end}}</dl>
+                    {{if .Attributes}}<div class="timeline-attributes">{{range $key,$value := .Attributes}}<div><strong>{{$key}}:</strong> <code>{{printf "%s" $value}}</code></div>{{end}}</div>{{end}}
+                </div>
+            </div>
+            {{else}}<p class="empty-state">No stages recorded.</p>{{end}}
+        </div>
+    </div>
+</div>
+{{end}}

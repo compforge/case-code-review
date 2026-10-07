@@ -13,7 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/console"
 )
 
-//go:embed templates/*.html static/style.css
+//go:embed templates/*.html static/*
 var assets embed.FS
 
 // BrowserURL turns an all-interface listen address into a URL a local browser
@@ -98,7 +98,7 @@ func formatTime(t time.Time) string {
 func parseTemplate(name string) (*template.Template, error) {
 	funcMap := template.FuncMap{
 		"formatDuration": formatDuration,
-		"timelineRows":   timelineRows,
+		"layoutTimeline": layoutTimeline,
 		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },
 		"formatInt":      formatInt,
 		"formatRatio": func(value, total int) string {
@@ -211,7 +211,11 @@ func parseTemplate(name string) (*template.Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	return template.New(name).Funcs(funcMap).Parse(string(content))
+	tmpl, err := template.New(name).Funcs(funcMap).Parse(string(content))
+	if err != nil {
+		return nil, err
+	}
+	return tmpl.ParseFS(assets, "templates/timeline.html")
 }
 
 func truncateText(n int, s string) string {

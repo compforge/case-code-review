@@ -65,7 +65,7 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 		{Stage: timeline.Stage{ID: "parent", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running}},
 	}}
 	rows := timelineRows(doc)
-	if len(rows) != 2 || rows[0].Name != "execution" || rows[1].DurationMS != 20 || rows[1].OffsetMS != 10 || rows[1].Label != "· model.attempt" {
+	if len(rows) != 2 || rows[0].Name != "execution" || rows[1].DurationMS != 20 || rows[1].OffsetMS != 10 || rows[1].Depth != 1 || !rows[0].HasChildren {
 		t.Fatalf("rows=%+v", rows)
 	}
 	tmpl, err := parseTemplate("session.html")
@@ -76,9 +76,37 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	if err := tmpl.Execute(&out, map[string]any{"Session": &ViewSession{Timeline: doc}, "EncodedRepo": "repo", "RepoName": "repo"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Run Timeline", "model.attempt", "incomplete", "attempt: 3"} {
+	for _, text := range []string{"Run Timeline", "model.attempt", "incomplete", "attempt:</strong> <code>3</code>", `role="tabpanel"`, `aria-controls="panel-timeline"`} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("missing rendered %s", text)
 		}
+	}
+}
+
+func TestTimelineWaterfallPreservesParallelIntervalsAndUnknownEnds(t *testing.T) {
+	start := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	doc := &timeline.Document{RootStageID: "root", OperationRecord: timeline.OperationRecord{StartedAt: start, FinishedAt: start.Add(10 * time.Second)}, Stages: []timeline.StageUpdate{
+		{Stage: timeline.Stage{ID: "a", ParentID: "root", Name: "parallel-a", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second), Elapsed: 3 * time.Second}},
+		{Stage: timeline.Stage{ID: "b", ParentID: "root", Name: "parallel-b", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second)}},
+		{Stage: timeline.Stage{ID: "unknown", ParentID: "missing", Name: "await_response", StartedAt: start.Add(9 * time.Second), Status: timeline.Running}},
+	}}
+	view := layoutTimeline(doc)
+	if view.WindowMS != 10000 || view.Incomplete != 1 {
+		t.Fatalf("view=%+v", view)
+	}
+	for _, row := range view.Rows[:2] {
+		if row.StartPercent != 20 || row.WidthPercent != 40 {
+			t.Fatalf("parallel interval changed: %+v", row)
+		}
+	}
+	if view.Rows[0].DurationMS != 3000 {
+		t.Fatal("elapsed label must preserve source duration")
+	}
+	if row := view.Rows[2]; row.WidthPercent != 0 || row.StartPercent != 90 || !row.MissingParent {
+		t.Fatalf("unknown end fabricated: %+v", row)
+	}
+	doc.FinishedAt = time.Time{}
+	if got := layoutTimeline(doc).WindowMS; got != 9000 {
+		t.Fatalf("unclosed timeline should end at last evidence, got %d", got)
 	}
 }

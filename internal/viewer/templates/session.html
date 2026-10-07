@@ -5,24 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Session Overview - CCR Viewer</title>
     <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/timeline.js" defer></script>
 </head>
 <body>
 <nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Session {{.Session.Summary.SessionID | truncate 12}}</nav>
 <main>
 {{if .Session.RecordingWarning}}<p class="error">{{.Session.RecordingWarning}}</p>{{end}}
-{{if .Session.Timeline}}
-<details open><summary><strong>Run Timeline · {{.Session.Timeline.Status}}</strong></summary>
-<p>Offsets share the run start. Parent and parallel durations overlap; do not add them. Running stages have no recorded terminal result.</p>
-{{if .Session.Timeline.FinishedAt.IsZero}}<p>Run terminal state is not recorded (incomplete).</p>{{end}}
-{{if .Session.Timeline.Error}}<p>{{.Session.Timeline.Error}}</p>{{end}}
-<table class="timeline-table"><thead><tr><th>Stage</th><th>Start offset</th><th>Duration</th><th>Result</th><th>Identity / details</th></tr></thead><tbody>
-{{range timelineRows .Session.Timeline}}<tr>
-<td><code>{{.Label}}</code>{{if .MissingParent}} (parent not recorded){{end}}</td>
-<td>{{formatMillis .OffsetMS}}</td><td>{{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</td>
-<td>{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</td><td>{{range $key,$value := .Attributes}}<div>{{$key}}: {{printf "%s" $value}}</div>{{end}}{{if .Error}}<div>{{.Error}}</div>{{end}}</td>
-</tr>{{end}}</tbody></table></details>
-{{end}}
-
+<nav class="view-tabs" role="tablist" aria-label="Session views">
+    <a href="#session" id="tab-session" role="tab" aria-controls="panel-session" aria-selected="true">Session</a>
+    <a href="#timeline" id="tab-timeline" role="tab" aria-controls="panel-timeline" aria-selected="false" tabindex="-1">Timeline</a>
+</nav>
+<section id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
+    <div class="timeline-heading"><h2>Run Timeline</h2><code>{{.Session.Summary.SessionID}}</code></div>
+    {{if .Session.Timeline}}
+    {{if .Session.Timeline.FinishedAt.IsZero}}<p class="timeline-notice">Run terminal state is not recorded (incomplete).</p>{{else}}<p class="section-note">Run result: {{.Session.Timeline.Status}}</p>{{end}}
+    {{if .Session.Timeline.Error}}<p class="timeline-notice">{{.Session.Timeline.Error}}</p>{{end}}
+    {{template "timeline" .Session.Timeline}}
+    {{else}}<p class="empty-state">No timeline was recorded for this session.</p>{{end}}
+</section>
+<section id="panel-session" role="tabpanel" aria-labelledby="tab-session">
 {{$review1 := reviewsOfStage .Session.Reviews "review1"}}
 {{$review2 := reviewsOfStage .Session.Reviews "review2"}}
 {{$scans := reviewsOfStage .Session.Reviews "scan"}}
@@ -218,6 +219,8 @@
 {{end}}
 </div>
 {{end}}
+
+</section>
 
 {{define "reviewRow"}}
 <tr class="review-row {{if eq .Status "incomplete"}}review-row-incomplete{{end}}">

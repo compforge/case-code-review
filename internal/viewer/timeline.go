@@ -2,7 +2,7 @@ package viewer
 
 import (
 	"sort"
-	"strings"
+	"time"
 
 	"github.com/compforge/go-stdx/timeline"
 )
@@ -47,10 +47,13 @@ func (vs *ViewSession) projectRequestTimelines() {
 
 type timelineRow struct {
 	timeline.Stage
-	Label         string
 	OffsetMS      int64
 	DurationMS    int64
 	MissingParent bool
+	Depth         int
+	HasChildren   bool
+	StartPercent  float64
+	WidthPercent  float64
 }
 
 // Layout preserves hierarchy and overlapping intervals; it never sums durations.
@@ -79,7 +82,7 @@ func timelineRows(doc *timeline.Document) []timelineRow {
 			return
 		}
 		seen[stage.ID] = true
-		rows = append(rows, timelineRow{Stage: stage, Label: strings.Repeat("· ", depth) + stage.Name, OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: !known[stage.ParentID]})
+		rows = append(rows, timelineRow{Stage: stage, OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
 		for _, child := range children[stage.ID] {
 			visit(child, depth+1)
 		}
@@ -95,4 +98,43 @@ func timelineRows(doc *timeline.Document) []timelineRow {
 		}
 	}
 	return rows
+}
+
+type timelineView struct {
+	Rows       []timelineRow
+	WindowMS   int64
+	Incomplete int
+}
+
+// spec: Bars share source timestamps; unknown end times are markers, never
+// intervals extended to the current wall clock. Elapsed is kept for the label.
+func layoutTimeline(doc *timeline.Document) timelineView {
+	view := timelineView{Rows: timelineRows(doc)}
+	if doc == nil {
+		return view
+	}
+	end := doc.FinishedAt
+	for _, row := range view.Rows {
+		if row.StartedAt.After(end) {
+			end = row.StartedAt
+		}
+		if row.FinishedAt.After(end) {
+			end = row.FinishedAt
+		}
+	}
+	window := end.Sub(doc.StartedAt)
+	if window <= 0 {
+		window = time.Millisecond
+	}
+	view.WindowMS = window.Milliseconds()
+	for i := range view.Rows {
+		row := &view.Rows[i]
+		row.StartPercent = max(0, min(100, 100*float64(row.StartedAt.Sub(doc.StartedAt))/float64(window)))
+		if row.FinishedAt.IsZero() {
+			view.Incomplete++
+			continue
+		}
+		row.WidthPercent = max(0, min(100-row.StartPercent, 100*float64(row.FinishedAt.Sub(row.StartedAt))/float64(window)))
+	}
+	return view
 }
