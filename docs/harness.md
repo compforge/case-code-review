@@ -173,12 +173,12 @@ ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图�
 ### 3.3 预算是机制，完成策略属于调用方
 
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
-增量上下文与“接近边界”的 wrap-up。进入 wrap-up 时，首次模型请求只暴露调用方声明的结果提交工具
-和 completion tool；若仍未结束，唯一一次 completion 修正请求只暴露 terminal tool，并直接指定它。
-仍不提交合法终态则以 truncated 结束，而不是用相同拒绝结果耗尽剩余轮次。Tool middleware 继续拒绝
-执行越界调查调用，作为模型忽略 schema 时的本地兜底。Natural completion 不强制工具：首次收卷仍可
-提交成熟结果，最终纠正请求不暴露工具，允许模型明确自然结束。调用方定义终态动作和收敛语义。例如
-Unit Review 可在硬门后只允许提交 Hypothesis，Hypothesis Review 可要求每个输入都有 Assessment。
+增量上下文与“接近边界”的 wrap-up。调查轮次到达、时间余量不足、或剩余累计 token 不够
+“再调查一轮 + 收卷”时进入收卷。模式提示追加到消息末尾，工具定义和 tool choice 保持稳定，
+避免模式切换破坏可复用的请求前缀。首次收卷允许调用方声明的结果提交工具及 completion tool；
+唯一一次纠正只允许 completion tool，natural completion 则要求自然结束。Tool middleware 拦截
+越界调用，StopGuard 检查完成契约；仍未完成则以 truncated 结束。调用方定义终态动作和收敛语义，
+例如 Unit Review 可在收卷后只允许提交 Hypothesis，Hypothesis Review 可要求每个输入都有 Assessment。
 
 Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用方给出的 completion contract。需要
 完整结构化结果的流程可以要求 terminal tool；允许“检查完即结束”的流程可以选择 natural completion，
@@ -189,6 +189,11 @@ partial/incomplete，不把空输出包装成成功；此前已被领域层接�
 累计预算，包括 Plan、主循环、Review 2、压缩、重定位和汇总等辅助调用。每次调用返回后按 provider
 报告的 input + output usage 累计，达到预算后拒绝新调用；派发器在获得并发槽位后再检查预算，避免
 等待期间沿用旧额度。Scan 同时保留启动新文件前的成本预估。
+
+收卷估算复用上下文估算器：以最近报告的输入 usage 加后续消息估计输入，已提交的 Compact 会更新
+基线；输出参考近期调用并保留最低余量，收卷同时计入上下文输入和输出。判断在 BeforeTurn，
+本轮压缩、未来工具输出和其它并发执行的消耗仍可能改变余额。Session 的 `wrap_up` artifact 记录
+触发原因、轮次、剩余时间、剩余 token 及两部分估算，便于验证收卷是否及时。
 
 这是软预算：已放行的并发请求及其 provider 内部重试可以完成，未报告的 usage 无法精确计费。
 预算耗尽不额外购买收卷轮次；未完成的 Execution 以带原因的 truncated 结束，已接受的结果保留，

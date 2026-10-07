@@ -37,7 +37,7 @@ inspect their diff only when they can affect the changed source behavior.
 {{project_context}}
 
 ### Governing Spec/Case (Optional)
-The contract and cases bound to the changed function(s). Treat them as invariants the change must preserve: for each, judge whether this diff could break it. A case unrelated to this change is a valid finding too — say it is unaffected. If empty, no spec is bound to these functions.
+The contract and cases bound to the changed function(s). Treat them as invariants the change must preserve: for each, judge whether this diff could break it. An unaffected case is not a Hypothesis; use it only to rule out a lead. If empty, no spec is bound to these functions.
 {{spec_cases}}
 
 ### See Also (Optional)

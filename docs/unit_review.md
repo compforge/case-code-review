@@ -167,23 +167,18 @@ running
   └─ deadline / provider failure ─▶ incomplete（已接受结果保留）
 ```
 
-AgentGo `BeforeTurn` / `BeforeModelCall` 提供 turn 与逻辑模型调用边界，Harness `Execution` 负责
+AgentGo `BeforeTurn` / `ModelMiddleware` 提供 turn 与模型调用边界，Harness `Execution` 负责
 wrap-up、调用约束、StopGuard 和停止状态；Runner 的 `HypothesisHook` 只负责单个结果的校验与接收。
 三层都不互相偷走职责。Unit Review 允许无成熟 Hypothesis 时自然结束，因此不会强制工具调用；需要
-terminal tool 的执行在 wrap-up 阶段由 Harness 强制提交。
+terminal tool 的执行在 wrap-up 阶段由 Harness 检查是否成功完成。
 
 ### 3. 探索预算结束后硬关闭调查工具
 
-执行层将“探索预算”和“终态预留”分开。到达探索边界后，首次收卷请求把模型可见工具收敛为：
-
-```text
-hide: submit_hypothesis 之外的调查工具
-show: submit_hypothesis（最终 flush）
-```
-
-若首次收卷仍未结束，最终纠正请求不再暴露工具，让自然结束成为唯一动作。Harness tool middleware
-仍在本地拒绝模型异常发出的调查调用，不能只依赖 wrap-up 文本或请求 schema。再次忽略就标记
-incomplete。最终 flush 只提交已经成熟的主张，不要求模型在最后一轮补完困难 lead。
+执行层将“探索预算”和“终态预留”分开。轮次、时间和累计 token 任一条件达到收卷边界后，
+Harness 追加模式提示，保持工具 schema 与 tool choice 不变，由 Tool middleware 关闭调查调用。
+首次收卷只允许提交已经成熟的结果；没有成熟结果时自然结束。若模型继续调查，则拦截执行并给出
+一次最终纠正，要求自然结束；需要 terminal tool 的流程只允许完成动作。再次忽略就标记
+truncated，保留已接受的结果，不把强制停止当作 completed。
 
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。
@@ -319,7 +314,7 @@ ContextManager 做统一投影：
 ```text
 [durable conversation above]
 user: <incremental BoardDigest>                 # 仅 Review Team 试验开启且有新事实时
-user: <wrap-up: stop investigation and flush mature claims> # 有限调查窗口或 turn/deadline 边界
+user: <wrap-up: stop investigation and flush mature claims> # 调查轮次、deadline 或累计 token 边界
 user: <available file path/range inventory>     # request-only 尾消息，不写回 transcript
 ```
 
@@ -328,8 +323,8 @@ user: <available file path/range inventory>     # request-only 尾消息，不�
 判断需要压缩时才把目标比例交给消息，文件由 `msg.File` 自行在 full/outline/path 中选择，搜索和 diff
 仍可从 full 降为 condensed/reference，
 但 tool call/result 配对和消息顺序不变。Review Plan 是有限 lead 清单，Review 1 不因全局 turn 上限尚有
-余量而继续扩散；简单 Unit 可以很快自然结束，不必等待 wrap-up。有限调查窗口结束后才进入 wrap-up；
-首次请求只暴露最终结果提交工具，最终纠正请求不再暴露工具，避免继续调查空转。
+余量而继续扩散；简单 Unit 可以很快自然结束，不必等待 wrap-up。任一预算条件触发后进入 wrap-up；
+工具定义保持稳定，模式提示与运行时拦截共同约束收卷行为。
 
 预载 File 自有的 outline 形态由 Language 生成 `FileOutline`：代码保留声明与数据成员，JSON 保留
 key/容器结构并压短长 value，Markdown 保留标题层级。它位于“完整源码 → 文件引用”之间，只帮助模型

@@ -39,6 +39,13 @@ func NewBudgetClient(client LLMClient, limit int64, onExhausted func(int64, int6
 	return &BudgetClient{client: client, limit: limit, onExhausted: onExhausted}
 }
 func (c *BudgetClient) Used() int64 { return c.used.Load() }
+
+// Remaining reports the shared, reported allowance. It is a snapshot, not a
+// reservation: in-flight calls may still spend tokens after it is read.
+func (c *BudgetClient) Remaining() (tokens int64, limited bool) {
+	return max(0, c.limit-c.Used()), c.limit > 0
+}
+
 func (c *BudgetClient) Check() error {
 	used := c.Used()
 	if c.limit <= 0 || used < c.limit {
