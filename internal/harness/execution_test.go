@@ -1116,7 +1116,7 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	}
 }
 
-func TestExecutionUsesAgentGoSummaryAndRecordsItsUsage(t *testing.T) {
+func TestExecutionUsesSummaryAndRecordsItsUsage(t *testing.T) {
 	long := strings.Repeat("review evidence and reasoning ", 30)
 	messages := make([]agentgo.AgentMessage, 0, 8)
 	for range 8 {

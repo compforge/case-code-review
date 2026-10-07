@@ -102,7 +102,7 @@ func TestPartitionProtectsWholeRoundsAndKeepsAnchorsInPlace(t *testing.T) {
 func TestZoneCompactorHistoricalPriorityAndAge(t *testing.T) {
 	high, old, newer := file("target.go").ConfigurePriority(20), file("old.go"), file("newer.go")
 	input := []agentgo.AgentMessage{msg.FixedText("user", "task"), high, old, newer}
-	c := ZoneCompactor{Stages: []Stage{{"message", &agentcontext.MessageCompactor{OldestFirst: true}}}}
+	c := ZoneCompactor{Stages: []Stage{{"message", &MessageCompactor{}}}}
 	view, err := c.Compact(t.Context(), input, 0.8)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func (*summaryModel) SupportsTools() bool { return false }
 
 func TestZoneCompactorRepeatedSummaryPreservesActiveAndRaw(t *testing.T) {
 	model := &summaryModel{}
-	c := ZoneCompactor{KeepRecentTokens: 1, Stages: []Stage{{"summary", agentcontext.NewSummaryCompactor(agentcontext.FullSummaryConfig{Model: model, KeepRecentTokens: -1})}}}
+	c := ZoneCompactor{KeepRecentTokens: 1, Stages: []Stage{{"summary", NewSummaryCompactor(SummaryConfig{Model: model})}}}
 	input := []agentgo.AgentMessage{msg.FixedText("user", "the review task"), file("old.go")}
 	input = append(input, round("first")...)
 	for _, next := range []string{"second", "third"} {

@@ -143,7 +143,9 @@ ContextManager 从完整消息开始，预算趋紧时调用 `compactor.ZoneComp
 
 历史预算扣除 Fixed 与 Active 的实际占用。当前任务锚点保留原来的时间位置，摘要不跨越它；
 持续执行进入下一任务后，旧任务锚点进入历史区。
-内部压缩器关闭重复的最近消息保护。结果满足预算和工具配对约束后才交给 Engine 提交，保护区自身
+`MessageCompactor`、`ToolResultCompactor`、`LightTrimCompactor`、`SummaryCompactor` 均由 CCR
+在 `compactor` 包实现，只处理传入的历史段，不再各自保留最近消息。MessageCompactor 同级先旧后新，
+不向 AgentGo 添加排序配置；摘要继续使用 AgentGo 的模型执行与 ContextSummary 契约。结果满足预算和工具配对约束后才交给 Engine 提交，保护区自身
 超限时明确报告预算不足；摘要失败不提交半成品。显式溢出恢复同样受保护区和窗口预算约束。
 
 `context.zones` timeline stage 记录每区消息数、估算 token、执行策略、目标与结果，包括未达标的尝试；

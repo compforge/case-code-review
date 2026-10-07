@@ -10,21 +10,19 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 )
 
-// newContextCompactor adapts execution configuration to the CCR policy. Passing
-// the summary window explicitly is necessary across this application wrapper:
-// AgentGo's private window-aware hook only reaches its own built-in chain.
+// newContextCompactor wires CCR policy to AgentGo's context engine.
 func newContextCompactor(spec ExecutionSpec, model agentgo.ChatModel, window, reserve int) agentcontext.Compactor {
 	var stages []compactor.Stage
 	if spec.FileEvictEnabled {
-		stages = append(stages, compactor.Stage{Name: "message", Compactor: &agentcontext.MessageCompactor{OldestFirst: true}})
+		stages = append(stages, compactor.Stage{Name: "message", Compactor: &compactor.MessageCompactor{}})
 	}
 	stages = append(stages,
-		compactor.Stage{Name: "tool_result", Compactor: agentcontext.NewToolResultCompactor(agentcontext.ToolResultMicrocompactConfig{KeepRecent: -1})},
-		compactor.Stage{Name: "light_trim", Compactor: agentcontext.NewLightTrimCompactor(agentcontext.LightTrimConfig{KeepRecent: -1})},
-		compactor.Stage{Name: "summary", Compactor: agentcontext.NewSummaryCompactor(agentcontext.FullSummaryConfig{
-			Model: model, ContextWindow: window, ReserveTokens: reserve, KeepRecentTokens: -1,
+		compactor.Stage{Name: "tool_result", Compactor: &compactor.ToolResultCompactor{}},
+		compactor.Stage{Name: "light_trim", Compactor: compactor.NewLightTrimCompactor(compactor.LightTrimConfig{})},
+		compactor.Stage{Name: "summary", Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{
+			Model: model, ReserveTokens: reserve,
 			SystemPrompt: spec.CompressionSystemPrompt, SummaryPrompt: spec.CompressionPrompt,
-			UpdateSummaryPrompt: spec.CompressionUpdatePrompt, TurnPrefixPrompt: spec.CompressionPrefixPrompt,
+			UpdateSummaryPrompt: spec.CompressionUpdatePrompt,
 		})},
 	)
 	return &compactor.ZoneCompactor{KeepRecentTokens: max(window/4, 1), LimitTokens: window - reserve, Stages: stages, Observe: recordZoneCompaction}
