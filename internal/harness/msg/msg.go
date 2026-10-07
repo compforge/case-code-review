@@ -1,6 +1,7 @@
 // Package msg contains CCR's concrete review-domain AgentMessages. Each type
 // owns its raw form, compaction policy, priority, and model projection; Harness
-// passes the values to AgentGo without another message abstraction or wrapper.
+// passes the values to AgentGo; request-local ToolView values retain the original
+// AgentMessage while changing only its displayed representation.
 package msg
 
 import (

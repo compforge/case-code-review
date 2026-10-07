@@ -326,12 +326,14 @@ func TestCodeSearchExecuteAddsMergedContextWindows(t *testing.T) {
 	if !ok || len(results) != 1 {
 		t.Fatalf("result = %q", out)
 	}
-	result := results[0]
-	if !strings.Contains(result, "Match lines: 2\n4|needle four\n6|needle six\nContext:\nLINE_RANGE: 1-9") {
-		t.Fatalf("merged context missing from result:\n%s", result)
+	if !strings.Contains(results[0], "Hit line: 4") || !strings.Contains(results[0], "Hit line: 6") {
+		t.Fatalf("query hit identities missing: %s", results[0])
 	}
-	if got := strings.Count(result, "LINE_RANGE:"); got != 1 {
-		t.Fatalf("context ranges = %d, want 1:\n%s", got, result)
+	_, shared := SplitCodeSearchSource(out)
+	for n, line := range strings.Split(content, "\n") {
+		if got := strings.Count(shared, fmt.Sprintf("%d|%s\n", n+1, line)); got != 1 {
+			t.Fatalf("source line %d emitted %d times: %s", n+1, got, shared)
+		}
 	}
 }
 
@@ -396,7 +398,7 @@ func TestCodeSearchKeepsAmbiguousSymbolsAsAnchors(t *testing.T) {
 	if ranges := CodeSearchSourceRanges(out); len(ranges) != 0 {
 		t.Fatalf("ambiguous search exposed source ranges = %#v", ranges)
 	}
-	if got := strings.Count(out, "Symbol: {"); got != 2 || !strings.Contains(out, "Context:\n") {
+	if got := strings.Count(out, "Symbol: {"); got != 2 || !strings.Contains(out, "1|package main\n") {
 		t.Fatalf("ambiguous anchors/fallback = %d:\n%s", got, out)
 	}
 }
@@ -481,9 +483,14 @@ func TestCodeSearchContextUsesBatchBudget(t *testing.T) {
 	if !ok || len(results) != codeSearchMaxBatch {
 		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
 	}
+	_, shared := SplitCodeSearchSource(out)
+	// Fifty context lines plus the two hits in files beyond that allowance.
+	if got := len(regexp.MustCompile(`(?m)^\d+\|`).FindAllString(shared, -1)); got != 52 {
+		t.Fatalf("unique shared source lines = %d, want 52", got)
+	}
 	for i, result := range results {
 		numbered := regexp.MustCompile(`(?m)^\d+\|`).FindAllString(result, -1)
-		if len(numbered) != codeSearchContextBudget/codeSearchMaxBatch+codeSearchNearbyMaxHits {
+		if len(numbered) != 0 {
 			t.Fatalf("result %d numbered output lines = %d", i, len(numbered))
 		}
 		if !strings.Contains(result, "Context truncated") {
@@ -749,7 +756,7 @@ func TestCodeSearchBatchSharesAggregateMatchBudget(t *testing.T) {
 		t.Fatalf("batch result parsed=%d ok=%t", len(results), ok)
 	}
 	for i, result := range results {
-		if got := strings.Count(result, "|alpha beta gamma"); got != 66 {
+		if got := strings.Count(result, "Hit line: "); got != 66 {
 			t.Fatalf("result %d matches = %d, want 66", i, got)
 		}
 		if !strings.Contains(result, "first 66 results") {

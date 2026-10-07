@@ -18,9 +18,9 @@ import (
 func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
 	manager := newContextManager(ExecutionSpec{ContextWindow: 100, FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}})
 	input := []agentgo.AgentMessage{msg.FixedText("user", strings.Repeat("required task constraints ", 200))}
-	projection, err := manager.Project(t.Context(), input)
-	if !errors.Is(err, compactor.ErrBudget) || projection.ShouldCommit {
-		t.Fatalf("budget failure = %v, committed=%v", err, projection.ShouldCommit)
+	projection, err := manager.Compact(t.Context(), input, agentgo.CompactReasonThreshold)
+	if !errors.Is(err, compactor.ErrBudget) || projection.Changed {
+		t.Fatalf("budget failure = %v, committed=%v", err, projection.Changed)
 	}
 }
 
@@ -31,7 +31,7 @@ func TestContextZoneReportUsesTimeline(t *testing.T) {
 	}
 	ctx := timeline.NewContext(t.Context(), tm)
 	manager := newContextManager(ExecutionSpec{ContextWindow: 400, FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}})
-	_, err = manager.Project(ctx, []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))})
+	_, err = manager.Compact(ctx, []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}

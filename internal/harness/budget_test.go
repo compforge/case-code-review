@@ -52,7 +52,7 @@ func TestContextCountsToolArgumentsAndDoesNotDoubleCountCacheCreation(t *testing
 		t.Fatal(err)
 	}
 	manager := newContextManager(ExecutionSpec{ContextWindow: 20000}, nil)
-	view, err := manager.Project(t.Context(), []agentgo.AgentMessage{message})
+	view, err := manager.Compact(t.Context(), []agentgo.AgentMessage{message}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestCompressionBudgetStopsBeforeCallingSummaryModel(t *testing.T) {
 	// best-effort compression failure followed by another main model request.
 	execution.contextManager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{ContextWindow: 100, ReserveTokens: 20,
 		Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{Model: &chatModel{client: budget, recorder: execution.recorder, taskType: session.MemoryCompressionTask}})})
-	_, err = execution.contextManager.Project(t.Context(), []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")})
+	_, err = execution.contextManager.Compact(t.Context(), []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}, agentgo.CompactReasonThreshold)
 	if !errors.Is(err, llm.ErrTokenBudget) || len(client.Requests()) != 1 {
 		t.Fatalf("compression error=%v calls=%d", err, len(client.Requests()))
 	}
