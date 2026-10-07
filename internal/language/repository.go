@@ -44,13 +44,14 @@ func (a *Analyzer) Repository() *RepositoryIndex {
 			observe = a.ObserveRepositoryBuild()
 		}
 		start := time.Now()
-		a.repository = a.scanRepository()
-		a.repository.Duration = time.Since(start)
+		index := a.scanRepository()
+		index.Duration = time.Since(start)
+		a.repository.Store(index)
 		if observe != nil {
-			observe(a.repository)
+			observe(index)
 		}
 	})
-	return a.repository
+	return a.repository.Load()
 }
 
 func (a *Analyzer) scanRepository() *RepositoryIndex {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	cg "github.com/compforge/codegraph"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
@@ -27,7 +28,7 @@ type Analyzer struct {
 	repoDir                string
 	extractor              *cg.Extractor
 	repositoryOnce         sync.Once
-	repository             *RepositoryIndex
+	repository             atomic.Pointer[RepositoryIndex]
 	documents              map[string]string // captured changed documents, configured before publication
 }
 
@@ -88,32 +89,71 @@ func (a *Analyzer) FileOutline(ctx context.Context, source Source) (FileOutline,
 	return FileOutline{Path: source.Path, Language: Language(doc.Language), entries: graphOutlineEntries(graph, documentPath(source.Path))}, nil
 }
 
+// Definitions returns source declarations from the already published repository
+// graph when its document matches the supplied bytes. Unpublished or omitted
+// documents use local analysis without triggering a repository scan or expansion.
+// +spec=`Navigation reuses published source facts without mixing source versions`
+func (a *Analyzer) Definitions(ctx context.Context, source Source) ([]Definition, error) {
+	graph, err := a.navigationGraph(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	var definitions []Definition
+	for _, node := range graph.Find(documentPath(source.Path), "", "") {
+		if definition, ok := reviewDefinition(source.Path, node); ok {
+			definitions = append(definitions, definition)
+		}
+	}
+	return definitions, nil
+}
+
+func (a *Analyzer) navigationGraph(ctx context.Context, source Source) (*cg.Graph, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Publication can race with independent source navigation. Only reuse a
+	// fully published document; Sources can also contain budget-omitted inputs.
+	if index := a.repository.Load(); index != nil && index.Graph != nil {
+		path := documentPath(source.Path)
+		if content, ok := index.Sources[path]; ok && content == source.Content {
+			if _, admitted := index.Graph.Node(cg.DocumentID(path)); admitted {
+				return index.Graph, nil
+			}
+		}
+	}
+	facts, err := a.extract(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	return documentGraph(ctx, facts)
+}
+
 // DefinitionAt resolves a source line to its enclosing callable definition.
 func (a *Analyzer) DefinitionAt(ctx context.Context, source Source, line int) (Definition, bool) {
-	analysis, err := a.Analyze(ctx, source)
+	definitions, err := a.Definitions(ctx, source)
 	if err != nil {
 		return Definition{}, false
 	}
-	return analysis.DefinitionAt(line)
+	return (Analysis{Definitions: definitions}).DefinitionAt(line)
 }
 
 // SymbolAt resolves a source line to its innermost named definition, including
 // non-callable types and classes.
 func (a *Analyzer) SymbolAt(ctx context.Context, source Source, line int) (Definition, bool) {
-	analysis, err := a.Analyze(ctx, source)
+	definitions, err := a.Definitions(ctx, source)
 	if err != nil {
 		return Definition{}, false
 	}
-	return analysis.SymbolAt(line)
+	return (Analysis{Definitions: definitions}).SymbolAt(line)
 }
 
 // DefinitionByID resolves a canonical symbol id in a source file.
 func (a *Analyzer) DefinitionByID(ctx context.Context, source Source, id string) (Definition, bool) {
-	analysis, err := a.Analyze(ctx, source)
+	definitions, err := a.Definitions(ctx, source)
 	if err != nil {
 		return Definition{}, false
 	}
-	return analysis.DefinitionByID(id)
+	return (Analysis{Definitions: definitions}).DefinitionByID(id)
 }
 
 // CalleesOf returns unresolved call names made by the requested definition.

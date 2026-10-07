@@ -12,6 +12,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
@@ -150,10 +151,12 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			reader := &tool.FileReader{RepoDir: repo, Mode: reviewMode, Ref: ref, Runner: runner}
 			registry := tool.NewRegistry()
 			registry.Register(tool.NewFileRead(reader))
+			search := tool.NewCodeSearch(reader)
+			registry.Register(search)
 			registry.Register(tool.NewFileReadBase(&tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Runner: runner}))
 			recording := session.New(repo, "main", "test", session.SessionOptions{})
 			defer recording.Finalize()
-			a := New(Args{RepoDir: repo, Commit: ref, GitRunner: runner, Tools: registry, Session: recording})
+			a := New(Args{RepoDir: repo, Commit: ref, GitRunner: runner, Tools: registry, Session: recording, Features: feature.Set{feature.SearchSymbolContext: true}})
 			if err := a.loadChanges(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -164,6 +167,10 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			write(".casecodereview/spec.json", `{"a.go::A":{"spec":"later contract"}}`)
 			commit()
 			graphSource := a.analyzer.Repository().Sources["a.go"]
+			result, err := search.Execute(context.Background(), map[string]any{"searches": []any{map[string]any{"query": "func A"}}})
+			if err != nil || strings.Contains(result, "Surprise") || !strings.Contains(result, "a.go::A") {
+				t.Fatalf("search projection escaped reviewed snapshot: %s %v", result, err)
+			}
 			toolSource, err := reader.Read(context.Background(), "a.go")
 			if err != nil {
 				t.Fatal(err)
@@ -178,8 +185,7 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			if err != nil || strings.Contains(strings.Join(lines, "\n"), "Surprise") {
 				t.Fatalf("unchanged baseline drift: %v %v", lines, err)
 			}
-			search := tool.NewCodeSearch(reader)
-			result, err := search.Execute(context.Background(), map[string]any{"searches": []any{map[string]any{"query": "Surprise"}, map[string]any{"query": "Added", "file_patterns": []any{"*.go"}}}})
+			result, err = search.Execute(context.Background(), map[string]any{"searches": []any{map[string]any{"query": "Surprise"}, map[string]any{"query": "Added", "file_patterns": []any{"*.go"}}}})
 			if err != nil || strings.Contains(result, "SurpriseAdded") || !strings.Contains(result, "func Added()") {
 				t.Fatalf("search drift: %s %v", result, err)
 			}

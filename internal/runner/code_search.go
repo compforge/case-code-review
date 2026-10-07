@@ -8,6 +8,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 )
 
 const codeSearchAnalysisMaxBytes = 512 * 1024
@@ -20,8 +21,27 @@ type CodeSearchLanguageSource struct {
 	analyzer *language.Analyzer
 }
 
-func NewCodeSearchLanguageSource(reader *tool.FileReader) *CodeSearchLanguageSource {
-	return &CodeSearchLanguageSource{reader: reader, analyzer: language.NewAnalyzer(reader.RepoDir)}
+func NewCodeSearchLanguageSource(reader *tool.FileReader, analyzer *language.Analyzer) *CodeSearchLanguageSource {
+	return &CodeSearchLanguageSource{reader: reader, analyzer: analyzer}
+}
+
+// configureSourceTools binds tool projections to the same Analyzer used for
+// initial context. Snapshot capture finishes before any review tools execute.
+func (a *Runner) configureSourceTools() {
+	provider, ok := a.args.Tools.Get(tool.CodeSearch.Name())
+	if !ok {
+		return
+	}
+	search, ok := provider.(*tool.CodeSearchProvider)
+	if !ok {
+		return
+	}
+	source := NewCodeSearchLanguageSource(search.FileReader, a.analyzer)
+	search.WithDefinitionSource(source.Definitions)
+	search.WithSymbolSource(nil)
+	if a.features.Enabled(feature.SearchSymbolContext) {
+		search.WithSymbolSource(source.Symbols)
+	}
 }
 
 // Definitions adapts Language Knowledge to Harness' optional no-match
@@ -36,11 +56,11 @@ func (s *CodeSearchLanguageSource) Definitions(ctx context.Context, paths []stri
 		if err != nil || len(content) > codeSearchAnalysisMaxBytes {
 			continue
 		}
-		analysis, err := s.analyzer.Analyze(ctx, language.Source{Path: path, Content: content})
+		fileDefinitions, err := s.analyzer.Definitions(ctx, language.Source{Path: path, Content: content})
 		if err != nil {
 			continue
 		}
-		for _, definition := range analysis.Definitions {
+		for _, definition := range fileDefinitions {
 			definitions = append(definitions, tool.CodeSearchDefinition{
 				Name: definition.Name,
 				Path: path,
@@ -76,7 +96,11 @@ func (s *CodeSearchLanguageSource) Symbols(ctx context.Context, hits []tool.Code
 		if err != nil || len(content) > codeSearchAnalysisMaxBytes {
 			continue
 		}
-		source := language.Source{Path: path, Content: content}
+		definitions, err := s.analyzer.Definitions(ctx, language.Source{Path: path, Content: content})
+		if err != nil {
+			continue
+		}
+		analysis := language.Analysis{Definitions: definitions}
 		fileLines := strings.Split(content, "\n")
 		byDefinition := make(map[string]int)
 		pathHits := hitsByPath[path]
@@ -87,7 +111,7 @@ func (s *CodeSearchLanguageSource) Symbols(ctx context.Context, hits []tool.Code
 				continue
 			}
 			previousLine = line
-			definition, ok := s.analyzer.SymbolAt(ctx, source, line)
+			definition, ok := analysis.SymbolAt(line)
 			if !ok || definition.Span.Start < 1 || definition.Span.End > len(fileLines) {
 				continue
 			}

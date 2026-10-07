@@ -9,6 +9,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/scan"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
@@ -180,7 +182,10 @@ func runScan(args []string) error {
 		Mode:    tool.ModeWorkspace,
 		Runner:  cc.GitRunner,
 	}
-	tools := buildToolRegistry(rt.Findings, fileReader, nil, false)
+	tools := buildToolRegistry(rt.Findings, fileReader, nil)
+	// Scan has no fixed review graph; keep its workspace-local definition lookup.
+	searchLanguage := runner.NewCodeSearchLanguageSource(fileReader, language.NewAnalyzer(cc.RepoDir))
+	tools.Register(tool.NewCodeSearch(fileReader).WithDefinitionSource(searchLanguage.Definitions))
 
 	ag := scan.New(scan.Args{
 		RepoDir:               cc.RepoDir,

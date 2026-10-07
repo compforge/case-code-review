@@ -256,6 +256,7 @@ func New(args Args) *Runner {
 		splitter: unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
 		analyzer: analyzer,
 	}
+	a.configureSourceTools()
 	a.configureFinders(spec.Catalog{})
 	a.observeGraphBuild(context.Background(), analyzer, "after")
 	if args.MaxTokensBudget > 0 {

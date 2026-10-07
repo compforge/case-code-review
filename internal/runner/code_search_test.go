@@ -10,6 +10,8 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
 )
 
 func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
@@ -38,7 +40,7 @@ func TestCodeSearchDefinitionsReadsReviewedRef(t *testing.T) {
 		Ref:     ref,
 		Runner:  gitcmd.New(0),
 	}
-	source := NewCodeSearchLanguageSource(reader)
+	source := NewCodeSearchLanguageSource(reader, language.NewAnalyzer(repo))
 	provider := tool.NewCodeSearch(reader).WithDefinitionSource(source.Definitions)
 	result, err := provider.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{"query": "HandleName", "syntax": "literal"}},
@@ -71,7 +73,7 @@ func TestCodeSearchSymbolsReadReviewedRef(t *testing.T) {
 	}
 
 	reader := &tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Ref: ref, Runner: gitcmd.New(0)}
-	source := NewCodeSearchLanguageSource(reader)
+	source := NewCodeSearchLanguageSource(reader, language.NewAnalyzer(repo))
 	provider := tool.NewCodeSearch(reader).WithSymbolSource(source.Symbols)
 	result, err := provider.Execute(context.Background(), map[string]any{
 		"searches": []any{map[string]any{"query": "old"}},
@@ -95,4 +97,56 @@ func runCodeSearchGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// Search must identify the actual matched definition, including multiple hits
+// within it, without substituting a similarly named telemetry helper (#119).
+func TestCodeSearchSharedGraphEvidence(t *testing.T) {
+	repo := t.TempDir()
+	metric := "package telemetry\n\nfunc RecordToolCall(ok bool) {\n if !ok { println(\"RecordToolCall failed\") }\n}\n"
+	for path, content := range map[string]string{
+		"metrics.go": metric,
+		"span.go":    "package telemetry\nfunc RecordToolResult(err error) {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repo, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := &tool.FileReader{RepoDir: repo, Mode: tool.ModeWorkspace}
+	registry := tool.NewRegistry()
+	provider := tool.NewCodeSearch(reader)
+	registry.Register(provider)
+	a := New(Args{RepoDir: repo, Tools: registry, Features: feature.Set{feature.SearchSymbolContext: true}})
+	defer a.session.Finalize()
+	index := a.analyzer.Repository()
+	// Compare the visible tool result with local-only projection on identical input.
+	local := NewCodeSearchLanguageSource(reader, language.NewAnalyzer(repo))
+	baseline := tool.NewCodeSearch(reader).WithSymbolSource(local.Symbols)
+	args := map[string]any{"searches": []any{map[string]any{"query": "RecordToolCall"}}}
+	want, err := baseline.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := provider.Execute(context.Background(), args)
+	if err != nil || got != want {
+		t.Fatalf("projection drift: %v\nwant=%s\ngot=%s", err, want, got)
+	}
+	outcome, ok := tool.ParseCodeSearchSymbolContextOutcome(got)
+	if !ok || outcome.Status != tool.CodeSearchSymbolExpanded || !strings.Contains(got, "if !ok") || strings.Contains(got, "RecordToolResult") {
+		t.Fatalf("wrong evidence: %s", got)
+	}
+	if a.analyzer.Repository() != index {
+		t.Fatal("tool replaced the shared graph")
+	}
+	// The existing gate still controls source expansion; no new model-facing mode.
+	a.features = feature.Set{feature.SearchSymbolContext: false}
+	a.configureSourceTools()
+	got, err = provider.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, ok = tool.ParseCodeSearchSymbolContextOutcome(got)
+	if ok && outcome.Status == tool.CodeSearchSymbolExpanded {
+		t.Fatal("disabled source expansion still active")
+	}
 }

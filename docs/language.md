@@ -30,6 +30,11 @@ Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后
 构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
 ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
+搜索工具与初始上下文共用 Runner 的 Analyzer。定义定位优先消费已发布仓库图中内容一致的
+Document；尚未构图、未接纳或内容不同的文件使用同一解析缓存构造局部图，不因导航触发全仓扫描或
+补图。一次搜索按文件提取定义后匹配全部命中，避免逐命中重复构图。工具通过 Runner 注入的定义与
+符号接口使用 Language 事实，Harness 不依赖 CodeGraph。
+
 RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的源码集合，提供 Go module 根，
 将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。

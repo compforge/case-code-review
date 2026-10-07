@@ -78,7 +78,7 @@ func runReview(args []string) error {
 	}
 	baseReader := &tool.FileReader{RepoDir: cc.RepoDir, Mode: tool.ModeCommit, Runner: cc.GitRunner}
 	tools := buildToolRegistry(
-		rt.Findings, fileReader, baseReader, features.Enabled(feature.SearchSymbolContext),
+		rt.Findings, fileReader, baseReader,
 	)
 
 	historyIndex, err := history.Load(opts.historyPath)
@@ -285,7 +285,6 @@ func buildToolRegistry(
 	findings *finding.Collector,
 	fr *tool.FileReader,
 	base *tool.FileReader,
-	searchSymbolContextEnabled bool,
 ) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewFileRead(fr))
@@ -294,12 +293,7 @@ func buildToolRegistry(
 	}
 	reg.Register(tool.NewFileFind(fr))
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
-	codeSearchLanguage := runner.NewCodeSearchLanguageSource(fr)
-	codeSearch := tool.NewCodeSearch(fr).WithDefinitionSource(codeSearchLanguage.Definitions)
-	if searchSymbolContextEnabled {
-		codeSearch.WithSymbolSource(codeSearchLanguage.Symbols)
-	}
-	reg.Register(codeSearch)
+	reg.Register(tool.NewCodeSearch(fr))
 	reg.Register(&finding.ToolProvider{Collector: findings})
 	return reg
 }

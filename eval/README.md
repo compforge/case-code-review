@@ -490,6 +490,21 @@ LLMToolResult：Tool、ToolCallID、Arguments、Content）和 `ratio`（两种�
 它不调用模型，不证明实际 token 成本、评审质量或超时率改善；后者需要对齐输入的真实运行，
 并确认轨迹确实触发压缩，包含摘要调用成本和未完成的执行。
 
+## 搜索工具的确定性重放
+
+共享 Language 图的接入可直接重放 Session 中捕获的 `search_code` 参数。显式指定同一仓库和目标
+commit，分别比较单文件解析与共享仓库图的输出；测试同时覆盖默认搜索和 symbol-context 实验模式。
+
+```bash
+CCR_SEARCH_REPLAY=/path/to/session.jsonl \
+CCR_SEARCH_REPO=/path/to/repository \
+CCR_SEARCH_REF=<reviewed-commit> \
+go test ./internal/runner -run '^TestCodeSearchReplay$' -count=1 -v
+```
+
+测试要求结果及错误一致，并报告图构建时间与工具耗时。它不调用模型；单次工具计时不能证明整轮
+review 的时间、token 或准确率改善。涉及模型可见结果变化时，仍需固定 corpus 的真实评审对照。
+
 ## 可选：建立固定 corpus 并重放
 
 从本地 clone 构建 merge-parent corpus：
