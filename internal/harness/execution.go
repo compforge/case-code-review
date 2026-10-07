@@ -12,6 +12,7 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/compforge/go-stdx/uuid"
+	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -567,6 +568,11 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 	if errors.Is(e.runErr, llm.ErrTokenBudget) {
 		result.State = OutcomeTruncated
 		result.Reason = llm.ErrTokenBudget.Error()
+		return result, nil
+	}
+	if errors.Is(e.runErr, compactor.ErrBudget) {
+		result.State = OutcomeTruncated
+		result.Reason = e.runErr.Error()
 		return result, nil
 	}
 	if e.runErr != nil {

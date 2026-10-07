@@ -12,6 +12,7 @@ import (
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
 
+	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -60,26 +61,11 @@ func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextMana
 		// Match CCR's existing 80% warning threshold while delegating the
 		// actual trim/summary mechanics to agentgo.
 		reserve := max(window/5, 1)
-		compactors := []agentcontext.Compactor{
-			agentcontext.NewToolResultCompactor(agentcontext.ToolResultMicrocompactConfig{}),
-			agentcontext.NewLightTrimCompactor(agentcontext.LightTrimConfig{}),
-			agentcontext.NewSummaryCompactor(agentcontext.FullSummaryConfig{
-				Model:               model,
-				KeepRecentTokens:    max(window/4, 1),
-				SystemPrompt:        spec.CompressionSystemPrompt,
-				SummaryPrompt:       spec.CompressionPrompt,
-				UpdateSummaryPrompt: spec.CompressionUpdatePrompt,
-				TurnPrefixPrompt:    spec.CompressionPrefixPrompt,
-			}),
-		}
-		if spec.FileEvictEnabled {
-			compactors = append([]agentcontext.Compactor{agentcontext.NewMessageCompactor()}, compactors...)
-		}
 		manager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{
 			ContextWindow:   window,
 			ReserveTokens:   reserve,
 			CommitOnProject: true,
-			Compactor:       agentcontext.Chain(compactors...),
+			Compactor:       newContextCompactor(spec, model, window, reserve),
 		})
 	}
 	return manager
@@ -95,7 +81,7 @@ func (m *contextManager) Project(
 	if m.engine != nil {
 		engineProjection, err := m.engine.Project(ctx, view)
 		if err != nil {
-			if errors.Is(err, llm.ErrTokenBudget) {
+			if errors.Is(err, llm.ErrTokenBudget) || errors.Is(err, compactor.ErrBudget) {
 				return agentgo.ContextProjection{}, err
 			}
 			// Compression is a context optimization, not permission to discard

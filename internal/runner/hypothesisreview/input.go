@@ -207,3 +207,10 @@ func (m hypothesisMessage) Compact(expect float64) (agentgo.AgentMessage, float6
 }
 
 func (m hypothesisMessage) Priority() int { return priorityHypothesis }
+
+// FixedContext preserves the claim and task constraints while allowing the
+// message-owned representation to omit supporting context already held separately.
+func (m hypothesisMessage) FixedContext() agentgo.AgentMessage {
+	next, _ := m.Compact(0)
+	return next
+}

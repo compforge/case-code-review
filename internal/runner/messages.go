@@ -195,6 +195,13 @@ func (a *Runner) assembleReviewMessages(
 	}
 
 	out := msg.Wrap(build(unitSlot, relatedSlot))
+	// Only the source-separated review task is pinned. Generic Wrap also serves
+	// scan prompts that can contain whole files and must remain compressible.
+	for i, message := range out {
+		if wire, ok := message.(agentgo.Message); ok && wire.Role == agentgo.RoleUser && !wire.HasToolCalls() {
+			out[i] = msg.Instruction{Message: wire}
+		}
+	}
 	if len(initial) > 0 {
 		out = append(out, msg.NewFileContext(initial))
 	}

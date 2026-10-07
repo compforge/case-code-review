@@ -472,6 +472,24 @@ Review 2 成本同时展示 per-Lane 与 per-Assessment，避免 Lane 在一周�
 失败数、精确时间窗覆盖状态和 dataset snapshot 一致性；任一 snapshot manifest 缺失或不一致时，
 不能把本周 `0 label` 解释为真实效果事实。
 
+## 上下文压缩的确定性回放
+
+先用捕获的请求比较压缩变换，再用下面的固定 corpus 做真实评审对照。Harness 提供可选测试：
+
+```bash
+CCR_CONTEXT_REPLAY="$PWD/eval/data/trajectory/<run>/replay-input.json" \
+  go test ./internal/harness -run '^TestContextCompactionReplay$' -v
+```
+
+本地 fixture 包含 `messages`（Session 的 llm_request 消息）、`result`（最新工具调用的原始
+LLMToolResult：Tool、ToolCallID、Arguments、Content）和 `ratio`（两种策略共用的目标比例）。
+从同一 Execution 连接 request 与 tool_result，恢复该最新结果后，测试比较默认消息压缩和分区策略，
+检查新证据保留、总预算及估算 token。fixture 与输出留在 ignored `eval/data/`，不提交真实源码。
+
+这是捕获输入上的局部变换比较，不能还原整段消息原来的 Go 类型，也不能替代完整轨迹重放。
+它不调用模型，不证明实际 token 成本、评审质量或超时率改善；后者需要对齐输入的真实运行，
+并确认轨迹确实触发压缩，包含摘要调用成本和未完成的执行。
+
 ## 可选：建立固定 corpus 并重放
 
 从本地 clone 构建 merge-parent corpus：

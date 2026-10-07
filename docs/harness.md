@@ -129,13 +129,28 @@ provider 并行读取，并按请求顺序装回同一条结果。ContextManager
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
-ContextManager 默认从完整消息开始，只有预算趋紧才通过 AgentGo Compactor 单调降低消息 fidelity，
-再做通用 tool-result trim 和 summary。默认先处理低优先级消息，同一优先级从尾部向前压，够用即停；
-压缩一旦提交不再展开，从而尽量保住 provider prompt cache 的公共前缀。领域层可以决定“哪类事实值得提供”，
-也可以按消息实例声明当前执行内的证据价值：例如包含待审 diff 的源码高于静态关联源码，而 loop 中临时
-读取、可随时重取的文件保持低优先级。Priority 只决定先压谁，具体如何按 ratio 取舍仍由消息自己负责。
-但不能各自实现一套 transcript 修剪，否则实际 prompt、成本
-统计和恢复行为会分裂。
+ContextManager 从完整消息开始，预算趋紧时调用 `compactor.ZoneCompactor`。接入层
+`context_compactor.go` 负责注入执行配置、模型和摘要 prompt；分区与压缩策略位于 `compactor` 包。
+
+分区按消息职责和完整轮次计算，不在消息上维护可变 Zone：
+
+- Fixed 保留 system 指令及任务消息提供的必要投影，源码使用独立消息承载。Hypothesis 的固定投影
+  保留待判断的主张和约束，原始内容仍可通过 Raw 追溯。
+- Active 保留最近的完整 assistant/tool 轮次，至少保护最新轮次，再按 token 预算向前扩展。
+  首次调用前的独立源码不属于工具轮次，允许选择 outline/reference 表示。
+- History 承载其余内容，先调用消息原生 Compact，再尝试工具结果裁剪、长文本裁剪和摘要。
+  同一历史段内先压低 Priority，同级先压旧内容；Priority 表达重要性，不替代活跃轮次保护。
+
+历史预算扣除 Fixed 与 Active 的实际占用。当前任务锚点保留原来的时间位置，摘要不跨越它；
+持续执行进入下一任务后，旧任务锚点进入历史区。
+`MessageCompactor`、`ToolResultCompactor`、`LightTrimCompactor`、`SummaryCompactor` 均由 CCR
+在 `compactor` 包实现，只处理传入的历史段，不再各自保留最近消息。MessageCompactor 同级先旧后新，
+不向 AgentGo 添加排序配置；摘要继续使用 AgentGo 的模型执行与 ContextSummary 契约。结果满足预算和工具配对约束后才交给 Engine 提交，保护区自身
+超限时明确报告预算不足；摘要失败不提交半成品。显式溢出恢复同样受保护区和窗口预算约束。
+
+`context.zones` timeline stage 记录每区消息数、估算 token、执行策略、目标与结果，包括未达标的尝试；
+整体提交结果仍通过 AgentGo 的 `context_compacted` 事件记录。这里的 token 是上下文估算，实际调用
+成本继续以模型 usage 为准。
 
 上下文占用由 AgentGo 按实际消息投影估算，包含 tool call 的名称和参数。有效的 API input usage
 可校准此前的输入，但本轮 assistant 输出与后续工具结果仍需计入下一次请求。去重或压缩改写消息后，
@@ -214,7 +229,7 @@ Execution 本身是 Session timeline 的 Stage，ID 与 `execution_id` 相同。
 领域层仍把 Hypothesis、Lane assignment、Assessment、Trial decision 和 Finding 作为内容追加，并引用
 产生它们的阶段。`context_projected` 记录实际可见 ContextItem；首次投影是 Initial Context 的 exposure
 分母，后续投影反映压缩和工具结果带来的变化。`context_compacted` 记录改写原因、提交状态和前后规模，
-不泄漏内部 Compactor 步骤。Eval 从工具轨迹提取 ContextDemand，与首次投影连接。
+策略诊断见对应的 `context.zones` stage。Eval 从工具轨迹提取 ContextDemand，与首次投影连接。
 
 JSONL 的价值不只是“留日志”：它是问题分析、回放、eval 数据连接和版本对比的稳定输入。持久化发生在
 Harness recorder 边界，保证记录的是实际 wire 行为，而不是模板渲染前的推测。

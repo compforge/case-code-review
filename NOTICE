@@ -31,3 +31,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The historical context compactors in internal/harness/compactor are derived
+from compforge/agentgo (https://github.com/compforge/agentgo), licensed under
+the Apache License, Version 2.0. CCR adapts these implementations to zone-owned
+retention and oldest-first historical compression.
