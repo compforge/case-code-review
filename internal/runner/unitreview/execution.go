@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/compforge/agentgo"
 
@@ -121,6 +122,7 @@ func (e *Executor) Run(
 	messages []agentgo.AgentMessage,
 	scope session.Scope,
 	reviewUnit *unit.Unit,
+	wrapUpAt time.Time,
 ) (Outcome, error) {
 	run := &unitExecution{
 		executor:       e,
@@ -152,6 +154,7 @@ func (e *Executor) Run(
 		FileEvictEnabled:        e.fileEvict,
 		WrapUpPrompt:            e.wrapUpPrompt,
 		WrapUpAfterTurns:        maxInvestigationTurns,
+		WrapUpAt:                wrapUpAt,
 		WrapUpAllowedTools:      []string{SubmitHypothesis.Name()},
 		NaturalCompletion:       true,
 		CompressionSystemPrompt: e.compressionSystemPrompt,

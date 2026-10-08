@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/compforge/agentgo"
 
@@ -53,7 +54,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil)
+	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
+	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil)
+	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -105,8 +105,9 @@ type Args struct {
 	// MaxUnits is a grouping threshold; the effective target is at least the selected-file count.
 	MaxUnits int
 
-	// Concurrent task timeout in minutes. 0 means no timeout.
-	ConcurrentTaskTimeout int
+	// InvestigationTimeout limits Unit exploration, including planning and briefing.
+	// Zero disables the time limit; wrap-up has no separate wall-clock deadline.
+	InvestigationTimeout time.Duration
 
 	// Findings stores only post-Trial findings. Investigative hypotheses use a
 	// separate Runner-owned collector and cannot leak through this boundary.
@@ -232,9 +233,10 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"group_diff_tokens": formation.DefaultGroupDiffTokens,
-				"max_tokens_budget": args.MaxTokensBudget,
-				"max_units":         args.MaxUnits,
+				"group_diff_tokens":        formation.DefaultGroupDiffTokens,
+				"max_tokens_budget":        args.MaxTokensBudget,
+				"max_units":                args.MaxUnits,
+				"investigation_timeout_ms": args.InvestigationTimeout.Milliseconds(),
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -603,7 +605,6 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	sem := make(chan struct{}, concurrency)
-	timeout := time.Duration(a.args.ConcurrentTaskTimeout) * time.Minute
 
 	var dispatched int64
 	for i := range units {
@@ -627,9 +628,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 			// A panic while reviewing one unit must be isolated exactly like an
 			// error return: counted in unitFailed and recorded as a unit_error
 			// warning, so other units still complete and the all-failed rollup
-			// below stays correct. Registered before the timeout-cancel defer,
-			// so cancel() still runs first on unwind and fileCtx is already
-			// cancelled here — use the parent ctx for telemetry.
+			// below stays correct. Exploration expiry switches the mode instead
+			// of canceling this context, so wrap-up can still deliver results.
 			defer func() {
 				if r := recover(); r != nil {
 					atomic.AddInt64(&a.unitFailed, 1)
@@ -645,19 +645,10 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				}
 			}()
 
-			var fileCtx context.Context
-			var cancel context.CancelFunc
-			if timeout > 0 {
-				fileCtx, cancel = context.WithTimeout(ctx, timeout)
-				defer cancel()
-			} else {
-				fileCtx = ctx
-			}
-
-			if err := a.reviewUnit(fileCtx, u); err != nil {
+			if err := a.reviewUnit(ctx, u); err != nil {
 				atomic.AddInt64(&a.unitFailed, 1)
 				fmt.Fprintf(console.Out(), "[ccr] Unit review error for %s: %v\n", u.ID, err)
-				telemetry.ErrorEvent(fileCtx, "unit.error", err,
+				telemetry.ErrorEvent(ctx, "unit.error", err,
 					telemetry.AnyToAttr("file.path", u.Path()))
 				a.recordWarning("unit_error", u.Path(), err.Error())
 			}
@@ -1111,6 +1102,10 @@ func relationClueLabel(c unit.Clue) string {
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
 func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) {
+	var wrapUpAt time.Time
+	if a.args.InvestigationTimeout > 0 {
+		wrapUpAt = time.Now().Add(a.args.InvestigationTimeout)
+	}
 	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {
 		if p := recover(); p != nil {
@@ -1247,7 +1242,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	domain := a.assembleReviewMessages(buildMessages, ownFiles, relatedFiles, initialFiles)
 
 	unitreview.AttachMessages(&u, domain)
-	outcome, err := a.executor.Run(ctx, domain, sc, &u)
+	outcome, err := a.executor.Run(ctx, domain, sc, &u, wrapUpAt)
 	deb.Outcome, deb.Reason = outcome.State, outcome.Reason
 	deb.BoardPulled = outcome.BoardPulled
 	deb.BoardInjectedTokens = outcome.BoardInjectedTokens

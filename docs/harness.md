@@ -173,8 +173,9 @@ ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图�
 ### 3.3 预算是机制，完成策略属于调用方
 
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
-增量上下文与“接近边界”的 wrap-up。调查轮次到达、时间余量不足、或剩余累计 token 不够
-“再调查一轮 + 收卷”时进入收卷。模式提示追加到消息末尾，工具定义和 tool choice 保持稳定，
+增量上下文与 wrap-up。调用方可指定独立的探索截止时间，到点关闭新调查调用而不取消执行 context；
+收卷沿用原调用方的取消信号，不额外添加时间上限。调查轮次到达、探索时间到达、外层 deadline
+余量不足、或剩余累计 token 不够“再调查一轮 + 收卷”时进入收卷。模式提示追加到消息末尾，工具定义和 tool choice 保持稳定，
 避免模式切换破坏可复用的请求前缀。首次收卷允许调用方声明的结果提交工具及 completion tool；
 唯一一次纠正只允许 completion tool，natural completion 则要求自然结束。Tool middleware 拦截
 越界调用，StopGuard 检查完成契约；仍未完成则以 truncated 结束。调用方定义终态动作和收敛语义，
