@@ -1139,7 +1139,11 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	changeFilesExcludingCurrent := a.buildChangeFilesExcept(u.Paths()...)
 
 	// Render this unit's found context (clues) into the prompt blocks.
-	specCases, specRules, seeAlso, priorFindings := renderClues(u.Clues)
+	promptClues, documents := separateClueDocuments(u.Clues)
+	specCases, specRules, seeAlso, priorFindings := renderClues(promptClues)
+	if len(documents) > 0 {
+		specCases += "\nDocstrings are supplied as separate document messages with their source references and relationships."
+	}
 	projectContext := renderProjectContext(u.Clues)
 	// Pre-grep where else the repo references the changed symbols ({{usage_sites}}).
 	usageSites, usageCount, usagePaths := a.renderUsageSites(u)
@@ -1243,6 +1247,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	deb.SourcePreloads = outcomes
 	deb.InitialOutlineAttempts = outlineAttempts
 	domain := a.assembleReviewMessages(buildMessages, ownFiles, relatedFiles, initialFiles)
+	domain = append(domain, documents...)
 
 	unitreview.AttachMessages(&u, domain)
 	outcome, err := a.executor.Run(ctx, domain, sc, &u, wrapUpAt)

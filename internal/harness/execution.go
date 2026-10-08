@@ -99,7 +99,8 @@ type ExecutionResult struct {
 	ToolCalls  int
 	ToolErrors int
 
-	context []agentgo.AgentMessage
+	context   []agentgo.AgentMessage
+	artifacts []agentgo.Artifact
 }
 
 // Execution owns one Harness run from immutable input through terminal result.
@@ -236,10 +237,16 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
 		ModelMiddlewares:         []agentgo.ModelMiddleware{timing.model, e.modelMiddleware()},
-		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.toolMiddleware()},
+		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.artifactMiddleware(), e.toolMiddleware()},
 	}
 
 	history := e.continuationContext()
+	initial, _ := normalizeContextMessages(append(append([]agentgo.AgentMessage(nil), history...), e.spec.Messages...))
+	var retained []agentgo.Artifact
+	if e.spec.ContinueFrom != nil {
+		retained = e.spec.ContinueFrom.artifacts
+	}
+	config.InitialState.Artifacts = mergeArtifacts(retained, msg.Artifacts(initial))
 	e.replaceContext(history, nil)
 	e.contextManager.Sync(history)
 	events := agentgo.AgentLoop(
@@ -248,6 +255,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		agentgo.AgentContext{Messages: history, Tools: e.tools},
 		config,
 	)
+	var artifacts []agentgo.Artifact
 	for event := range events {
 		timing.observe(event)
 		emitExecutionEvent(e.spec.Events, e.recorder, event)
@@ -262,9 +270,13 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 			}
 		case agentgo.EventAgentEnd:
 			e.summary = event.Summary
+			if event.State != nil {
+				artifacts = event.State.Artifacts
+			}
 		}
 	}
 	result, err := e.finish(ctx)
+	result.artifacts = artifacts
 	result.ID = e.id
 	result.Duration = time.Since(startedAt)
 	timing.finish(result, err)
@@ -294,6 +306,9 @@ func (e *Execution) beforeTurn(ctx context.Context, turn agentgo.BeforeTurnConte
 	}
 	if len(e.wrapUpAllowed) > 0 && e.wrapUpRequestCount.Load() > 0 && !e.wrapUpFinalTurnGranted.Load() {
 		messages = append(messages, msg.Text("user", e.finalWrapUpPrompt()))
+	}
+	if err := msg.RegisterArtifacts(turn.Artifacts, messages); err != nil {
+		return nil, err
 	}
 	return messages, nil
 }
@@ -365,6 +380,13 @@ func (e *Execution) stopGuard(_ context.Context, stop agentgo.StopInfo) agentgo.
 }
 
 func (e *Execution) toolResultMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo.AgentMessage {
+	if message, ok := result.Details.(agentgo.AgentMessage); ok {
+		return message
+	}
+	return decodeToolMessage(call, result)
+}
+
+func decodeToolMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo.AgentMessage {
 	var args map[string]any
 	_ = json.Unmarshal(call.Args, &args)
 	decoded := msg.FromLLM(msg.LLMToolResult{

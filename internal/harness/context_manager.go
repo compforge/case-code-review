@@ -73,8 +73,9 @@ func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextMana
 
 // Transform prepares only a request view. Raw evidence and the runtime baseline
 // are unchanged; the loop owns explicit compaction commits.
-func (m *contextManager) Transform(ctx context.Context, messages []agentgo.AgentMessage) ([]agentgo.AgentMessage, error) {
-	view, _, changed := m.rewrite(messages)
+func (m *contextManager) Transform(ctx context.Context, input agentgo.TransformContext) ([]agentgo.AgentMessage, error) {
+	messages := input.Messages
+	view, _, changed := m.rewrite(input)
 	view = appendVisibleFileInventory(view)
 	m.remember(messages, view, m.estimateUsage(view), "transform", changed)
 	return view, nil
@@ -82,10 +83,11 @@ func (m *contextManager) Transform(ctx context.Context, messages []agentgo.Agent
 
 func (m *contextManager) Compact(
 	ctx context.Context,
-	messages []agentgo.AgentMessage,
+	input agentgo.TransformContext,
 	reason agentgo.CompactReason,
 ) (agentgo.ContextCommitResult, error) {
-	view, usage, changed := m.rewrite(messages)
+	messages := input.Messages
+	view, usage, changed := m.rewrite(input)
 	if reason == agentgo.CompactReasonThreshold && (m.window <= 0 || usage.Tokens <= m.window-max(m.window/5, 1)) {
 		return agentgo.ContextCommitResult{Messages: messages, Usage: usage}, nil
 	}
@@ -95,7 +97,7 @@ func (m *contextManager) Compact(
 	view = msg.LimitToolMessages(view)
 	changed = false
 	if m.engine != nil {
-		result, err := m.engine.Compact(ctx, view, reason)
+		result, err := m.engine.Compact(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts}, reason)
 		if err != nil {
 			if errors.Is(err, llm.ErrTokenBudget) || errors.Is(err, compactor.ErrBudget) || reason != agentgo.CompactReasonThreshold {
 				return agentgo.ContextCommitResult{}, err
@@ -117,14 +119,15 @@ func (m *contextManager) Compact(
 
 func (m *contextManager) RecoverOverflow(
 	ctx context.Context,
-	messages []agentgo.AgentMessage,
+	input agentgo.TransformContext,
 	cause error,
 ) (agentgo.ContextRecoveryResult, error) {
+	messages := input.Messages
 	view, _ := normalizeContextMessages(messages)
 	view = msg.LimitToolMessages(view)
 	usage, changed := m.estimateUsage(view), false
 	if m.engine != nil {
-		result, err := m.engine.RecoverOverflow(ctx, view, cause)
+		result, err := m.engine.RecoverOverflow(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts}, cause)
 		if err != nil {
 			return agentgo.ContextRecoveryResult{}, err
 		}
@@ -184,14 +187,18 @@ func (m *contextManager) EstimateContext(messages []agentgo.AgentMessage) (int, 
 func (m *contextManager) ContextWindow() int { return m.window }
 
 func (m *contextManager) rewrite(
-	messages []agentgo.AgentMessage,
+	input agentgo.TransformContext,
 ) ([]agentgo.AgentMessage, *agentgo.ContextUsage, bool) {
+	messages := input.Messages
 	view, changed := normalizeContextMessages(messages)
 	limited := msg.LimitToolMessages(view)
 	changed = changed || !reflect.DeepEqual(view, limited)
 	view = limited
+	materials := msg.TransformMaterials(agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts})
+	changed = changed || !reflect.DeepEqual(view, materials)
+	view = materials
 	if m.dedupEnabled {
-		next := msg.TransformSource(view)
+		next := msg.TransformSource(agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts})
 		changed = changed || !reflect.DeepEqual(view, next)
 		view = next
 	}

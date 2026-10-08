@@ -21,7 +21,9 @@ type sourceLine struct {
 // earlier owner cannot leave later messages pointing at absent evidence.
 // CCR fixes the review snapshot for an execution; snapshot/ref and exact line
 // text additionally prevent current/base or changed-content reuse.
-func TransformSource(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
+func TransformSource(input agentgo.TransformContext) []agentgo.AgentMessage {
+	messages := input.Messages
+	registered := registeredSource(input.Artifacts)
 	out := append([]agentgo.AgentMessage(nil), messages...)
 	seen := make(map[sourceLine]string)
 	for i, message := range out {
@@ -36,7 +38,7 @@ func TransformSource(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 		switch value := message.(type) {
 		case *File:
 			if value.FullContentVisible() {
-				next = dedupSourceLines(text, value.Path, value.Snapshot, value.Ref, seen)
+				next = dedupSourceLines(text, value.Path, value.Snapshot, value.Ref, seen, registered)
 			}
 		case *FileBatch:
 			if value.representation != fileBatchSource {
@@ -48,7 +50,7 @@ func TransformSource(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 				if item.file != nil {
 					parts[n] = item.file.render()
 					if item.file.FullContentVisible() {
-						parts[n] = dedupSourceLines(parts[n], item.file.Path, item.file.Snapshot, item.file.Ref, seen)
+						parts[n] = dedupSourceLines(parts[n], item.file.Path, item.file.Snapshot, item.file.Ref, seen, registered)
 					}
 				}
 			}
@@ -64,7 +66,7 @@ func TransformSource(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 			var shared, block strings.Builder
 			path := ""
 			flush := func() {
-				shared.WriteString(dedupSourceLines(block.String(), path, SnapshotCurrent, "", seen))
+				shared.WriteString(dedupSourceLines(block.String(), path, SnapshotCurrent, "", seen, registered))
 				block.Reset()
 			}
 			for _, line := range strings.SplitAfter(source, "\n") {
@@ -96,7 +98,7 @@ func TransformSource(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 	return out
 }
 
-func dedupSourceLines(text, path string, snapshot FileSnapshot, ref string, seen map[sourceLine]string) string {
+func dedupSourceLines(text, path string, snapshot FileSnapshot, ref string, seen map[sourceLine]string, registered sourceInventory) string {
 	var out strings.Builder
 	first, last := 0, 0
 	flush := func() {
@@ -118,6 +120,13 @@ func dedupSourceLines(text, path string, snapshot FileSnapshot, ref string, seen
 		// Search caps annotate a shortened source line on the following line.
 		clipped := i+1 < len(lines) && strings.HasPrefix(lines[i+1], "[Output truncated:")
 		key := sourceLine{path, snapshot, ref, n}
+		// Inventory membership alone never removes source. Both the registered
+		// observation and an earlier visible line in this request must agree.
+		if registered != nil && !registered[key][body] {
+			flush()
+			out.WriteString(line)
+			continue
+		}
 		if previous, exists := seen[key]; exists && previous == body && !clipped {
 			if first != 0 && n != last+1 {
 				flush()

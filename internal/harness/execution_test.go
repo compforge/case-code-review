@@ -610,7 +610,7 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 		t.Fatal("baseline result was not promoted")
 	}
 	manager := newContextManager(ExecutionSpec{FileDedupEnabled: true}, nil)
-	projection, err := manager.Compact(context.Background(), []agentgo.AgentMessage{baseline}, agentgo.CompactReasonThreshold)
+	projection, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{baseline}}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -764,7 +764,7 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
 
-	projection, err := manager.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
+	projection, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,7 +784,7 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 		t.Fatalf("oldest compaction = %q, want reference", text)
 	}
 
-	second, err := manager.Compact(context.Background(), committed, agentgo.CompactReasonThreshold)
+	second, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: committed}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -833,7 +833,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 		ContextWindow:    full * 2,
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
-	fullProjection, err := roomy.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
+	fullProjection, err := roomy.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -852,7 +852,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 		FileEvictEnabled: true,
 	}, &chatModel{client: &scriptedClient{}})
 
-	projection, err := manager.Compact(context.Background(), messages, agentgo.CompactReasonThreshold)
+	projection, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
