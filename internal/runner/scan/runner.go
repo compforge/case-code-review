@@ -221,7 +221,7 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	scanCtx, finishEnumeration := session.Begin(ctx, "scan.enumerate")
 	scanCtx, scanSpan := telemetry.StartSpan(scanCtx, "scan.enumerate")
 	provider := NewProvider(a.args.RepoDir, a.args.Paths, a.args.GitRunner, a.args.MaxFileSizeBytes)
-	items, err := provider.Enumerate(scanCtx)
+	items, err := provider.Enumerate(scanCtx, a.selectPath)
 	finishEnumeration(err)
 	if err != nil {
 		scanSpan.End()
@@ -230,13 +230,12 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	telemetry.SetAttr(scanSpan, "files.enumerated", len(items))
 	scanSpan.End()
 
-	a.items = items
+	totalDiscovered := len(items)
+	a.items = a.filterLargeScans(a.filterScanItems(items))
+	// Only admitted scan bodies belong in the tool snapshot. Building it
+	// earlier keeps excluded and over-budget contents alive for the run.
 	a.injectScanContentMap()
 	a.args.Tools.Freeze()
-
-	totalDiscovered := len(a.items)
-	a.items = a.filterScanItems(a.items)
-	a.items = a.filterLargeScans(a.items)
 
 	reviewable := len(a.items)
 	fmt.Fprintf(console.Out(), "[ccr] full-scan: %d file(s) discovered, reviewing %d in %s\n",
@@ -354,6 +353,12 @@ func (a *Runner) filterLargeScans(items []Item) []Item {
 		fmt.Fprintf(console.Out(), "[ccr] Pre-filtered %d file(s) exceeding 80%% of max_tokens\n", skipped)
 	}
 	return kept
+}
+
+// selectPath applies the same policy before reading a body. Binary status is
+// checked after admission; excluded paths need no content inspection.
+func (a *Runner) selectPath(path string) bool {
+	return a.whyExcluded(Item{Path: path}) == preview.ExcludeNone
 }
 
 // whyExcluded mirrors runner.whyExcluded but for scan Item inputs.

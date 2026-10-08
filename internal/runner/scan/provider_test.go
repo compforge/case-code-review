@@ -134,7 +134,7 @@ func TestProvider_Enumerate_FullRepo(t *testing.T) {
 	writeFile(t, repo, "ignored.txt", []byte("should not appear\n"))
 	gitCommit(t, repo, "init")
 
-	got, err := NewProvider(repo, nil, nil, 0).Enumerate(context.Background())
+	got, err := NewProvider(repo, nil, nil, 0).Enumerate(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestProvider_Enumerate_NonGitDirectory(t *testing.T) {
 	writeFile(t, repo, "ignored.txt", []byte("should be excluded by root .gitignore\n"))
 	writeFile(t, repo, "node_modules/lib/foo.js", []byte("module.exports = 1;\n")) // enumeration retains dependency files for caller policy
 
-	got, err := NewProvider(repo, nil, nil, 0).Enumerate(context.Background())
+	got, err := NewProvider(repo, nil, nil, 0).Enumerate(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Enumerate (non-git): %v", err)
 	}
@@ -209,7 +209,7 @@ func TestProvider_Enumerate_RespectsContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancelled
-	_, err := NewProvider(repo, nil, nil, 0).Enumerate(ctx)
+	_, err := NewProvider(repo, nil, nil, 0).Enumerate(ctx, nil)
 	if err == nil {
 		t.Fatal("expected ctx-cancelled error, got nil")
 	}
@@ -225,7 +225,7 @@ func TestProvider_Enumerate_PathFilter(t *testing.T) {
 	writeFile(t, repo, "pkg/sub/c.go", []byte("package sub\n"))
 	gitCommit(t, repo, "init")
 
-	got, err := NewProvider(repo, []string{"pkg"}, nil, 0).Enumerate(context.Background())
+	got, err := NewProvider(repo, []string{"pkg"}, nil, 0).Enumerate(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Enumerate: %v", err)
 	}
