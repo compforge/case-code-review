@@ -36,12 +36,22 @@ Changed manifest or lock files from the same Component. They are not review targ
 inspect their diff only when they can affect the changed source behavior.
 {{project_context}}
 
+### Authored Intent
+- `spec`: intended guarantees.
+- `case`: expected/forbidden outcomes, not proof of a passing test.
+- `rule`: relevant review constraints.
+- `why`: design rationale.
+- `ideal`: target design, not a current requirement.
+- `tmp`: temporary measure; check any relevant `until` condition, without assuming removal is due.
+- `link`: references to read only when needed.
+Distinguish intended behavior from actual behavior; verify conflicting claims in comments or test descriptions against the relevant execution path.
+
 ### Governing Spec/Case (Optional)
-The contract and cases bound to the changed function(s). Treat them as invariants the change must preserve: for each, judge whether this diff could break it. An unaffected case is not a Hypothesis; use it only to rule out a lead. If empty, no spec is bound to these functions.
+Contracts and cases bound to the changed function(s). Check whether this diff breaks their guarantees or expected outcomes. An unaffected case is not a Hypothesis; use it only to rule out a lead. If empty, no spec is bound to these functions.
 {{spec_cases}}
 
 ### See Also (Optional)
-References the author flagged as relevant when changing these function(s) — consult them, fetching content as needed (a bare path is a doc; `<path>::<symbol>` is another function). If empty, none were flagged.
+References the author flagged as relevant when changing these function(s) — fetch their content when needed to settle a material premise (a bare path is a doc; `<path>::<symbol>` is another function). If empty, none were flagged.
 {{see_also}}
 
 ### Prior Review (Optional)
