@@ -21,7 +21,7 @@ func TestClueMessageProjectionRetainsProvenanceAndRebuildsCoverage(t *testing.T)
 	changed := newDocClueMessage("caller.go::Run", "", "changed docstring", text+"Different guarantee.")
 	input := []agentgo.AgentMessage{first, second, before, changed}
 	withClueManager(t, input, func(manager agentgo.ArtifactManager) {
-		if len(manager.ListArtifacts()) != 3 {
+		if len(manager.ListArtifacts()) != 2 {
 			t.Fatalf("document identity: %d", len(manager.ListArtifacts()))
 		}
 		project := func(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
@@ -31,7 +31,7 @@ func TestClueMessageProjectionRetainsProvenanceAndRebuildsCoverage(t *testing.T)
 		if strings.Contains(view[1].TextContent(), text) || !strings.Contains(view[1].TextContent(), "other.go::Run") || !strings.Contains(view[1].TextContent(), "used type docstring") {
 			t.Fatal("dedup lost provenance or repeated the body")
 		}
-		if !strings.Contains(view[2].TextContent(), text) || !strings.Contains(view[3].TextContent(), "Different guarantee") {
+		if strings.Contains(view[2].TextContent(), text) || !strings.Contains(view[2].TextContent(), "before base") || !strings.Contains(view[3].TextContent(), "Different guarantee") {
 			t.Fatal("conflated snapshots or changed documents")
 		}
 		again := project(view)
@@ -64,7 +64,7 @@ func TestClueMessageProjectionRetainsProvenanceAndRebuildsCoverage(t *testing.T)
 }
 
 func TestClueMessageCodecAndShortProjection(t *testing.T) {
-	original := ClueArtifact{ClueKind: unit.ClueDoc, Snapshot: "base", Text: "brief"}
+	original := ClueArtifact{ClueKind: unit.ClueDoc, Text: "brief"}
 	c, err := agentgo.NewCodec(codec.Type[ClueArtifact]("ccr.clue.v1"))
 	if err != nil {
 		t.Fatal(err)

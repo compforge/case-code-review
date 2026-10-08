@@ -17,7 +17,19 @@ type MaterialMessage interface {
 // TransformMaterials only reuses a body registered and visible in this request.
 // Historical registration never licenses a dangling reference.
 func TransformMaterials(input agentgo.TransformContext) []agentgo.AgentMessage {
-	out := append([]agentgo.AgentMessage(nil), input.Messages...)
+	artifacts := Artifacts(input.Messages)
+	if input.Artifacts != nil {
+		artifacts = input.Artifacts.ListArtifacts()
+	}
+	return ProjectMaterials(input.Messages, artifacts)
+}
+
+func ProjectMaterials(messages []agentgo.AgentMessage, artifacts []agentgo.Artifact) []agentgo.AgentMessage {
+	registered := make(map[string]bool, len(artifacts))
+	for _, artifact := range artifacts {
+		registered[artifact.ID()] = true
+	}
+	out := append([]agentgo.AgentMessage(nil), messages...)
 	seen := make(map[string]string)
 	for i, message := range out {
 		original, ok := message.(MaterialMessage)
@@ -31,10 +43,8 @@ func TransformMaterials(input agentgo.TransformContext) []agentgo.AgentMessage {
 			continue
 		}
 		id := artifact.ID()
-		if input.Artifacts != nil {
-			if _, exists := input.Artifacts.GetArtifact(id); !exists {
-				continue
-			}
+		if !registered[id] {
+			continue
 		}
 		if ref, exists := seen[id]; exists {
 			candidate := value.WithMaterialReference(ref)

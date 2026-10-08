@@ -12,6 +12,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
@@ -42,7 +43,7 @@ func (a *Runner) preloadReviewFiles(
 	ctx context.Context,
 	u unit.Unit,
 ) (own, related []*msg.File, outcomes []string) {
-	if a.fileReader() == nil {
+	if a.reviewSourceReader() == nil {
 		return nil, nil, nil
 	}
 
@@ -121,7 +122,7 @@ func (a *Runner) preloadPath(
 	whole bool,
 	label string,
 ) (files []*msg.File, outcome string) {
-	content, err := a.fileReader().Read(ctx, filePath)
+	content, err := a.reviewSourceReader().Read(ctx, filePath)
 	if err != nil {
 		return nil, "unreadable " + filePath
 	}
@@ -184,6 +185,7 @@ func (a *Runner) assembleReviewMessages(
 	build func(unitSlot, relatedSlot string) []llm.Message,
 	own, related []*msg.File,
 	initial []msg.FileContextEntry,
+	materials ...agentgo.AgentMessage,
 ) []agentgo.AgentMessage {
 	unitSlot := sourceNotPreloaded
 	if len(own) > 0 {
@@ -202,6 +204,7 @@ func (a *Runner) assembleReviewMessages(
 			out[i] = msg.Instruction{Message: wire}
 		}
 	}
+	out = append(out, materials...)
 	if len(initial) > 0 {
 		out = append(out, msg.NewFileContext(initial))
 	}
@@ -224,7 +227,7 @@ func (a *Runner) initialFileContext(
 	usagePaths []string,
 	own, related []*msg.File,
 ) ([]msg.FileContextEntry, []session.InitialOutlineAttempt) {
-	if a.fileReader() == nil {
+	if a.reviewSourceReader() == nil {
 		return nil, nil
 	}
 	source := make(map[string]bool)
@@ -280,7 +283,7 @@ func (a *Runner) initialFileContext(
 				entries = append(entries, entry)
 				continue
 			}
-			content, err := a.fileReader().Read(ctx, candidate.path)
+			content, err := a.reviewSourceReader().Read(ctx, candidate.path)
 			if err != nil {
 				attempt.Outcome = "read_error"
 				attempts = append(attempts, attempt)
@@ -415,4 +418,12 @@ func (a *Runner) renderUsageSites(u unit.Unit) (string, int, []string) {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n"), len(usages), paths
+}
+
+// Review preparation uses the captured input even without an executable tool registry.
+func (a *Runner) reviewSourceReader() *tool.FileReader {
+	if a.afterSource != nil {
+		return &tool.FileReader{Snapshot: a.afterSource}
+	}
+	return a.fileReader()
 }

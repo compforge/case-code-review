@@ -33,7 +33,11 @@ func AttachMessages(reviewUnit *unit.Unit, messages []agentgo.AgentMessage) {
 				reviewUnit.AddSearchResult(searchResult(result))
 			}
 		case *msg.Diff:
-			reviewUnit.AddRelatedDiff(diffSnapshot(value))
+			// The primary diff already belongs to Unit.Fragments. Registering its
+			// message as a related read would duplicate it in Review 2.
+			if !value.RequiredMaterial() {
+				reviewUnit.AddRelatedDiff(diffSnapshot(value))
+			}
 		}
 	}
 }

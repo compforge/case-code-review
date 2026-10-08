@@ -13,6 +13,8 @@ func TestSkipFinalImportOnlyUnits(t *testing.T) {
 		name, before, after, diff string
 		want                      int
 	}{
+		// Known policy limitation: even registration-only changes are skipped.
+		{"side-effect import", "package p\n", "package p\nimport _ \"net/http/pprof\"\n", "@@ -1,0 +2 @@\n+import _ \"net/http/pprof\"\n", 0},
 		{"added import", "package p\n", "package p\nimport \"fmt\"\n", "@@ -1,0 +2 @@\n+import \"fmt\"\n", 0},
 		{"removed import", "package p\nimport \"fmt\"\n", "package p\n", "@@ -2 +1,0 @@\n-import \"fmt\"\n", 0},
 		{"changed import", "package p\nimport \"fmt\"\n", "package p\nimport \"os\"\n", "@@ -2 +2 @@\n-import \"fmt\"\n+import \"os\"\n", 0},

@@ -130,6 +130,7 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			git("config", "user.name", "Test")
 			git("config", "user.email", "test@example.com")
 			commit := func() { git("add", "."); git("-c", "commit.gpgsign=false", "commit", "-qm", "fixture") }
+			write("go.mod", "module example.com/reviewfixture\n\ngo 1.26\n")
 			write("a.go", "package p\nfunc A() int { return 0 }\n")
 			write("untouched.go", "package p\nfunc Stable() {}\n")
 			write("deleted.go", "package p\nfunc Deleted() {}\n")
@@ -159,12 +160,19 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			if err := a.loadChanges(context.Background()); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Remove(filepath.Join(repo, "go.mod")); err != nil {
+				t.Fatal(err)
+			}
 			write("a.go", "package p\nfunc Surprise() {}\n")
 			write("untouched.go", "package p\nfunc SurpriseStable() {}\n")
 			write("new.go", "package p\nfunc SurpriseAdded() {}\n")
 			write("deleted.go", "package p\nfunc SurpriseDeleted() {}\n")
 			write(".casecodereview/spec.json", `{"a.go::A":{"spec":"later contract"}}`)
 			commit()
+			a.prepareFileSelections(context.Background())
+			if !a.fileSelections["a.go"].HasComponent {
+				t.Fatal("component drifted away from captured manifest")
+			}
 			graphSource := a.analyzer.Repository().Sources["a.go"]
 			toolSource, err := reader.Read(context.Background(), "a.go")
 			if err != nil {

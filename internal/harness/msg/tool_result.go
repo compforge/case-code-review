@@ -213,6 +213,8 @@ type Diff struct {
 	Content        string
 	ToolCallID     string
 	Label          string
+	sources        []SourceArtifact
+	required       bool
 	representation diffRepresentation
 	priority       int
 }

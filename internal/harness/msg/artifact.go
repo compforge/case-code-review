@@ -70,6 +70,10 @@ func SourceArtifacts(messages []agentgo.AgentMessage) []agentgo.Artifact {
 	addFile := func(file *File) { add(file.Content, file.Path, file.Snapshot, file.Ref) }
 	for _, message := range messages {
 		switch value := message.Raw().(type) {
+		case Diff:
+			for _, source := range value.sources {
+				values[source.ID()] = source
+			}
 		case *File:
 			addFile(value)
 		case *FileBatch:
@@ -137,12 +141,9 @@ func RegisterArtifacts(manager agentgo.ArtifactManager, messages []agentgo.Agent
 // separately determines which of their lines are actually visible this time.
 type sourceInventory map[sourceLine]map[string]bool
 
-func registeredSource(manager agentgo.ArtifactManager) sourceInventory {
-	if manager == nil {
-		return nil
-	} // Direct message projection can remain standalone.
+func registeredSource(artifacts []agentgo.Artifact) sourceInventory {
 	inventory := make(sourceInventory)
-	for _, value := range manager.ListArtifacts() {
+	for _, value := range artifacts {
 		source, ok := value.(SourceArtifact)
 		if !ok {
 			continue

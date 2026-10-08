@@ -22,8 +22,15 @@ type sourceLine struct {
 // CCR fixes the review snapshot for an execution; snapshot/ref and exact line
 // text additionally prevent current/base or changed-content reuse.
 func TransformSource(input agentgo.TransformContext) []agentgo.AgentMessage {
-	messages := input.Messages
-	registered := registeredSource(input.Artifacts)
+	artifacts := Artifacts(input.Messages)
+	if input.Artifacts != nil {
+		artifacts = input.Artifacts.ListArtifacts()
+	}
+	return ProjectSource(input.Messages, artifacts)
+}
+
+func ProjectSource(messages []agentgo.AgentMessage, artifacts []agentgo.Artifact) []agentgo.AgentMessage {
+	registered := registeredSource(artifacts)
 	out := append([]agentgo.AgentMessage(nil), messages...)
 	seen := make(map[sourceLine]string)
 	for i, message := range out {
@@ -32,10 +39,25 @@ func TransformSource(input agentgo.TransformContext) []agentgo.AgentMessage {
 		if view, ok := message.(*ToolView); ok {
 			message = view.AgentMessage
 		}
+		if diff, ok := message.(*Diff); ok {
+			message = *diff
+		}
 		message = limitToolMessage(message)
 		text := message.TextContent()
 		next := text
 		switch value := message.(type) {
+		case Diff:
+			if value.representation != diffFull {
+				break
+			}
+			for _, source := range value.sources {
+				for _, line := range source.Lines {
+					key := sourceLine{source.Path, source.Snapshot, source.Ref, line.Number}
+					if registered[key][line.Text] {
+						seen[key] = line.Text
+					}
+				}
+			}
 		case *File:
 			if value.FullContentVisible() {
 				next = dedupSourceLines(text, value.Path, value.Snapshot, value.Ref, seen, registered)

@@ -1,0 +1,156 @@
+[
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.GetDiff",
+    "snapshot": "",
+    "text": "GetDiff returns all changes as parsed Diff structs.",
+    "relation": "self"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider",
+    "snapshot": "",
+    "text": "Provider retrieves and parse git diffs from a repository.",
+    "relation": "owner"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.commit",
+    "snapshot": "",
+    "text": "Commit mode parameter",
+    "relation": "used"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.BaseRef",
+    "snapshot": "",
+    "text": "BaseRef returns the tree immediately before the reviewed change. Range mode uses the merge base (matching GetDiff), workspace uses HEAD, and commit mode uses the first parent. Empty means an empty-tree baseline (root commit).",
+    "relation": "used"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::DiffContextLines",
+    "snapshot": "",
+    "text": "DiffContextLines defines the number of context lines around each changed hunk.",
+    "relation": "used"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.GetDiff",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "GetDiff returns all changes as parsed Diff structs.",
+    "relation": "self"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "Provider retrieves and parse git diffs from a repository.",
+    "relation": "owner"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.commit",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "Commit mode parameter",
+    "relation": "used"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::DiffContextLines",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "DiffContextLines defines the number of context lines around each changed hunk.",
+    "relation": "used"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestRangeDiffSurvivesExternalDiffTool",
+    "snapshot": "",
+    "text": "TestRangeDiffSurvivesExternalDiffTool covers the ModeRange call site (git diff <base> <to>), which likewise must pass --no-ext-diff so that a user's external diff tool does not break range comparisons.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestRangeDiffDetectsRename",
+    "snapshot": "",
+    "text": "TestRangeDiffDetectsRename guards against issue #99: when a file is renamed on the target branch, `ocr review --from master --to BRANCH` must recognize the rename and read content at the NEW path. Before the fix the rename could surface as delete(old)+add(new) (e.g. diff.renames=false) and the parser's broken /dev/null detection sent the deleted half into `git show ref:oldpath` -> \"WARNING: cannot read file ... exit status 128\".",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestCommitDiffSurvivesExternalDiffTool",
+    "snapshot": "",
+    "text": "TestCommitDiffSurvivesExternalDiffTool covers the ModeCommit call site, which likewise must pass --no-ext-diff so that a user's external diff tool does not break single-commit analysis.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestWorkspaceDiffSurvivesExternalDiffTool",
+    "snapshot": "",
+    "text": "TestWorkspaceDiffSurvivesExternalDiffTool guards against issue #82: when a user has configured an external diff tool (GIT_EXTERNAL_DIFF or diff.external), git diff/show emit the tool's output instead of unified diff text, which the parser cannot read -> 0 diffs -> a silent \"No files changed\". Passing --no-ext-diff (and --no-textconv) to every git diff/show call site makes the provider immune to the user's diff configuration.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.BaseRef",
+    "snapshot": "",
+    "text": "BaseRef returns the tree immediately before the reviewed change. Range mode uses the merge base (matching GetDiff), workspace uses HEAD, and commit mode uses the first parent. Empty means an empty-tree baseline (root commit).",
+    "relation": "callee"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.filterDiffs",
+    "snapshot": "",
+    "text": "filterDiffs removes diffs whose file paths are excluded.",
+    "relation": "callee"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.MergeBase",
+    "snapshot": "",
+    "text": "MergeBase returns the computed merge-base commit hash for range mode.",
+    "relation": "callee"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestCommitDiffSurvivesExternalDiffTool",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "TestCommitDiffSurvivesExternalDiffTool covers the ModeCommit call site (git show <commit>), which likewise must pass --no-ext-diff so that a user's external diff tool does not break single-commit analysis.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestRangeDiffDetectsRename",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "TestRangeDiffDetectsRename guards against issue #99: when a file is renamed on the target branch, `ocr review --from master --to BRANCH` must recognize the rename and read content at the NEW path. Before the fix the rename could surface as delete(old)+add(new) (e.g. diff.renames=false) and the parser's broken /dev/null detection sent the deleted half into `git show ref:oldpath` -> \"WARNING: cannot read file ... exit status 128\".",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestWorkspaceDiffSurvivesExternalDiffTool",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "TestWorkspaceDiffSurvivesExternalDiffTool guards against issue #82: when a user has configured an external diff tool (GIT_EXTERNAL_DIFF or diff.external), git diff/show emit the tool's output instead of unified diff text, which the parser cannot read -> 0 diffs -> a silent \"No files changed\". Passing --no-ext-diff (and --no-textconv) to every git diff/show call site makes the provider immune to the user's diff configuration.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git_test.go::TestRangeDiffSurvivesExternalDiffTool",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "TestRangeDiffSurvivesExternalDiffTool covers the ModeRange call site (git diff <base> <to>), which likewise must pass --no-ext-diff so that a user's external diff tool does not break range comparisons.",
+    "relation": "caller"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.MergeBase",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "MergeBase returns the computed merge-base commit hash for range mode.",
+    "relation": "callee"
+  },
+  {
+    "kind": "doc",
+    "ref": "internal/runner/source/git.go::Provider.filterDiffs",
+    "snapshot": "sha256:22a6d808d9498c9e4845a8eeb448d2811f98d4c6be4ee5839ee20ce11b7e1ed5",
+    "text": "filterDiffs removes diffs whose file paths are excluded.",
+    "relation": "callee"
+  }
+]

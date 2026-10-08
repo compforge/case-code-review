@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	cg "github.com/compforge/codegraph"
+	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 )
 
@@ -20,15 +21,20 @@ func TestTaggedMaterialExcludedBeforeUnitFormation(t *testing.T) {
 	runSelectionGit(t, repo, "add", ".")
 	runSelectionGit(t, repo, "commit", "-qm", "base")
 	paths := map[string]cg.Tag{
-		"api.pb.go":         cg.GeneratedTag,
-		"testdata/data.go":  cg.TestFixtureTag,
-		"sub/vendor/lib.go": cg.DependencyTag,
-		"dist/bundle.go":    cg.BuildOutputTag,
-		".cache/source.go":  cg.CacheTag,
-		"assets/app.min.js": cg.MinifiedTag,
+		"api.pb.go":              cg.GeneratedTag,
+		"testdata/data.go":       cg.TestFixtureTag,
+		"sub/vendor/lib.go":      cg.DependencyTag,
+		"dist/bundle.go":         cg.BuildOutputTag,
+		".cache/source.go":       cg.CacheTag,
+		"assets/app.min.js":      cg.MinifiedTag,
+		"UPPER.PB.GO":            cg.GeneratedTag,
+		"a_test.go":              allowedext.TestTag,
+		"sub/.yarn/cache/lib.js": cg.DependencyTag,
+		"target/lib.go":          cg.BuildOutputTag,
 	}
 	for path := range paths {
 		writeSelectionContent(t, repo, path, "package app\nfunc Generated() {}\n")
+		runSelectionGit(t, repo, "add", "-f", "--", path)
 	}
 	writeSelectionContent(t, repo, "app.go", "package app\nfunc Work() {}\n")
 	writeSelectionContent(t, repo, "go.mod", "module example.org/app\n\ngo 1.26\n// changed metadata\n")
@@ -69,7 +75,7 @@ func TestTaggedMaterialExcludedBeforeUnitFormation(t *testing.T) {
 		filter *rules.FileFilter
 		want   bool
 	}{
-		{&rules.FileFilter{Include: []string{"api.pb.go"}}, true},
+		{&rules.FileFilter{Include: []string{"api.pb.go", "target/**"}}, true},
 		{&rules.FileFilter{Include: []string{"api.pb.go"}, Exclude: []string{"api.pb.go"}}, false},
 	} {
 		b := New(Args{RepoDir: repo, FileFilter: tt.filter})
@@ -78,8 +84,13 @@ func TestTaggedMaterialExcludedBeforeUnitFormation(t *testing.T) {
 			t.Fatal(err)
 		}
 		found := false
+		targetFound := false
 		for _, u := range units {
+			targetFound = targetFound || slices.Contains(u.Paths, "target/lib.go")
 			found = found || slices.Contains(u.Paths, "api.pb.go")
+		}
+		if tt.want && !targetFound {
+			t.Fatal("capture dropped explicitly included build output")
 		}
 		if found != tt.want {
 			t.Fatalf("include/exclude precedence: found=%v want=%v", found, tt.want)

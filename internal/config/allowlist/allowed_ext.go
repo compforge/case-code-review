@@ -1,102 +1,59 @@
-// Package allowedext provides file-level filtering for code review:
-// an extension allowlist (which file types to review) and a path-based
-// exclude list (which files to skip regardless of extension).
-//
-// # default_exclude_patterns.json 配置说明
-//
-// 文件包含一个 JSON 字符串数组，每个元素是一个 glob 排除模式。
-// 支持的通配符语法（基于 doublestar 库）:
-//
-//   - 匹配单层路径内的任意字符（不跨越 /）
-//     例: "*_test.go" 匹配 "foo_test.go"，不匹配 "pkg/foo_test.go"
-//
-//     **       匹配零个或多个路径段（可跨越 /）
-//     例: "**/*_test.go" 匹配 "foo_test.go" 和 "a/b/c_test.go"
-//
-//     {a,b,c}  花括号展开，匹配其中任意一项
-//     例: "**/*.{js,ts}" 匹配所有层级的 .js 和 .ts 文件
-//
-// 组合示例:
-//
-//	"**/*_test.go"                 — 任意层级的 Go 测试文件
-//	"**/src/test/java/**/*.java"   — Java 标准测试目录下所有文件
-//	"**/*.spec.{js,jsx,ts,tsx}"    — 任意层级的前端 spec 测试文件
-//	"*_test.go"                    — 仅匹配根目录下的 Go 测试文件（不跨目录）
+// Package allowedext owns CCR path classification and default review eligibility.
 package allowedext
 
 import (
-	_ "embed"
-	"encoding/json"
-	"strings"
 	"sync"
 
-	"github.com/bmatcuk/doublestar/v4"
 	cg "github.com/compforge/codegraph"
+
 	"github.com/qiankunli/case-code-review/internal/language"
 )
 
-//go:embed default_exclude_patterns.json
-var excludeData []byte
+const TestTag cg.Tag = "test"
+const ReviewDataTag cg.Tag = "review_data"
+const ToolingTag cg.Tag = "tooling"
 
-var (
-	excludePatterns []string // raw patterns from JSON (may contain {a,b} syntax)
-	excludeOnce     sync.Once
-)
-
-func initExclude() {
-	if err := json.Unmarshal(excludeData, &excludePatterns); err != nil {
-		panic("allowedext: failed to parse default_exclude_patterns.json: " + err.Error())
+// TagRules supplies the same classification to captured diffs and full scans.
+// CCR extends the vocabulary without teaching CodeGraph review policy.
+func TagRules() []cg.TagRule {
+	var rules []cg.TagRule
+	for _, rule := range cg.BuiltinTagRules() {
+		switch rule.Name {
+		case cg.GeneratedTag, cg.DependencyTag, cg.BuildOutputTag, cg.MinifiedTag:
+			continue // The rules below include CCR's additional path conventions.
+		}
+		rules = append(rules, rule)
 	}
-	for i, p := range excludePatterns {
-		excludePatterns[i] = strings.ToLower(p)
-	}
+	return append(rules,
+		cg.TagRule{Name: TestTag, Pattern: `(?i)(^|/)([^/]*_test\.(go|py|rs)|[^/]*_spec\.rb|[^/]*tests?\.java|[^/]*\.(test|spec)\.(js|jsx|ts|tsx)|[^/]*\.test\.ets)$|(?i)(^|/)(__tests__/|src/test/java/.*\.java$|src/test/.*\.kt$)`},
+		cg.TagRule{Name: ToolingTag, Pattern: `^(\.idea|\.vscode|\.svn|\.git)(/|$)`},
+		cg.TagRule{Name: ReviewDataTag, Pattern: `(?i)(^|/)\.casecodereview(/|$)`},
+		cg.TagRule{Name: cg.GeneratedTag, Pattern: `(?i:\.(generated\.[^/]*|gen\.go|pb\.(go|cc|h)|capnp\.(h|go|ts))$|_capnp\.(rs|py)$|(^|/)kitex_gen/.*\.go$)|(^|/)kitex_gen(/|$)`},
+		cg.TagRule{Name: cg.DependencyTag, Pattern: `^(_packages|rpm|pkgs)(/|$)|(?i)(^|/)(vendor|node_modules|oh_modules|bower_components|\.pnpm-store|\.bundle|\.venv|venv|site-packages|pods|carthage)(/|$)|(?i)(^|/)\.yarn/(cache|unplugged|releases|sdks|patches)(/|$)|(?i)(^|/)\.pnp\.(cjs|loader\.mjs)$|(?i)(^|/)[^/]*\.egg-info(/|$)`},
+		cg.TagRule{Name: cg.BuildOutputTag, Pattern: `(?i)(^|/)(dist|\.next|\.nuxt|\.svelte-kit|\.astro|\.docusaurus|target|\.build|obj)(/|$)|(?i)(^|/)coverage/lcov-report(/|$)`},
+		cg.TagRule{Name: cg.CacheTag, Pattern: `^(\.happypack|\.cachefile)(/|$)|(?i)(^|/)(\.turbo|\.angular|\.parcel-cache|\.gradle|__pycache__|\.tox|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.dart_tool|\.terraform|\.stack-work)(/|$)`},
+		cg.TagRule{Name: cg.MinifiedTag, Pattern: `(?i)\.min\.(js|css)$`},
+	)
 }
 
-// Scan has paths rather than captured Changes; share CodeGraph's compiled
-// builtin classification across files, then apply the same review policy.
-var defaultTagMatcher = sync.OnceValue(func() *cg.TagMatcher {
-	matcher, err := cg.NewTagMatcher(nil)
+var tagMatcher = sync.OnceValue(func() *cg.TagMatcher {
+	matcher, err := cg.NewTagMatcher(TagRules())
 	if err != nil {
-		panic("allowedext: invalid builtin tag rules: " + err.Error())
+		panic(err)
 	}
 	return matcher
 })
 
-// IsAllowedExt returns true when the given file extension is in the supported types list.
-// The check is case-insensitive.
-func IsAllowedExt(ext string) bool {
-	return language.IsReviewableExtension(ext)
-}
+func Classify(path string) []cg.Tag   { return tagMatcher().Match(path) }
+func IsAllowedExt(ext string) bool    { return language.IsReviewableExtension(ext) }
+func IsExcludedPath(path string) bool { return IsExcluded(Classify(path)) }
 
-// IsExcludedPath classifies a path with builtin tags and applies CCR default exclusions.
-// Patterns support ** (recursive directory matching), * (single-segment wildcard),
-// and {a,b,c} brace expansion. Glob matching is case-insensitive; tag rules
-// retain CodeGraph's case-sensitive regular expression semantics.
-//
-// Example patterns and their behavior:
-//
-//	"**/*_test.go"       matches "foo_test.go", "pkg/bar_test.go", "a/b/c_test.go"
-//	"*_test.go"          matches "foo_test.go" only (no directory traversal)
-//	"**/*.test.{js,ts}"  matches "src/app.test.js", "lib/util.test.ts"
-func IsExcludedPath(path string) bool {
-	return IsExcluded(path, defaultTagMatcher().Match(path))
-}
-
-// IsExcluded applies CCR's default review policy to captured path tags and
-// legacy test/config path patterns. Classification belongs to CodeGraph;
-// deciding which material deserves its own review belongs to CCR.
-func IsExcluded(path string, tags []cg.Tag) bool {
+// IsExcluded consumes captured classification; it does not reclassify Changes.
+func IsExcluded(tags []cg.Tag) bool {
 	for _, tag := range tags {
 		switch tag {
-		case cg.GeneratedTag, cg.TestFixtureTag, cg.DependencyTag,
-			cg.BuildOutputTag, cg.CacheTag, cg.MinifiedTag:
-			return true
-		}
-	}
-	excludeOnce.Do(initExclude)
-	lowerPath := strings.ToLower(path)
-	for _, pattern := range excludePatterns {
-		if matched, _ := doublestar.Match(pattern, lowerPath); matched {
+		case cg.GeneratedTag, cg.TestFixtureTag, cg.DependencyTag, cg.BuildOutputTag,
+			cg.CacheTag, cg.MinifiedTag, TestTag, ReviewDataTag, ToolingTag:
 			return true
 		}
 	}

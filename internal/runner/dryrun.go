@@ -3,8 +3,11 @@ package runner
 import (
 	"context"
 	"fmt"
-	"strings"
 
+	"github.com/compforge/agentgo"
+	agentcontext "github.com/compforge/agentgo/context"
+	"github.com/qiankunli/case-code-review/internal/harness"
+	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
@@ -16,6 +19,14 @@ import (
 // structural fields (Scope/Paths/Fragments/Clues) let `--format json` be used to
 // compare how features (relation grouping, clues) change unit shape, for free.
 type UnitContext struct {
+	InputMessages          []agentgo.Message     `json:"input_messages"`
+	ProjectedMessages      []agentgo.Message     `json:"projected_messages"`
+	Artifacts              []ArtifactRef         `json:"artifacts"`
+	ContextItems           []agentgo.ContextItem `json:"context_items"`
+	EstimatedMessageTokens int                   `json:"estimated_message_tokens"`
+	CompactionRequired     bool                  `json:"compaction_required"`
+	Unexecuted             []string              `json:"unexecuted,omitempty"`
+
 	BudgetExceeded bool                    `json:"budget_exceeded,omitempty"`
 	Grouping       []unit.GroupingEvidence `json:"grouping,omitempty"`
 	Boundaries     []unit.GroupingEvidence `json:"boundaries,omitempty"`
@@ -77,19 +88,30 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 		repoMap = a.buildRepoMap(units)
 	}
 
+	a.repoMap = repoMap
 	out := make([]UnitContext, 0, len(units))
 	for _, u := range units {
-		// Mirror reviewUnit's context assembly: clues + the path-glob rule.json.
-		specCases, specRules, seeAlso, prior := renderClues(u.Clues)
-		usageSites, _, _ := a.renderUsageSites(u)
-		rule := a.resolveSystemRule(strings.ToLower(u.Path()))
-		if specRules != "" {
-			if rule != "" {
-				rule += "\n"
-			}
-			rule += specRules
+		input := a.prepareReviewInput(ctx, u)
+		messages := a.reviewMessages(u, input, "")
+		artifacts := msg.Artifacts(messages)
+		view := harness.ProjectContext(messages, artifacts, a.features.Enabled(feature.FileDedup))
+		var refs []ArtifactRef
+		for _, artifact := range artifacts {
+			refs = append(refs, ArtifactRef{ID: artifact.ID(), Kind: artifact.Kind()})
 		}
+		tokens := agentcontext.EstimateTotal(view)
+		var unexecuted []string
+		if a.features.Enabled(feature.Plan) && a.args.Template.PlanTask != nil {
+			unexecuted = append(unexecuted, "plan")
+		}
+		requiresCompaction := a.args.Template.MaxTokens > 0 && tokens > a.args.Template.MaxTokens-a.args.Template.MaxTokens/5
+		if requiresCompaction {
+			unexecuted = append(unexecuted, "compaction")
+		}
+
 		out = append(out, UnitContext{
+			InputMessages: agentgo.ToMessages(messages), ProjectedMessages: agentgo.ToMessages(view), Artifacts: refs,
+			ContextItems: agentgo.CollectContextItems(view), EstimatedMessageTokens: tokens, CompactionRequired: requiresCompaction, Unexecuted: unexecuted,
 			ID:       u.ID,
 			Grouping: u.Grouping, Boundaries: u.Boundaries, Targets: u.Targets(), DiffTokens: u.DiffTokens, BudgetExceeded: u.BudgetExceeded,
 			Path:           u.Path(),
@@ -97,13 +119,13 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 			Paths:          u.Paths(),
 			Fragments:      len(u.Fragments),
 			Clues:          countClues(u.Clues),
-			SpecCases:      specCases,
-			Rules:          rule,
-			SeeAlso:        seeAlso,
-			Prior:          prior,
-			ProjectContext: renderProjectContext(u.Clues),
+			SpecCases:      input.specCases,
+			Rules:          input.rules,
+			SeeAlso:        input.seeAlso,
+			Prior:          input.prior,
+			ProjectContext: input.projectContext,
 			SourcePreloads: a.describePreloadedSources(u),
-			UsageSites:     usageSites,
+			UsageSites:     input.usageSites,
 		})
 	}
 	return preview, out, repoMap, nil
@@ -111,3 +133,9 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 
 // GroupingReport explains the strategies and count target used in this run.
 func (a *Runner) GroupingReport() formation.GroupingReport { return a.grouping }
+
+// ArtifactRef reports inventory identity without duplicating payload bodies.
+type ArtifactRef struct {
+	ID   string `json:"id"`
+	Kind string `json:"kind"`
+}
