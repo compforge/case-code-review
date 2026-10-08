@@ -45,14 +45,14 @@ case-code-review/
 **主链路**：
 
 ```
-git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fragment ─Formation─▶ Unit
+repocli.Diff ─▶ captured Change ─Component/FileRole─▶ FormUnits ─▶ RepoUnit ─▶ review Unit
                                       └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
     ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis
     ─Lane─▶ Hypothesis Review ─▶ Assessment ─Trial (Review 3)─▶ Finding
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
 
-Formation 调用 repocli 将 Change 切成 Fragment，再按关系形成仓库 Unit，并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
+Source 调用 repocli.Diff 捕获变更与前后源码；Formation 调用 repocli.FormUnits 并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
 Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结果以及 Hypothesis、Assessment 与 Trial decision。Runner
 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有这些评审领域状态。
 

@@ -52,7 +52,6 @@ func TestDogfoodContextAssembly(t *testing.T) {
 	}
 
 	a := &Runner{
-		splitter: unit.AutoSplitter{},
 		finders: []unit.ClueFinder{
 			spec.NewRelatedFinder(spec.Catalog{Local: idx}, language.NewAnalyzer(repo), spec.KindGates{Spec: true, Rule: true, Link: true, Doc: true}),
 		},

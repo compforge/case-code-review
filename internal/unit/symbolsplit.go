@@ -8,47 +8,52 @@ import (
 	"strings"
 )
 
-// AutoSplitter delegates repository splitting to repocli, then attaches CCR's
-// graph identities for contract and source-context lookup.
-type AutoSplitter struct {
-	RepoDir  string
-	Analyzer *language.Analyzer
-	Before   *language.Analyzer
-}
-
-func (s AutoSplitter) Split(d change.Change) ([]Fragment, error) {
-	fs, err := repocli.SplitChange(context.Background(), d)
-	if err != nil {
-		return nil, err
-	}
-	after := s.Analyzer
+// BindFragments adds review identities to repository-owned fragments. It never
+// reparses a diff or changes ownership/grouping; bindings serve Clue queries only.
+func BindFragments(ctx context.Context, fs []repocli.Fragment, changes []change.Change, repoDir string, after, before *language.Analyzer) ([]Fragment, error) {
 	if after == nil {
-		after = language.NewAnalyzer(s.RepoDir)
+		after = language.NewAnalyzer(repoDir)
 	}
-	before := s.Before
 	if before == nil {
-		before = language.NewSnapshotAnalyzer(s.RepoDir, d.BeforeRef, nil)
+		before = language.NewSnapshotAnalyzer(repoDir, "", nil)
 	}
-	var old, next []language.Anchor
-	var bindingGaps []string
-	if !d.IsNew && d.OldContentKnown {
-		old, err = before.Anchors(context.Background(), language.Source{Path: d.OldPath, Content: d.OldFileContent})
-		if err != nil {
-			bindingGaps = append(bindingGaps, "before graph binding: "+err.Error())
+	type bindings struct {
+		old, next []language.Anchor
+		gaps      []string
+	}
+	type sourceKey struct {
+		path    string
+		deleted bool
+	}
+	byFile := map[sourceKey]bindings{}
+	for _, d := range changes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-	}
-	if !d.IsDeleted && !d.NewContentMissing {
-		next, err = after.Anchors(context.Background(), language.Source{Path: d.NewPath, Content: d.NewFileContent})
-		if err != nil {
-			bindingGaps = append(bindingGaps, "after graph binding: "+err.Error())
+		var b bindings
+		var err error
+		if !d.IsNew && d.OldContentKnown {
+			b.old, err = before.Anchors(ctx, language.Source{Path: d.OldPath, Content: d.OldFileContent})
+			if err != nil {
+				b.gaps = append(b.gaps, "before graph binding: "+err.Error())
+			}
 		}
+		if !d.IsDeleted && !d.NewContentMissing {
+			b.next, err = after.Anchors(ctx, language.Source{Path: d.NewPath, Content: d.NewFileContent})
+			if err != nil {
+				b.gaps = append(b.gaps, "after graph binding: "+err.Error())
+			}
+		}
+		byFile[sourceKey{d.Path(), d.IsDeleted}] = b
 	}
+	// A file may contain separate deletion/addition records for a type change.
+	// Select bindings by the captured source side, preserving each native fragment.
 	var out []Fragment
 	for _, source := range fs {
-		f := Fragment{Source: &source, Path: source.Path, OldPath: source.OldPath, Gaps: source.Gaps, Diff: source.Diff, Status: source.Status, Insertions: source.Insertions, Deletions: source.Deletions}
-		f.Gaps = append(append([]string(nil), f.Gaps...), bindingGaps...)
-		f.Before = bindElements(source.Before, old)
-		f.After = bindElements(source.After, next)
+		b := byFile[sourceKey{source.Path, source.Status == "deleted"}]
+		f := Fragment{Source: &source, Path: source.Path, OldPath: source.OldPath, Gaps: append(append([]string(nil), source.Gaps...), b.gaps...), Diff: source.Diff, Status: source.Status, Insertions: source.Insertions, Deletions: source.Deletions}
+		f.Before = bindElements(source.Before, b.old)
+		f.After = bindElements(source.After, b.next)
 		for _, a := range f.After {
 			if a.SymbolID != "" {
 				f.Symbols = append(f.Symbols, a.SymbolID)
@@ -58,6 +63,7 @@ func (s AutoSplitter) Split(d change.Change) ([]Fragment, error) {
 	}
 	return out, nil
 }
+
 func bindElements(elements []repocli.SourceElement, anchors []language.Anchor) []language.Anchor {
 	var out []language.Anchor
 	seen := map[string]bool{}

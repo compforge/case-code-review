@@ -126,7 +126,7 @@ func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {
 	if snapshot.Status != timeline.Failed || snapshot.FinishedAt.IsZero() {
 		t.Fatalf("run=%+v", snapshot)
 	}
-	if len(snapshot.Stages) != 1 || snapshot.Stages[0].Name != "diff.load" || snapshot.Stages[0].Status != timeline.Failed {
+	if len(snapshot.Stages) != 2 || snapshot.Stages[0].Name != "diff.load" || snapshot.Stages[0].Status != timeline.Failed || snapshot.Stages[1].Name != "diff.capture" || snapshot.Stages[1].Status != timeline.Failed || snapshot.Stages[1].ParentID != snapshot.Stages[0].ID {
 		t.Fatalf("stages=%+v", snapshot.Stages)
 	}
 }

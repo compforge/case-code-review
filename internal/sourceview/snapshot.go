@@ -3,6 +3,7 @@ package sourceview
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/compforge/repocli/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 )
 
@@ -42,6 +44,8 @@ type Snapshot struct {
 	once       sync.Once
 	entries    []Entry
 	entriesErr error
+	captured   *repocli.DiffReport
+	before     bool
 }
 
 func New(repoDir, ref, id string, overlay map[string]File, runner *gitcmd.Runner) *Snapshot {
@@ -51,7 +55,47 @@ func New(repoDir, ref, id string, overlay map[string]File, runner *gitcmd.Runner
 	return &Snapshot{RepoDir: repoDir, Ref: ref, ID: id, overlay: maps.Clone(overlay), git: runner}
 }
 
+// NewCaptured shares repocli's captured bytes with tools, graph and contracts.
+// Search uses an immutable Git baseline plus captured changes, avoiding copying
+// every unchanged repository file to temporary storage on each tool call.
+func NewCaptured(d repocli.DiffReport, before bool) *Snapshot {
+	ref, id := d.Head, d.AfterSnapshot
+	if before {
+		ref, id = d.Base, d.BeforeSnapshot
+	} else if ref == "" {
+		ref = d.Base
+	}
+	overlay := map[string]File{}
+	capture := func(name string) {
+		if name == "" || name == "/dev/null" {
+			return
+		}
+		content, err := d.ReadSource(before, name)
+		overlay[name] = File{Content: content, Deleted: errors.Is(err, fs.ErrNotExist), Unavailable: err != nil && !errors.Is(err, fs.ErrNotExist)}
+	}
+	if !before {
+		for _, ch := range d.Changes {
+			capture(ch.OldPath)
+			capture(ch.NewPath)
+		}
+	}
+	// Git could search blobs omitted by capture limits. Mask these in the baseline
+	// too, so search cannot claim evidence that other snapshot consumers lack.
+	for _, entry := range d.SourceFiles(before) {
+		if entry.Size < 0 {
+			capture(entry.Path)
+		}
+	}
+	return &Snapshot{RepoDir: d.Checkout, Ref: ref, ID: id, captured: &d, before: before, overlay: overlay, git: gitcmd.New(0)}
+}
+
 func (s *Snapshot) Read(ctx context.Context, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if s.captured != nil {
+		return s.captured.ReadSource(s.before, name)
+	}
 	name = path.Clean(name)
 	if !fs.ValidPath(name) {
 		return "", fmt.Errorf("invalid snapshot path %q", name)
@@ -83,6 +127,12 @@ func (s *Snapshot) Read(ctx context.Context, name string) (string, error) {
 
 func (s *Snapshot) Entries(ctx context.Context) ([]Entry, error) {
 	s.once.Do(func() {
+		if s.captured != nil {
+			for _, f := range s.captured.SourceFiles(s.before) {
+				s.entries = append(s.entries, Entry{f.Path, f.Size})
+			}
+			return
+		}
 		files := map[string]int64{}
 		if s.Ref != "" {
 			data, err := s.git.Output(ctx, s.RepoDir, "ls-tree", "-rlz", "--full-tree", s.Ref)

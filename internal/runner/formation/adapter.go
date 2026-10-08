@@ -16,7 +16,7 @@ const maxGroupFiles = 5
 
 // CCR owns token accounting, review state, clues and Session output; repocli
 // owns Fragment/Unit grouping and graph-backed merge decisions.
-func groupRepositoryFragments(config Config, fragments []unit.Fragment, tokenLimit int) ([]unit.Unit, error) {
+func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	ctx := config.Context
 	if ctx == nil {
 		ctx = context.Background()
@@ -29,23 +29,31 @@ func groupRepositoryFragments(config Config, fragments []unit.Fragment, tokenLim
 	if config.Analyzer != nil {
 		after = config.Analyzer.Repository().Graph
 	}
-	var inputs []repocli.Fragment
-	byID := map[string]unit.Fragment{}
+	input := config.Diff.WithGraphs(before, after)
+	if config.Changes != nil {
+		input.Changes = config.Changes
+	}
 	paths := map[string]bool{}
-	for _, f := range fragments {
-		input := f.RepositoryFragment()
-		inputs = append(inputs, input)
-		byID[repocli.FragmentID(input)] = f
-		paths[f.Path] = true
+	for _, ch := range input.Changes {
+		paths[ch.Path()] = true
 	}
 	maxUnits := config.MaxUnits
 	if maxUnits == 0 {
 		maxUnits = len(paths)
 	}
-	result, err := repocli.GroupFragments(ctx, inputs, before, after, repocli.UnitOptions{FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
+	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
 	if err != nil {
 		finish(err)
 		return nil, err
+	}
+	fragments, err := unit.BindFragments(ctx, result.Fragments, input.Changes, config.RepoDir, config.Analyzer, config.Before)
+	if err != nil {
+		finish(err)
+		return nil, err
+	}
+	byID := map[string]unit.Fragment{}
+	for _, f := range fragments {
+		byID[unit.FragmentID(f)] = f
 	}
 	report := GroupingReport{InitialUnits: len(paths), MaxUnits: maxUnits, FinalUnits: len(result.Units), LimitExceeded: result.LimitExceeded}
 	for _, s := range result.Steps {
@@ -85,9 +93,11 @@ func groupRepositoryFragments(config Config, fragments []unit.Fragment, tokenLim
 			fs = append(fs, byID[id])
 		}
 		u := unit.NewRelatedUnit(fs)
+		u.Repo = formed
+		u.ID = formed.ID
 		u.Grouping = convert(formed.Relations)
 		u.Boundaries = convert(formed.Boundaries)
-		u.DiffTokens = llm.CountTokens(u.Diff())
+		u.DiffTokens = formed.DiffSize
 		u.BudgetExceeded = formed.BudgetExceeded || u.DiffTokens > tokenLimit
 		if len(u.Paths()) == 1 {
 			u.Scope, u.Formed = unit.ScopeFile, unit.FormedFile

@@ -52,11 +52,13 @@ func TestCapturedGraphAndOldContractsSurviveWorkspaceChanges(t *testing.T) {
 	}
 	write(".casecodereview/spec.json", `{"guard.go::Guard":{"spec":"new unrelated contract"}}`)
 	runner := gitcmd.New(0)
-	changes, err := source.NewWorkspaceProvider(repo, runner).GetDiff(context.Background())
+	provider := source.NewWorkspaceProvider(repo, runner)
+	changes, err := provider.GetDiff(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &Runner{args: Args{RepoDir: repo, GitRunner: runner}, analyzer: language.NewAnalyzer(repo)}
+	a := &Runner{args: Args{RepoDir: repo, GitRunner: runner}, analyzer: language.NewAnalyzer(repo), repositoryDiff: provider.Diff, beforeSource: provider.Before}
+	a.analyzer.SetSnapshot(provider.After)
 	for _, d := range changes {
 		if strings.HasSuffix(d.Path(), ".go") {
 			a.changes = append(a.changes, d)

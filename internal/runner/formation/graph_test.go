@@ -178,7 +178,7 @@ func TestGraphFormationFileCountTakesPrecedenceOverTokenBudget(t *testing.T) {
 		fmt.Fprintf(&added, "+line_%d_%s\n", i, strings.Repeat("abc ", 20))
 	}
 	d := change.Change{NewPath: "unknown.txt", IsNew: true, Diff: "@@ -0,0 +1,20 @@\n" + added.String(), Insertions: 20}
-	us, err := Form(Config{Changes: []change.Change{d}, Splitter: unit.FileSplitter{}, GroupDiffTokens: 150})
+	us, err := Form(Config{Changes: []change.Change{d}, GroupDiffTokens: 150})
 	if err != nil {
 		t.Fatal(err)
 	}

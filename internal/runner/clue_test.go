@@ -17,7 +17,6 @@ func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
 	// Coalesced targets receive context for their final shared Unit.
 	var under int
 	au := &Runner{
-		splitter:      unit.AutoSplitter{},
 		changes:       []change.Change{goDiff("p.go", 3)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&under}},
 	}
@@ -31,7 +30,6 @@ func TestSplitUnits_ContextIsNotDisabledByChangeCount(t *testing.T) {
 	// A larger change set retains the same per-Unit context behavior.
 	var over int
 	ao := &Runner{
-		splitter:      unit.AutoSplitter{},
 		changes:       []change.Change{goDiff("p.go", 12)},
 		costlyFinders: []unit.ClueFinder{countingFinder{&over}},
 	}
