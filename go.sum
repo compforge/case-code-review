@@ -60,8 +60,8 @@ github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea h1:dpB7bkdTkg0
 github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea/go.mod h1:Mt9pt4PEjEyQfLUqQq6yrx5xK/Mhw35P1u2zvPw/MeE=
 github.com/compforge/quality-harness/sdks/go v0.0.0-20260918040607-09e316e3171e h1:ZLM3nd86A99lpnN9qtipwquWYj+SQuJYAiDY1ffsH88=
 github.com/compforge/quality-harness/sdks/go v0.0.0-20260918040607-09e316e3171e/go.mod h1:fUlWkQs2s6Z9vh7qaBow11j1wSDMCaFcMEhl++IOcWw=
-github.com/compforge/repocli/toolkit/go v0.0.0-20261008091847-d691afdcfc7b h1:CsOOD0DIPKLnKlw1G/YltxyFuWtZpLlgpQsjNGCcpHY=
-github.com/compforge/repocli/toolkit/go v0.0.0-20261008091847-d691afdcfc7b/go.mod h1:Fn6tqsXVcLa8cleFsnKqt/1SWe+l5aiUO5KoO+SdXPU=
+github.com/compforge/repocli/toolkit/go v0.0.0-20261008093833-5e028eeddac6 h1:xua4nEfjaxBoEww8KUheS+H09Rv51Lh0FN133mlllZc=
+github.com/compforge/repocli/toolkit/go v0.0.0-20261008093833-5e028eeddac6/go.mod h1:Fn6tqsXVcLa8cleFsnKqt/1SWe+l5aiUO5KoO+SdXPU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.10.0 h1:+/GIL799phkJqYW+3YbOd8LCcbHzT0Pbo8zl70MHsq0=

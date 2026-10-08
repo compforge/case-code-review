@@ -7,7 +7,7 @@ CCR 的 Unit 是一次 run 的评审聚合根，围绕一组相关变更保存 C
 [Fragment 与 Unit](https://github.com/compforge/repocli/blob/main/docs/units.md)。
 
 repocli 负责 `Diff → Fragment → Unit`，提供面向任意调用方的仓库事实与组合方法。
-CCR 先捕获 `Diff`，再向 `FormUnits` 的 `ExcludeChange` 传入评审选择策略；repocli 在生成 Fragment / Unit 前排除对应 Change，图、契约和源码工具共用捕获版本。
+CCR 先捕获 `Diff`，再向 `FormUnits` 的 `Exclude` 传入评审选择策略；repocli 在生成 Fragment / Unit 前排除对应 Change，图、契约和源码工具共用捕获版本。
 `RepoUnit` 是 `repocli.Unit` 的别名，评审 Unit 组合它与 Clue、预算和运行状态。
 CodeGraph 提供组装时使用的代码关系与 namespace 证据。
 CCR 负责选择评审目标、提供 token 预算、将仓库 Unit 适配为评审 Unit，并在范围确定后加载上下文。

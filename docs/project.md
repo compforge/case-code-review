@@ -72,7 +72,7 @@ Change ─▶ Component / FileRole
 
 路径类别由 CodeGraph 提供、repocli 在捕获 Change 时保存为 Tags；CCR 默认不为 generated、
 test_fixture、dependency、build_output、cache、minified 材料启动独立评审。CCR 将选择策略通过
-`repocli.UnitOptions.ExcludeChange` 传入，repocli 在 Change 进入 Fragment / Unit 之前执行排除；
+`repocli.UnitOptions.Exclude` 传入，repocli 在 Change 进入 Fragment / Unit 之前执行排除；
 原始 Diff 保留用于上下文，排除文件不生成 Fragment 或 Unit。Scan 使用同一套
 CodeGraph 路径规则和 CCR 排除策略。manifest 标签本身不排除文件，普通 manifest/lock 仍按 Component
 提供上下文；位于依赖或构建产物目录中的 manifest/lock 则受对应类别的排除策略约束。

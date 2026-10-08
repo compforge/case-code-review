@@ -23,8 +23,8 @@ type Config struct {
 	OnStep    func(context.Context, GroupingStep)
 	OnGrouped func(GroupingReport)
 	RepoDir   string
-	// ExcludeChange must be pure: it is also consulted when counting selected files for grouping budgets.
-	ExcludeChange   func(change.Change) bool
+	// Exclude must be pure: it is also consulted when counting selected files for grouping budgets.
+	Exclude         func(change.Change) bool
 	Changes         []change.Change
 	Diff            repocli.DiffReport
 	Finders         []unit.ClueFinder

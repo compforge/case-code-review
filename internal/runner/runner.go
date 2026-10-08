@@ -955,7 +955,7 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 			}
 		},
 		RepoDir:         a.args.RepoDir,
-		ExcludeChange:   func(ch change.Change) bool { return !a.shouldReview(ch) },
+		Exclude:         func(ch change.Change) bool { return !a.shouldReview(ch) },
 		Changes:         a.changes,
 		Diff:            a.repositoryDiff,
 		Finders:         finders,
