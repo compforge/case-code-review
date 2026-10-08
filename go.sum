@@ -62,6 +62,8 @@ github.com/compforge/quality-harness/sdks/go v0.0.0-20260918040607-09e316e3171e 
 github.com/compforge/quality-harness/sdks/go v0.0.0-20260918040607-09e316e3171e/go.mod h1:fUlWkQs2s6Z9vh7qaBow11j1wSDMCaFcMEhl++IOcWw=
 github.com/compforge/repocli/toolkit/go v0.0.0-20261008042226-a866f36fc708 h1:Cr4M5xGEVhX1BZoh8ZU01gM7YqysIZwC3kdXsLoul+w=
 github.com/compforge/repocli/toolkit/go v0.0.0-20261008042226-a866f36fc708/go.mod h1:Z76Tao/eHIN9cp9idGFD6qeUqENLKFusehPjgPkHxhQ=
+github.com/compforge/repocli/toolkit/go v0.0.0-20261008050228-421386a13703 h1:BMwjKh3W3eLapwh/s4Vxf5gaFsKzC895SAimKiLt48Q=
+github.com/compforge/repocli/toolkit/go v0.0.0-20261008050228-421386a13703/go.mod h1:Z76Tao/eHIN9cp9idGFD6qeUqENLKFusehPjgPkHxhQ=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.10.0 h1:+/GIL799phkJqYW+3YbOd8LCcbHzT0Pbo8zl70MHsq0=
