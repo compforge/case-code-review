@@ -55,6 +55,9 @@ type ExecutionSpec struct {
 	// turns. Zero disables this investigation limit; turn, deadline, and token
 	// reserves still apply when WrapUpPrompt is set.
 	WrapUpAfterTurns int
+	// WrapUpAt closes investigation at this instant without canceling Run's
+	// context. Zero disables this boundary; callers retain cancellation ownership.
+	WrapUpAt time.Time
 	// WrapUpAllowedTools are the result tools permitted during the first
 	// wrap-up request. Tool schemas stay stable; middleware enforces this policy.
 	// The final corrective request permits only the completion tool, if present.
@@ -350,6 +353,10 @@ func (e *Execution) stopGuard(_ context.Context, stop agentgo.StopInfo) agentgo.
 	if !e.turns.WrapUpIssued() {
 		return agentgo.StopDecision{InjectMessage: e.completionPrompt}
 	}
+	// Expiry while a call is in flight has not spent the first wrap-up turn.
+	if e.turns.takeReminder() {
+		return agentgo.StopDecision{InjectMessage: e.spec.WrapUpPrompt}
+	}
 	if e.wrapUpFinalTurnGranted.CompareAndSwap(false, true) {
 		return agentgo.StopDecision{InjectMessage: e.spec.WrapUpPrompt + "\n" + e.finalWrapUpPrompt()}
 	}
@@ -405,10 +412,14 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 		defer func() {
 			e.recorder.finishToolExecution(call.ID, time.Since(started))
 		}()
+		e.turns.checkTime(ctx)
 		if e.turns.WrapUpIssued() && len(e.wrapUpAllowed) > 0 && !e.wrapUpToolAllowed(call.Name) {
 			guidance := "Investigation is closed. Do not repeat results already accepted. Submit only supported results that have not yet been accepted. " + e.completionPrompt
 			if e.wrapUpRequestCount.Load() > 1 || e.naturalCompletion {
 				guidance = e.finalWrapUpPrompt()
+			}
+			if e.wrapUpRequestCount.Load() == 0 {
+				guidance = e.spec.WrapUpPrompt
 			}
 			return handledToolResult(call, json.RawMessage(guidance)), nil
 		}

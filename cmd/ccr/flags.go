@@ -155,7 +155,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "soft limit on reported input+output tokens across the run; stops new model calls (0 = unlimited)")
 	a.IntVar(&opts.maxUnits, "max-units", 0, "grouping threshold; target = max(selected-file count, value); best effort")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
-	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
+	a.IntVar(&opts.perFileTimeout, "timeout", 10, "Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited)")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the review")
 	a.StringVar(&opts.bizID, "biz-id", "", "opaque caller-owned business identity persisted with the session")
@@ -289,7 +289,7 @@ Flags:
   --rule string           path to JSON file with system review rules
   --spec string           path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
   --history string        path to prior-findings JSON (symbol-id/path → findings); injected per unit so the reviewer reconciles them
-  --timeout int           concurrent task timeout in minutes (default 10)
+  --timeout int           Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited) (default 10)
   --to string             target ref to end diff at (e.g., 'feature-branch')
   --tools string          path to JSON tools config file (default: embedded)`)
 

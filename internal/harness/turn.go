@@ -31,6 +31,8 @@ type tokenAllowance interface {
 type turnController struct {
 	maxTurns     int
 	wrapUpAfter  int
+	wrapUpAt     time.Time
+	currentTurn  int
 	wrapUpPrompt string
 	scope        session.Scope
 	provider     TurnContextProvider
@@ -41,8 +43,9 @@ type turnController struct {
 	outputs      [3]int64
 	outputIndex  int
 
-	mu           sync.Mutex
-	wrapUpIssued bool
+	mu            sync.Mutex
+	wrapUpIssued  bool
+	wrapUpPending bool
 }
 
 func newTurnController(spec ExecutionSpec) *turnController {
@@ -55,6 +58,7 @@ func newTurnController(spec ExecutionSpec) *turnController {
 		toolTokens:   llm.CountTokens(string(schemas)),
 		maxTurns:     spec.MaxTurns,
 		wrapUpAfter:  spec.WrapUpAfterTurns,
+		wrapUpAt:     spec.WrapUpAt,
 		wrapUpPrompt: spec.WrapUpPrompt,
 		scope:        spec.Scope,
 		provider:     spec.TurnContext,
@@ -65,12 +69,16 @@ func (c *turnController) BeforeTurn(
 	ctx context.Context,
 	turn agentgo.BeforeTurnContext,
 ) ([]agentgo.AgentMessage, error) {
+	c.mu.Lock()
+	c.currentTurn = turn.TurnIndex
+	c.mu.Unlock()
 	var messages []agentgo.AgentMessage
 	if c.provider != nil {
 		messages = append(messages, c.provider.PullTurnContext(ctx, c.scope)...)
 	}
 	contextMessages := append(append([]agentgo.AgentMessage(nil), turn.Context.Messages...), messages...)
-	if c.shouldWrapUp(ctx, turn.TurnIndex, contextMessages) {
+	c.shouldWrapUp(ctx, turn.TurnIndex, contextMessages)
+	if c.takeReminder() {
 		messages = append(messages, msg.Text("user", c.wrapUpPrompt))
 	}
 	return rawMessages(messages), nil
@@ -117,6 +125,9 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int, messag
 	if nearTurnLimit {
 		reasons = append(reasons, "turn_limit")
 	}
+	if !c.wrapUpAt.IsZero() && !time.Now().Before(c.wrapUpAt) {
+		reasons = append(reasons, "investigation_time")
+	}
 	if nearDeadline {
 		reasons = append(reasons, "deadline")
 	}
@@ -133,11 +144,13 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int, messag
 	}
 	if len(reasons) > 0 {
 		c.wrapUpIssued = true
+		c.wrapUpPending = true
 		if c.history != nil {
 			c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
 				"scope_id": c.scope.ID, "turn": turnIndex, "reasons": reasons,
 				"remaining_time_ms": timeLeft.Milliseconds(), "token_limited": limited,
-				"remaining_tokens": remaining, "investigation_tokens": investigation, "wrap_up_tokens": wrapUp,
+				"investigation_deadline": c.wrapUpAt,
+				"remaining_tokens":       remaining, "investigation_tokens": investigation, "wrap_up_tokens": wrapUp,
 			})
 		}
 		return true
@@ -169,4 +182,29 @@ func (c *turnController) forecast(messages []agentgo.AgentMessage) (investigatio
 	// spend the remaining allowance, which the client still checks at admission.
 	wrapUp = input + 2*output + int64(llm.CountTokens(c.wrapUpPrompt))
 	return investigation, wrapUp
+}
+
+// checkTime closes tool admission when an in-flight model/tool call crosses the
+// exploration boundary. The next model turn receives the ordinary wrap-up prompt.
+func (c *turnController) checkTime(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.wrapUpIssued || c.wrapUpPrompt == "" || c.wrapUpAt.IsZero() || time.Now().Before(c.wrapUpAt) {
+		return
+	}
+	c.wrapUpIssued, c.wrapUpPending = true, true
+	if c.history != nil {
+		c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
+			"scope_id": c.scope.ID, "turn": c.currentTurn, "reasons": []string{"investigation_time"},
+			"investigation_deadline": c.wrapUpAt,
+		})
+	}
+}
+
+func (c *turnController) takeReminder() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	pending := c.wrapUpPending
+	c.wrapUpPending = false
+	return pending
 }
