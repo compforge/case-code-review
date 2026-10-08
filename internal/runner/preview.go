@@ -45,7 +45,7 @@ func (a *Runner) whyExcluded(d change.Change) ExcludeReason {
 		return ExcludeExtension
 	}
 
-	if allowedext.IsExcludedPath(path) {
+	if allowedext.IsExcluded(path, d.Tags) {
 		return ExcludeDefaultPath
 	}
 

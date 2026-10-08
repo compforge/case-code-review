@@ -70,7 +70,8 @@ func (a *Runner) enrichFileSelection(
 	selection fileSelection,
 	reader *tool.FileReader,
 ) fileSelection {
-	if !selection.HasComponent || !selection.Roles.Has(project.RoleSource) {
+	// Excluded material must not trigger source parsing just to enrich review roles.
+	if !selection.Target || !selection.HasComponent || !selection.Roles.Has(project.RoleSource) {
 		return selection
 	}
 	content, err := reader.Read(ctx, path)
@@ -116,7 +117,7 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 	if selection.HasComponent && (selection.Roles.Has(project.RoleManifest) || selection.Roles.Has(project.RoleLock)) {
 		// Project context may bypass the global extension allowlist (.lock,
 		// .mod, .sum), but never the default path exclusions.
-		if allowedext.IsExcludedPath(path) {
+		if allowedext.IsExcluded(path, d.Tags) {
 			selection.Reason = ExcludeDefaultPath
 			return selection
 		}

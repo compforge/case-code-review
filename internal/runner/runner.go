@@ -353,9 +353,8 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	fmt.Fprintf(console.Out(), "[ccr] %d file(s) changed, reviewing %d with %d project context file(s) in %s\n",
 		totalChanged, reviewCount, a.contextFileCount, a.args.RepoDir)
 
-	a.changes = a.filterDiffs(a.changes)
-
-	if len(a.changes) == 0 {
+	if reviewCount == 0 {
+		a.changes = a.filterDiffs(a.changes)
 		if a.contextFileCount > 0 {
 			fmt.Fprintf(console.Out(), "[ccr] No Unit Review targets; %d project context file(s) changed. Skipping review.\n", a.contextFileCount)
 		} else {
@@ -956,6 +955,7 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 			}
 		},
 		RepoDir:         a.args.RepoDir,
+		ExcludeChange:   func(ch change.Change) bool { return !a.shouldReview(ch) },
 		Changes:         a.changes,
 		Diff:            a.repositoryDiff,
 		Finders:         finders,
@@ -968,6 +968,10 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Formation excludes changes before splitting; retain the selected review
+	// view for downstream context assembly while repositoryDiff stays intact.
+	a.changes = a.filterDiffs(a.changes)
 
 	// Review Team: register each unit's board interest before dispatch — its
 	// files + covered symbols + clue neighbors (the Relation axis reused as

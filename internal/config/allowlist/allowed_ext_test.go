@@ -1,6 +1,7 @@
 package allowedext
 
 import (
+	cg "github.com/compforge/codegraph"
 	"testing"
 )
 
@@ -110,5 +111,26 @@ func TestIsExcludedPath(t *testing.T) {
 				t.Errorf("IsExcludedPath(%q) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDefaultTagPolicy(t *testing.T) {
+	for _, tag := range []cg.Tag{cg.GeneratedTag, cg.TestFixtureTag, cg.DependencyTag, cg.BuildOutputTag, cg.CacheTag, cg.MinifiedTag} {
+		if !IsExcluded("ordinary.go", []cg.Tag{tag}) {
+			t.Fatalf("tag not excluded: %s", tag)
+		}
+	}
+	if IsExcluded("ordinary.go", []cg.Tag{cg.ManifestTag, "custom"}) {
+		t.Fatal("nonexcluded tag became policy")
+	}
+	for _, path := range []string{"api.pb.go", "api.gen.go", "api.generated.ts", "kitex_gen/api.go", "fixtures/a.py", "testdata/a.go", "snapshots/a.js", "pkg/vendor/a.go", "pkg/node_modules/a.js", "dist/a.js", ".next/a.js", ".cache/a.py", "__pycache__/a.py", "app.min.js", "app.min.css"} {
+		if !IsExcludedPath(path) {
+			t.Fatalf("scan path not excluded: %s", path)
+		}
+	}
+	for _, path := range []string{"go.mod", "go.sum", "package.json", "package-lock.json", "pyproject.toml", "uv.lock", "app.go", "page.html"} {
+		if IsExcludedPath(path) {
+			t.Fatalf("source or metadata excluded: %s", path)
+		}
 	}
 }
