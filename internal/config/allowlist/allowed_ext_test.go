@@ -101,6 +101,38 @@ func TestIsExcludedPath(t *testing.T) {
 		{"ets test file", "entry/src/test/Component.test.ets", true},
 		{"ets non-test", "entry/src/main/Component.ets", false},
 
+		// Generated code, dependencies and build output are default review exclusions.
+		{"generated go", "api/types.generated.go", true},
+		{"generated typescript", "src/schema.generated.ts", true},
+		{"generated go suffix", "api/types.gen.go", true},
+		{"protobuf output", "proto/message.pb.go", true},
+		{"kitex output", "services/kitex_gen/api/client.go", true},
+		{"capnp output", "proto/schema_capnp.py", true},
+		{"node dependency", "packages/ui/node_modules/lib/index.js", true},
+		{"yarn cache", ".yarn/cache/lib/index.js", true},
+		{"yarn source", ".yarn/custom/index.js", false},
+		{"go dependency", "vendor/example/lib.go", true},
+		{"python environment", "backend/.venv/lib/module.py", true},
+		{"python cache", "backend/.pytest_cache/config.json", true},
+		{"compiled output", "packages/ui/dist/index.js", true},
+		{"framework output", "web/.next/server/app.js", true},
+		{"minified javascript", "static/app.min.js", true},
+		{"minified css", "static/app.min.css", true},
+		{"rust build output", "target/debug/build/config.json", true},
+		{"swift dependency", "ios/Pods/Example/source.swift", true},
+		{"terraform cache", "infra/.terraform/modules/main.tf", true},
+		{"coverage report", "coverage/lcov-report/index.html", true},
+
+		// Similar names, fixtures and project context retain their existing policy.
+		{"handwritten generated directory", "src/generated/client.go", false},
+		{"handwritten vendor prefix", "src/vendor_client.go", false},
+		{"handwritten distribution module", "src/distribution/index.ts", false},
+		{"fixture source", "fixtures/example.go", false},
+		{"testdata source", "testdata/example.go", false},
+		{"project manifest", "package.json", false},
+		{"project lock", "pnpm-lock.yaml", false},
+		{"trace html report", "doctor-trace.html", false},
+
 		// Case insensitive
 		{"case insensitive go", "Foo/Bar_Test.go", true},
 		{"case insensitive java", "com/FooTEST.java", true}, // lowercase → "com/footest.java" matches "**/*test.java"
