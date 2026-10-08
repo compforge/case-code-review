@@ -123,12 +123,12 @@ func TestIsExcludedPath(t *testing.T) {
 		{"terraform cache", "infra/.terraform/modules/main.tf", true},
 		{"coverage report", "coverage/lcov-report/index.html", true},
 
-		// Similar names, fixtures and project context retain their existing policy.
+		// Fixtures follow the builtin tag policy; similar names and project context stay eligible.
 		{"handwritten generated directory", "src/generated/client.go", false},
 		{"handwritten vendor prefix", "src/vendor_client.go", false},
 		{"handwritten distribution module", "src/distribution/index.ts", false},
-		{"fixture source", "fixtures/example.go", false},
-		{"testdata source", "testdata/example.go", false},
+		{"fixture source", "fixtures/example.go", true},
+		{"testdata source", "testdata/example.go", true},
 		{"project manifest", "package.json", false},
 		{"project lock", "pnpm-lock.yaml", false},
 		{"trace html report", "doctor-trace.html", false},
