@@ -1,4 +1,4 @@
-// Package formation turns filtered changes into the stable Units consumed by
+// Package formation turns captured changes and caller policy into Units consumed by
 // Unit Review. It delegates splitting/grouping to repocli and owns review Clue
 // attachment; it does not execute an agent loop.
 package formation
@@ -18,11 +18,13 @@ import (
 // Config supplies the rules and knowledge sources needed to form Units. The
 // zero value keeps relation grouping off and uses default cross-file merge budgets.
 type Config struct {
-	Context         context.Context
-	MaxUnits        int
-	OnStep          func(context.Context, GroupingStep)
-	OnGrouped       func(GroupingReport)
-	RepoDir         string
+	Context   context.Context
+	MaxUnits  int
+	OnStep    func(context.Context, GroupingStep)
+	OnGrouped func(GroupingReport)
+	RepoDir   string
+	// Exclude must be pure: it is also consulted when counting selected files for grouping budgets.
+	Exclude         func(change.Change) bool
 	Changes         []change.Change
 	Diff            repocli.DiffReport
 	Finders         []unit.ClueFinder

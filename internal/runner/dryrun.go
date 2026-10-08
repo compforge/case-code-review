@@ -63,7 +63,6 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	}
 	a.prepareFileSelections(ctx)
 	preview := a.buildPreview()
-	a.changes = a.filterDiffs(a.changes)
 	formationCtx, finish := session.Begin(ctx, "unit.formation")
 	units, err := a.splitUnits(formationCtx)
 	if err == nil && a.session != nil {

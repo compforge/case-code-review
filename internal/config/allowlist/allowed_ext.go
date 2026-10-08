@@ -31,6 +31,7 @@ import (
 	"sync"
 
 	"github.com/bmatcuk/doublestar/v4"
+	cg "github.com/compforge/codegraph"
 	"github.com/qiankunli/case-code-review/internal/language"
 )
 
@@ -51,15 +52,26 @@ func initExclude() {
 	}
 }
 
+// Scan has paths rather than captured Changes; share CodeGraph's compiled
+// builtin classification across files, then apply the same review policy.
+var defaultTagMatcher = sync.OnceValue(func() *cg.TagMatcher {
+	matcher, err := cg.NewTagMatcher(nil)
+	if err != nil {
+		panic("allowedext: invalid builtin tag rules: " + err.Error())
+	}
+	return matcher
+})
+
 // IsAllowedExt returns true when the given file extension is in the supported types list.
 // The check is case-insensitive.
 func IsAllowedExt(ext string) bool {
 	return language.IsReviewableExtension(ext)
 }
 
-// IsExcludedPath returns true when the given file path matches any default exclude pattern.
+// IsExcludedPath classifies a path with builtin tags and applies CCR default exclusions.
 // Patterns support ** (recursive directory matching), * (single-segment wildcard),
-// and {a,b,c} brace expansion. The check is case-insensitive.
+// and {a,b,c} brace expansion. Glob matching is case-insensitive; tag rules
+// retain CodeGraph's case-sensitive regular expression semantics.
 //
 // Example patterns and their behavior:
 //
@@ -67,6 +79,20 @@ func IsAllowedExt(ext string) bool {
 //	"*_test.go"          matches "foo_test.go" only (no directory traversal)
 //	"**/*.test.{js,ts}"  matches "src/app.test.js", "lib/util.test.ts"
 func IsExcludedPath(path string) bool {
+	return IsExcluded(path, defaultTagMatcher().Match(path))
+}
+
+// IsExcluded applies CCR's default review policy to captured path tags and
+// legacy test/config path patterns. Classification belongs to CodeGraph;
+// deciding which material deserves its own review belongs to CCR.
+func IsExcluded(path string, tags []cg.Tag) bool {
+	for _, tag := range tags {
+		switch tag {
+		case cg.GeneratedTag, cg.TestFixtureTag, cg.DependencyTag,
+			cg.BuildOutputTag, cg.CacheTag, cg.MinifiedTag:
+			return true
+		}
+	}
 	excludeOnce.Do(initExclude)
 	lowerPath := strings.ToLower(path)
 	for _, pattern := range excludePatterns {

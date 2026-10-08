@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -75,7 +76,8 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 	client := &budgetClient{}
 	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
-	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client,
+	// Explicitly admit the text fixture so this test isolates the merge budget.
+	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client, FileFilter: &rules.FileFilter{Include: []string{"large.txt"}},
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})
 	defer history.Finalize()
 	a.changes = []change.Change{{NewPath: "large.txt", Diff: "@@ -0,0 +1 @@\n+" + strings.Repeat("word ", 10000) + "\n", Insertions: 1}}

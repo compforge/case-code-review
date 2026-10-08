@@ -35,17 +35,19 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	}
 	paths := map[string]bool{}
 	for _, ch := range input.Changes {
-		paths[ch.Path()] = true
+		if config.Exclude == nil || !config.Exclude(ch) {
+			paths[ch.Path()] = true
+		}
 	}
 	// Count-driven coalescing should not force a target below the selected-file count.
 	// Strong source relations may still produce fewer Units.
 	maxUnits := max(len(paths), config.MaxUnits)
-	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
+	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{Exclude: config.Exclude, FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
 	if err != nil {
 		finish(err)
 		return nil, err
 	}
-	fragments, err := unit.BindFragments(ctx, result.Fragments, input.Changes, config.RepoDir, config.Analyzer, config.Before)
+	fragments, err := unit.BindFragments(ctx, result.Fragments, result.Changes, config.RepoDir, config.Analyzer, config.Before)
 	if err != nil {
 		finish(err)
 		return nil, err
