@@ -56,7 +56,7 @@ CCR 将 `max(进入 formation 的不同文件数, --max-units)` 作为数量软�
 强关系可以聚合出更少的 Unit；大小预算可能阻止降到目标，此时报告超限并保留全部改动。
 Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态仍由 CCR 管理。
 
-聚合完成后，CCR 跳过 element counts 仅包含 import 的 Unit（前后两侧均无其他类型且 import 非零）；
+聚合完成后，CCR 跳过前后两侧 element counts 满足 `import count == total count` 的 Unit，包含空 counts；
 混有代码、unknown 或 whitespace 的 Unit 保留。repocli 的完整编辑覆盖不变，过滤数量记录在
 `skip_import_only` 步骤中，最终 Unit 数与超限标记以实际评审范围为准。
 

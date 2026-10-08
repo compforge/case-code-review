@@ -85,7 +85,7 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	var out []unit.Unit
 	for _, formed := range result.Units {
 		// Review policy applies after grouping so imports can still join code Units.
-		if formed.Counts.Only(repocli.ElementImport) {
+		if onlyImportElements(formed.Counts) {
 			continue
 		}
 		var fs []unit.Fragment
@@ -119,4 +119,18 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	finish(nil)
 	return out, nil
+}
+
+// Empty counts also qualify: review eligibility uses import count == total count.
+func onlyImportElements(counts repocli.ElementCounts) bool {
+	imports, total := 0, 0
+	for _, side := range []map[repocli.ElementKind]int{counts.Before, counts.After} {
+		for kind, count := range side {
+			total += count
+			if kind == repocli.ElementImport {
+				imports += count
+			}
+		}
+	}
+	return imports == total
 }

@@ -47,3 +47,22 @@ func TestUnknownUnitsRemainReviewable(t *testing.T) {
 	}
 	assertCoverage(t, changes, us)
 }
+
+func TestImportCountEqualsTotalCount(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		counts repocli.ElementCounts
+		want   bool
+	}{
+		{"empty", repocli.ElementCounts{}, true},
+		{"zero", repocli.ElementCounts{After: map[repocli.ElementKind]int{repocli.ElementUnknown: 0}}, true},
+		{"import", repocli.ElementCounts{Before: map[repocli.ElementKind]int{repocli.ElementImport: 1}, After: map[repocli.ElementKind]int{repocli.ElementImport: 2}}, true},
+		{"unknown", repocli.ElementCounts{Before: map[repocli.ElementKind]int{repocli.ElementUnknown: 1}, After: map[repocli.ElementKind]int{repocli.ElementImport: 1}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := onlyImportElements(tc.counts); got != tc.want {
+				t.Fatalf("onlyImportElements(%+v) = %v, want %v", tc.counts, got, tc.want)
+			}
+		})
+	}
+}
