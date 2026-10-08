@@ -71,9 +71,11 @@ func NewProvider(repoDir string, paths []string, runner *gitcmd.Runner, maxFileS
 	}
 }
 
-// Enumerate returns one Item per reviewable file. Binaries are emitted
-// with empty Content + IsBinary=true so previews can show them as excluded.
-func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
+// Enumerate returns regular-file candidates. selectPath decides which bodies
+// to read; nil selects all paths. Rejected paths remain as metadata-only Items
+// for preview, without binary sniffing or line counting. Selected binaries are
+// emitted with empty Content + IsBinary=true.
+func (p *Provider) Enumerate(ctx context.Context, selectPath func(string) bool) ([]Item, error) {
 	files, err := p.listFiles(ctx)
 	if err != nil {
 		return nil, err
@@ -101,6 +103,12 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 			continue
 		}
 		if !info.Mode().IsRegular() {
+			continue
+		}
+		// Caller policy must run before any content I/O. Keeping the path
+		// lets preview explain exclusions without retaining dependency trees.
+		if selectPath != nil && !selectPath(rel) {
+			out = append(out, Item{Path: rel})
 			continue
 		}
 		if info.Size() > p.maxFileSizeBytes {
@@ -140,8 +148,7 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 // listFiles returns all source files under repoDir. In a git repo it uses
 // `git ls-files` for full .gitignore semantics (nested + global excludes +
 // negation rules). In a non-git directory it falls back to filepath.WalkDir
-// with the simpler in-process gitignore handling (root .gitignore + the
-// internal ExcludedDirs blocklist).
+// with the simpler in-process root .gitignore handling and Git metadata skip.
 func (p *Provider) listFiles(ctx context.Context) ([]string, error) {
 	if p.isGitRepo(ctx) {
 		return p.listFilesViaGit(ctx)

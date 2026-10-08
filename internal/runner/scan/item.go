@@ -7,8 +7,9 @@ import (
 
 // Item represents a single file enumerated by full-scan mode. Unlike
 // change.Change (which carries a unified diff text), Item carries the
-// entire file content because scan reviews whole files with no diff
-// context.
+// entire admitted file content because scan reviews whole files with no diff
+// context. Paths rejected before reading have empty Content and no line count
+// or binary classification; preview still reports their path-policy reason.
 type Item struct {
 	Path      string `json:"path"`
 	Content   string `json:"content"`

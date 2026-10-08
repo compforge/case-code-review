@@ -17,7 +17,7 @@ import (
 // it.) Callers that want to reuse the enumeration should call Run once.
 func (a *Runner) Preview(ctx context.Context) (*preview.Preview, error) {
 	provider := NewProvider(a.args.RepoDir, a.args.Paths, a.args.GitRunner, a.args.MaxFileSizeBytes)
-	items, err := provider.Enumerate(ctx)
+	items, err := provider.Enumerate(ctx, a.selectPath)
 	if err != nil {
 		return nil, fmt.Errorf("enumerate files: %w", err)
 	}

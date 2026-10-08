@@ -87,7 +87,9 @@ TagMatcher 分类规则和 CCR 排除策略。manifest 标签本身不排除文�
 这层分离使 FileRole 可以被 Review 1、Review 2 或未来其它 Reviewer 复用，而不把当前 admission
 策略固化进项目知识。
 
-捕获后的选择只消费已有 Tags。Scan 在路径入口使用同一规则集分类；用户显式 include/exclude 保留
+捕获后的选择只消费已有 Tags。Scan 在读取文件正文前使用同一规则集分类和选择；排除项仅保留路径
+供 preview 解释原因，不探测二进制或统计行数。入选文件完成二进制和 token 预算筛选后才进入工具
+DiffMap。用户显式 include/exclude 保留
 现有 glob 接口，默认分类使用正则规则，大小写约定由每条规则明确表达。Project 的 Component 查找和
 角色补充分析与 Graph、源码工具、仓库契约共用捕获快照；评审中后续工作区编辑或 HEAD 移动不改变它们。
 
