@@ -22,7 +22,7 @@ type Anchor struct {
 func graphAnchors(g *cg.Graph, path string) []Anchor {
 	var out []Anchor
 	for _, n := range g.Nodes() {
-		if n.Location == nil || n.Location.Path != path || n.Kind == cg.Reference || n.Kind == cg.DocumentKind {
+		if n.Location == nil || n.Location.Path != path || n.Kind == cg.Reference || n.Kind == cg.DocumentNodeKind {
 			continue
 		}
 		anchor := Anchor{Snapshot: g.Snapshot(), NodeID: n.ID, SymbolID: ReviewSymbolID(n), Path: path, Kind: n.Kind, Span: locationSpan(*n.Location), StartByte: n.Location.StartByte, EndByte: n.Location.EndByte}

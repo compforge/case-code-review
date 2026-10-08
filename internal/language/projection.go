@@ -109,7 +109,7 @@ func locationSpan(loc cg.Location) Span {
 
 // ReviewSymbolID translates a graph declaration to the contract/Unit join key.
 func ReviewSymbolID(node cg.Node) string {
-	if node.Location == nil || node.QualifiedName == "" || node.Kind == cg.Reference || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentKind {
+	if node.Location == nil || node.QualifiedName == "" || node.Kind == cg.Reference || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentNodeKind {
 		return ""
 	}
 	return SymbolID(node.Location.Path, "", node.QualifiedName)

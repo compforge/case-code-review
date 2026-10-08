@@ -49,12 +49,12 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 		stages[stage.ID] = stage.Name
 	}
 	for _, stage := range snapshot.Stages {
-		if stage.Name == "unit.grouping.relations" && stages[stage.ParentID] != "unit.formation" {
+		if stage.Name == "unit.grouping" && stages[stage.ParentID] != "unit.formation" {
 			t.Fatalf("grouping has wrong parent: %+v", stage)
 		}
 	}
 
-	for _, name := range []string{"unit.formation", "unit.grouping.relations", "codegraph.build", "unit.queue", "review.unit", "execution", "turn", "context.project", "model.attempt", "llm.request", "trial.finalize"} {
+	for _, name := range []string{"unit.formation", "unit.grouping", "codegraph.build", "unit.queue", "review.unit", "execution", "turn", "context.project", "model.attempt", "llm.request", "trial.finalize"} {
 		if !names[name] {
 			t.Errorf("missing %s in %v", name, names)
 		}
@@ -87,7 +87,7 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 			if err := json.Unmarshal(record.Data["step"], &step); err != nil {
 				t.Fatal(err)
 			}
-			if step.Strategy != "relations" || step.Input != 1 || step.Output != 1 || stages[record.StageID] != "unit.grouping.relations" {
+			if step.Strategy != "local" || step.Input != 1 || step.Output != 1 || stages[record.StageID] != "unit.grouping" {
 				t.Fatalf("step=%+v stage=%s", step, record.StageID)
 			}
 			foundStep = true
@@ -126,7 +126,7 @@ func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {
 	if snapshot.Status != timeline.Failed || snapshot.FinishedAt.IsZero() {
 		t.Fatalf("run=%+v", snapshot)
 	}
-	if len(snapshot.Stages) != 1 || snapshot.Stages[0].Name != "diff.load" || snapshot.Stages[0].Status != timeline.Failed {
+	if len(snapshot.Stages) != 2 || snapshot.Stages[0].Name != "diff.load" || snapshot.Stages[0].Status != timeline.Failed || snapshot.Stages[1].Name != "diff.capture" || snapshot.Stages[1].Status != timeline.Failed || snapshot.Stages[1].ParentID != snapshot.Stages[0].ID {
 		t.Fatalf("stages=%+v", snapshot.Stages)
 	}
 }

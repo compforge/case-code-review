@@ -19,9 +19,8 @@ func TestFormDeduplicatesCluesAfterScopeIsFinal(t *testing.T) {
 		{Kind: unit.ClueRule, Relation: unit.RelUsed, Text: "per-request"},
 	}
 	units, err := Form(Config{
-		Changes:  []change.Change{{NewPath: "a.go", Diff: "@@ -1 +1 @@\n-old\n+new"}},
-		Splitter: unit.FileSplitter{},
-		Finders:  []unit.ClueFinder{clues},
+		Changes: []change.Change{{NewPath: "a.go", Diff: "@@ -1 +1 @@\n-old\n+new"}},
+		Finders: []unit.ClueFinder{clues},
 	})
 	if err != nil {
 		t.Fatal(err)

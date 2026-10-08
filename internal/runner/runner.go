@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/compforge/repocli/toolkit/go"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"os"
 	"runtime/debug"
 	"sort"
@@ -169,9 +171,10 @@ type Runner struct {
 	executor         *unitreview.Executor
 	// Splitting locates graph-owned edits; Formation groups them before any
 	// context lookup. Both finder sets run with their own per-Unit limits.
-	splitter      unit.Splitter
-	finders       []unit.ClueFinder
-	costlyFinders []unit.ClueFinder
+	repositoryDiff repocli.DiffReport
+	beforeSource   *sourceview.Snapshot
+	finders        []unit.ClueFinder
+	costlyFinders  []unit.ClueFinder
 	// features are the resolved ablation gates; consulted in splitUnits (callchain)
 	// and dispatchUnits (plan / hypothesis review). Clue gates are applied at finder
 	// assembly in New(), so findClues stays gate-agnostic.
@@ -253,7 +256,6 @@ func New(args Args) *Runner {
 		session:  args.Session,
 		features: f,
 		// Graph ownership locates edits; Formation owns their bounded partition.
-		splitter: unit.AutoSplitter{RepoDir: args.RepoDir, Analyzer: analyzer},
 		analyzer: analyzer,
 	}
 	a.configureFinders(spec.Catalog{})
@@ -448,6 +450,8 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 		return fmt.Errorf("get diffs: %w", err)
 	}
 
+	a.repositoryDiff = provider.Diff
+	a.beforeSource = provider.Before
 	a.changes = parsed
 	a.persistReviewInput(ctx)
 	catalog, err := spec.LoadSnapshot(ctx, a.args.RepoDir, a.args.SpecPath, provider.After)
@@ -963,7 +967,7 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 		},
 		RepoDir:         a.args.RepoDir,
 		Changes:         a.changes,
-		Splitter:        a.splitter,
+		Diff:            a.repositoryDiff,
 		Finders:         finders,
 		CostlyFinders:   a.costlyFinders,
 		Analyzer:        a.sourceAnalyzer(),

@@ -1,5 +1,5 @@
 // Package formation turns filtered changes into the stable Units consumed by
-// Unit Review. It owns target splitting, semantic/cost grouping and Clue
+// Unit Review. It delegates splitting/grouping to repocli and owns review Clue
 // attachment; it does not execute an agent loop.
 package formation
 
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
+	"github.com/compforge/repocli/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -23,7 +24,7 @@ type Config struct {
 	OnGrouped       func(GroupingReport)
 	RepoDir         string
 	Changes         []change.Change
-	Splitter        unit.Splitter
+	Diff            repocli.DiffReport
 	Finders         []unit.ClueFinder
 	CostlyFinders   []unit.ClueFinder
 	Analyzer        *language.Analyzer
@@ -32,10 +33,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form starts with file groups and applies GroupChain before creating Units.
+// Form delegates repository grouping to repocli before creating review Units.
 // Clues are gathered only after the final scope is known.
 //
-// +spec=`Each target edit belongs to exactly one Unit; changed cross-file dependencies are grouped before file-local remainders, with explicit grouping limits`
+// +spec=`Each edit has one Fragment identity; review Units can share evidenced imports and preserve explicit grouping limits`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)
@@ -44,86 +45,15 @@ func Form(config Config) ([]unit.Unit, error) {
 	if tokenLimit <= 0 {
 		tokenLimit = DefaultGroupDiffTokens
 	}
-	splitter := config.Splitter
-	if splitter == nil {
-		splitter = unit.AutoSplitter{RepoDir: config.RepoDir, Analyzer: config.Analyzer, Before: config.Before}
-	}
-	var fragments []unit.Fragment
-	for _, d := range config.Changes {
-		fs, err := splitter.Split(d)
-		if err != nil {
-			return nil, fmt.Errorf("split units for %s: %w", d.Path(), err)
-		}
-		// Context lines may repeat, edits may not. Fragment granularity describes
-		// source ownership; it must not force another review loop for every node.
-		if err := validateEdits(d, fs); err != nil {
-			return nil, err
-		}
-		fragments = append(fragments, fs...)
-	}
-	groups := fileGroups(fragments)
-	maxUnits := len(groups)
-	if config.MaxUnits > 0 {
-		maxUnits = min(maxUnits, config.MaxUnits)
-	}
-	ctx := config.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	chain := GroupChain{Groupers: []Grouper{RelationGrouper{Disabled: !config.CallChain}, NamespaceGrouper{}}, OnStep: config.OnStep}
-	result, report, err := chain.Group(ctx, GroupingInput{Groups: groups, After: config.Analyzer, Before: config.Before, MaxUnits: maxUnits, DiffTokens: tokenLimit})
+	units, err := formRepositoryUnits(config, tokenLimit)
 	if err != nil {
 		return nil, err
 	}
-	if config.OnGrouped != nil {
-		config.OnGrouped(report)
-	}
-	units := materialize(result.Groups, result.Relations, tokenLimit)
 	for i := range units {
 		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders)
 		units[i].Clues = append(units[i].Clues, boundaryClues(units[i].Boundaries)...)
 	}
 	return units, nil
-}
-
-// validateEdits compares coordinate/content multisets rather than reported line
-// counts: synthetic inputs and metadata-only changes can have zero churn fields.
-func validateEdits(d change.Change, fs []unit.Fragment) error {
-	want := editCounts(d.Diff)
-	got := map[string]int{}
-	for _, f := range fs {
-		for key, n := range editCounts(f.Diff) {
-			got[key] += n
-		}
-	}
-	if len(want) != len(got) {
-		return fmt.Errorf("fragment coverage mismatch for %s", d.Path())
-	}
-	for k, n := range want {
-		if got[k] != n {
-			return fmt.Errorf("fragment coverage mismatch for %s at %s", d.Path(), k)
-		}
-	}
-	return nil
-}
-func editCounts(diff string) map[string]int {
-	out := map[string]int{}
-	for _, h := range change.ParseHunks(diff) {
-		old, new := h.OldStart, h.NewStart
-		for _, l := range h.Lines {
-			if l.Type == change.HunkAdded {
-				out[fmt.Sprintf("+%d:%s", new, l.Content)]++
-				new++
-			} else if l.Type == change.HunkDeleted {
-				out[fmt.Sprintf("-%d:%s", old, l.Content)]++
-				old++
-			} else {
-				old++
-				new++
-			}
-		}
-	}
-	return out
 }
 
 func findClues(

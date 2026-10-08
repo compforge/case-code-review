@@ -9,8 +9,9 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agentgo v0.0.2-0.20261007133541-fd7b5c6bd5c8
-	github.com/compforge/codegraph v0.10.6-0.20261005151343-4676567a57cf
+	github.com/compforge/codegraph v0.10.6-0.20261006084222-af86453255c6
 	github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea
+	github.com/compforge/repocli/toolkit/go v0.0.0-20261008061415-613adab3ee27
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -34,6 +35,7 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bits-and-blooms/bitset v1.25.0 // indirect
+	github.com/bluekeyes/go-gitdiff v0.8.1 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -45,6 +47,7 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/compforge/quality-harness/sdks/go v0.0.0-20260918040607-09e316e3171e // indirect
 	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

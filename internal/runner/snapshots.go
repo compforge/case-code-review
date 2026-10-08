@@ -37,6 +37,9 @@ func (a *Runner) captureGraphs(ctx context.Context) {
 		ref := a.changes[0].BeforeRef
 		a.beforeAnalyzer = language.NewSnapshotAnalyzer(a.args.RepoDir, ref, a.args.GitRunner)
 		a.beforeAnalyzer.SetDocuments(before)
+		if a.beforeSource != nil {
+			a.beforeAnalyzer.SetSnapshot(a.beforeSource)
+		}
 		a.observeGraphBuild(ctx, a.beforeAnalyzer, "before")
 		// Repository contracts follow their own snapshot. Current catalog entries
 		// must not masquerade as pre-change contracts with the same symbol name.
@@ -45,7 +48,11 @@ func (a *Runner) captureGraphs(ctx context.Context) {
 		if git == nil {
 			git = gitcmd.New(0)
 		}
-		if data, err := git.Output(ctx, a.args.RepoDir, "show", ref+":.casecodereview/spec.json"); err == nil {
+		if a.beforeSource != nil {
+			if data, err := a.beforeSource.Read(ctx, ".casecodereview/spec.json"); err == nil {
+				catalog.Local, _ = spec.Parse([]byte(data))
+			}
+		} else if data, err := git.Output(ctx, a.args.RepoDir, "show", ref+":.casecodereview/spec.json"); err == nil {
 			catalog.Local, _ = spec.Parse(data)
 		}
 		kinds := spec.KindGates{Spec: a.features.Enabled(feature.SpecCase), Rule: a.features.Enabled(feature.Rule), Link: a.features.Enabled(feature.Link), Doc: a.features.Enabled(feature.Doc)}
@@ -55,11 +62,7 @@ func (a *Runner) captureGraphs(ctx context.Context) {
 			a.costlyFinders = append(a.costlyFinders, wrap(sourcecontext.CallerFinder{RepoDir: a.args.RepoDir, Index: catalog.Local, Analyzer: a.beforeAnalyzer, Kinds: kinds}), wrap(sourcecontext.CalleeFinder{RepoDir: a.args.RepoDir, Index: catalog.Local, Analyzer: a.beforeAnalyzer, Kinds: kinds}))
 		}
 	}
-	if splitter, ok := a.splitter.(unit.AutoSplitter); ok {
-		splitter.Analyzer = a.analyzer
-		splitter.Before = a.beforeAnalyzer
-		a.splitter = splitter
-	}
+
 }
 
 func (a *Runner) configureFinders(catalog spec.Catalog) {

@@ -4,11 +4,11 @@
 package unit
 
 import (
+	"github.com/compforge/repocli/toolkit/go"
 	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
 // Scope is how a Unit's Fragments were grouped — set when the Unit is formed.
@@ -39,6 +39,8 @@ const (
 // It can cover declarations, bindings, or unbound residual edits. Symbols is
 // the after-side review identity projection; before-side finders use Before.
 type Fragment struct {
+	// Source is the repository-owned target. Anchors below are CCR context bindings.
+	Source        *repocli.Fragment `json:"-"`
 	Path          string
 	OldPath       string
 	Before, After []language.Anchor
@@ -55,7 +57,10 @@ type Fragment struct {
 // per Unit. It groups Fragments and carries the Clues found for that scope.
 // change.Change is upstream of this (the Splitter consumes it) and does not flow
 // past the split.
+type RepoUnit = repocli.Unit
+
 type Unit struct {
+	Repo RepoUnit
 	// ID is a stable identity for telemetry/span naming.
 	ID string
 	// Scope is how this Unit's Fragments were grouped.
@@ -143,24 +148,6 @@ func (u Unit) Diff() string {
 		b.WriteString("// " + f.Path + "\n" + f.Diff)
 	}
 	return b.String()
-}
-
-// Splitter attributes edits to source owners, retaining unbound residuals.
-type Splitter interface {
-	Split(d change.Change) ([]Fragment, error)
-}
-
-// FileSplitter is the degenerate Splitter: a single whole-file Fragment.
-type FileSplitter struct{}
-
-func (FileSplitter) Split(d change.Change) ([]Fragment, error) {
-	return []Fragment{{
-		Path:       d.Path(),
-		OldPath:    d.OldPath,
-		Diff:       d.Diff,
-		Insertions: d.Insertions,
-		Deletions:  d.Deletions,
-	}}, nil
 }
 
 // UnitOf wraps a single Fragment as its own review Unit: ScopeFunc when it covers

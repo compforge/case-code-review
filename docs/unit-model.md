@@ -2,17 +2,16 @@
 
 ## 1. 理念 / 概念
 
-**Unit 是一次行为审查的边界**。已改动目标之间的图关系决定哪些跨文件改动值得共同评审，
-其余改动按文件收拢，让理解同一项行为变化所需的改动共享一次上下文。
+CCR 的 Unit 是一次 run 的评审聚合根，围绕一组相关变更保存 Clue、实际读取的事实和各阶段结果。
+通用的 Change / Fragment / Unit 定义、关系强度及聚合规则由 repocli 维护，见
+[Fragment 与 Unit](https://github.com/compforge/repocli/blob/main/docs/units.md)。
 
-**让相关改动得到完整、有界的共同评审**，是选择 Unit 作为基本单元的目的。调用方与被调用方、
-公开绑定与使用方等协作改动可以共享一次理解。未参与跨文件分组的 import、声明和残余区段按文件
-合并，不各自启动评审。Fragment 保留源码归属和改动范围，每条目标编辑恰好归属一个 Unit。
-Unit 数量目标默认取进入 formation 的文件数，也可通过 `--max-units` 设为更小的目标。
-缺少共同 namespace 或受大小预算约束时报告超限；所有目标始终保留。
-
-CodeGraph 的 Node + Relation 提供源码归属和关系，Language 适配版本、身份与范围，Formation 决定
-哪些 Fragment 一起评审。图可以是局部的，静态分析也可能不完整；缺少关系表示未知，不妨碍保留目标改动。
+repocli 负责 `Diff → Fragment → Unit`，提供面向任意调用方的仓库事实与组合方法。
+CCR 先捕获 `Diff`，按评审范围筛选变更，再调用 `FormUnits`；图、契约和源码工具共用捕获版本。
+`RepoUnit` 是 `repocli.Unit` 的别名，评审 Unit 组合它与 Clue、预算和运行状态。
+CodeGraph 提供组装时使用的代码关系与 namespace 证据。
+CCR 负责选择评审目标、提供 token 预算、将仓库 Unit 适配为评审 Unit，并在范围确定后加载上下文。
+共享 import 可以出现在多个评审 Unit 中，目标编辑在唯一 Fragment 目录中校验覆盖。
 
 Project Knowledge 先用 Repository / Component / FileRole 解释文件的稳定项目职责，再把 source 交给
 Unit formation，把 manifest / lock 等项目事实投影为 Clue。Component 是静态项目边界，Unit 是一次
@@ -47,47 +46,18 @@ Unit 自身的项目先验。用户显式 include 仍可提升文件，未被 Co
 Project 分类完成后才进入 formation；Clue 在 Unit scope 最终确定后挂载，避免静态 Component 边界
 替代动态行为边界。Project 只提供事实，是否形成 Unit 仍由 formation 决定。
 
-### 2.2 从 Fragment 形成 Unit
+### 2.2 接入仓库 Unit
 
-1. Git 固定比较基线和目标版本，并捕获改动文件内容。增加行在新侧图中定位，删除行在旧侧图中定位；
-   重命名保留两侧路径。旧侧图按需构建，声明的文档与标记范围沿图中的归属一并定位。
-2. Formation 按图中最内层源码归属切分编辑块。连续替换保留为同一个补丁，不用同名推断跨版本身份；
-   无法定位的编辑保留为 residual。拆分前后校验编辑的坐标与内容，确保每条编辑恰好出现一次。
-3. 同一文件的 Fragment 先组成一个初始组。`GroupChain` 运行有序的 `Grouper` 列表，校验每步都完整、
-   唯一地保留目标，并在每步后检查数量；首个关系策略始终执行，后续策略只在数量超限时执行。
-4. `RelationGrouper` 以 `Exact/Scoped` 的调用、引用、继承、实现、别名和导出关系重组已改动目标，
-   优先选择触及改动行的关系。它在大小预算内形成跨文件组，其余 Fragment 按文件收拢。
-   共同依赖同一个未改动工具函数，不构成合并依据；关闭关系分组时保留初始文件组。
-5. 数量仍超限时，`NamespaceGrouper` 合并拥有共同语义容器的完整组，优先较近的容器，再选较小的 diff。
-   达到数量目标即停止。跨 namespace 的关系组必须有共同祖先才能参与归拢，不能按首个文件归类。
-6. 策略执行后仍超限，则报告 `limit_exceeded`；不丢弃目标或推测不存在的组织关系。
-   分组完成后才创建最终 Unit、附加图关系证据和上下文。
+Formation 调用 repocli 的拆分与组装能力，复用当前 run 的前后版本图。库定义 Fragment 类型和
+合并策略；Language 为这些源码范围关联 CCR 的图身份，供契约与邻域查询使用。
 
-例如 `file1.func1` 调用 `file2.func2`，且两者都发生改动：
+CCR 提供 diff token 计量和合并预算，保留分阶段数量、namespace 证明、预算边界与解析缺口。
+`--max-units` 是数量软目标，未指定时沿用进入 formation 的文件数；无法满足时明确报告超限，所有目标继续保留。
+Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态仍由 CCR 管理。
 
-- 若这次只修改两者，就形成一个 `func1 + func2` Unit。
-- 若 `file1` 还修改了无关的 `func3`，则形成 `func1 + func2` 和 `func3` 两个 Unit。
-- 若上述两个 Unit 仍超过显式设置的数量目标，则继续尝试 namespace 归拢；已形成的关系组保持完整。
-
-Namespace 通过 CodeGraph 的 `CommonNamespaces` 查询取得，CCR 不自行遍历或重建层级。
-身份包含 snapshot 与 Node ID，原生结果提供距离和 Node + Relation 证明路径。
-Document 的 `in_namespace` 与组织节点的 `contains` 由语言适配层生成：Go 同包文件可以归拢，
-不同 package 可在已知共同 module 下归拢，独立的嵌套 Go module 不因目录嵌套而成为父子；
-Python 在图中存在包与子模块关系时向共同包归拢；JS/TS 文件 Module 不把同目录文件自动合并。
-没有事实的目录不猜成 Package。删除目标使用旧侧图；未绑定目标可查询 Document 的组织归属。
-查询取消或超出预算返回错误，不能伪装为“没有共同 namespace”。
-
-关系和 namespace 合并共享文件数、改动行数、diff token 预算。初始文件组或文件剩余改动可超过
-合并阈值，因为按大小切补丁会增加评审循环。大 Unit 保留完整目标并进入评审，由 Harness 的上下文、
-时间和 token 预算控制执行；无法完成时报告 incomplete。`budget_exceeded` 只描述 diff token
-超过合并阈值，不表示该 Unit 已被跳过。最终分属不同 Unit 的源码关系保留为跨 Unit 线索。
-
-`Grouper` 只拥有归拢规则；`GroupChain` 拥有顺序、阈值检查、覆盖校验和阶段记录。
-新增策略实现接口并加入有序列表即可，无需增加插件注册框架。每步的前后数量、namespace 合并依据
-和预算／归属缺口进入 Session；耗时沿用 Session timeline 的子阶段，不重复记另一份计时。
-
-图决定“哪些关系有依据”，CCR 决定“这次哪些目标一起审”。分组依据和预算边界随 Unit 保存，
-`--dry-run --format json` 与 Session 可以解释每个目标的归属、合并关系、切断关系和材料缺口。
+最终范围确定后才创建评审 Unit 并运行 ClueFinder。大小超限不等于跳过评审；Harness 的上下文、
+时间和 token 预算控制执行，无法完成时报告 incomplete。分属不同 Unit 的图关系可投影为有界的
+跨 Unit 线索，支持模型按需补证。
 
 ### 2.3 为 Unit 组织上下文
 
@@ -139,7 +109,7 @@ Unit
 ### 3.1 稳定身份连接 diff、源码和契约
 
 路径和短函数名不足以跨文件、重命名和依赖建立关系。语言层提供稳定 `symbol-id`；作者声明的
-契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 身份由完整路径、两侧图身份和补丁内容派生，成员顺序不改变 Unit 身份。
+契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 的目标身份复用 repocli 的版本、源码范围与补丁身份，成员顺序不改变 Unit 身份。
 Clue 和历史反馈使用各自支持的身份连接，Forge 只剩文件锚点时
 才退化到 path。
 
@@ -157,7 +127,7 @@ CodeGraph 负责产出 definition、reference、call edge 等源码事实；Unit
 - 同一版本的 caller/callee、owner、used、usage 和声明文档共享图快照；新旧侧分别解释。源码项边与声明依赖边按用途选择，不重复计数。
 - 无法判定的边保持 unknown，不升级成“确定调用”；contract catalog 提供作者的含义，不能通过同名命中证明源码绑定。
 
-图既不是独立的最终产品，也不能直接控制 review loop。它是 Unit formation 和 Clue 的证据来源，
+图是 Unit formation 和 Clue 的证据来源，
 其错误成本取决于消费位置：展示错一个候选影响有限，错误合并 Unit 则会改变整个评审边界。
 
 ### 3.3 Unit 在一次 run 内是追加式聚合根
@@ -189,6 +159,8 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 - partial Unit 是否被单独统计，而非混入 clean。
 
 ## References
+
+- [repocli Fragment 与 Unit](https://github.com/compforge/repocli/blob/main/docs/units.md) — 通用变更模型、关系优先级与分阶段聚合
 
 - [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
 - [`project.md`](project.md) — Repository、Component、FileRole 与项目事实投影

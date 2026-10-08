@@ -431,13 +431,13 @@ func TestProviderCapturesBeforeAfterMaterial(t *testing.T) {
 		t.Fatal(diffs)
 	}
 	d := diffs[0]
-	if !d.OldContentKnown || !strings.Contains(d.OldFileContent, "line2") || !strings.Contains(d.NewFileContent, "CHANGED") || len(d.BeforeRef) != 40 || d.AfterRef != "" {
+	if !d.OldContentKnown || !strings.Contains(d.OldFileContent, "line2") || !strings.Contains(d.NewFileContent, "CHANGED") || d.BeforeRef != provider.Diff.BeforeSnapshot || d.AfterRef != provider.Diff.AfterSnapshot {
 		t.Fatalf("wrong diff materials: %+v", d)
 	}
 	// The base belongs to this comparison, even after the branch advances.
 	runGitTest(t, repo, "add", "sample.txt")
 	runGitTest(t, repo, "commit", "-qm", "next")
-	if provider.BaseRef(context.Background()) != d.BeforeRef {
+	if provider.BaseRef(context.Background()) != provider.Diff.Base {
 		t.Fatal("base moved with HEAD")
 	}
 }

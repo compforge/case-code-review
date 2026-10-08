@@ -1,12 +1,12 @@
 package source
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
 	"strings"
 
+	"github.com/compforge/repocli/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/pathutil"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
@@ -38,6 +38,7 @@ type Provider struct {
 	commit string // single commit hash/ref
 
 	Before, After *sourceview.Snapshot
+	Diff          repocli.DiffReport
 
 	base      string
 	baseKnown bool
@@ -142,104 +143,24 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 			p.to = strings.TrimSpace(sha)
 		}
 	}
-	p.BaseRef(ctx)
-	var combined strings.Builder
-
-	switch p.mode {
-	case ModeRange:
-		base := p.MergeBase(ctx)
-		if base == "" {
-			return nil, fmt.Errorf("cannot find merge-base between %s and %s", p.from, p.to)
-		}
-		out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", base, p.to, "--")
-		if err != nil {
-			return nil, fmt.Errorf("git diff failed: %w", err)
-		}
-		combined.WriteString(out)
-
-	case ModeCommit:
-		base := p.BaseRef(ctx)
-		if base == "" {
-			// A root commit has no first parent, so git show supplies its
-			// empty-tree diff. Invalid refs also fail here with a useful error.
-			out, err := p.runGit(ctx, "show", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", p.commit)
-			if err != nil {
-				return nil, fmt.Errorf("git show failed: %w", err)
-			}
-			combined.WriteString(out)
-			break
-		}
-
-		// Always compare against the first parent. Besides making ordinary
-		// commits explicit, this reviews what a merge added to its target
-		// branch, including any conflict resolution recorded in the merge.
-		out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--end-of-options", base, p.commit, "--")
-		if err != nil {
-			return nil, fmt.Errorf("git diff failed: %w", err)
-		}
-		combined.WriteString(out)
-
-	case ModeWorkspace:
-		tracked, err := p.workspaceTrackedDiff(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("workspace tracked diff failed: %w", err)
-		}
-		combined.WriteString(tracked)
-
-		untracked, err := p.untrackedFileDiffs(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("untracked file diff failed: %w", err)
-		}
-		for _, ud := range untracked {
-			combined.WriteString(ud)
-			combined.WriteString("\n\n")
-		}
+	base := p.BaseRef(ctx)
+	if p.mode == ModeRange && base == "" {
+		return nil, fmt.Errorf("cannot find merge-base between %s and %s", p.from, p.to)
 	}
-
-	var ref string
-	switch p.mode {
-	case ModeRange:
-		ref = p.to
-	case ModeCommit:
-		ref = p.commit
+	target := ""
+	if p.mode == ModeRange {
+		target = p.to
+	} else if p.mode == ModeCommit {
+		target = p.commit
 	}
-
-	diffs, err := ParseDiffText(ctx, combined.String(), p.repoDir, ref, p.runner)
+	captured, err := repocli.Diff(ctx, repocli.DiffRequest{Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target})
 	if err != nil {
 		return nil, err
 	}
-	base := p.BaseRef(ctx)
-	for i := range diffs {
-		d := &diffs[i]
-		d.BeforeRef, d.AfterRef = base, ref
-		if d.IsNew || base == "" {
-			d.OldContentKnown = true
-			continue
-		}
-		content, e := p.runGit(ctx, "show", base+":"+d.OldPath)
-		if e == nil {
-			d.OldFileContent = content
-			d.OldContentKnown = true
-		}
-	}
-	p.Before = sourceview.New(p.repoDir, base, base, nil, p.runner)
-	overlay := map[string]sourceview.File{}
-	if p.mode == ModeWorkspace {
-		for _, d := range diffs {
-			if d.IsDeleted || d.IsRenamed {
-				overlay[d.OldPath] = sourceview.File{Deleted: true}
-			}
-			if !d.IsDeleted {
-				overlay[d.NewPath] = sourceview.File{Content: d.NewFileContent, Unavailable: d.NewContentMissing}
-			}
-		}
-	}
-	tree, identity := ref, ref
-	if p.mode == ModeWorkspace {
-		tree, identity = base, "review-worktree"
-	}
-	p.After = sourceview.New(p.repoDir, tree, identity, overlay, p.runner)
-	return p.filterDiffs(diffs), nil
+	p.Diff = captured
+	p.Before = sourceview.NewCaptured(captured, true)
+	p.After = sourceview.NewCaptured(captured, false)
+	return p.filterDiffs(captured.Changes), nil
 }
 
 // loadGitignorePatterns reads and parses .gitignore patterns from the repo root.
@@ -277,74 +198,6 @@ func (p *Provider) computeMergeBase(ctx context.Context, from, to string) string
 		return ""
 	}
 	return strings.TrimSpace(out)
-}
-
-func (p *Provider) workspaceTrackedDiff(ctx context.Context) (string, error) {
-	out, err := p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", p.BaseRef(ctx), "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--")
-	if err == nil && out != "" {
-		return out, nil
-	}
-	if ctx.Err() != nil {
-		return "", ctx.Err()
-	}
-	return p.runGit(ctx, "diff", "--no-ext-diff", "--no-textconv", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "--staged", "--no-color", "-U"+fmt.Sprint(DiffContextLines), "--")
-}
-
-func (p *Provider) untrackedFileDiffs(ctx context.Context) ([]string, error) {
-	files, err := p.untrackedFilesList(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var results []string
-	for _, f := range files {
-		content, rerr := readWorkspaceFileForDiff(p.repoDir, f)
-		if rerr != nil {
-			continue
-		}
-
-		lineCount := bytes.Count(content, []byte{'\n'})
-		if len(content) > 0 && content[len(content)-1] != '\n' {
-			lineCount++
-		}
-
-		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("diff --git a/%s b/%s\n", f, f))
-		sb.WriteString("--- /dev/null\n")
-		sb.WriteString(fmt.Sprintf("+++ b/%s\n", f))
-		sb.WriteString(fmt.Sprintf("@@ -0,0 +1,%d @@\n", lineCount))
-
-		lines := bytes.Split(content, []byte{'\n'})
-		if len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
-			lines = lines[:len(lines)-1]
-		}
-		for _, line := range lines {
-			sb.WriteByte('+')
-			sb.Write(line)
-			sb.WriteByte('\n')
-		}
-		results = append(results, sb.String())
-	}
-	return results, nil
-}
-
-func (p *Provider) untrackedFilesList(ctx context.Context) ([]string, error) {
-	out, err := p.runGit(ctx, "ls-files", "--others", "--exclude-standard")
-	if err != nil || out == "" {
-		return nil, nil
-	}
-	patterns := p.loadGitignorePatterns()
-	var files []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !p.isPathExcluded(line, patterns) {
-			files = append(files, line)
-		}
-	}
-	return files, nil
 }
 
 func (p *Provider) runGit(ctx context.Context, args ...string) (string, error) {
