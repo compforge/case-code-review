@@ -105,9 +105,9 @@ type Args struct {
 	// MaxUnits is a grouping threshold; the effective target is at least the selected-file count.
 	MaxUnits int
 
-	// InvestigationTimeout limits Unit exploration, including planning and briefing.
-	// Zero disables the time limit; wrap-up has no separate wall-clock deadline.
-	InvestigationTimeout time.Duration
+	// ConcurrentTaskTimeout limits Unit exploration in minutes, including planning
+	// and briefing. Zero disables the limit; wrap-up has no time limit.
+	ConcurrentTaskTimeout int
 
 	// Findings stores only post-Trial findings. Investigative hypotheses use a
 	// separate Runner-owned collector and cannot leak through this boundary.
@@ -233,10 +233,9 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"group_diff_tokens":        formation.DefaultGroupDiffTokens,
-				"max_tokens_budget":        args.MaxTokensBudget,
-				"max_units":                args.MaxUnits,
-				"investigation_timeout_ms": args.InvestigationTimeout.Milliseconds(),
+				"group_diff_tokens": formation.DefaultGroupDiffTokens,
+				"max_tokens_budget": args.MaxTokensBudget,
+				"max_units":         args.MaxUnits,
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -1103,8 +1102,8 @@ func relationClueLabel(c unit.Clue) string {
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
 func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) {
 	var wrapUpAt time.Time
-	if a.args.InvestigationTimeout > 0 {
-		wrapUpAt = time.Now().Add(a.args.InvestigationTimeout)
+	if a.args.ConcurrentTaskTimeout > 0 {
+		wrapUpAt = time.Now().Add(time.Duration(a.args.ConcurrentTaskTimeout) * time.Minute)
 	}
 	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {

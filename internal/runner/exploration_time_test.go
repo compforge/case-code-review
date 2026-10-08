@@ -38,7 +38,7 @@ func TestExplorationTimeIncludesPlanAndLeavesWrapUpAlive(t *testing.T) {
 		defer history.Finalize()
 		client := &explorationPlanClient{t: t}
 		conversation := template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}
-		a := New(Args{RepoDir: repo, Session: history, LLMClient: client, MaxConcurrency: 1, InvestigationTimeout: 5 * time.Minute, Template: template.Template{MainTask: conversation, PlanTask: &conversation, MaxTokens: 10000, MaxToolRequestTimes: 5}})
+		a := New(Args{RepoDir: repo, Session: history, LLMClient: client, MaxConcurrency: 1, ConcurrentTaskTimeout: 5, Template: template.Template{MainTask: conversation, PlanTask: &conversation, MaxTokens: 10000, MaxToolRequestTimes: 5}})
 		a.changes = []change.Change{goDiff("p.go", 1)}
 		if _, err := a.dispatchUnits(context.Background()); err != nil {
 			t.Fatal(err)
