@@ -130,6 +130,22 @@ Session 的工具记录保留 provider 返回值，模型请求记录反映实�
 只有正文逐行完整保留的 symbol range 才能参与后续读取去重；压缩到摘要后共享正文与 range receipt
 一并移除。旧 Session 中没有共享源码区的批次仍可解码。
 
+源码材料通过 AgentGo 的 ArtifactManager 与消息历史并列保存。Harness 从初始消息生成
+`InitialState.Artifacts`，工具 Middleware 在最终结果入历史前登记新增材料，Turn Hook 登记追加输入。
+`SourceArtifact` 保存完整源码行，其身份包含 snapshot/ref、path 与正文；重叠范围和不同内容各自保留，
+并行工具无需覆盖共享的文件记录。材料字段支持 codec；Session 仍记录实际 prompt 与工具事实。
+
+`TransformContext` 向投影提供本次 Loop 的材料能力。登记表示拥有材料，可见覆盖仍需在每次请求中
+从实际正文重新计算；压缩后的引用不能仅凭库存宣称源码已展示。投影保留 Raw、错误结果和工具配对。
+ExecutionResult 内部携带材料值用于续跑，新 Loop 创建独立 Manager，不向 Runner 暴露 Manager。
+
+Review 1 的 ClueDoc 由 Runner 拆为独立 `ClueMessage` 消息，不再把正文嵌入固定 Instruction。
+`ClueMessage` 持有原始 Clue（包括 `ClueKind`、来源与关系），由 Runner 决定各类型的保留策略。
+Harness 通过 `MaterialMessage` 接口登记和投影材料，不依赖 Unit 类型。当前仅 doc 类型启用去重和引用压缩。
+`ClueArtifact` 按 kind、snapshot 与完整正文标识可复用内容；每条消息仍保留各自来源与关系，
+相同正文在一次请求中展开一次，不跨 current/baseline 混用。文档可独立压缩为来源引用；
+早先正文被压缩或移除后，后续请求重新展开仍保留的完整文档消息。
+
 ### 3.2 上下文生命周期统一在 ContextManager
 
 上下文不是只增不减的聊天数组。Harness 统一处理：
