@@ -124,6 +124,8 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 }
 
 // Empty counts also qualify: review eligibility uses import count == total count.
+// WARNING: this is a scope policy, not proof of unchanged behavior. Side-effect
+// imports, initialization registration and dependency replacements can be skipped.
 func onlyImportElements(counts repocli.ElementCounts) bool {
 	imports, total := 0, 0
 	for _, side := range []map[repocli.ElementKind]int{counts.Before, counts.After} {

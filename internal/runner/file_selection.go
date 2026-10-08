@@ -31,9 +31,10 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 	a.contextFileCount = 0
 
 	reader := &tool.FileReader{
-		RepoDir: a.args.RepoDir,
-		Mode:    tool.ParseReviewMode(a.args.From, a.args.To, a.args.Commit),
-		Runner:  a.args.GitRunner,
+		Snapshot: a.afterSource,
+		RepoDir:  a.args.RepoDir,
+		Mode:     tool.ParseReviewMode(a.args.From, a.args.To, a.args.Commit),
+		Runner:   a.args.GitRunner,
 	}
 	reader.Ref, _ = reader.Mode.RefValue(a.args.To, a.args.Commit)
 	repository := project.NewRepository(a.args.RepoDir, func(path string) bool {
@@ -117,7 +118,7 @@ func (a *Runner) selectFile(d change.Change, repository *project.Repository) fil
 	if selection.HasComponent && (selection.Roles.Has(project.RoleManifest) || selection.Roles.Has(project.RoleLock)) {
 		// Project context may bypass the global extension allowlist (.lock,
 		// .mod, .sum), but never the default path exclusions.
-		if allowedext.IsExcluded(path, d.Tags) {
+		if allowedext.IsExcluded(d.Tags) {
 			selection.Reason = ExcludeDefaultPath
 			return selection
 		}

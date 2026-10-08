@@ -365,10 +365,13 @@ func outputDryRunText(units []runner.UnitContext) {
 	}
 	for _, u := range units {
 		fmt.Printf("\n========== %s ==========\n", sanitizeTerminal(u.ID))
-		dryRunSection("Governing Spec/Case", u.SpecCases)
-		dryRunSection("Review Rules", u.Rules)
-		dryRunSection("See Also", u.SeeAlso)
-		dryRunSection("Prior Review", u.Prior)
+		fmt.Printf("Materials: %d; estimated message tokens: %d; compaction required: %t\n", len(u.Artifacts), u.EstimatedMessageTokens, u.CompactionRequired)
+		if len(u.Unexecuted) > 0 {
+			fmt.Printf("Not executed: %v\n", u.Unexecuted)
+		}
+		for _, message := range u.ProjectedMessages {
+			dryRunSection(string(message.Role), message.TextContent())
+		}
 	}
 }
 

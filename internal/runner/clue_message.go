@@ -4,21 +4,22 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/unit"
 	"strings"
 	"time"
 
 	"github.com/compforge/agentgo"
+
+	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 // ClueArtifact identifies reusable prose. References and relation labels
 // belong to each message: identical prose can support several source identities
-// without repeating its body. Pre-change and current observations stay separate.
+// without repeating its body. Snapshot provenance belongs to each occurrence,
+// not the reusable prose; different bodies always retain different identities.
 type ClueArtifact struct {
 	ClueKind unit.ClueKind `codec:"clue_kind"`
-	Snapshot string        `codec:"snapshot,omitempty"`
 	Text     string        `codec:"text"`
 }
 
@@ -39,16 +40,22 @@ type ClueMessage struct {
 }
 
 func NewClueMessage(clue unit.Clue) *ClueMessage {
-	return &ClueMessage{Clue: clue, timestamp: time.Now(), label: relationClueLabel(clue)}
+	return &ClueMessage{Clue: clue, timestamp: time.Now(), label: string(clue.Relation)}
 }
 func (d *ClueMessage) GetTimestamp() time.Time { return d.timestamp }
 func (d *ClueMessage) MaterialArtifact() agentgo.Artifact {
 	if d.Text == "" {
 		return nil
 	}
-	return ClueArtifact{ClueKind: d.Kind, Snapshot: d.Snapshot, Text: d.Text}
+	return ClueArtifact{ClueKind: d.Kind, Text: d.Text}
 }
-func (d *ClueMessage) MaterialReference() string { return d.Ref }
+func (d *ClueMessage) MaterialReference() string {
+	ref := d.Ref
+	if d.Snapshot != "" {
+		ref += " (before " + d.Snapshot + ")"
+	}
+	return ref
+}
 func (d *ClueMessage) MaterialVisible() bool {
 	// Only docstrings currently have a body-reuse policy. Other clues retain
 	// their full contract, rule or finding until a domain policy is defined.
@@ -63,10 +70,7 @@ func (d *ClueMessage) WithMaterialReference(ref string) msg.MaterialMessage {
 var _ msg.MaterialMessage = (*ClueMessage)(nil)
 
 func (d *ClueMessage) render() llm.Message {
-	header := "Clue (" + string(d.Kind) + "): " + d.Ref
-	if d.Snapshot != "" {
-		header += " (snapshot " + d.Snapshot + ")"
-	}
+	header := "Clue (" + string(d.Kind) + "): " + d.MaterialReference()
 	if d.label != "" {
 		header += " — " + strings.TrimSpace(d.label)
 	}
@@ -75,7 +79,7 @@ func (d *ClueMessage) render() llm.Message {
 		body = "[Compacted to a reference; retrieve the source document if needed.]"
 	}
 	if d.duplicateOf != "" {
-		body = "[Same document content as " + d.duplicateOf + ", shown earlier in this request.]"
+		body = "[Same body: " + d.duplicateOf + "]"
 	}
 	return llm.NewTextMessage("user", header+"\n"+body)
 }
@@ -116,5 +120,5 @@ func (d *ClueMessage) ContextItems() []agentgo.ContextItem {
 	if d.reference || d.duplicateOf != "" {
 		representation = "reference"
 	}
-	return []agentgo.ContextItem{{ContextKey: agentgo.ContextKey{Kind: "clue", Identity: (ClueArtifact{ClueKind: d.Kind, Snapshot: d.Snapshot, Text: d.Text}).ID()}, Representation: representation, Ref: d.Ref, Reason: d.label}}
+	return []agentgo.ContextItem{{ContextKey: agentgo.ContextKey{Kind: "clue", Identity: (ClueArtifact{ClueKind: d.Kind, Text: d.Text}).ID()}, Representation: representation, Ref: d.Ref, Reason: d.label}}
 }

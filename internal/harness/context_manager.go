@@ -76,7 +76,6 @@ func newContextManager(spec ExecutionSpec, model agentgo.ChatModel) *contextMana
 func (m *contextManager) Transform(ctx context.Context, input agentgo.TransformContext) ([]agentgo.AgentMessage, error) {
 	messages := input.Messages
 	view, _, changed := m.rewrite(input)
-	view = appendVisibleFileInventory(view)
 	m.remember(messages, view, m.estimateUsage(view), "transform", changed)
 	return view, nil
 }
@@ -189,24 +188,27 @@ func (m *contextManager) ContextWindow() int { return m.window }
 func (m *contextManager) rewrite(
 	input agentgo.TransformContext,
 ) ([]agentgo.AgentMessage, *agentgo.ContextUsage, bool) {
-	messages := input.Messages
-	view, changed := normalizeContextMessages(messages)
-	limited := msg.LimitToolMessages(view)
-	changed = changed || !reflect.DeepEqual(view, limited)
-	view = limited
-	materials := msg.TransformMaterials(agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts})
-	changed = changed || !reflect.DeepEqual(view, materials)
-	view = materials
-	if m.dedupEnabled {
-		next := msg.TransformSource(agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts})
-		changed = changed || !reflect.DeepEqual(view, next)
-		view = next
+	artifacts := msg.Artifacts(input.Messages)
+	if input.Artifacts != nil {
+		artifacts = input.Artifacts.ListArtifacts()
 	}
+	view := ProjectContext(input.Messages, artifacts, m.dedupEnabled)
+	return view, m.estimateUsage(view), !reflect.DeepEqual(input.Messages, view)
+}
 
-	if changed {
+// ProjectContext is the request projection shared by execution and no-model preview.
+// Artifact values are inputs, not a second manager. Visibility is rebuilt on every call.
+func ProjectContext(messages []agentgo.AgentMessage, artifacts []agentgo.Artifact, dedup bool) []agentgo.AgentMessage {
+	view, _ := normalizeContextMessages(messages)
+	view = msg.LimitToolMessages(view)
+	view = msg.ProjectMaterials(view, artifacts)
+	if dedup {
+		view = msg.ProjectSource(view, artifacts)
+	}
+	if !reflect.DeepEqual(messages, view) {
 		view = agentcontext.InvalidateUsage(view)
 	}
-	return view, m.estimateUsage(view), changed
+	return appendVisibleFileInventory(view)
 }
 
 func (m *contextManager) estimateUsage(messages []agentgo.AgentMessage) *agentgo.ContextUsage {
@@ -415,7 +417,16 @@ func normalizeContextMessages(messages []agentgo.AgentMessage) ([]agentgo.AgentM
 	return out, changed
 }
 
+type visibleFileInventory struct{ agentgo.Message }
+
 func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
+	clean := make([]agentgo.AgentMessage, 0, len(messages))
+	for _, message := range messages {
+		if _, derived := message.(visibleFileInventory); !derived {
+			clean = append(clean, message)
+		}
+	}
+	messages = clean
 	files := visibleFilesIn(messages)
 	if len(files) == 0 {
 		return messages
@@ -431,7 +442,7 @@ func appendVisibleFileInventory(messages []agentgo.AgentMessage) []agentgo.Agent
 		}
 		b.WriteByte('\n')
 	}
-	return append(messages, msg.Text("user", strings.TrimRight(b.String(), "\n")))
+	return append(messages, visibleFileInventory{Message: agentgo.UserMsg(strings.TrimRight(b.String(), "\n"))})
 }
 
 type toolInvocation struct {

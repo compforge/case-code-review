@@ -130,7 +130,10 @@ Session 的工具记录保留 provider 返回值，模型请求记录反映实�
 只有正文逐行完整保留的 symbol range 才能参与后续读取去重；压缩到摘要后共享正文与 range receipt
 一并移除。旧 Session 中没有共享源码区的批次仍可解码。
 
-源码材料通过 AgentGo 的 ArtifactManager 与消息历史并列保存。Harness 从初始消息生成
+Artifact 是调用者在 Loop 中维护、利用的具名数据对象。其内容、可变性、消息关联和用途由调用者定义，
+可以用于 prompt 投影，也可以用于工具、流程或结果处理。AgentGo 管理容器及 ID 唯一性。
+CCR 当前用它登记源码、diff 和 Clue 正文；这些不可变、内容寻址的类型是 CCR 的具体策略。
+Harness 从初始消息生成
 `InitialState.Artifacts`，工具 Middleware 在最终结果入历史前登记新增材料，Turn Hook 登记追加输入。
 `SourceArtifact` 保存完整源码行，其身份包含 snapshot/ref、path 与正文；重叠范围和不同内容各自保留，
 并行工具无需覆盖共享的文件记录。材料字段支持 codec；Session 仍记录实际 prompt 与工具事实。
@@ -142,8 +145,8 @@ ExecutionResult 内部携带材料值用于续跑，新 Loop 创建独立 Manage
 Review 1 的 ClueDoc 由 Runner 拆为独立 `ClueMessage` 消息，不再把正文嵌入固定 Instruction。
 `ClueMessage` 持有原始 Clue（包括 `ClueKind`、来源与关系），由 Runner 决定各类型的保留策略。
 Harness 通过 `MaterialMessage` 接口登记和投影材料，不依赖 Unit 类型。当前仅 doc 类型启用去重和引用压缩。
-`ClueArtifact` 按 kind、snapshot 与完整正文标识可复用内容；每条消息仍保留各自来源与关系，
-相同正文在一次请求中展开一次，不跨 current/baseline 混用。文档可独立压缩为来源引用；
+`ClueArtifact` 按 kind 与完整正文标识可复用内容；Snapshot、Ref、Relation 属于各条 ClueMessage。
+完全相同的 before/after 正文可以复用一次展开，版本归属仍在消息上分别表达。文档可独立压缩为来源引用；
 早先正文被压缩或移除后，后续请求重新展开仍保留的完整文档消息。
 
 ### 3.2 上下文生命周期统一在 ContextManager
@@ -157,6 +160,7 @@ Harness 通过 `MaterialMessage` 接口登记和投影材料，不依赖 Unit �
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
+ContextManager.Transform 与 dry-run 调用同一个纯投影函数，输入消息与 Artifact 值，输出请求视图。
 ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图，批次与历史使用同一套
 覆盖判断，raw 不变。临时引用不会提交到历史；Compact/RecoverOverflow 只提交独立的压缩结果，
 再重新 Transform，保证被引用正文被压缩后可以恢复展示。预算趋紧时调用 `compactor.ZoneCompactor`。接入层
@@ -164,7 +168,7 @@ ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图�
 
 分区按消息职责和完整轮次计算，不在消息上维护可变 Zone：
 
-- Fixed 保留 system 指令及任务消息提供的必要投影，源码使用独立消息承载。Hypothesis 的固定投影
+- Fixed 保留 system 指令、当前任务消息的必要投影和该任务声明的必要材料（如目标 diff），源码使用独立消息承载。Hypothesis 的固定投影
   保留待判断的主张和约束，原始内容仍可通过 Raw 追溯。
 - Active 保留最近的完整 assistant/tool 轮次，至少保护最新轮次，再按 token 预算向前扩展。
   首次调用前的独立源码不属于工具轮次，允许选择 outline/reference 表示。

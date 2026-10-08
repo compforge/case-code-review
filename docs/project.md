@@ -70,11 +70,13 @@ Change ─▶ Component / FileRole
   Review，应由 formation / review policy 决定；
 - 用户显式 include 可以提升文件为 target；未被 Component 认领的文件继续使用全局扩展名与路径规则。
 
-路径类别由 CodeGraph 提供、repocli 在捕获 Change 时保存为 Tags；CCR 默认不为 generated、
-test_fixture、dependency、build_output、cache、minified 材料启动独立评审。CCR 将选择策略通过
+CCR 组合 CodeGraph 内置规则与自身的 `TagRule` 扩展，通过 `DiffRequest.TagRules` 交给 repocli；
+repocli 在捕获 Change 时保存 Tags。CodeGraph 提供匹配机制，CCR 维护分类约定并选择评审范围。
+CCR 默认不为 generated、test_fixture、dependency、build_output、cache、minified、test、review_data、tooling
+材料启动独立评审。CCR 将选择策略通过
 `repocli.UnitOptions.Exclude` 传入，repocli 在 Change 进入 Fragment / Unit 之前执行排除；
 原始 Diff 保留用于上下文，排除文件不生成 Fragment 或 Unit。Scan 使用同一套
-CodeGraph 路径规则和 CCR 排除策略。manifest 标签本身不排除文件，普通 manifest/lock 仍按 Component
+TagMatcher 分类规则和 CCR 排除策略。manifest 标签本身不排除文件，普通 manifest/lock 仍按 Component
 提供上下文；位于依赖或构建产物目录中的 manifest/lock 则受对应类别的排除策略约束。
 
 在已捕获的文件中，用户显式 exclude 优先于 include；include 可覆盖默认类别和路径排除，二进制文件始终跳过。
@@ -85,10 +87,9 @@ CodeGraph 路径规则和 CCR 排除策略。manifest 标签本身不排除文�
 这层分离使 FileRole 可以被 Review 1、Review 2 或未来其它 Reviewer 复用，而不把当前 admission
 策略固化进项目知识。
 
-全局路径规则默认排除常见生成代码、第三方依赖、缓存和构建产物；这属于 CCR 的评审范围策略，
-repocli 仍保留完整变更。Preview 与实际评审共用文件选择结果，被排除的目标 diff 仍可通过
-`read_diffs` 作为相关上下文读取。项目 manifest / lock 继续按 Component 提供上下文，依赖或
-构建目录内的同类文件则默认排除。
+捕获后的选择只消费已有 Tags。Scan 在路径入口使用同一规则集分类；用户显式 include/exclude 保留
+现有 glob 接口，默认分类使用正则规则，大小写约定由每条规则明确表达。Project 的 Component 查找和
+角色补充分析与 Graph、源码工具、仓库契约共用捕获快照；评审中后续工作区编辑或 HEAD 移动不改变它们。
 
 用户 exclude 优先于 include；显式 include 可以覆盖默认路径排除，二进制仍不进入评审。
 普通 HTML 继续作为候选，trace 报告等项目特有产物由项目 `rule.json` 的 exclude 声明，

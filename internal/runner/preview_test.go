@@ -3,6 +3,7 @@ package runner
 import (
 	"testing"
 
+	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -41,6 +42,7 @@ func TestWhyExcluded_BinaryFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -86,6 +88,7 @@ func TestWhyExcluded_UserExcludePattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -148,6 +151,7 @@ func TestWhyExcluded_ExtensionFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -196,6 +200,7 @@ func TestWhyExcluded_DefaultPathFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -288,6 +293,7 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -329,6 +335,7 @@ func TestWhyExcluded_IncludeBypassesDefaultPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -377,6 +384,7 @@ func TestWhyExcluded_IncludeAndExcludeInteraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -445,6 +453,7 @@ func TestShouldReview(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
 			got := agent.shouldReview(tt.diff)
 			if got != tt.expected {
 				t.Errorf("shouldReview() = %v, want %v", got, tt.expected)

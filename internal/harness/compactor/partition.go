@@ -46,6 +46,8 @@ func partition(messages []agentgo.AgentMessage, recentTokens int) []segment {
 			kind = active
 		} else if message.GetRole() == agentgo.RoleSystem {
 			kind = fixed
+		} else if material, ok := message.(interface{ RequiredMaterial() bool }); ok && material.RequiredMaterial() && i > taskAnchor {
+			kind = fixed
 		} else if keeper, ok := message.(FixedContext); ok && i == taskAnchor {
 			kind, message = fixed, keeper.FixedContext()
 		}

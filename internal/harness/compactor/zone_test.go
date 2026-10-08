@@ -230,3 +230,20 @@ func TestPartitionMovesSupersededTaskIntoHistory(t *testing.T) {
 		t.Fatal("current task was not pinned")
 	}
 }
+
+func TestPrimaryDiffProtectionFollowsTaskLifetime(t *testing.T) {
+	oldDiff := msg.NewDiff([]string{"old.go"}, "old changes").ConfigureReviewSource(nil)
+	newDiff := msg.NewDiff([]string{"new.go"}, "new changes").ConfigureReviewSource(nil)
+	input := []agentgo.AgentMessage{msg.FixedText("user", "old task"), oldDiff, msg.FixedText("user", "new task"), newDiff, file("context.go")}
+	parts := partition(input, 1)
+	for _, part := range parts {
+		for _, m := range part.messages {
+			if m == oldDiff && part.zone != history {
+				t.Fatal("completed diff remained protected")
+			}
+			if m == newDiff && part.zone != fixed {
+				t.Fatal("primary diff entered history")
+			}
+		}
+	}
+}

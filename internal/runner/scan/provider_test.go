@@ -179,7 +179,7 @@ func TestProvider_Enumerate_NonGitDirectory(t *testing.T) {
 	writeFile(t, repo, "pkg/util.go", []byte("package pkg\n"))
 	writeFile(t, repo, ".gitignore", []byte("ignored.txt\n"))
 	writeFile(t, repo, "ignored.txt", []byte("should be excluded by root .gitignore\n"))
-	writeFile(t, repo, "node_modules/lib/foo.js", []byte("module.exports = 1;\n")) // should be skipped via ExcludedDirs
+	writeFile(t, repo, "node_modules/lib/foo.js", []byte("module.exports = 1;\n")) // enumeration retains dependency files for caller policy
 
 	got, err := NewProvider(repo, nil, nil, 0).Enumerate(context.Background())
 	if err != nil {
@@ -192,9 +192,9 @@ func TestProvider_Enumerate_NonGitDirectory(t *testing.T) {
 	}
 	sort.Strings(paths)
 
-	want := []string{".gitignore", "main.go", "pkg/util.go"}
+	want := []string{".gitignore", "main.go", "node_modules/lib/foo.js", "pkg/util.go"}
 	if !reflect.DeepEqual(paths, want) {
-		t.Errorf("paths = %v, want %v (ignored.txt must be filtered by .gitignore, node_modules/* by ExcludedDirs)", paths, want)
+		t.Errorf("paths = %v, want %v (ignored.txt follows .gitignore; dependency policy belongs to Runner)", paths, want)
 	}
 }
 

@@ -251,6 +251,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	}
 	ag := runner.New(runner.Args{
 		RepoDir:      cc.RepoDir,
+		Template:     *cc.Template,
 		From:         opts.from,
 		To:           opts.to,
 		Commit:       opts.commit,

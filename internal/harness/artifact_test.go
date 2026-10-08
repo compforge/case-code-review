@@ -163,3 +163,35 @@ func (m *testMaterialMessage) WithMaterialReference(ref string) msg.MaterialMess
 	copy.duplicateOf = ref
 	return &copy
 }
+
+func TestPreviewProjectionMatchesLiveRequest(t *testing.T) {
+	initial := []agentgo.AgentMessage{
+		msg.FixedText("user", "review"),
+		msg.NewFile("a.go", 1, 1, 1, "File: a.go (Total lines: 1)\n1|same source\n"),
+		msg.NewFile("a.go", 1, 1, 1, "File: a.go (Total lines: 1)\n1|same source\n"),
+	}
+	expected := ProjectContext(initial, msg.Artifacts(initial), true)
+	repeated := ProjectContext(expected, msg.Artifacts(initial), true)
+	if len(expected) != len(repeated) {
+		t.Fatal("projection accumulated derived inventory")
+	}
+	for i, m := range expected {
+		if m.TextContent() != repeated[i].TextContent() {
+			t.Fatal("non-idempotent projection")
+		}
+	}
+	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}
+	result, err := runExecution(t.Context(), ExecutionSpec{LLMClient: client, Messages: initial, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
+	if err != nil || result.State != OutcomeCompleted {
+		t.Fatal(result.State, err)
+	}
+	request := client.Requests()[0]
+	if len(request.Messages) != len(expected) {
+		t.Fatalf("live=%d preview=%d", len(request.Messages), len(expected))
+	}
+	for i, m := range expected {
+		if request.Messages[i].ExtractText() != m.TextContent() {
+			t.Fatalf("message %d differs", i)
+		}
+	}
+}

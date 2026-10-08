@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	previewmodel "github.com/qiankunli/case-code-review/internal/runner/preview"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -25,31 +24,7 @@ const (
 // whyExcluded applies the filter algorithm as shouldReview but
 // returns the specific reason a file is excluded.
 func (a *Runner) whyExcluded(d change.Change) ExcludeReason {
-	if d.IsBinary {
-		return ExcludeBinary
-	}
-
-	path := effectivePath(d)
-	f := a.args.FileFilter
-
-	if f != nil && f.IsUserExcluded(path) {
-		return ExcludeUserRule
-	}
-
-	if f != nil && f.HasInclude() && f.IsUserIncluded(path) {
-		return ExcludeNone
-	}
-
-	ext := a.extFromPath(path)
-	if ext != "" && !allowedext.IsAllowedExt(ext) {
-		return ExcludeExtension
-	}
-
-	if allowedext.IsExcluded(path, d.Tags) {
-		return ExcludeDefaultPath
-	}
-
-	return ExcludeNone
+	return previewmodel.Select(effectivePath(d), d.Tags, d.IsBinary, a.args.FileFilter)
 }
 
 // Preview loads diffs and applies the filter algorithm, returning structured

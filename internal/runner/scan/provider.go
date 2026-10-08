@@ -83,8 +83,6 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 		files = filterByPaths(files, p.paths)
 	}
 
-	gitignorePatterns := pathutil.LoadGitignorePatterns(p.repoDir)
-
 	var out []Item
 	for _, rel := range files {
 		// Per-iteration cancellation check: a large repo with thousands of
@@ -94,9 +92,6 @@ func (p *Provider) Enumerate(ctx context.Context) ([]Item, error) {
 			return nil, err
 		}
 		if rel == "" {
-			continue
-		}
-		if pathutil.IsPathExcluded(rel, gitignorePatterns) {
 			continue
 		}
 		full := filepath.Join(p.repoDir, rel)
@@ -187,7 +182,7 @@ func (p *Provider) listFilesViaGit(ctx context.Context) ([]string, error) {
 
 // listFilesViaWalk recursively walks p.repoDir collecting regular files.
 // Honors:
-//   - the internal ExcludedDirs blocklist (.git, node_modules, vendor, ...)
+//   - Git metadata (.git); review category policy is applied by Runner
 //   - the root .gitignore (simplified semantics; nested .gitignore is NOT
 //     supported in this mode)
 //
@@ -217,7 +212,7 @@ func (p *Provider) listFilesViaWalk(ctx context.Context) ([]string, error) {
 
 		if d.IsDir() {
 			// Skip the whole subtree if the dir itself is excluded.
-			if pathutil.IsPathExcluded(rel, gitignorePatterns) {
+			if ignoredScanPath(rel, gitignorePatterns) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -226,7 +221,7 @@ func (p *Provider) listFilesViaWalk(ctx context.Context) ([]string, error) {
 		if !d.Type().IsRegular() {
 			return nil
 		}
-		if pathutil.IsPathExcluded(rel, gitignorePatterns) {
+		if ignoredScanPath(rel, gitignorePatterns) {
 			return nil
 		}
 		files = append(files, rel)
@@ -309,4 +304,18 @@ func isBinaryFile(path string) (bool, error) {
 		return false, err
 	}
 	return bytes.IndexByte(buf[:n], 0) >= 0, nil
+}
+
+// The filesystem fallback approximates Git enumeration, not review eligibility.
+// Category filtering must remain overridable by the caller's selection policy.
+func ignoredScanPath(name string, patterns []string) bool {
+	if name == ".git" || strings.HasPrefix(name, ".git/") {
+		return true
+	}
+	for _, pattern := range patterns {
+		if pathutil.MatchGitignorePattern(name, pattern) {
+			return true
+		}
+	}
+	return false
 }

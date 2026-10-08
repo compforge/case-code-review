@@ -358,24 +358,7 @@ func (a *Runner) filterLargeScans(items []Item) []Item {
 
 // whyExcluded mirrors runner.whyExcluded but for scan Item inputs.
 func (a *Runner) whyExcluded(it Item) preview.ExcludeReason {
-	if it.IsBinary {
-		return preview.ExcludeBinary
-	}
-	path := it.Path
-	if a.args.FileFilter != nil && a.args.FileFilter.IsUserExcluded(path) {
-		return preview.ExcludeUserRule
-	}
-	ext := extFromPath(path)
-	if ext != "" && !allowedext.IsAllowedExt(ext) {
-		return preview.ExcludeExtension
-	}
-	if a.args.FileFilter != nil && a.args.FileFilter.HasInclude() && a.args.FileFilter.IsUserIncluded(path) {
-		return preview.ExcludeNone
-	}
-	if allowedext.IsExcludedPath(path) {
-		return preview.ExcludeDefaultPath
-	}
-	return preview.ExcludeNone
+	return preview.Select(it.Path, allowedext.Classify(it.Path), it.IsBinary, a.args.FileFilter)
 }
 
 func extFromPath(path string) string {

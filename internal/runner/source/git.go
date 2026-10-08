@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/compforge/repocli/toolkit/go"
+	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/pathutil"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -153,41 +153,14 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	} else if p.mode == ModeCommit {
 		target = p.commit
 	}
-	captured, err := repocli.Diff(ctx, repocli.DiffRequest{Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target})
+	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: allowedext.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target})
 	if err != nil {
 		return nil, err
 	}
 	p.Diff = captured
 	p.Before = sourceview.NewCaptured(captured, true)
 	p.After = sourceview.NewCaptured(captured, false)
-	return p.filterDiffs(captured.Changes), nil
-}
-
-// loadGitignorePatterns reads and parses .gitignore patterns from the repo root.
-func (p *Provider) loadGitignorePatterns() []string {
-	return pathutil.LoadGitignorePatterns(p.repoDir)
-}
-
-// isPathExcluded returns true when the given relative file path should be skipped
-// based on hardcoded dir rules or .gitignore patterns.
-func (p *Provider) isPathExcluded(relPath string, gitignorePatterns []string) bool {
-	return pathutil.IsPathExcluded(relPath, gitignorePatterns)
-}
-
-// filterDiffs removes diffs whose file paths are excluded.
-func (p *Provider) filterDiffs(diffs []change.Change) []change.Change {
-	patterns := p.loadGitignorePatterns()
-	var result []change.Change
-	for _, d := range diffs {
-		path := d.NewPath
-		if path == "/dev/null" {
-			path = d.OldPath
-		}
-		if !p.isPathExcluded(path, patterns) {
-			result = append(result, d)
-		}
-	}
-	return result
+	return captured.Changes, nil
 }
 
 // ---- Internal helpers ----

@@ -173,6 +173,7 @@ type Runner struct {
 	// Splitting locates graph-owned edits; Formation groups them before any
 	// context lookup. Both finder sets run with their own per-Unit limits.
 	repositoryDiff repocli.DiffReport
+	afterSource    *sourceview.Snapshot
 	beforeSource   *sourceview.Snapshot
 	finders        []unit.ClueFinder
 	costlyFinders  []unit.ClueFinder
@@ -253,9 +254,10 @@ func New(args Args) *Runner {
 	}
 	analyzer := language.NewSnapshotAnalyzer(args.RepoDir, ref, args.GitRunner)
 	a := &Runner{
-		args:     args,
-		session:  args.Session,
-		features: f,
+		args:        args,
+		session:     args.Session,
+		features:    f,
+		currentDate: time.Now().Format("2006-01-02 15:04"),
 		// Graph ownership locates edits; Formation owns their bounded partition.
 		analyzer: analyzer,
 	}
@@ -364,7 +366,6 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 		return []finding.Finding{}, nil
 	}
 
-	a.currentDate = time.Now().Format("2006-01-02 15:04")
 	telemetry.Event(ctx, "review.started",
 		telemetry.AnyToAttr("file.count", totalChanged),
 		telemetry.AnyToAttr("review.count", reviewCount),
@@ -452,6 +453,7 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 
 	a.repositoryDiff = provider.Diff
 	a.beforeSource = provider.Before
+	a.afterSource = provider.After
 	a.changes = parsed
 	a.persistReviewInput(ctx)
 	catalog, err := spec.LoadSnapshot(ctx, a.args.RepoDir, a.args.SpecPath, provider.After)
@@ -1134,28 +1136,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	// a cross-file Unit stays whole.
 	sc := session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
 
-	// Build change-files list excluding this Unit's own file(s) — all member paths
-	// for a cross-file call-chain Unit, the single path otherwise.
-	changeFilesExcludingCurrent := a.buildChangeFilesExcept(u.Paths()...)
-
-	// Render this unit's found context (clues) into the prompt blocks.
-	promptClues, documents := separateClueDocuments(u.Clues)
-	specCases, specRules, seeAlso, priorFindings := renderClues(promptClues)
-	if len(documents) > 0 {
-		specCases += "\nDocstrings are supplied as separate document messages with their source references and relationships."
-	}
-	projectContext := renderProjectContext(u.Clues)
-	// Pre-grep where else the repo references the changed symbols ({{usage_sites}}).
-	usageSites, usageCount, usagePaths := a.renderUsageSites(u)
-	// Per-function @rule (from clues) augments the path-glob rule.json criteria;
-	// both flow into {{system_rule}} (plan + main).
-	rule := a.resolveSystemRule(strings.ToLower(newPath))
-	if specRules != "" {
-		if rule != "" {
-			rule += "\n"
-		}
-		rule += specRules
-	}
+	input := a.prepareReviewInput(ctx, u)
 
 	threshold := a.args.Template.PlanModeLineThreshold
 	changeLines := u.Insertions() + u.Deletions()
@@ -1171,7 +1152,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 			telemetry.AnyToAttr("threshold", threshold))
 	} else if planOn && a.args.Template.PlanTask != nil && len(a.args.Template.PlanTask.Messages) > 0 {
 		var err error
-		planResult, err = a.executePlanPhase(ctx, sc, u.Diff(), changeFilesExcludingCurrent, rule)
+		planResult, err = a.executePlanPhase(ctx, sc, u.Diff(), input.changeFiles, input.rules)
 		if err != nil {
 			fmt.Fprintf(console.Out(), "[ccr] Plan phase failed for %s: %v (continuing without plan)\n", newPath, err)
 			telemetry.Eventf(ctx, "plan.failed", err.Error(),
@@ -1185,47 +1166,6 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 		return fmt.Errorf("main_task.messages is empty in template")
 	}
 
-	rawMsgs := a.args.Template.MainTask.Messages
-	buildMessages := func(unitSource, relatedSource string) []llm.Message {
-		messages := make([]llm.Message, 0, len(rawMsgs))
-		for _, m := range rawMsgs {
-			content := m.Content
-			content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
-			content = strings.ReplaceAll(content, "{{current_file_path}}", newPath)
-			content = strings.ReplaceAll(content, "{{system_rule}}", rule)
-			content = strings.ReplaceAll(content, "{{change_files}}", changeFilesExcludingCurrent)
-			content = strings.ReplaceAll(content, "{{diff}}", u.Diff())
-			// High-confidence source already implied by the Unit is appended as
-			// separate File messages so early rounds do not fetch it again.
-			content = strings.ReplaceAll(content, "{{unit_source}}", unitSource)
-			content = strings.ReplaceAll(content, "{{related_source}}", relatedSource)
-			// Pre-grepped blast-radius map of the changed symbols.
-			content = strings.ReplaceAll(content, "{{usage_sites}}", usageSites)
-			content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
-			content = strings.ReplaceAll(content, "{{spec_cases}}", specCases)
-			content = strings.ReplaceAll(content, "{{project_context}}", projectContext)
-			// Curated see-also pointers; the reviewer fetches content on demand.
-			content = strings.ReplaceAll(content, "{{see_also}}", seeAlso)
-			// Run-level ranked symbol map (real names, anti-guessing).
-			content = strings.ReplaceAll(content, "{{repo_map}}", a.repoMap)
-			// A previous review's findings on this unit, to reconcile against the change.
-			content = strings.ReplaceAll(content, "{{prior_findings}}", priorFindings)
-			// Always substitute the {{plan_guidance}} token so the literal placeholder
-			// never leaks into the rendered prompt. When the plan phase produced no
-			// output, strip the surrounding "### Review Plan (Optional)\n…\n\n" wrapper
-			// (any language variant) so the LLM does not see a dangling section header.
-			// Strip MUST run before ReplaceAll: the regex requires the literal
-			// {{plan_guidance}} token to be present; if we replace first, the token
-			// is gone and the wrapper can't be matched.
-			if planResult == "" {
-				content = stripEmptyPlanBlock(content)
-			}
-			content = strings.ReplaceAll(content, "{{plan_guidance}}", planResult)
-			messages = append(messages, llm.NewTextMessage(m.Role, content))
-		}
-		return messages
-	}
-
 	// The debrief is this unit's terminal record: what only this moment knows
 	// (formation, source-preload fate, outcome) — post-hoc analysis can't rebuild it.
 	// Cost rollup is filled by WriteDebrief from the scope's task records.
@@ -1237,17 +1177,14 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 		Clues:        countClues(u.Clues),
 		ClueRefs:     clueRefs(u.Clues),
 		ContextPaths: cluePaths(u.Clues),
-		UsageSites:   usageCount,
+		UsageSites:   input.usageCount,
 	}
 
 	// Hand the full domain messages to Harness. ContextManager performs the first
 	// projection, and each File owns its source/outline/path ratio decision.
-	ownFiles, relatedFiles, outcomes := a.preloadReviewFiles(ctx, u)
-	initialFiles, outlineAttempts := a.initialFileContext(ctx, u, usagePaths, ownFiles, relatedFiles)
-	deb.SourcePreloads = outcomes
-	deb.InitialOutlineAttempts = outlineAttempts
-	domain := a.assembleReviewMessages(buildMessages, ownFiles, relatedFiles, initialFiles)
-	domain = append(domain, documents...)
+	deb.SourcePreloads = input.outcomes
+	deb.InitialOutlineAttempts = input.outlineAttempts
+	domain := a.reviewMessages(u, input, planResult)
 
 	unitreview.AttachMessages(&u, domain)
 	outcome, err := a.executor.Run(ctx, domain, sc, &u, wrapUpAt)

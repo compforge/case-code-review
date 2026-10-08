@@ -60,6 +60,9 @@ Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态
 混有代码、unknown 或 whitespace 的 Unit 保留。repocli 的完整编辑覆盖不变，过滤数量记录在
 `skip_import_only` 步骤中，最终 Unit 数与超限标记以实际评审范围为准。
 
+> 警告：import-only 跳过是评审范围取舍，不代表行为不变。副作用导入、初始化注册以及依赖替换
+> 可能因此不被评审；`skip_import_only` 表示策略跳过，不能作为无风险或已完成评审的证据。
+
 最终范围确定后才创建评审 Unit 并运行 ClueFinder。大小超限不等于跳过评审；Harness 的上下文、
 时间和 token 预算控制执行，无法完成时报告 incomplete。分属不同 Unit 的图关系可投影为有界的
 跨 Unit 线索，支持模型按需补证。
@@ -99,7 +102,16 @@ Unit
 未知路径和低概率细节由 Review loop 通过只读工具按需获取。实际进入上下文或由工具成功读取的仓库
 事实按其真实形状追加到 Unit：文件内容是 `FileSnapshot`，额外变更切片是 `DiffSnapshot`，检索输出是
 `SearchResult`；Unit 自身目标 diff 仍只来自 Fragment，避免重复事实源。Review Messages 是这些完整
-事实到 Execution 的可压缩投影，不再引入一个泛化的材料对象。
+事实到 Execution 的投影。Artifact 为运行中的材料及业务数据提供独立身份，消息表达出现位置与用途；
+具体关联和使用策略由 CCR 决定，Unit 继续持有评审事实与结果。AgentGo 管理 Artifact 容器生命周期。
+
+任务指令、目标 diff、源码和文档分别装配为类型化消息。目标 diff 保留完整增删与前后路径语义，并在
+所属任务活跃期间作为必要材料保留；文件正文可复用 diff 中精确的快照、路径和行内容覆盖。
+文档的正文身份与 Snapshot / Ref / Relation 分离，相同正文可以共用展开，来源各自保留。
+
+`review --dry-run` 和执行共用初始消息装配及请求投影。JSON 提供原始输入消息、Artifact 身份、投影消息、
+ContextItems 和消息 token 估算；估算不包含工具 schema，也不是 provider usage。预览不执行模型计划或
+压缩，所需但未执行的步骤显式列出，因此超过上下文阈值的预览不是压缩后的最终请求。
 
 这条边界同时控制两个风险：
 
