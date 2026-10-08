@@ -181,15 +181,15 @@ func TestUnchangedCalleeDoesNotMergeUnrelatedEditsInItsFile(t *testing.T) {
 	assertCoverage(t, changes, us)
 }
 
-func TestOnlyChangedCallerAndCalleeFormOneUnit(t *testing.T) {
+func TestChangedCallerAndCalleeKeepBoundaryWhenTargetReached(t *testing.T) {
 	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){B()}\n", "b.go": "package p\nfunc B(){}\n"}
 	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){B()}"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
 	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 1 || len(us[0].Fragments) != 2 || len(us[0].Grouping) == 0 {
-		t.Fatalf("caller and callee should be the only Unit: %+v", us)
+	if len(us) != 2 || len(us[0].Fragments) != 1 || len(us[1].Fragments) != 1 || len(us[0].Boundaries) == 0 || len(us[1].Boundaries) == 0 {
+		t.Fatalf("reached target must retain caller/callee boundary evidence: %+v", us)
 	}
 	assertCoverage(t, changes, us)
 }

@@ -102,7 +102,7 @@ type Args struct {
 
 	// Concurrency limit for per-file subtasks. Defaults to number of CPUs.
 	MaxConcurrency int
-	// MaxUnits is a grouping target; zero uses the selected-file count.
+	// MaxUnits is a grouping threshold; the effective target is at least the selected-file count.
 	MaxUnits int
 
 	// Concurrent task timeout in minutes. 0 means no timeout.

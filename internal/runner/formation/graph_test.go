@@ -62,14 +62,14 @@ func TestGraphFormationExtractsChangedCallsAndKeepsUnrelatedRemainder(t *testing
 		t.Fatal(a.Paths())
 	}
 }
-func TestGraphFormationAliasesAndNonCallableTargets(t *testing.T) {
+func TestGraphFormationAliasesRetainBoundaryAtTarget(t *testing.T) {
 	files := map[string]string{"lib.ts": "export const LIMIT = 2;\n", "app.ts": "import { LIMIT as cap } from './lib';\nexport function run(){ return cap; }\n"}
 	us, err := Form(Config{Changes: []change.Change{edit("lib.ts", files["lib.ts"], 1, "export const LIMIT = 1;", "export const LIMIT = 2;"), edit("app.ts", files["app.ts"], 2, "export function run(){ return 0; }", "export function run(){ return cap; }")}, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 1 || len(us[0].Paths()) != 2 || len(us[0].Grouping) == 0 {
-		t.Fatalf("alias use should join changed binding: %+v", us)
+	if len(us) != 2 || len(us[0].Paths()) != 1 || len(us[0].Boundaries) == 0 || len(us[1].Boundaries) == 0 {
+		t.Fatalf("alias use should remain evidenced across target boundaries: %+v", us)
 	}
 }
 func TestGraphFormationDoesNotJoinCommonUnchangedDependency(t *testing.T) {
@@ -130,8 +130,8 @@ func TestGraphFormationPartitionsLargeGraphDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) <= 1 || len(us) >= 24 {
-		t.Fatalf("expected bounded groups even above old watermark, got %d", len(us))
+	if len(us) != 24 {
+		t.Fatalf("expected grouping to stop at selected-file target, got %d", len(us))
 	}
 	covered := map[string]bool{}
 	var ids []string
