@@ -37,10 +37,9 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	for _, ch := range input.Changes {
 		paths[ch.Path()] = true
 	}
-	maxUnits := config.MaxUnits
-	if maxUnits == 0 {
-		maxUnits = len(paths)
-	}
+	// Count-driven coalescing should not force a target below the selected-file count.
+	// Strong source relations may still produce fewer Units.
+	maxUnits := max(len(paths), config.MaxUnits)
 	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
 	if err != nil {
 		finish(err)
@@ -76,9 +75,6 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 			config.OnStep(ctx, step)
 		}
 	}
-	if config.OnGrouped != nil {
-		config.OnGrouped(report)
-	}
 	convert := func(es []repocli.FragmentRelation) []unit.GroupingEvidence {
 		var out []unit.GroupingEvidence
 		for _, e := range es {
@@ -88,6 +84,10 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	}
 	var out []unit.Unit
 	for _, formed := range result.Units {
+		// Review policy applies after grouping so imports can still join code Units.
+		if onlyImportElements(formed.Counts) {
+			continue
+		}
 		var fs []unit.Fragment
 		for _, id := range formed.FragmentIDs {
 			fs = append(fs, byID[id])
@@ -104,7 +104,33 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 		}
 		out = append(out, u)
 	}
+	if len(out) != len(result.Units) {
+		step := GroupingStep{Strategy: "skip_import_only", InputUnits: len(result.Units), OutputUnits: len(out)}
+		report.Steps = append(report.Steps, step)
+		if config.OnStep != nil {
+			config.OnStep(ctx, step)
+		}
+	}
+	report.FinalUnits = len(out)
+	report.LimitExceeded = maxUnits > 0 && len(out) > maxUnits
+	if config.OnGrouped != nil {
+		config.OnGrouped(report)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	finish(nil)
 	return out, nil
+}
+
+// Empty counts also qualify: review eligibility uses import count == total count.
+func onlyImportElements(counts repocli.ElementCounts) bool {
+	imports, total := 0, 0
+	for _, side := range []map[repocli.ElementKind]int{counts.Before, counts.After} {
+		for kind, count := range side {
+			total += count
+			if kind == repocli.ElementImport {
+				imports += count
+			}
+		}
+	}
+	return imports == total
 }

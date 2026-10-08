@@ -197,7 +197,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	}
 }
 
-func TestNamespaceProofsPersistWithGroupingStage(t *testing.T) {
+func TestGroupingStopsAtFileTargetAndPersistsStage(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	src := "package p\nfunc A(){}\n"
@@ -232,23 +232,19 @@ func TestNamespaceProofsPersistWithGroupingStage(t *testing.T) {
 		if err := json.Unmarshal(line, &record); err != nil {
 			t.Fatal(err)
 		}
-		if record.Kind != "unit_grouping" || record.Data.Step.Strategy != "namespace" {
+		if record.Kind != "unit_grouping" || record.Data.Step.Strategy != "local" {
 			continue
 		}
 		step := record.Data.Step
-		if record.StageID == "" || step.InputUnits != 2 || step.OutputUnits != 1 || len(step.Merges) != 1 {
-			t.Fatalf("step=%+v stage=%s", step, record.StageID)
+		if record.StageID == "" || step.OutputUnits != 2 || a.grouping.MaxUnits != 2 || a.grouping.FinalUnits != 2 {
+			t.Fatalf("step=%+v stage=%s grouping=%+v", step, record.StageID, a.grouping)
 		}
-		merge := step.Merges[0]
-		if len(merge.Paths) < 2 {
-			t.Fatalf("missing paths: %+v", merge)
-		}
-		for _, proof := range merge.Paths {
-			if len(proof.Relations) == 0 || proof.Nodes[len(proof.Nodes)-1].ID != merge.Namespace.NodeID {
-				t.Fatalf("broken persisted proof: %+v", proof)
+		for _, grouped := range a.grouping.Steps {
+			if grouped.Strategy == "namespace" {
+				t.Fatalf("namespace grouping continued after reaching target: %+v", grouped)
 			}
 		}
 		return
 	}
-	t.Fatal("namespace grouping artifact missing")
+	t.Fatal("local grouping artifact missing")
 }
