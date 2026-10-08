@@ -85,6 +85,15 @@ CodeGraph 路径规则和 CCR 排除策略。manifest 标签本身不排除文�
 这层分离使 FileRole 可以被 Review 1、Review 2 或未来其它 Reviewer 复用，而不把当前 admission
 策略固化进项目知识。
 
+全局路径规则默认排除常见生成代码、第三方依赖、缓存和构建产物；这属于 CCR 的评审范围策略，
+repocli 仍保留完整变更。Preview 与实际评审共用文件选择结果，被排除的目标 diff 仍可通过
+`read_diffs` 作为相关上下文读取。项目 manifest / lock 继续按 Component 提供上下文，依赖或
+构建目录内的同类文件则默认排除。
+
+用户 exclude 优先于 include；显式 include 可以覆盖默认路径排除，二进制仍不进入评审。
+普通 HTML 继续作为候选，trace 报告等项目特有产物由项目 `rule.json` 的 exclude 声明，
+例如 `doctor-trace*.html`，避免把正常 HTML 源码一并排除。
+
 ### 2.3 用 Language 事实绑定和丰富项目语义
 
 Project 与 Language 各自拥有不同事实：Language 提取 decorator、call、symbol 和 span，Project
