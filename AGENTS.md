@@ -35,7 +35,7 @@ case-code-review/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
     ├── language/   ★ CodeGraph 接入边界：选择 review snapshot 的 Document，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
-    ├── unit/       ★ `change.Change`→`Fragment`→`Unit` 及其评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
+    ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力，`llmloop` 作为旧实现隔离保留。详见 `docs/harness.md`
     ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施平铺
     ├── config/     模板 prompt、rule.json、tools 配置
@@ -52,20 +52,19 @@ git change ─▶ Change ─Component/FileRole─▶ source ─Splitter─▶ Fr
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
 
-Formation 把 Change 切成 Fragment，再按行为关系形成 Unit；Unit 是一次 run 的评审聚合根，先持有
+Formation 调用 repocli 将 Change 切成 Fragment，再按关系形成仓库 Unit，并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
 Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结果以及 Hypothesis、Assessment 与 Trial decision。Runner
 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有这些评审领域状态。
 
 ## 关键约定
 
 1. **Knowledge owner 唯一**：Project Knowledge 包含 Repository / Component / FileRole 等结构事实和
-   `spec / case / link / rule / doc` 等 Biz Knowledge；CodeGraph 拥有源码解析与关系绑定，Language 负责 CodeGraph 接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
+   `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有代码图与关系绑定，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 以相关改动为边界**：改动前后分别定位源码归属，按文件建立初始组，再由 `Grouper` / `GroupChain` 依次组织关系组，超限时沿 namespace 祖先归拢。
-   Fragment 保留源码身份和范围；链统一检查覆盖与数量目标，后续归拢保持已提取的关联组完整；缺少共同 namespace 或受大小预算约束时显式报告超限，不丢弃目标或推测组织关系。
-   缺少图事实时保留未绑定目标，预算切断的关系保留为上下文；无法在预算内评审的目标显式报告 incomplete。
-   上下文能力不由 Unit 的展示形状决定。
+2. **Unit 以相关改动为边界**：repocli 拥有 Fragment 分类与 Unit 组装，按包含、调用、import、同文件、namespace 逐步聚合；CCR 提供评审目标、token 预算并适配 Clue 与运行状态。
+   Fragment 编辑身份唯一，Unit 可共享 import 引用；合并后去重。缺少图关系或预算不足时保留目标并报告边界，不能强行满足数量目标。
+   通用理念见 [repocli Unit 文档](https://github.com/compforge/repocli/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；

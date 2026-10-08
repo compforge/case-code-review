@@ -4,6 +4,7 @@
 package unit
 
 import (
+	"github.com/compforge/repocli/toolkit/go"
 	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
@@ -39,6 +40,8 @@ const (
 // It can cover declarations, bindings, or unbound residual edits. Symbols is
 // the after-side review identity projection; before-side finders use Before.
 type Fragment struct {
+	// Source is the repository-owned target. Anchors below are CCR context bindings.
+	Source        *repocli.Fragment `json:"-"`
 	Path          string
 	OldPath       string
 	Before, After []language.Anchor

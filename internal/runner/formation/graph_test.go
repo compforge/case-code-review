@@ -64,7 +64,7 @@ func TestGraphFormationExtractsChangedCallsAndKeepsUnrelatedRemainder(t *testing
 }
 func TestGraphFormationAliasesAndNonCallableTargets(t *testing.T) {
 	files := map[string]string{"lib.ts": "export const LIMIT = 2;\n", "app.ts": "import { LIMIT as cap } from './lib';\nexport function run(){ return cap; }\n"}
-	us, err := Form(Config{Changes: []change.Change{edit("lib.ts", files["lib.ts"], 1, "export const LIMIT = 1;", "export const LIMIT = 2;"), edit("app.ts", files["app.ts"], 2, "export function run(){ return 0; }", "export function run(){ return cap; }")}, Analyzer: graphRepo(t, files), CallChain: true})
+	us, err := Form(Config{Changes: []change.Change{edit("lib.ts", files["lib.ts"], 1, "export const LIMIT = 1;", "export const LIMIT = 2;"), edit("app.ts", files["app.ts"], 2, "export function run(){ return 0; }", "export function run(){ return cap; }")}, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestGraphFormationPartitionsLargeGraphDeterministically(t *testing.T) {
 		changes = append(changes, edit(path, files[path], 2, fmt.Sprintf("func F%02d(){panic(0)}", i), body))
 	}
 	analyzer := graphRepo(t, files)
-	cfg := Config{Changes: changes, Analyzer: analyzer, CallChain: true, GroupDiffTokens: 300}
+	cfg := Config{Changes: changes, Analyzer: analyzer, CallChain: true, MaxUnits: 1, GroupDiffTokens: 300}
 	us, err := Form(cfg)
 	if err != nil {
 		t.Fatal(err)

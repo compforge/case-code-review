@@ -19,13 +19,15 @@ func addedFile(path, text string) change.Change {
 func assertCoverage(t *testing.T, changes []change.Change, units []unit.Unit) {
 	t.Helper()
 	files := map[string][]unit.Fragment{}
+	seen := map[string]bool{}
 	for _, u := range units {
 		for _, f := range u.Fragments {
-			files[f.Path] = append(files[f.Path], f)
+			id := unit.FragmentID(f)
+			if !seen[id] {
+				files[f.Path] = append(files[f.Path], f)
+				seen[id] = true
+			}
 		}
-	}
-	if len(units) > len(files) {
-		t.Fatalf("%d Units exceed %d target files", len(units), len(files))
 	}
 	for _, d := range changes {
 		if err := validateEdits(d, files[d.Path()]); err != nil {
@@ -43,7 +45,7 @@ func TestImportsAndResidualsDoNotMultiplyReviewLoops(t *testing.T) {
 	changes := []change.Change{addedFile("app.go", text)}
 	for _, related := range []bool{false, true} {
 		t.Run(fmt.Sprint(related), func(t *testing.T) {
-			us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, map[string]string{"app.go": text}), CallChain: related})
+			us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, map[string]string{"app.go": text}), CallChain: related, MaxUnits: 1})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -63,7 +65,7 @@ func TestCrossFileExtractionPreservesCallGroupsAndCountAllowance(t *testing.T) {
 	}
 	changes := []change.Change{addedFile("a.go", files["a.go"]), addedFile("b.go", files["b.go"])}
 	analyzer := graphRepo(t, files)
-	config := Config{Changes: changes, Analyzer: analyzer, CallChain: true}
+	config := Config{Changes: changes, Analyzer: analyzer, CallChain: true, MaxUnits: 2}
 	us, err := Form(config)
 	if err != nil {
 		t.Fatal(err)
@@ -131,15 +133,19 @@ func TestFileMergeBudgetRetainsCrossUnitCallEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 2 {
-		t.Fatalf("merge budget should retain two whole-file Units: %+v", us)
-	}
 	assertCoverage(t, changes, us)
-	for _, u := range us {
-		if len(u.Boundaries) == 0 || len(u.Clues) == 0 || !u.BudgetExceeded || u.Scope != unit.ScopeFile {
-			t.Fatalf("oversize file lost grouping diagnostics or call boundary: %+v", u)
+	for _, symbol := range []string{"a.go::A", "b.go::B"} {
+		u := targetUnit(t, us, symbol)
+		if len(u.Boundaries) == 0 || len(u.Clues) == 0 || !u.BudgetExceeded {
+			t.Fatalf("lost boundary for %s: %+v", symbol, u)
 		}
 	}
+	for _, u := range us {
+		if len(u.Paths()) != 1 {
+			t.Fatal("budget allowed a cross-file merge")
+		}
+	}
+
 }
 
 func TestDisablingGraphGroupingKeepsOneUnitPerFile(t *testing.T) {
@@ -178,7 +184,7 @@ func TestUnchangedCalleeDoesNotMergeUnrelatedEditsInItsFile(t *testing.T) {
 func TestOnlyChangedCallerAndCalleeFormOneUnit(t *testing.T) {
 	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){B()}\n", "b.go": "package p\nfunc B(){}\n"}
 	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){B()}"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
-	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true})
+	us, err := Form(Config{Changes: changes, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

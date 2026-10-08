@@ -32,10 +32,10 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form starts with file groups and applies GroupChain before creating Units.
+// Form delegates repository grouping to repocli before creating review Units.
 // Clues are gathered only after the final scope is known.
 //
-// +spec=`Each target edit belongs to exactly one Unit; changed cross-file dependencies are grouped before file-local remainders, with explicit grouping limits`
+// +spec=`Each edit has one Fragment identity; review Units can share evidenced imports and preserve explicit grouping limits`
 func Form(config Config) ([]unit.Unit, error) {
 	if config.Analyzer == nil && config.RepoDir != "" {
 		config.Analyzer = language.NewAnalyzer(config.RepoDir)
@@ -61,24 +61,10 @@ func Form(config Config) ([]unit.Unit, error) {
 		}
 		fragments = append(fragments, fs...)
 	}
-	groups := fileGroups(fragments)
-	maxUnits := len(groups)
-	if config.MaxUnits > 0 {
-		maxUnits = min(maxUnits, config.MaxUnits)
-	}
-	ctx := config.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	chain := GroupChain{Groupers: []Grouper{RelationGrouper{Disabled: !config.CallChain}, NamespaceGrouper{}}, OnStep: config.OnStep}
-	result, report, err := chain.Group(ctx, GroupingInput{Groups: groups, After: config.Analyzer, Before: config.Before, MaxUnits: maxUnits, DiffTokens: tokenLimit})
+	units, err := groupRepositoryFragments(config, fragments, tokenLimit)
 	if err != nil {
 		return nil, err
 	}
-	if config.OnGrouped != nil {
-		config.OnGrouped(report)
-	}
-	units := materialize(result.Groups, result.Relations, tokenLimit)
 	for i := range units {
 		units[i].Clues = findClues(units[i], config.Finders, config.CostlyFinders)
 		units[i].Clues = append(units[i].Clues, boundaryClues(units[i].Boundaries)...)
