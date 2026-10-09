@@ -162,8 +162,10 @@ Harness 通过 `MaterialMessage` 接口登记和投影材料，不依赖 Unit �
 
 ContextManager.Transform 与 dry-run 调用同一个纯投影函数，输入消息与 Artifact 值，输出请求视图。
 ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图，批次与历史使用同一套
-覆盖判断，raw 不变。临时引用不会提交到历史；Compact/RecoverOverflow 只提交独立的压缩结果，
-再重新 Transform，保证被引用正文被压缩后可以恢复展示。预算趋紧时调用 `compactor.ZoneCompactor`。接入层
+覆盖判断，raw 不变。临时引用不会提交到历史。Compact 按基线判断预算，Compactor 接收消息与材料准备态；AgentGo 接受压缩结果后，
+最终请求只执行一次 Transform，保证被引用正文被压缩后可以恢复展示。普通重试不重复压缩，overflow
+单独触发恢复。Sync 只同步已接受的基线，工具读取去重保留上一模型请求实际可见的覆盖，避免原始历史
+重新声明已被移出的源码可见。预算趋紧时调用 `compactor.ZoneCompactor`。接入层
 `context_compactor.go` 负责注入执行配置、模型和摘要 prompt；分区与压缩策略位于 `compactor` 包。
 
 分区按消息职责和完整轮次计算，不在消息上维护可变 Zone：

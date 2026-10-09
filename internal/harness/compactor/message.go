@@ -21,9 +21,10 @@ func NewMessageCompactor() *MessageCompactor {
 
 func (s *MessageCompactor) Compact(
 	_ context.Context,
-	messages []agentgo.AgentMessage,
+	input agentgo.TransformContext,
 	expect float64,
 ) ([]agentgo.AgentMessage, error) {
+	messages := input.Messages
 	if len(messages) == 0 || expect >= 1 {
 		return messages, nil
 	}

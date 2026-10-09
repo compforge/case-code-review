@@ -32,7 +32,8 @@ func NewSummaryCompactor(cfg SummaryConfig) *SummaryCompactor {
 
 // Compact summarizes the entire supplied history segment. AgentGo's checkpoint
 // and model execution contracts preserve raw evidence, usage and loop events.
-func (s *SummaryCompactor) Compact(ctx context.Context, messages []agentgo.AgentMessage, expect float64) ([]agentgo.AgentMessage, error) {
+func (s *SummaryCompactor) Compact(ctx context.Context, input agentgo.TransformContext, expect float64) ([]agentgo.AgentMessage, error) {
+	messages := input.Messages
 	if len(messages) == 0 || expect >= 1 || s.cfg.Model == nil {
 		return messages, nil
 	}

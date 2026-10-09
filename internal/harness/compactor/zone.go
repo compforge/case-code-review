@@ -44,7 +44,8 @@ type ZoneCompactor struct {
 	Observe     func(context.Context, Report)
 }
 
-func (c *ZoneCompactor) Compact(ctx context.Context, messages []agentgo.AgentMessage, expect float64) (result []agentgo.AgentMessage, err error) {
+func (c *ZoneCompactor) Compact(ctx context.Context, input agentgo.TransformContext, expect float64) (result []agentgo.AgentMessage, err error) {
+	messages := input.Messages
 	before := agentcontext.EstimateTotal(messages)
 	if expect >= 1 || len(messages) == 0 {
 		return messages, nil
@@ -108,7 +109,7 @@ func (c *ZoneCompactor) Compact(ctx context.Context, messages []agentgo.AgentMes
 				report.Stages = append(report.Stages, stage.Name)
 				used = true
 			}
-			next, stageErr := stage.Compactor.Compact(ctx, part.messages, ratio)
+			next, stageErr := stage.Compactor.Compact(ctx, agentgo.TransformContext{Messages: part.messages, Artifacts: input.Artifacts}, ratio)
 			if stageErr != nil {
 				return nil, fmt.Errorf("history %s: %w", stage.Name, stageErr)
 			}
