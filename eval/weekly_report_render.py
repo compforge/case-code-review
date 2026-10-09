@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ccr_trajectory import REVIEW1, REVIEW2
+from eval.trajectory.ccr_trajectory import REVIEW1, REVIEW2
 
 
 def _format_value(value: Any, kind: str = "number") -> str:

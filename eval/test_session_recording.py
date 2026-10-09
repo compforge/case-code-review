@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from session_recording import execution_facts, read_records
+from eval.session_recording import execution_facts, read_records
 
 
 class SessionRecordingTests(unittest.TestCase):

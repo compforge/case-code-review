@@ -141,3 +141,29 @@ class Recording:
         return {key: totals[key] for key in (
             "rounds", "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens",
             "pending_calls", "error_calls", "estimated_usage", "unknown_usage")}
+
+
+def encode_repo_path(p: str) -> str:
+    """Port of internal/harness/session/persist.go encodeRepoPath (posix subset)."""
+    p = p.lstrip("/\\").replace("/", "-").replace("\\", "-")
+    return p or "empty"
+
+
+def session_dir(repo: str) -> Path:
+    return Path.home() / ".casecodereview" / "sessions" / encode_repo_path(str(Path(repo).resolve()))
+
+
+def find_session(repo: str, tag: str) -> Path | None:
+    """Locate the transcript this run wrote, by its unique eval_tag."""
+    d = session_dir(repo)
+    if not d.is_dir():
+        return None
+    for f in sorted(d.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            with f.open(encoding="utf-8", errors="replace") as stream:
+                first = stream.readline()
+            if json.loads(first).get("eval_tag") == tag:
+                return f
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None

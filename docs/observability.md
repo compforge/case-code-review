@@ -102,8 +102,8 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 超时前已经提交的有效 Assessment 继续参与判断；没有提交就是未评估，系统兜底不能充当判断证据。
 缺少记录、超时或范围变化时保留 incomplete / unknown，不把没有交付 Finding 解释为修复。
 
-现有实验入口 `eval/replay.py` 对相同 repeat 的两臂生成问题、覆盖、阶段去向和成本对比；
-`eval/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
+现有实验入口 `eval/benchmark/replay.py` 对相同 repeat 的两臂生成问题、覆盖、阶段去向和成本对比；
+`eval/benchmark/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
 比较结果是实验观测，不代替人工真值标签；使用方式及匹配限制见 `eval/README.md`。
 
 ### 整轮时间线
@@ -194,13 +194,21 @@ Viewer 只消费当前 Session schema。协议变化时应同步 recorder、fixt
 单次运行容易受 diff、模型路由、缓存、网络和上下文差异影响。Viewer 更像显微镜：适合发现问题、查看
 prompt 和形成改进假设，不适合凭少量 session 断言整体效果提升。
 
-## 3. eval：主要效果判断
+## 3. eval：效果与轨迹闭环
 
-主要效果问题由 eval 回答。它通过 CCR `RecordingSource` 选择和读取 Session/ATIF，经 ATIF Loader
-投影为ATIF v1.7 Trajectory，再与人工标签、固定 corpus、阶段数据集、Detector、Verifier 和
-Measurer 连接，在相同输入和判定标准下比较 baseline 与 candidate，并同时观察：
+`eval/benchmark` 对固定数据集运行正常 Review 1/2/3，分别匹配全部 Hypothesis、有效的
+supported + caused Assessment 对应 claim，以及最终 Finding。Review 2 的视图保留 low_value，
+用于区分发现/复核能力与产品交付策略。参考标注和独立语义匹配是效果判据，Assessment 本身是被评测输出。
+负标签标记错误评论，不表示整个变更 clean；未匹配到参考的新结论也不能自动判为误报。
 
-- **准确性**：Finding 真伪、重复交付、漏报，以及 Assessment/Trial 是否正确放行；
+效果分析输出待检查 case，保留 dataset/case/run/arm、Session 内容身份、Hypothesis/Unit ID、
+三个阶段的产物与选择原因。`eval/trajectory` 消费同一次运行的 Session/ATIF，解释工具行为、
+上下文、阶段流转与成本，不重新运行评审。Review 3 的正常低价值过滤属于可解释的策略差异，
+不能自动列为待修复缺陷。所有未完成运行、缺失证据和未判定的匹配都保持显式。
+
+两者共享 Python 环境、Session 读取和快照身份；周报组合效果与轨迹的持久化结果，同时观察：
+
+- **效果**：参考问题命中、已知错误评论复现，以及 Assessment/Trial 的阶段去向；
 - **健壮性**：Unit/Lane 是否完成、Hypothesis 是否全部 Assessment、超时、partial 和执行错误；
 - **成本**：Measurer 记录的 token、时间、模型轮次、工具调用和 Unit 数量。
 
@@ -220,7 +228,7 @@ Viewer 中发现的重复 `read_files` 或搜索空转可以进一步沉淀为 T
 
 ### 3.1 已知问题的阶段归因
 
-一个已知问题没有形成 Finding，只能说明交付失败，不能直接说明应该改 prompt。问题可能在 Formation
+一个已确认需要交付的问题没有形成 Finding，不能直接说明应该改 prompt。问题可能在 Formation
 时没有进入正确 Unit，也可能在 Unit Review、Hypothesis Review、Trial 或最终持久化时丢失；相关
 Execution 没有完成时，领域阶段甚至没有产生可判定结果。eval 因此把外部确认的已知问题与 Session
 事实连接，寻找它在评审漏斗中到达的最深位置：

@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-import weekly_report as weekly
-from eval_snapshot import dataset_artifacts
+import eval.weekly_report as weekly
+from eval.eval_snapshot import dataset_artifacts
 
 
 class WeeklyReportTest(unittest.TestCase):
