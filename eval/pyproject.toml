@@ -1,0 +1,29 @@
+[project]
+name = "ccr-eval"
+version = "0.1.0"
+description = "CCR 数据集效果评测与 Session 轨迹分析，共用 case-harness 和固定依赖"
+requires-python = ">=3.11"
+dependencies = [
+    "case-harness",
+    "spec-case[model]>=0.1.1",
+    "pyyaml>=6.0,<7.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.11",
+]
+
+[tool.uv.sources]
+case-harness = { git = "https://github.com/compforge/case-harness", subdirectory = "python", rev = "afb1f3e2ecc491d3c780f017aaca88ee3fa3fcaf" }
+spec-case = { git = "https://github.com/compforge/spec-case", subdirectory = "toolchains/python" }
+
+[tool.uv]
+package = false
+
+[tool.ruff.lint]
+select = ["F"]
+
+[tool.pytest.ini_options]
+pythonpath = [".."]

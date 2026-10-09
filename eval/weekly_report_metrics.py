@@ -6,8 +6,8 @@ import math
 from collections import Counter
 from typing import Any
 
-from ccr_trajectory import UNKNOWN_STAGE
-from trajectory_judge import main_deductions
+from eval.trajectory.ccr_trajectory import UNKNOWN_STAGE
+from eval.trajectory.trajectory_judge import main_deductions
 
 
 def _percentile(values: list[float], percentile: float) -> float | int | None:

@@ -1,0 +1,1247 @@
+import json
+import unittest
+
+from atif import Trajectory
+
+from eval.trajectory.ccr_trajectory import (
+    AdjacentFileReadsDetector,
+    ATIFTrajectoryLoader,
+    AssessmentCompletionVerifier,
+    DurationEfficiencyVerifier,
+    FileReadBatchingDetector,
+    FileReadCoverageVerifier,
+    ReviewCompletionVerifier,
+    PromptFileCoverageVerifier,
+    REVIEW1,
+    REVIEW2,
+    RoundEfficiencyVerifier,
+    SearchThenReadDetector,
+    SearchScopeVerifier,
+    ToolFailureVerifier,
+    adjacent_file_read_stats,
+    code_search_stats,
+    empty_tool_argument_stats,
+    file_read_stats,
+    hypothesis_yield,
+    initial_context_stats,
+    prompt_file_read_overlap,
+    repeated_file_reads,
+    review_stage,
+    same_turn_file_read_batching,
+    search_then_read_stats,
+)
+from trajectory_harness.model import (
+    step_attributes,
+    step_failure,
+    step_operation,
+    step_status,
+    trajectory_execution,
+    trajectory_generation,
+    trajectory_metadata,
+)
+from trajectory_harness import RepeatedToolCallDetector, detect, verify
+from eval.trajectory.trajectory_judge import main_deductions, objective_analysis
+
+
+class CCRTrajectoryTest(unittest.TestCase):
+    def test_atif_roundtrip_preserves_identity_calls_and_evidence(self):
+        payload = self.trajectory.to_json_dict()
+        restored = Trajectory.model_validate(payload)
+        self.assertEqual(
+            ATIFTrajectoryLoader().loads(json.dumps(payload))[0].to_json_dict(),
+            payload,
+        )
+        self.assertEqual(restored.schema_version, "ATIF-v1.7")
+        self.assertEqual(restored.agent.name, "case-code-review")
+        self.assertEqual(restored.agent.version, "v1.2.3")
+        self.assertNotIn("metadata", payload)
+        self.assertNotIn("execution", payload)
+        self.assertEqual(
+            [step.step_id for step in restored.steps],
+            list(range(1, len(restored.steps) + 1)),
+        )
+        tools = [step for step in restored.steps if step.tool_calls]
+        self.assertEqual(len(tools), 4)
+        self.assertTrue(all(step.llm_call_count == 0 for step in tools))
+        for step in tools:
+            self.assertEqual(
+                step.tool_calls[0].tool_call_id,
+                step.observation.results[0].source_call_id,
+            )
+        analysis = objective_analysis(restored)
+        known_ids = {str(step.step_id) for step in restored.steps}
+        evidence = [*analysis["verifications"], *analysis["measurements"]]
+        evidence.extend(
+            finding
+            for detection in analysis["detections"]
+            for finding in detection["findings"]
+        )
+        for result in evidence:
+            self.assertNotEqual(result.get("status"), "error")
+            self.assertLessEqual(set(result.get("step_ids", [])), known_ids)
+
+    def test_standard_token_metrics_do_not_count_tool_steps_as_model_calls(self):
+        raw = {
+            "session_id": "metrics-session",
+            "subagent_trajectories": [{
+                "trajectory_id": "unit-metrics",
+                "extra": {"scope_kind": "unit", "execution_outcome": "completed"},
+                "steps": [{
+                    "step_id": 1,
+                    "source": "agent",
+                    "metrics": {"prompt_tokens": 100, "completion_tokens": 20, "cached_tokens": 60},
+                    "tool_calls": [{
+                        "tool_call_id": "read-1", "function_name": "read_files",
+                        "arguments": {"reads": [{"file_path": "a.go"}]},
+                    }],
+                    "observation": {"results": [{"source_call_id": "read-1", "content": "source"}]},
+                }],
+            }],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
+        restored = Trajectory.model_validate(trajectory.to_json_dict())
+        self.assertEqual(restored.steps[0].metrics.prompt_tokens, 100)
+        values = objective_analysis(restored)["model_usage"]["measurements"]
+        self.assertEqual(values["model_call_count"], 1)
+        self.assertEqual(values["total_tokens"], 120)
+        self.assertEqual(values["cached_input_tokens"], 60)
+
+    def setUp(self):
+        root = {
+            "session_id": "s1",
+            "agent": {
+                "name": "case-code-review",
+                "version": "v1.2.3",
+                "model_name": "review-model",
+            },
+            "extra": {
+                "repo": "/repo",
+                "branch": "feature",
+                "features": {"callchain": True},
+            },
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-1",
+                    "steps": [
+                        {"step_id": 1, "source": "system", "message": "review"},
+                        {
+                            "step_id": 2,
+                            "source": "user",
+                            "message": "File: a.go (Total lines: 100)\nLINE_RANGE: 1-80\n1|source\n",
+                        },
+                        {
+                            "step_id": 3,
+                            "source": "agent",
+                            "timestamp": "2026-08-02T10:00:00Z",
+                            "reasoning_content": "The changed path needs more evidence.",
+                            "metrics": {"extra": {"duration_ms": 1200}},
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "c1",
+                                    "function_name": "read_files",
+                                    "arguments": {"file_path": "a.go"},
+                                },
+                                {
+                                    "tool_call_id": "c2",
+                                    "function_name": "read_files",
+                                    "arguments": {"file_path": "a.go"},
+                                },
+                                {
+                                    "tool_call_id": "c3",
+                                    "function_name": "search_code",
+                                    "arguments": {"query": "Thing"},
+                                },
+                                {
+                                    "tool_call_id": "c4",
+                                    "function_name": "submit_hypothesis",
+                                    "arguments": {"path": "a.go"},
+                                },
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "c1",
+                                        "content": "File: a.go (Total lines: 100)\nLINE_RANGE: 1-100\n",
+                                    },
+                                    {
+                                        "source_call_id": "c2",
+                                        "content": "File: a.go (Total lines: 100)\nLINE_RANGE: 1-100\n",
+                                    },
+                                    {
+                                        "source_call_id": "c3",
+                                        "content": "",
+                                        "extra": {"ok": False},
+                                    },
+                                    {
+                                        "source_call_id": "c4",
+                                        "content": "Hypothesis accepted for independent review. Do not resubmit it. Continue with the next material lead, or finish naturally when none remains.",
+                                    },
+                                ]
+                            },
+                        },
+                    ],
+                    "extra": {
+                        "file_path": "a.go",
+                        "scope_kind": "unit",
+                        "execution_outcome": "completed",
+                        "initial_context": [
+                            {
+                                "kind": "file",
+                                "identity": "a.go",
+                                "representation": "source",
+                                "reason": "unit",
+                            },
+                            {
+                                "kind": "file",
+                                "identity": "b.go",
+                                "representation": "outline",
+                                "reason": "callee",
+                            },
+                            {
+                                "kind": "file",
+                                "identity": "a.go",
+                                "representation": "reference",
+                                "reason": "repository_reference",
+                            },
+                        ],
+                        "initial_outline_attempts": [
+                            {
+                                "path": "b.go",
+                                "language": "go",
+                                "outcome": "admitted",
+                                "bytes": 80,
+                            },
+                            {
+                                "path": "README.md",
+                                "language": "markdown",
+                                "outcome": "empty",
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+        self.trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+    def test_projects_atif_and_runs_harness_verifiers(self):
+        detection = detect(
+            self.trajectory,
+            [
+                RepeatedToolCallDetector(),
+                AdjacentFileReadsDetector(),
+            ],
+        )
+        evaluation = verify(
+            self.trajectory,
+            [
+                ToolFailureVerifier(),
+                SearchScopeVerifier(),
+                FileReadCoverageVerifier(),
+                PromptFileCoverageVerifier(),
+                RoundEfficiencyVerifier(),
+                DurationEfficiencyVerifier(),
+                ReviewCompletionVerifier(),
+            ],
+        )
+
+        self.assertEqual(trajectory_metadata(self.trajectory)["session_id"], "s1")
+        self.assertEqual(trajectory_metadata(self.trajectory)["file_path"], "a.go")
+        self.assertEqual(
+            trajectory_generation(self.trajectory),
+            {
+                "agent": "case-code-review",
+                "agent_revision": "case-code-review@v1.2.3",
+                "model": "review-model",
+                "loop_config": '{"features":{"callchain":true}}',
+            },
+        )
+        self.assertIsNotNone(trajectory_execution(self.trajectory))
+        self.assertEqual(trajectory_execution(self.trajectory).outcome, "completed")
+        self.assertEqual(trajectory_execution(self.trajectory).duration_ms, 1200)
+        self.assertEqual(review_stage(self.trajectory), REVIEW1)
+        inference = next(
+            step for step in self.trajectory.steps if step_operation(step) == "inference"
+        )
+        self.assertEqual(
+            step_attributes(inference)["reasoning_content"],
+            "The changed path needs more evidence.",
+        )
+        self.assertEqual(
+            [step_operation(step) for step in self.trajectory.steps].count("execute_tool"), 4
+        )
+        failed_tool = next(
+            step
+            for step in self.trajectory.steps
+            if step_operation(step) == "execute_tool" and step_status(step) == "error"
+        )
+        self.assertEqual(step_failure(failed_tool).key, "tool.execute.execution_error")
+        self.assertEqual(detection.results[0].findings[0].code, "repeated_tool_call")
+        self.assertTrue(detection.results[0].findings[0].hypotheses)
+        self.assertEqual(detection.results[1].findings[0].code, "adjacent_file_reads")
+        self.assertEqual(evaluation.results[0].score, 0.75)
+        self.assertEqual(evaluation.results[1].score, 0)
+        self.assertEqual(evaluation.results[2].score, 0.5)
+        self.assertEqual(evaluation.results[3].score, 0.2)
+        self.assertEqual(evaluation.results[4].score, 1)
+        self.assertEqual(evaluation.results[5].score, 1)
+        self.assertEqual(evaluation.results[6].score, 1)
+        usage = objective_analysis(self.trajectory)["model_usage"]
+        self.assertEqual(usage["status"], "measured")
+        self.assertEqual(
+            usage["measurements"],
+            {
+                "model_call_count": 1,
+                "usage_reported_call_count": 0,
+                "usage_coverage_ratio": 0.0,
+            },
+        )
+        measurements = {
+            item["measurer_id"]: item
+            for item in objective_analysis(self.trajectory)["measurements"]
+        }
+        self.assertEqual(
+            measurements["tool_usage"]["measurements"]["failed_tool_call_count"],
+            1,
+        )
+        self.assertEqual(
+            measurements["context_usage"]["measurements"]["model_call_count"],
+            1,
+        )
+        self.assertEqual(hypothesis_yield(self.trajectory), 1)
+        self.assertEqual(
+            initial_context_stats(self.trajectory),
+            {
+                "admitted": {"source": 1, "outline": 1},
+                "demand": {"source_request": {"source": 2}},
+                "by_reason": {
+                    "unit": {"admitted": 1, "source_request": 2},
+                    "callee": {"admitted": 1},
+                },
+                "outlines": {
+                    "attempts": 2,
+                    "outcomes": {"admitted": 1, "empty": 1},
+                    "by_language": {
+                        "go": {"admitted": 1},
+                        "markdown": {"empty": 1},
+                    },
+                    "admitted_bytes": 80,
+                },
+            },
+        )
+
+        self.assertEqual(repeated_file_reads(self.trajectory), {"a.go": 2})
+        self.assertEqual(
+            file_read_stats(self.trajectory),
+            {
+                "calls": 2,
+                "requests": 2,
+                "rounds": 1,
+                "average_batch": 1.0,
+                "max_batch": 1,
+                "calls_per_round": 2.0,
+            },
+        )
+        self.assertEqual(
+            prompt_file_read_overlap(self.trajectory),
+            {
+                "calls": 2,
+                "fully_covered": 0,
+                "partially_covered": 2,
+                "new_context": 0,
+                "runtime_covered": 0,
+                "blocked": 0,
+                "failed": 0,
+                "unmeasured": 0,
+                "covered_lines": 160,
+                "total_lines": 200,
+                "overlap_rate": 0.8,
+                "overlapping_steps": ["4", "5"],
+            },
+        )
+        self.assertEqual(
+            [
+                item["verifier_id"]
+                for item in objective_analysis(self.trajectory)["verifications"]
+            ],
+            [
+                "tool_success",
+                "search_scope_validity",
+                "file_read_coverage",
+                "file_read_prompt_novelty",
+                "round_efficiency",
+                "duration_efficiency",
+                "review_completion",
+            ],
+        )
+        self.assertEqual(
+            [
+                item["detector_id"]
+                for item in objective_analysis(self.trajectory)["detections"]
+            ],
+            [
+                "repeated_tool_call",
+                "retry_loop",
+                "adjacent_file_reads",
+                "file_read_batching",
+                "search_then_read",
+            ],
+        )
+
+    def test_model_usage_preserves_cache_read_tokens(self):
+        root = {
+            "session_id": "usage",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-usage",
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "metrics": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 10,
+                                "cache_read_tokens": 80,
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        usage = objective_analysis(trajectory)["model_usage"]["measurements"]
+
+        self.assertEqual(usage["total_tokens"], 110)
+        self.assertEqual(usage["cached_input_tokens"], 80)
+        self.assertEqual(usage["uncached_input_tokens"], 20)
+        self.assertEqual(usage["cache_hit_ratio"], 0.8)
+
+    def test_review2_uses_assessment_completion_instead_of_task_done(self):
+        root = {
+            "session_id": "s2",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "hypothesis_review:lane-1",
+                    "extra": {"scope_kind": "lane"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "a1",
+                                    "function_name": "submit_assessment",
+                                    "arguments": {"support": "insufficient"},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "a1",
+                                        "content": json.dumps(
+                                            {"accepted": "h-1", "replaced": False}
+                                        ),
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(review_stage(trajectory), REVIEW2)
+        self.assertEqual(AssessmentCompletionVerifier().verify(trajectory).score, 1)
+        self.assertEqual(
+            ReviewCompletionVerifier().verify(trajectory).status,
+            "not_applicable",
+        )
+        self.assertEqual(
+            [
+                item["verifier_id"]
+                for item in objective_analysis(trajectory)["verifications"]
+            ],
+            [
+                "tool_success",
+                "search_scope_validity",
+                "file_read_coverage",
+                "file_read_prompt_novelty",
+                "round_efficiency",
+                "duration_efficiency",
+                "review_completion",
+                "assessment_submission",
+            ],
+        )
+
+    def test_failed_empty_arguments_are_grouped_by_tool_and_model(self):
+        root = {
+            "session_id": "empty-args",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-empty-args",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "model_name": "model-a",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read-1",
+                                    "function_name": "read_files",
+                                    "arguments": {},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read-1",
+                                        "content": "required parameter reads is missing",
+                                        "extra": {"ok": False},
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "model_name": "model-b",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "done-1",
+                                    "function_name": "task_done",
+                                    "arguments": {},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "done-1",
+                                        "content": "done",
+                                        "extra": {"ok": True},
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            empty_tool_argument_stats(trajectory),
+            {
+                "count": 1,
+                "by_tool": {"read_files": 1},
+                "by_model": {"model-a": 1},
+                "step_ids": ["2"],
+            },
+        )
+
+    def test_lane_efficiency_is_normalized_by_accepted_assessments(self):
+        steps = []
+        for index in range(30):
+            raw = {
+                "step_id": index + 1,
+                "source": "agent",
+                "metrics": {"extra": {"duration_ms": 10_000}},
+            }
+            if index in (10, 29):
+                call_id = f"assessment-{index}"
+                raw["tool_calls"] = [
+                    {
+                        "tool_call_id": call_id,
+                        "function_name": "submit_assessment",
+                        "arguments": {"support": "insufficient"},
+                    }
+                ]
+                raw["observation"] = {
+                    "results": [
+                        {
+                            "source_call_id": call_id,
+                            "content": json.dumps(
+                                {"accepted": f"h-{index}", "replaced": False}
+                            ),
+                        }
+                    ]
+                }
+            steps.append(raw)
+        root = {
+            "session_id": "lane-efficiency",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "lane-1",
+                    "extra": {"scope_kind": "lane"},
+                    "steps": steps,
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        rounds = RoundEfficiencyVerifier().verify(trajectory)
+        duration = DurationEfficiencyVerifier().verify(trajectory)
+
+        self.assertEqual(rounds.score, 0.8)
+        self.assertIn("2 review item(s)", rounds.explanation)
+        self.assertEqual(duration.score, 0.8)
+        self.assertEqual(objective_analysis(trajectory)["assessment_count"], 2)
+
+    def test_main_deductions_rank_total_score_loss(self):
+        deductions = main_deductions(
+            [
+                {
+                    "verifications": [
+                        {
+                            "verifier_id": "duration",
+                            "verdict": "fail",
+                            "score": 0.4,
+                        },
+                        {
+                            "verifier_id": "search",
+                            "verdict": "fail",
+                            "score": 0.7,
+                        },
+                    ]
+                },
+                {
+                    "verifications": [
+                        {
+                            "verifier_id": "duration",
+                            "verdict": "fail",
+                            "score": 0.5,
+                        },
+                        {
+                            "verifier_id": "completion",
+                            "verdict": "pass",
+                            "score": 1.0,
+                        },
+                    ]
+                },
+            ]
+        )
+
+        self.assertEqual(deductions[0]["name"], "duration")
+        self.assertEqual(deductions[0]["count"], 2)
+        self.assertEqual(deductions[0]["average_score"], 0.45)
+
+    def test_file_read_coverage_scores_overlapping_ranges(self):
+        root = {
+            "session_id": "s3",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-3",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "r1",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "file_path": "a.go",
+                                        "start_line": 1,
+                                        "end_line": 100,
+                                    },
+                                },
+                                {
+                                    "tool_call_id": "r2",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "file_path": "a.go",
+                                        "start_line": 50,
+                                        "end_line": 150,
+                                    },
+                                },
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "r1",
+                                        "content": "File: a.go (Total lines: 200)\nLINE_RANGE: 1-100\n",
+                                    },
+                                    {
+                                        "source_call_id": "r2",
+                                        "content": "File: a.go (Total lines: 200)\nLINE_RANGE: 50-150\n",
+                                    },
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        result = FileReadCoverageVerifier().verify(trajectory)
+
+        self.assertEqual(result.score, 0.746)
+        self.assertEqual(result.step_ids, ("3",))
+        self.assertEqual(
+            adjacent_file_read_stats(trajectory),
+            {
+                "read_range_count": 2,
+                "minimal_ranges": 1,
+                "mergeable_range_count": 1,
+                "cross_turn_mergeable_range_count": 0,
+                "same_turn_mergeable_range_count": 1,
+                "same_call_mergeable_range_count": 0,
+                "adjacent_step_ids": ["3"],
+            },
+        )
+        adjacency = AdjacentFileReadsDetector().detect(trajectory)
+        self.assertEqual(adjacency.findings[0].code, "adjacent_file_reads")
+        batching = FileReadBatchingDetector().detect(trajectory)
+        self.assertEqual(batching.findings[0].code, "unbatched_same_turn_reads")
+        self.assertEqual(
+            same_turn_file_read_batching(trajectory)["step_ids"],
+            ["2", "3"],
+        )
+
+    def test_prompt_overlap_classifies_context_short_circuits(self):
+        root = {
+            "session_id": "s4",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-4",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "initial",
+                                    "function_name": "read_files",
+                                    "arguments": {"file_path": "a.go"},
+                                },
+                                {
+                                    "tool_call_id": "runtime",
+                                    "function_name": "read_files",
+                                    "arguments": {"file_path": "b.go"},
+                                },
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "initial",
+                                        "content": "Already available in the current context from the initial source context: a.go lines 10-20. Reuse that content; call read_files only for a range not shown there.",
+                                    },
+                                    {
+                                        "source_call_id": "runtime",
+                                        "content": "Already available in the current context from an earlier read_files result: b.go lines 30-40. Reuse that content; call read_files only for a range not shown there.",
+                                    },
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        overlap = prompt_file_read_overlap(trajectory)
+
+        self.assertEqual(overlap["fully_covered"], 1)
+        self.assertEqual(overlap["runtime_covered"], 1)
+        self.assertEqual(overlap["covered_lines"], 11)
+        self.assertEqual(overlap["total_lines"], 11)
+
+    def test_batch_file_read_counts_requests_and_preserves_item_ranges(self):
+        result = (
+            "===== FILE_READ RESULT 1/2 =====\n"
+            "File: a.go (Total lines: 20)\nLINE_RANGE: 1-10\n1|a\n"
+            "===== FILE_READ RESULT 2/2 =====\n"
+            "File: b.go (Total lines: 30)\nLINE_RANGE: 11-20\n11|b\n"
+        )
+        root = {
+            "session_id": "batch",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-batch",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "batch-1",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "reads": [
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 1,
+                                                "end_line": 10,
+                                            },
+                                            {
+                                                "file_path": "b.go",
+                                                "start_line": 11,
+                                                "end_line": 20,
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {"source_call_id": "batch-1", "content": result}
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(repeated_file_reads(trajectory), {})
+        self.assertEqual(
+            file_read_stats(trajectory),
+            {
+                "calls": 1,
+                "requests": 2,
+                "rounds": 1,
+                "average_batch": 2.0,
+                "max_batch": 2,
+                "calls_per_round": 1.0,
+            },
+        )
+        self.assertEqual(adjacent_file_read_stats(trajectory)["read_range_count"], 2)
+        self.assertEqual(prompt_file_read_overlap(trajectory)["new_context"], 2)
+
+    def test_batch_code_search_distinguishes_valid_empty_from_scope_miss(self):
+        result = (
+            "===== CODE_SEARCH RESULT 1/4 =====\n"
+            "File: a.go\nMatch lines: 1\n10|func Alpha()\n"
+            "Context:\nLINE_RANGE: 9-11\n9|// Alpha\n10|func Alpha()\n11|}\n"
+            "===== CODE_SEARCH RESULT 2/4 =====\n"
+            'Search outcome: {"status":"no_matches","query_mode":"literal","searched_files":4}\n'
+            "No matches found\n"
+            "===== CODE_SEARCH RESULT 3/4 =====\n"
+            'Search outcome: {"status":"scope_empty","query_mode":"literal","searched_files":0}\n'
+            "No files matched file_patterns\n"
+            "===== CODE_SEARCH RESULT 4/4 =====\n"
+            'Search outcome: {"status":"no_matches","query_mode":"literal","searched_files":4}\n'
+            "No matches found\n"
+        )
+        root = {
+            "session_id": "search-batch",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-batch",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search-1",
+                                    "function_name": "search_code",
+                                    "arguments": {
+                                        "searches": [
+                                            {
+                                                "query": "Alpha",
+                                                "syntax": "literal",
+                                            },
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                            },
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                                "file_patterns": ["missing/**"],
+                                            },
+                                            {
+                                                "query": "Missing",
+                                                "syntax": "literal",
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {"source_call_id": "search-1", "content": result}
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            code_search_stats(trajectory),
+            {
+                "calls": 1,
+                "requests": 4,
+                "rounds": 1,
+                "average_batch": 4.0,
+                "max_batch": 4,
+                "calls_per_round": 1.0,
+                "hits": 1,
+                "valid_empty": 2,
+                "scope_miss": 1,
+                "scope_unknown": 0,
+                "tool_failure": 0,
+                "repeated_empty": 1,
+                "context_projections": 1,
+                "context_projection_rate": 0.25,
+                "returned_context_lines": 3,
+                "context_truncated_results": 0,
+                "context_unavailable_results": 0,
+                "symbol_context_attempts": 0,
+                "symbol_context_outcomes": {},
+                "returned_symbol_context_lines": 0,
+            },
+        )
+        evaluation = SearchScopeVerifier().verify(trajectory)
+        self.assertEqual(evaluation.score, 0.75)
+        self.assertEqual(evaluation.step_ids, ("2",))
+
+    def test_symbol_context_tracks_outcome_lines_and_follow_up(self):
+        root = {
+            "session_id": "search-symbol-context",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-symbol-context",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search",
+                                    "function_name": "search_code",
+                                    "arguments": {
+                                        "searches": [
+                                            {"query": "Alpha"}
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "search",
+                                        "content": (
+                                            "===== CODE_SEARCH RESULT 1/1 =====\n"
+                                            "File: a.go\nMatch lines: 1\n40|func Alpha()\n"
+                                            'Symbol context: {"status":"expanded","hit_count":1,'
+                                            '"resolved_hits":1,"candidate_count":1}\n'
+                                            'Symbol source: {"path":"a.go","start_line":39,'
+                                            '"end_line":41,"total_lines":100}\n'
+                                            "39|// Alpha\n40|func Alpha()\n41|}\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "reads": [
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 35,
+                                                "end_line": 45,
+                                            }
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read",
+                                        "content": (
+                                            "===== FILE_READ RESULT 1/1 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 35-45\n40|func Alpha()\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        searches = code_search_stats(trajectory)
+        self.assertEqual(searches["context_projections"], 1)
+        self.assertEqual(searches["symbol_context_attempts"], 1)
+        self.assertEqual(searches["symbol_context_outcomes"], {"expanded": 1})
+        self.assertEqual(searches["returned_symbol_context_lines"], 3)
+        follow_up = search_then_read_stats(trajectory)
+        self.assertEqual(follow_up["symbol_expanded_hit_search_request_count"], 1)
+        self.assertEqual(follow_up["symbol_expanded_follow_up_read_rate"], 1.0)
+        self.assertEqual(
+            follow_up["symbol_expanded_within_span_follow_up_read_rate"], 0.0
+        )
+        self.assertEqual(
+            follow_up["symbol_expanded_extending_follow_up_read_rate"], 1.0
+        )
+
+    def test_search_then_read_links_only_later_ranges_covering_hits(self):
+        root = {
+            "session_id": "search-then-read",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-search-then-read",
+                    "extra": {"scope_kind": "unit"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "search",
+                                    "function_name": "search_code",
+                                    "arguments": {"query": "Alpha"},
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "search",
+                                        "content": (
+                                            "File: a.go\nMatch lines: 1\n"
+                                            "40|func Alpha()\nContext:\n"
+                                            "LINE_RANGE: 39-41\n"
+                                            "39|// Alpha docs\n"
+                                            "40|func Alpha()\n"
+                                            "41|    return\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "step_id": 2,
+                            "source": "agent",
+                            "tool_calls": [
+                                {
+                                    "tool_call_id": "read",
+                                    "function_name": "read_files",
+                                    "arguments": {
+                                        "reads": [
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 30,
+                                                "end_line": 39,
+                                            },
+                                            {
+                                                "file_path": "a.go",
+                                                "start_line": 40,
+                                                "end_line": 50,
+                                            },
+                                            {
+                                                "file_path": "b.go",
+                                                "start_line": 1,
+                                                "end_line": 10,
+                                            },
+                                        ]
+                                    },
+                                }
+                            ],
+                            "observation": {
+                                "results": [
+                                    {
+                                        "source_call_id": "read",
+                                        "content": (
+                                            "===== FILE_READ RESULT 1/3 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 30-39\n39|// Alpha docs\n"
+                                            "===== FILE_READ RESULT 2/3 =====\n"
+                                            "File: a.go (Total lines: 100)\n"
+                                            "LINE_RANGE: 40-50\n40|func Alpha()\n"
+                                            "===== FILE_READ RESULT 3/3 =====\n"
+                                            "File: b.go (Total lines: 10)\n"
+                                            "LINE_RANGE: 1-10\n1|package b\n"
+                                        ),
+                                    }
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(
+            search_then_read_stats(trajectory),
+            {
+                "search_calls": 1,
+                "read_range_count": 3,
+                "search_then_read_range_count": 1,
+                "search_then_read_rate": 0.333,
+                "identifier_search_then_read_range_count": 1,
+                "identifier_search_then_read_rate": 0.333,
+                "hit_search_request_count": 1,
+                "follow_up_read_request_count": 1,
+                "follow_up_read_rate": 1.0,
+                "context_hit_search_request_count": 1,
+                "context_follow_up_read_request_count": 1,
+                "context_follow_up_read_rate": 1.0,
+                "plain_hit_search_request_count": 0,
+                "plain_follow_up_read_request_count": 0,
+                "plain_follow_up_read_rate": None,
+                "symbol_hit_search_request_count": 0,
+                "symbol_follow_up_read_request_count": 0,
+                "symbol_follow_up_read_rate": None,
+                "symbol_expanded_hit_search_request_count": 0,
+                "symbol_expanded_follow_up_read_request_count": 0,
+                "symbol_expanded_follow_up_read_rate": None,
+                "symbol_expanded_within_span_follow_up_read_request_count": 0,
+                "symbol_expanded_within_span_follow_up_read_rate": None,
+                "symbol_expanded_extending_follow_up_read_request_count": 0,
+                "symbol_expanded_extending_follow_up_read_rate": None,
+                "step_ids": ["2", "4"],
+            },
+        )
+        detection = SearchThenReadDetector().detect(trajectory)
+        self.assertEqual(detection.findings[0].code, "search_then_read")
+
+    def test_llm_failure_is_projected_with_transport_progress(self):
+        root = {
+            "session_id": "llm-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {
+                        "scope_kind": "unit",
+                        "execution_outcome": "llm_error",
+                    },
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "extra": {
+                                "llm_error": "routing timed out",
+                                "failure": {
+                                    "kind": "llm",
+                                    "phase": "routing",
+                                    "error_type": "timeout",
+                                    "code": "routing_budget_exhausted",
+                                    "attributes": {
+                                        "request_phase": "await_response",
+                                        "response_started": False,
+                                    },
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        step = trajectory.steps[0]
+        self.assertEqual(step_status(step), "error")
+        self.assertIsNotNone(step_failure(step))
+        self.assertEqual(step_failure(step).key, "llm.routing.timeout")
+        self.assertIsNotNone(trajectory_execution(trajectory))
+        self.assertEqual(trajectory_execution(trajectory).outcome, "failed")
+        self.assertEqual(trajectory_execution(trajectory).failure.key, "llm.routing.timeout")
+        self.assertEqual(
+            objective_analysis(trajectory)["failures"],
+            [
+                {
+                    "impact": "step",
+                    "key": "llm.routing.timeout",
+                    "code": "routing_budget_exhausted",
+                    "request_phase": "await_response",
+                    "timeout_scope": "unknown",
+                    "response_started": False,
+                    "step_id": "1",
+                },
+                {
+                    "impact": "execution",
+                    "key": "llm.routing.timeout",
+                    "code": "routing_budget_exhausted",
+                },
+            ],
+        )
+
+    def test_workflow_timeout_is_a_structured_execution_failure(self):
+        root = {
+            "session_id": "workflow-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {
+                        "scope_kind": "unit",
+                        "execution_outcome": "timeout",
+                        "execution_reason": "review deadline exceeded",
+                    },
+                    "steps": [],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertIsNotNone(trajectory_execution(trajectory))
+        self.assertEqual(trajectory_execution(trajectory).outcome, "timeout")
+        self.assertEqual(trajectory_execution(trajectory).failure.key, "workflow.timeout")
+        self.assertEqual(
+            objective_analysis(trajectory)["failures"],
+            [
+                {
+                    "impact": "execution",
+                    "key": "workflow.timeout",
+                    "code": "",
+                }
+            ],
+        )
+
+    def test_legacy_routing_timeout_text_uses_failure_taxonomy(self):
+        root = {
+            "session_id": "legacy-timeout",
+            "subagent_trajectories": [
+                {
+                    "trajectory_id": "unit-timeout",
+                    "extra": {"execution_outcome": "llm_error"},
+                    "steps": [
+                        {
+                            "step_id": 1,
+                            "source": "agent",
+                            "extra": {
+                                "llm_error": (
+                                    "llm routing call timeout exceeded after 3m0s: "
+                                    "context deadline exceeded"
+                                )
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+
+        self.assertEqual(step_failure(trajectory.steps[0]).key, "llm.routing.timeout")
+        self.assertEqual(
+            trajectory_execution(trajectory).failure.key,
+            "llm.routing.timeout",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

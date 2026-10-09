@@ -31,6 +31,7 @@ Session 轨迹分析持续校正 prompt、工具取舍与 schema；Language（�
 ```
 case-code-review/
 ├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
+├── eval/           benchmark 效果分析 → 原 Session 的 trajectory 分析；共享环境和事实读取，入口见 `eval/README.md`
 └── internal/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
@@ -81,7 +82,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 - 内核分层与依赖方向：Project 组织项目事实、Language 接入源码事实、Unit 汇总评审知识、Harness 执行——`docs/kernel.md`
 - Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
   与 HTML Viewer 可观测性——`docs/harness.md`
-- 可观测性：Session JSONL 是共同事实源，Viewer 用于单次运行诊断，eval 用固定数据，让 Detector、
+- 可观测性：Session JSONL 是共同事实源，Viewer 用于单次运行诊断，eval/benchmark 用固定数据观察三个阶段的效果，eval/trajectory 回到原 Session，让 Detector、
   Verifier 与 Measurer 分别承担行为发现、契约判断和事实测量——`docs/observability.md`
 - spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/compforge/spec-case)
 - 项目知识：Repository / Component / FileRole 等结构知识、作者声明的 Biz Knowledge 及其投影——`docs/project.md`

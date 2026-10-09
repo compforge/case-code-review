@@ -1,0 +1,10 @@
+# Adjust corpus/repositories in a local copy before running.
+name: aacr
+description: Reference coverage before and after product delivery policy
+corpus: ../../data/datasets/aacr/go.json
+engine: ccr
+concurrency: 1
+repositories: {}
+envs:
+  - name: baseline
+    overrides: {}

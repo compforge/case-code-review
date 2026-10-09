@@ -19,20 +19,20 @@ from pathlib import Path
 from typing import Any, Iterable, cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from ccr_source import CCRSessionSource
-from ccr_trajectory import REVIEW1, REVIEW2, UNKNOWN_STAGE
-from ccr_trajectory_report import run_weekly_report as run_trajectory_report
-from eval_snapshot import artifacts_match
+from eval.trajectory.ccr_source import CCRSessionSource
+from eval.trajectory.ccr_trajectory import REVIEW1, REVIEW2, UNKNOWN_STAGE
+from eval.trajectory.ccr_trajectory_report import run_weekly_report as run_trajectory_report
+from eval.eval_snapshot import artifacts_match
 from trajectory_harness.model import (
     trajectory_execution,
     trajectory_metadata,
     trajectory_recording_id,
 )
 from trajectory_harness import TrajectoryRunArtifact
-from trajectory_judge import objective_analysis_from_run
-from weekly_report_metrics import aggregate_cohorts, aggregate_stage
-from weekly_report_render import render_markdown
-from weekly_window import WeekWindow, default_dataset_paths
+from eval.trajectory.trajectory_judge import objective_analysis_from_run
+from eval.weekly_report_metrics import aggregate_cohorts, aggregate_stage
+from eval.weekly_report_render import render_markdown
+from eval.weekly_window import WeekWindow, default_dataset_paths
 
 DEFAULT_GITHUB_LABEL_MANIFEST = Path("eval/data/labels/github-harvest.json")
 DEFAULT_LABEL_DATASET_MANIFEST = Path("eval/data/datasets/label-dataset.json")

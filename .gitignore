@@ -32,6 +32,10 @@ bin/casecodereview
 /eval/data/
 # Local bulk harvester bound to a private forge/CLI; the generic GitHub/GitLab harvester is tracked.
 /eval/codebase_labels.py
+/eval/benchmark/codebase_labels.py
+/eval/.venv/
+/eval/.ruff_cache/
+/eval/.pytest_cache/
 __pycache__/
 *.py[cod]
 
