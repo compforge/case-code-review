@@ -11,6 +11,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
@@ -33,6 +34,9 @@ func runReview(args []string) error {
 	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, opts.maxTools, opts.maxGitProcs, true)
 	if err != nil {
 		return err
+	}
+	if opts.maxCompletionTokens > 0 {
+		cc.Template.MaxCompletionTokens = opts.maxCompletionTokens
 	}
 	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
@@ -91,6 +95,8 @@ func runReview(args []string) error {
 	}
 
 	ag := runner.New(runner.Args{
+		MaxSnapshotBytes:      opts.maxSnapshotBytes,
+		MaxFiles:              opts.maxFiles,
 		RepoDir:               cc.RepoDir,
 		From:                  opts.from,
 		To:                    opts.to,
@@ -217,12 +223,14 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 
 func runPreview(cc *commonContext, opts reviewOptions) error {
 	ag := runner.New(runner.Args{
-		RepoDir:    cc.RepoDir,
-		From:       opts.from,
-		To:         opts.to,
-		Commit:     opts.commit,
-		FileFilter: cc.FileFilter,
-		GitRunner:  cc.GitRunner,
+		MaxSnapshotBytes: opts.maxSnapshotBytes,
+		MaxFiles:         opts.maxFiles,
+		RepoDir:          cc.RepoDir,
+		From:             opts.from,
+		To:               opts.to,
+		Commit:           opts.commit,
+		FileFilter:       cc.FileFilter,
+		GitRunner:        cc.GitRunner,
 	})
 
 	preview, err := ag.Preview(context.Background())
@@ -250,20 +258,22 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		return err
 	}
 	ag := runner.New(runner.Args{
-		RepoDir:      cc.RepoDir,
-		Template:     *cc.Template,
-		From:         opts.from,
-		To:           opts.to,
-		Commit:       opts.commit,
-		FileFilter:   cc.FileFilter,
-		GitRunner:    cc.GitRunner,
-		SpecPath:     opts.specPath,
-		HistoryIndex: historyIndex,
-		SystemRule:   cc.Resolver,
-		Background:   opts.background,
-		Features:     features,
-		Version:      versionString(),
-		MaxUnits:     opts.maxUnits,
+		MaxSnapshotBytes: opts.maxSnapshotBytes,
+		MaxFiles:         opts.maxFiles,
+		RepoDir:          cc.RepoDir,
+		Template:         *cc.Template,
+		From:             opts.from,
+		To:               opts.to,
+		Commit:           opts.commit,
+		FileFilter:       cc.FileFilter,
+		GitRunner:        cc.GitRunner,
+		SpecPath:         opts.specPath,
+		HistoryIndex:     historyIndex,
+		SystemRule:       cc.Resolver,
+		Background:       opts.background,
+		Features:         features,
+		Version:          versionString(),
+		MaxUnits:         opts.maxUnits,
 	})
 
 	preview, units, repoMap, err := ag.DryRun(context.Background())
@@ -290,6 +300,8 @@ func buildToolRegistry(
 ) *tool.Registry {
 	reg := tool.NewRegistry()
 	reg.Register(tool.NewFileRead(fr))
+	dependencyReader := language.NewGoDependencyReader(fr.Read, tool.FileReadMaxLines, tool.MaxResultBytes)
+	reg.Register(tool.NewBuiltin(tool.ReadGoDependency, dependencyReader.Execute))
 	if base != nil {
 		reg.Register(tool.NewFileReadBase(base))
 	}

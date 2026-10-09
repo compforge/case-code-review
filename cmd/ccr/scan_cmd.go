@@ -19,26 +19,27 @@ import (
 //
 // Bare `ccr scan` (no --path) scans the entire repository; --path narrows.
 type scanOptions struct {
-	toolConfigPath  string
-	rulePath        string
-	repoDir         string
-	paths           string // comma-separated relative paths; empty = whole repo
-	excludes        string // comma-separated gitignore-style exclude patterns
-	outputFormat    string
-	audience        string
-	background      string
-	concurrency     int
-	perFileTimeout  int
-	maxTools        int
-	maxGitProcs     int
-	preview         bool
-	noPlan          bool   // --no-plan: skip the PLAN_TASK pre-pass per file
-	noDedup         bool   // --no-dedup: skip the per-batch DEDUP_TASK
-	noSummary       bool   // --no-summary: skip the post-run PROJECT_SUMMARY_TASK
-	batch           string // --batch: override scan template's BATCH_STRATEGY
-	maxTokensBudget int    // --max-tokens-budget: cap total token usage; 0 = unlimited
-	model           string // --model: override resolved LLM model for this scan
-	showHelp        bool
+	toolConfigPath      string
+	rulePath            string
+	repoDir             string
+	paths               string // comma-separated relative paths; empty = whole repo
+	excludes            string // comma-separated gitignore-style exclude patterns
+	outputFormat        string
+	audience            string
+	background          string
+	concurrency         int
+	perFileTimeout      int
+	maxTools            int
+	maxGitProcs         int
+	preview             bool
+	noPlan              bool   // --no-plan: skip the PLAN_TASK pre-pass per file
+	noDedup             bool   // --no-dedup: skip the per-batch DEDUP_TASK
+	noSummary           bool   // --no-summary: skip the post-run PROJECT_SUMMARY_TASK
+	batch               string // --batch: override scan template's BATCH_STRATEGY
+	maxCompletionTokens int
+	maxTokensBudget     int    // --max-tokens-budget: cap total token usage; 0 = unlimited
+	model               string // --model: override resolved LLM model for this scan
+	showHelp            bool
 }
 
 func parseScanFlags(args []string) (scanOptions, error) {
@@ -55,6 +56,7 @@ func parseScanFlags(args []string) (scanOptions, error) {
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "concurrent task timeout in minutes")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the scan")
+	a.IntVar(&opts.maxCompletionTokens, "max-completion-tokens", 0, "single model response token cap (0 = template default)")
 	a.IntVar(&opts.maxTools, "max-tools", 0, "max tool call rounds per file; only takes effect when greater than template default")
 	a.IntVar(&opts.maxGitProcs, "max-git-procs", 16, "max concurrent git subprocesses")
 	a.BoolVarP(&opts.preview, "preview", "p", false, "preview which files will be scanned without running the LLM")
@@ -69,6 +71,9 @@ func parseScanFlags(args []string) (scanOptions, error) {
 		return opts, fmt.Errorf("parse flags: %w", err)
 	}
 
+	if opts.maxCompletionTokens < 0 {
+		return opts, fmt.Errorf("--max-completion-tokens must be non-negative")
+	}
 	opts.showHelp = a.showHelp
 	if opts.showHelp {
 		return opts, nil
@@ -145,6 +150,9 @@ func runScan(args []string) error {
 		scanTpl.BatchStrategy = opts.batch
 	}
 	// Token budget: --max-tokens-budget overrides the template value when set.
+	if opts.maxCompletionTokens > 0 {
+		scanTpl.MaxCompletionTokens = opts.maxCompletionTokens
+	}
 	budget := scanTpl.MaxTokensBudget
 	if opts.maxTokensBudget > 0 {
 		budget = int64(opts.maxTokensBudget)
@@ -284,6 +292,7 @@ Flags:
   --audience string       output audience: human (show progress) or agent (summary only) (default "human")
   -b, --background string optional requirement/business context for the scan
   -f, --format string     output format: text or json (default "text")
+  --max-completion-tokens int  single model response cap (default 16384)
   --concurrency int       max concurrent file scans (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)
   --max-tools int         max tool call rounds per file; only takes effect when greater than template default

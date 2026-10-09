@@ -208,6 +208,14 @@ Harness 不能把 `task_done` 统一解释为领域完成；它只执行调用�
 因此简单 Review 1 不必为了形式上的交卷继续等待或耗尽预算。超时或轮次耗尽时返回
 partial/incomplete，不把空输出包装成成功；此前已被领域层接受的增量结果不随 Execution 的失败回滚。
 
+模板的 `MAX_TOKENS` 表示输入上下文预算，`MAX_COMPLETION_TOKENS` 表示单次模型输出上限。
+主循环及 Plan、摘要、Review 2、重定位等辅助请求使用输出上限，不把上下文容量当作响应容量。
+默认 review 上下文为 200000 token，scan 为 58888，输出上限均为 16384；CLI 的
+`--max-completion-tokens` 可覆盖输出上限。未声明输出字段的自定义模板沿用其原 `MAX_TOKENS`。
+
+模型返回的 reasoning 与可见正文分别保存。后续 assistant 工具调用消息保留 provider 的 reasoning
+字段，避免工具结果回传后丢失协议要求的思考内容；Session 按实际返回值记录这两部分。
+
 整轮累计 token 预算与单次上下文窗口分别控制成本和容量。Review / Scan 的所有模型入口共享同一份
 累计预算，包括 Plan、主循环、Review 2、压缩、重定位和汇总等辅助调用。每次调用返回后按 provider
 报告的 input + output usage 累计，达到预算后拒绝新调用；派发器在获得并发槽位后再检查预算，避免

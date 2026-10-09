@@ -57,8 +57,11 @@ Review 2 不平均地“多查一些材料”，而是先把主张还原为
 优先寻找能直接支持或推翻关键前提的最短证据链。若触发条件已被反驳，就不再调查后续影响；合理的
 定向检查后仍有关键前提未知，则判 `insufficient`，不能用一个条件成立时自洽的故事替代可达性证明。
 
-CCR 不负责调查外部 provider、SDK 或 API 的真实行为。若决定性前提没有被已有 Repository 上下文
-（例如依赖源码/类型、真实 fixture/test 或实际构造该状态的 adapter）直接证明，Review 2 应停止外查并将
+Review 2 可以用 `read_go_dependency` 读取本地已有、版本可核验的 Go 依赖与标准库源码，核实 SDK
+或语言 API 的具体行为。材料的定位与校验归 Language，解析与符号关系归 CodeGraph；工具结果作为
+独立的 dependency snapshot 保留，receipt 记录其版本与内容身份，不能用作仓库 diff 锚点。
+这类源码事实不证明外部服务状态或部署配置。若决定性前提没有被已有 Repository 上下文、版本化
+依赖材料、真实 fixture/test 或实际构造该状态的 adapter 直接证明，Review 2 应停止外查并将
 `support` 判为 `insufficient`；本地代码只展示“收到某状态后会怎样”，不能单独证明外部系统会产生该状态。
 `web_search` 与 `web_fetch` 把这个边界显式化：前者表达按 query 寻找来源，后者表达读取已知 URL。
 当前两者都不联网，而是成功返回 `unavailable / unverified` 并签发当前 Hypothesis 专属 receipt。该结果

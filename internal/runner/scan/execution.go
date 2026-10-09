@@ -32,6 +32,7 @@ type scanExecutor struct {
 	handler                 harness.ToolHandler
 	maxTurns                int
 	maxTokens               int
+	maxCompletionTokens     int
 	wrapUpPrompt            string
 	compressionSystemPrompt string
 	compressionPrompt       string
@@ -60,6 +61,7 @@ func newScanExecutor(args Args, handler harness.ToolHandler) *scanExecutor {
 		handler:                 handler,
 		maxTurns:                args.Template.MaxToolRequestTimes,
 		maxTokens:               args.Template.MaxTokens,
+		maxCompletionTokens:     args.Template.CompletionTokenLimit(),
 		wrapUpPrompt:            finding.WrapUpPrompt,
 		compressionSystemPrompt: systemPrompt,
 		compressionPrompt:       compressionPrompt,
@@ -84,7 +86,7 @@ func (e *scanExecutor) Run(
 		TaskType:                session.MainTask,
 		Events:                  run,
 		MaxTurns:                e.maxTurns,
-		MaxTokens:               e.maxTokens,
+		MaxTokens:               e.maxCompletionTokens,
 		ContextWindow:           e.maxTokens,
 		WrapUpPrompt:            e.wrapUpPrompt,
 		WrapUpAllowedTools:      []string{finding.CodeComment.Name()},

@@ -98,6 +98,8 @@ func reviewContextMessages(input ReviewInput) []agentgo.AgentMessage {
 		kind := msg.SnapshotCurrent
 		if file.Kind == unit.BaselineSnapshot {
 			kind = msg.SnapshotBaseline
+		} else if file.Kind == unit.DependencySnapshot {
+			kind = msg.SnapshotDependency
 		}
 		out = append(out, (&msg.File{
 			Path: file.Path, Start: file.Start, End: file.End, Total: file.Total,
@@ -130,9 +132,15 @@ func UnitReceipts(reviewUnit unit.Unit) []EvidenceReceipt {
 		kind := "source"
 		if file.Kind == unit.BaselineSnapshot {
 			kind = "base"
+		} else if file.Kind == unit.DependencySnapshot {
+			kind = "dependency"
 		}
 		if file.Path != "" {
-			out = append(out, EvidenceReceipt{ToolCallID: "unit:" + file.ID, Kind: kind, Ref: file.Path})
+			ref := file.Path
+			if file.Kind == unit.DependencySnapshot {
+				ref = file.Ref
+			}
+			out = append(out, EvidenceReceipt{ToolCallID: "unit:" + file.ID, Kind: kind, Ref: ref})
 		}
 	}
 	for _, diff := range snapshot.RelatedDiffs {

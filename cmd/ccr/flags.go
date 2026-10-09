@@ -56,6 +56,10 @@ func (a *ocrFlagSet) IntVar(p *int, name string, value int, usage string) {
 	a.fs.IntVar(p, name, value, usage)
 }
 
+func (a *ocrFlagSet) Int64Var(p *int64, name string, value int64, usage string) {
+	a.fs.Int64Var(p, name, value, usage)
+}
+
 func (a *ocrFlagSet) DurationVar(p *time.Duration, name string, value time.Duration, usage string) {
 	a.fs.DurationVar(p, name, value, usage)
 }
@@ -112,30 +116,33 @@ func expandShortFlags(args []string, shortMap map[string]string) []string {
 // --- review subcommand options ---
 
 type reviewOptions struct {
-	toolConfigPath  string
-	rulePath        string
-	repoDir         string
-	from            string
-	to              string
-	commit          string
-	excludes        string // --exclude: comma-separated gitignore-style patterns
-	outputFormat    string
-	audience        string // --audience: "human" (default) or "agent"
-	background      string // --background: optional requirement context
-	bizID           string // --biz-id: caller-owned execution identity, persisted only
-	specPath        string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
-	historyPath     string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
-	model           string // --model: override resolved LLM model for this review
-	concurrency     int
-	perFileTimeout  int
-	maxUnits        int
-	maxTokensBudget int
-	maxTools        int
-	maxGitProcs     int
-	preview         bool
-	dryRun          bool
-	features        []string // --feature name=on|off (repeatable): ablation gates; see internal/runner/feature
-	showHelp        bool
+	toolConfigPath      string
+	rulePath            string
+	repoDir             string
+	from                string
+	to                  string
+	commit              string
+	excludes            string // --exclude: comma-separated gitignore-style patterns
+	outputFormat        string
+	audience            string // --audience: "human" (default) or "agent"
+	background          string // --background: optional requirement context
+	bizID               string // --biz-id: caller-owned execution identity, persisted only
+	specPath            string // --spec: path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
+	historyPath         string // --history: path to prior-findings JSON (symbol-id/path -> findings); injected per-unit so the reviewer reconciles them
+	model               string // --model: override resolved LLM model for this review
+	concurrency         int
+	perFileTimeout      int
+	maxUnits            int
+	maxTokensBudget     int
+	maxCompletionTokens int
+	maxFiles            int
+	maxSnapshotBytes    int64
+	maxTools            int
+	maxGitProcs         int
+	preview             bool
+	dryRun              bool
+	features            []string // --feature name=on|off (repeatable): ablation gates; see internal/runner/feature
+	showHelp            bool
 }
 
 func parseReviewFlags(args []string) (reviewOptions, error) {
@@ -153,6 +160,9 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVarP(&opts.outputFormat, "format", "f", "text", "output format: text, json, or jsonl")
 	a.StringSliceVar(&opts.features, "feature", "toggle a feature gate: name=on|off (repeatable); run 'ccr review --help' for the list")
 	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "soft limit on reported input+output tokens across the run; stops new model calls (0 = unlimited)")
+	a.IntVar(&opts.maxCompletionTokens, "max-completion-tokens", 0, "single model response token cap (0 = template default)")
+	a.Int64Var(&opts.maxSnapshotBytes, "max-snapshot-bytes", 0, "snapshot source byte budget (0 = repocli default)")
+	a.IntVar(&opts.maxFiles, "max-files", 0, "snapshot file count budget (0 = repocli default)")
 	a.IntVar(&opts.maxUnits, "max-units", 0, "grouping threshold; target = max(selected-file count, value); best effort")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited)")
@@ -176,6 +186,15 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 		return opts, nil
 	}
 
+	if opts.maxCompletionTokens < 0 {
+		return opts, fmt.Errorf("--max-completion-tokens must be non-negative")
+	}
+	if opts.maxSnapshotBytes < 0 {
+		return opts, fmt.Errorf("--max-snapshot-bytes must be non-negative")
+	}
+	if opts.maxFiles < 0 {
+		return opts, fmt.Errorf("--max-files must be non-negative")
+	}
 	if opts.maxUnits < 0 {
 		return opts, fmt.Errorf("--max-units must be non-negative")
 	}
@@ -277,6 +296,9 @@ Flags:
   -f, --format string     output format: text, json, or jsonl (default "text")
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env
   --max-units int         grouping threshold; target = max(selected-file count, value)
+  --max-completion-tokens int  single model response cap (default 16384)
+  --max-files int         snapshot file count budget (0 = repocli default)
+  --max-snapshot-bytes int snapshot source byte budget (0 = 128 MiB)
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)
   --from string           source ref to start diff from (e.g., 'main')

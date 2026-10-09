@@ -47,6 +47,7 @@ func (a *Runner) reviewHypothesis(
 		Background:              a.args.Background,
 		MaxTurns:                a.args.Template.MaxToolRequestTimes,
 		MaxTokens:               a.args.Template.MaxTokens,
+		MaxCompletionTokens:     a.args.Template.CompletionTokenLimit(),
 		FileDedup:               a.features.Enabled(feature.FileDedup),
 		FileEvict:               a.features.Enabled(feature.FileEvict),
 		CompressionSystemPrompt: a.executor.CompressionSystemPrompt(),

@@ -9,13 +9,14 @@ import (
 	"sync"
 )
 
-// SnapshotKind identifies which side of the reviewed change a file snapshot
-// came from. A specific Git ref, when available, remains in FileSnapshot.Ref.
+// SnapshotKind distinguishes repository versions from dependency source.
+// FileSnapshot.Ref retains the exact Git or dependency content identity.
 type SnapshotKind string
 
 const (
-	CurrentSnapshot  SnapshotKind = "current"
-	BaselineSnapshot SnapshotKind = "baseline"
+	CurrentSnapshot    SnapshotKind = "current"
+	BaselineSnapshot   SnapshotKind = "baseline"
+	DependencySnapshot SnapshotKind = "dependency"
 )
 
 // FileSnapshot is immutable file content actually admitted to a review. It is

@@ -65,6 +65,8 @@ func fileSnapshot(file *msg.File) unit.FileSnapshot {
 	kind := unit.CurrentSnapshot
 	if file.Snapshot == msg.SnapshotBaseline {
 		kind = unit.BaselineSnapshot
+	} else if file.Snapshot == msg.SnapshotDependency {
+		kind = unit.DependencySnapshot
 	}
 	snapshot := unit.FileSnapshot{
 		Kind: kind, Path: file.Path, Start: file.Start, End: file.End, Total: file.Total,

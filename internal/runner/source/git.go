@@ -37,6 +37,10 @@ type Provider struct {
 	// Commit mode parameter
 	commit string // single commit hash/ref
 
+	// MaxFiles is the caller-owned snapshot file budget; zero uses repocli defaults.
+	MaxFiles         int
+	MaxSnapshotBytes int64
+
 	Before, After *sourceview.Snapshot
 	Diff          repocli.DiffReport
 
@@ -153,7 +157,7 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	} else if p.mode == ModeCommit {
 		target = p.commit
 	}
-	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: allowedext.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target})
+	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: allowedext.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target, MaxFiles: p.MaxFiles, MaxSnapshotBytes: p.MaxSnapshotBytes})
 	if err != nil {
 		return nil, err
 	}

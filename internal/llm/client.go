@@ -42,10 +42,11 @@ type LLMClient interface {
 // or an array of content blocks (used by Claude for multi-part content).
 // ToolCallID is used by OpenAI-format APIs to identify which tool call this result responds to.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    any        `json:"content"`                // string or []ContentBlock
-	ToolCallID string     `json:"tool_call_id,omitempty"` // OpenAI tool call identifier
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // assistant tool invocations
+	Role             string     `json:"role"`
+	Content          any        `json:"content"`                     // string or []ContentBlock
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // OpenAI tool call identifier
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // assistant tool invocations
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // provider reasoning, distinct from visible text
 }
 
 // ContentBlock represents a single block within a multi-part message content.
@@ -157,6 +158,15 @@ func (r *ChatResponse) Content() string {
 		return strings.TrimSpace(cleaned)
 	}
 	return msg.ReasoningContent
+}
+
+// VisibleContent is assistant text only. Model history must not turn provider
+// reasoning into visible content or duplicate reasoning across both fields.
+func (r *ChatResponse) VisibleContent() string {
+	if len(r.Choices) == 0 || r.Choices[0].Message.Content == nil {
+		return ""
+	}
+	return strings.TrimSpace(stripThinkTags(*r.Choices[0].Message.Content))
 }
 
 // ToolCalls extracts tool calls from the first choice.
@@ -377,7 +387,7 @@ func (c *OpenAIClient) buildOpenAIParams(model string, req ChatRequest) openai.C
 		case "tool":
 			messages = append(messages, openai.ToolMessage(content, msg.ToolCallID))
 		case "assistant":
-			if len(msg.ToolCalls) == 0 {
+			if len(msg.ToolCalls) == 0 && msg.ReasoningContent == "" {
 				messages = append(messages, openai.AssistantMessage(content))
 			} else {
 				asst := openai.ChatCompletionAssistantMessageParam{}
@@ -394,6 +404,9 @@ func (c *OpenAIClient) buildOpenAIParams(model string, req ChatRequest) openai.C
 							},
 						},
 					})
+				}
+				if msg.ReasoningContent != "" {
+					asst.SetExtraFields(map[string]any{"reasoning_content": msg.ReasoningContent})
 				}
 				messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: &asst})
 			}
@@ -475,7 +488,9 @@ func (c *OpenAIClient) mapOpenAIResponse(sdkResp *openai.ChatCompletion) *ChatRe
 		}
 
 		var reasoningContent string
-		if extra, ok := ch.Message.JSON.ExtraFields["reasoning_content"]; ok && extra.Valid() {
+		// ExtraFields use presence, not Valid(): SDK extra fields do not carry
+		// the validity status of a generated, modeled response field.
+		if extra, ok := ch.Message.JSON.ExtraFields["reasoning_content"]; ok {
 			if err := json.Unmarshal([]byte(extra.Raw()), &reasoningContent); err != nil {
 				reasoningContent = extra.Raw()
 			}

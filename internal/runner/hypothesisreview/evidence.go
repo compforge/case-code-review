@@ -3,6 +3,7 @@ package hypothesisreview
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -72,6 +73,14 @@ func (l *EvidenceLedger) Receipts() []EvidenceReceipt {
 func receiptsFor(request harness.ToolRequest, result string) []EvidenceReceipt {
 	base := EvidenceReceipt{ToolCallID: request.Call.ID}
 	switch request.Tool {
+	case tool.ReadGoDependency:
+		source, ok := tool.DecodeGoDependencyResult(result)
+		if !ok {
+			return nil
+		}
+		base.Kind = "dependency"
+		base.Ref = source.Ref
+		return []EvidenceReceipt{base}
 	case tool.FileReadDiff:
 		base.Kind = "diff"
 		var out []EvidenceReceipt
@@ -199,7 +208,14 @@ func (h *ReviewHandler) HandleTool(
 	if !ok {
 		return tool.Of(tool.NotAvailableMsg), true
 	}
-	result, err := provider.Execute(ctx, request.Args)
+	args := request.Args
+	if request.Tool == tool.ReadGoDependency {
+		// The source being reviewed fixes the dependency scope. Keep model-visible
+		// arguments unchanged in Session; the reader reports its selected manifest.
+		args = maps.Clone(request.Args)
+		args["_reviewed_path"] = h.Hypothesis.Path
+	}
+	result, err := provider.Execute(ctx, args)
 	if err != nil {
 		return tool.Of(fmt.Sprintf("Error: %v", err)), true
 	}
@@ -215,5 +231,5 @@ func (h *ReviewHandler) HandleTool(
 func isEvidenceTool(candidate tool.Tool) bool {
 	return candidate == tool.FileRead || candidate == tool.FileReadBase ||
 		candidate == tool.FileReadDiff || candidate == tool.CodeSearch ||
-		candidate == tool.FileFind
+		candidate == tool.FileFind || candidate == tool.ReadGoDependency
 }
