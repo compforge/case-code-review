@@ -85,12 +85,12 @@ func TestContextCompactionReplay(t *testing.T) {
 	}
 	input, _ = normalizeContextMessages(input)
 	before := agentcontext.EstimateTotal(input)
-	legacy, err := agentcontext.NewMessageCompactor().Compact(t.Context(), input, fixture.Ratio)
+	legacy, err := agentcontext.NewMessageCompactor().Compact(t.Context(), agentgo.TransformContext{Messages: input}, fixture.Ratio)
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := newContextCompactor(ExecutionSpec{FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}}, before, before/5)
-	view, err := policy.Compact(t.Context(), input, fixture.Ratio)
+	view, err := policy.Compact(t.Context(), agentgo.TransformContext{Messages: input}, fixture.Ratio)
 	if err != nil {
 		t.Fatal(err)
 	}

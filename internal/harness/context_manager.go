@@ -3,7 +3,6 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path"
 	"reflect"
@@ -13,15 +12,13 @@ import (
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
 
-	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 // contextManager keeps CCR's typed messages alive until the provider boundary.
-// Projection is deterministic: deduplicate covered file reads, then shed
-// re-derivable content when the configured window crosses its warning level.
+// Transform deduplicates request evidence independently of budget; Compact
+// reduces the baseline under pressure and leaves acceptance to AgentGo.
 type contextManager struct {
 	window       int
 	dedupEnabled bool
@@ -86,22 +83,21 @@ func (m *contextManager) Compact(
 	reason agentgo.CompactReason,
 ) (agentgo.ContextCommitResult, error) {
 	messages := input.Messages
-	view, usage, changed := m.rewrite(input)
+	usage := m.estimateUsage(messages)
 	if reason == agentgo.CompactReasonThreshold && (m.window <= 0 || usage.Tokens <= m.window-max(m.window/5, 1)) {
 		return agentgo.ContextCommitResult{Messages: messages, Usage: usage}, nil
 	}
 	// Only independent per-message limits enter compaction. Cross-message
 	// references are request-local and must be rebuilt after compaction.
-	view, _ = normalizeContextMessages(messages)
+	view, _ := normalizeContextMessages(messages)
 	view = msg.LimitToolMessages(view)
-	changed = false
+	changed := false
 	if m.engine != nil {
 		result, err := m.engine.Compact(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts}, reason)
 		if err != nil {
-			if errors.Is(err, llm.ErrTokenBudget) || errors.Is(err, compactor.ErrBudget) || reason != agentgo.CompactReasonThreshold {
-				return agentgo.ContextCommitResult{}, err
-			}
-			return agentgo.ContextCommitResult{Messages: messages, Usage: usage}, nil
+			// Failure must reach the Loop so it discards staged artifact CRUD.
+			// Returning a no-op here would accept a partially prepared collection.
+			return agentgo.ContextCommitResult{}, err
 		}
 		if result.Changed {
 			m.remember(messages, result.Messages, result.Usage, "compact", true)
@@ -148,6 +144,9 @@ func (m *contextManager) RecoverOverflow(
 func (m *contextManager) Sync(messages []agentgo.AgentMessage) {
 	usage := m.estimateUsage(messages)
 	m.remember(messages, messages, usage, "baseline", false)
+	if m.engine != nil {
+		m.engine.Sync(messages)
+	}
 }
 
 func (m *contextManager) Usage() *agentgo.ContextUsage {
@@ -233,19 +232,31 @@ func (m *contextManager) remember(
 	scope string,
 	changed bool,
 ) {
-	baselineUsage := m.estimateUsage(baseline)
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var baselineUsage *agentgo.ContextUsage
+	transcriptMessages := 0
+	if scope == "baseline" {
+		baselineUsage = m.estimateUsage(baseline)
+		transcriptMessages = len(baseline)
+	} else if m.snapshot != nil {
+		baselineUsage = m.snapshot.BaselineUsage
+		transcriptMessages = m.snapshot.TranscriptMessages
+	}
 	m.usage = usage
 	m.snapshot = &agentgo.ContextSnapshot{
 		BaselineUsage:      baselineUsage,
 		Usage:              usage,
 		Scope:              scope,
-		TranscriptMessages: len(baseline),
+		TranscriptMessages: transcriptMessages,
 		ActiveMessages:     len(view),
 		LastChanged:        changed,
 	}
-	m.visibleFiles = visibleFilesIn(view)
+	// Sync runs after an assistant response, before its tools. Keep the last
+	// actual request's coverage so raw baseline files cannot suppress rereads.
+	if scope == "transform" {
+		m.visibleFiles = visibleFilesIn(view)
+	}
 }
 
 // coveredFileRead returns a lightweight result when the exact range requested

@@ -247,7 +247,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		retained = e.spec.ContinueFrom.artifacts
 	}
 	config.InitialState.Artifacts = mergeArtifacts(retained, msg.Artifacts(initial))
-	e.replaceContext(history, nil)
+	e.replaceContext(agentgo.ContextCommitResult{Messages: history})
 	e.contextManager.Sync(history)
 	events := agentgo.AgentLoop(
 		ctx,
@@ -410,10 +410,10 @@ func (e *Execution) appendContext(message agentgo.AgentMessage) error {
 	return nil
 }
 
-func (e *Execution) replaceContext(messages []agentgo.AgentMessage, _ *agentgo.ContextUsage) error {
+func (e *Execution) replaceContext(result agentgo.ContextCommitResult) error {
 	e.contextMu.Lock()
 	defer e.contextMu.Unlock()
-	e.contextMessages = append([]agentgo.AgentMessage(nil), messages...)
+	e.contextMessages = append([]agentgo.AgentMessage(nil), result.Messages...)
 	return nil
 }
 

@@ -14,7 +14,8 @@ import (
 
 type compactFunc func(context.Context, []agentgo.AgentMessage, float64) ([]agentgo.AgentMessage, error)
 
-func (f compactFunc) Compact(ctx context.Context, messages []agentgo.AgentMessage, expect float64) ([]agentgo.AgentMessage, error) {
+func (f compactFunc) Compact(ctx context.Context, input agentgo.TransformContext, expect float64) ([]agentgo.AgentMessage, error) {
+	messages := input.Messages
 	return f(ctx, messages, expect)
 }
 
@@ -55,7 +56,7 @@ func TestZoneCompactorProtectsFreshParallelResultsAcrossAllStages(t *testing.T) 
 	})
 	c := ZoneCompactor{KeepRecentTokens: 1, Stages: []Stage{{"first", stage}, {"fallback", stage}}}
 	target := agentcontext.EstimateTotal(input) - agentcontext.EstimateTokens(input[2])/2
-	view, err := c.Compact(t.Context(), input, float64(target)/float64(agentcontext.EstimateTotal(input)))
+	view, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: input}, float64(target)/float64(agentcontext.EstimateTotal(input)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestZoneCompactorHistoricalPriorityAndAge(t *testing.T) {
 	high, old, newer := file("target.go").ConfigurePriority(20), file("old.go"), file("newer.go")
 	input := []agentgo.AgentMessage{msg.FixedText("user", "task"), high, old, newer}
 	c := ZoneCompactor{Stages: []Stage{{"message", &MessageCompactor{}}}}
-	view, err := c.Compact(t.Context(), input, 0.8)
+	view, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: input}, 0.8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestZoneCompactorNoOpAndFailureAreTransactional(t *testing.T) {
 			input := []agentgo.AgentMessage{agentgo.SystemMsg("instruction"), file("source.go")}
 			original := agentgo.ToMessages(input)
 			c := ZoneCompactor{Stages: []Stage{{"summary", tc.stage}}}
-			out, err := c.Compact(t.Context(), input, tc.ratio)
+			out, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: input}, tc.ratio)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("error = %v", err)
 			}
@@ -160,7 +161,7 @@ func TestZoneCompactorOversizedActiveDoesNotEraseFreshEvidence(t *testing.T) {
 		return nil, nil
 	})}}}
 	for _, ratio := range []float64{0, .01} {
-		out, err := c.Compact(t.Context(), input, ratio)
+		out, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: input}, ratio)
 		if !errors.Is(err, ErrBudget) || out != nil || called {
 			t.Fatalf("oversized active result=%v error=%v called=%v", out, err, called)
 		}
@@ -191,7 +192,7 @@ func TestZoneCompactorRepeatedSummaryPreservesActiveAndRaw(t *testing.T) {
 	input = append(input, round("first")...)
 	for _, next := range []string{"second", "third"} {
 		beforeActive := agentgo.ToMessages(input[len(input)-2:])
-		view, err := c.Compact(t.Context(), input, .8)
+		view, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: input}, .8)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,7 +212,7 @@ func TestZoneCompactorRepeatedSummaryPreservesActiveAndRaw(t *testing.T) {
 
 func TestZoneCompactorRejectsOrphanedToolResults(t *testing.T) {
 	c := ZoneCompactor{}
-	_, err := c.Compact(t.Context(), []agentgo.AgentMessage{agentgo.ToolResultMsg("missing", []byte("evidence"), false)}, .5)
+	_, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{agentgo.ToolResultMsg("missing", []byte("evidence"), false)}}, .5)
 	if err == nil {
 		t.Fatal("accepted orphan tool result")
 	}

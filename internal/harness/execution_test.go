@@ -614,7 +614,9 @@ func TestBaselineFileDoesNotCoverCurrentFileRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.remember(nil, projection.Messages, projection.Usage, "test", false)
+	if _, err := manager.Transform(t.Context(), agentgo.TransformContext{Messages: projection.Messages}); err != nil {
+		t.Fatal(err)
+	}
 	if _, covered := manager.coveredFileRead(tool.FileReadRequest{FilePath: "pkg/a.go"}); covered {
 		t.Fatal("baseline source must not suppress a current-snapshot read_files")
 	}
@@ -772,7 +774,7 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 	if !projection.Changed || len(committed) != len(messages) {
 		t.Fatalf("projection did not commit compaction: %+v", projection)
 	}
-	if projection.Compaction == nil || projection.Compaction.Reason != agentgo.CompactReasonThreshold || !projection.Compaction.Committed {
+	if projection.Compaction == nil || projection.Compaction.Reason != agentgo.CompactReasonThreshold || projection.Compaction.Committed {
 		t.Fatalf("projection lost AgentGo compaction details: %+v", projection.Compaction)
 	}
 	for i := 3; i < 5; i++ {
@@ -807,7 +809,7 @@ func TestMessagePriorityOverridesRecencyDuringCompaction(t *testing.T) {
 		ConfigurePriority(20)
 	messages := []agentgo.AgentMessage{low, high}
 
-	projected, err := agentcontext.NewMessageCompactor().Compact(context.Background(), messages, 0.75)
+	projected, err := agentcontext.NewMessageCompactor().Compact(context.Background(), agentgo.TransformContext{Messages: messages}, 0.75)
 	if err != nil {
 		t.Fatal(err)
 	}

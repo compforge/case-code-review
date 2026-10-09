@@ -34,7 +34,8 @@ func NewLightTrimCompactor(cfg LightTrimConfig) *LightTrimCompactor {
 	return &LightTrimCompactor{cfg: cfg}
 }
 
-func (s *LightTrimCompactor) Compact(_ context.Context, messages []agentgo.AgentMessage, expect float64) ([]agentgo.AgentMessage, error) {
+func (s *LightTrimCompactor) Compact(_ context.Context, input agentgo.TransformContext, expect float64) ([]agentgo.AgentMessage, error) {
+	messages := input.Messages
 	if len(messages) == 0 || expect >= 1 {
 		return messages, nil
 	}

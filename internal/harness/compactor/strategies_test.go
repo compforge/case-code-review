@@ -23,7 +23,7 @@ func TestHistoryStrategiesDoNotRetainTheirOwnTail(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			original := agentgo.ToMessages(tt.input)
-			out, err := tt.stage.Compact(t.Context(), tt.input, 0)
+			out, err := tt.stage.Compact(t.Context(), agentgo.TransformContext{Messages: tt.input}, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -40,7 +40,7 @@ func TestHistoryStrategiesDoNotRetainTheirOwnTail(t *testing.T) {
 			if err := validateTools(out); err != nil {
 				t.Fatal(err)
 			}
-			again, err := tt.stage.Compact(t.Context(), out, 0)
+			again, err := tt.stage.Compact(t.Context(), agentgo.TransformContext{Messages: out}, 0)
 			if err != nil || !reflect.DeepEqual(agentgo.ToMessages(out), agentgo.ToMessages(again)) {
 				t.Fatalf("repeated projection changed: %v", err)
 			}
@@ -68,7 +68,7 @@ func TestHistorySummaryRetainsEvidenceAndUsesIncrementalCheckpoint(t *testing.T)
 	ctx := agentgo.ContextWithExecution(t.Context(), agentgo.Execution{ID: "compact-1", TurnIndex: 3})
 	raw := agentgo.UserMsg("original evidence marker " + strings.Repeat("source ", 200))
 	projected := newProjectedMessage(raw, agentgo.UserMsg("reference only"))
-	out, err := c.Compact(ctx, []agentgo.AgentMessage{projected}, .5)
+	out, err := c.Compact(ctx, agentgo.TransformContext{Messages: []agentgo.AgentMessage{projected}}, .5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestHistorySummaryRetainsEvidenceAndUsesIncrementalCheckpoint(t *testing.T)
 		t.Fatal("summary consumed the cleared projection instead of source evidence")
 	}
 	newFact := agentgo.UserMsg("new confirmed fact")
-	out, err = c.Compact(ctx, append(out, newFact), .5)
+	out, err = c.Compact(ctx, agentgo.TransformContext{Messages: append(out, newFact)}, .5)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestHistorySummaryRetainsEvidenceAndUsesIncrementalCheckpoint(t *testing.T)
 
 func TestHistorySummaryRejectsEmptyResponse(t *testing.T) {
 	c := NewSummaryCompactor(SummaryConfig{Model: &captureSummaryModel{}})
-	out, err := c.Compact(t.Context(), []agentgo.AgentMessage{agentgo.UserMsg("evidence")}, .5)
+	out, err := c.Compact(t.Context(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{agentgo.UserMsg("evidence")}}, .5)
 	if err == nil || out != nil {
 		t.Fatalf("empty response was accepted: %v", err)
 	}
