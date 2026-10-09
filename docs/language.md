@@ -99,6 +99,17 @@ Documentation 的归属由 CodeGraph 确定，CCR 只处理注释定界符、首
 外部 Go selector 缺少图中的目标绑定时，接收者拼写和导入路径不足以证明 used 契约，不再猜包名
 或补做绑定。源码覆盖缺口应交给 CodeGraph 改进，CCR 保留本轮分析限制。
 
+## 依赖源码材料
+
+Language 同时负责把评审快照中的依赖声明映射到本机已安装的材料。`GoDependencyReader` 从同一
+review snapshot 按当前 Hypothesis 的源码路径选择最近的 go.mod 与同目录 go.sum，选择声明版本，并校验本地 module cache 的完整源码与
+锁定 checksum 一致；不下载依赖，也不执行被评审项目。它提供文件发现和有界源码读取，不补做
+符号绑定或调用关系。需要分析这些材料时，仍通过 Document 交给 CodeGraph。
+
+读取结果保留模块、版本、内容摘要和行范围，作为 dependency snapshot 进入 Unit，避免与仓库
+current / baseline 源码混淆。标准库来自 CCR 实际运行的工具链，明确记录工具链版本与项目声明的
+Go 版本；它不证明部署环境使用同一版本。缺少锁定版本、checksum 或本地材料时返回 unavailable。
+
 ## 能力边界
 
 语言覆盖随依赖版本演进，使用 CodeGraph 的实际产物和 diagnostics 判断，不能用“有 grammar”推断

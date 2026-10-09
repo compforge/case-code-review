@@ -124,7 +124,9 @@ func toLLMMessages(messages []agentgo.Message) []llm.Message {
 					},
 				})
 			}
-			out = append(out, llm.NewToolCallMessage(message.TextContent(), toolCalls))
+			assistant := llm.NewToolCallMessage(message.TextContent(), toolCalls)
+			assistant.ReasoningContent = message.ThinkingContent()
+			out = append(out, assistant)
 		case agentgo.RoleTool:
 			out = append(out, llm.NewToolResultMessage(
 				metadataString(message.Metadata, "tool_call_id"),
@@ -160,7 +162,10 @@ func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentg
 
 	choice := resp.Choices[0]
 	content := make([]agentgo.ContentBlock, 0, len(choice.Message.ToolCalls)+1)
-	if text := resp.Content(); text != "" {
+	if choice.Message.ReasoningContent != "" {
+		content = append(content, agentgo.ThinkingBlock(choice.Message.ReasoningContent))
+	}
+	if text := resp.VisibleContent(); text != "" {
 		content = append(content, agentgo.TextBlock(text))
 	}
 	for _, call := range choice.Message.ToolCalls {

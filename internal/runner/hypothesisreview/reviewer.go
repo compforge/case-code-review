@@ -30,6 +30,7 @@ type Config struct {
 	Background              string
 	MaxTurns                int
 	MaxTokens               int
+	MaxCompletionTokens     int
 	FileDedup               bool
 	FileEvict               bool
 	CompressionSystemPrompt string
@@ -109,7 +110,7 @@ func Review(
 		TaskType:                session.HypothesisReviewTask,
 		Events:                  config.Events,
 		MaxTurns:                config.MaxTurns,
-		MaxTokens:               config.MaxTokens,
+		MaxTokens:               outputLimit(config.MaxTokens, config.MaxCompletionTokens),
 		ContextWindow:           config.MaxTokens,
 		FileDedupEnabled:        config.FileDedup,
 		FileEvictEnabled:        config.FileEvict,
@@ -239,4 +240,11 @@ func reviewRule(hypothesis unitreview.Hypothesis, resolve func(string) string) s
 		return ""
 	}
 	return hypothesis.Path + ":\n" + rule
+}
+
+func outputLimit(contextTokens, completionTokens int) int {
+	if completionTokens > 0 {
+		return completionTokens
+	}
+	return contextTokens
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/compforge/agentgo"
 
+	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
@@ -37,7 +38,7 @@ type File struct {
 	Total      int    // total lines in the file at read time
 	Content    string // the rendered block (read_files's numbered-line format)
 	Snapshot   FileSnapshot
-	Ref        string // populated for baseline snapshots when the provider reports it
+	Ref        string // baseline revision or versioned dependency content identity
 	// Label describes why this file is present without leaking Unit or Clue
 	// objects into Harness, e.g. "code under review" or "related caller ...".
 	Label string
@@ -66,8 +67,9 @@ const (
 type FileSnapshot string
 
 const (
-	SnapshotCurrent  FileSnapshot = "current"
-	SnapshotBaseline FileSnapshot = "baseline"
+	SnapshotCurrent    FileSnapshot = "current"
+	SnapshotBaseline   FileSnapshot = "baseline"
+	SnapshotDependency FileSnapshot = "dependency"
 )
 
 // StubReason selects the pointer text a deduplicated File lowers to.
@@ -121,6 +123,9 @@ func (f *File) render() string {
 		toolName := f.ToolName()
 		text = fmt.Sprintf("File: %s lines %d-%d (%s snapshot) — compacted to a reference; call %s if the content is needed again.",
 			f.Path, f.Start, f.End, f.Snapshot, toolName)
+		if f.Snapshot == SnapshotDependency {
+			text += " Ref: " + f.Ref
+		}
 	}
 	switch f.stubbed {
 	case StubSuperseded:
@@ -133,6 +138,14 @@ func (f *File) render() string {
 // FromLLM restores a file tool result into this message. Keep it beside ToLLM:
 // changes to the file wire contract must update both directions together.
 func (f *File) FromLLM(result LLMToolResult) bool {
+	if result.Tool == tool.ReadGoDependency.Name() && !result.failed() {
+		source, ok := tool.DecodeGoDependencyResult(result.Content)
+		if !ok {
+			return false
+		}
+		*f = File{messageMeta: result.messageMeta(), Path: source.Path, Start: source.Start, End: source.End, Total: source.Total, Content: source.Content, Snapshot: SnapshotDependency, Ref: source.Ref, toolCallID: result.ToolCallID}
+		return true
+	}
 	if result.failed() || (result.Tool != FileReadToolName && result.Tool != FileReadBaseToolName) {
 		return false
 	}
@@ -222,16 +235,22 @@ func (f *File) ContextItems() []agentgo.ContextItem {
 		representation = ViewOutline
 	}
 	kind := "file"
+	identity, ref := f.Path, f.ContextRef
 	if f.Snapshot == SnapshotBaseline {
 		kind = "baseline_file"
+	} else if f.Snapshot == SnapshotDependency {
+		kind, identity, ref = "dependency_file", f.Ref, f.Ref
 	}
 	return []agentgo.ContextItem{{
-		ContextKey:     agentgo.ContextKey{Kind: kind, Identity: f.Path},
-		Representation: string(representation), Reason: reason, Ref: f.ContextRef,
+		ContextKey:     agentgo.ContextKey{Kind: kind, Identity: identity},
+		Representation: string(representation), Reason: reason, Ref: ref,
 	}}
 }
 
 func (f *File) ToolName() string {
+	if f.Snapshot == SnapshotDependency {
+		return tool.ReadGoDependency.Name()
+	}
 	if f.Snapshot == SnapshotBaseline {
 		return FileReadBaseToolName
 	}

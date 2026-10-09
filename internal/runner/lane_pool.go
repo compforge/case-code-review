@@ -330,7 +330,7 @@ func newReviewCandidate(h unitreview.Hypothesis, reviewUnit unit.Unit, config la
 	}
 	snapshot := reviewUnit.Review()
 	for _, file := range snapshot.FileSnapshots {
-		if file.Path != "" && !candidate.targetPaths[file.Path] {
+		if file.Kind != unit.DependencySnapshot && file.Path != "" && !candidate.targetPaths[file.Path] {
 			candidate.readPaths[file.Path] = true
 		}
 	}

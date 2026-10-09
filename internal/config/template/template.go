@@ -15,6 +15,7 @@ type Template struct {
 	PlanTask              *LlmConversation `json:"PLAN_TASK,omitempty"`
 	MemoryCompressionTask LlmConversation  `json:"MEMORY_COMPRESSION_TASK"`
 	MaxTokens             int              `json:"MAX_TOKENS"`
+	MaxCompletionTokens   int              `json:"MAX_COMPLETION_TOKENS,omitempty"`
 	MaxToolRequestTimes   int              `json:"MAX_TOOL_REQUEST_TIMES"`
 	PlanModeLineThreshold int              `json:"PLAN_MODE_LINE_THRESHOLD"`
 	ReLocationTask        *LlmConversation `json:"RE_LOCATION_TASK,omitempty"`
@@ -30,6 +31,7 @@ type ScanTemplate struct {
 	MemoryCompressionTask LlmConversation  `json:"MEMORY_COMPRESSION_TASK"`
 	ReLocationTask        *LlmConversation `json:"RE_LOCATION_TASK,omitempty"`
 	MaxTokens             int              `json:"MAX_TOKENS"`
+	MaxCompletionTokens   int              `json:"MAX_COMPLETION_TOKENS,omitempty"`
 	ToolRequestWaitTimeMs int              `json:"TOOL_REQUEST_WAIT_TIME_MS"`
 	MaxToolRequestTimes   int              `json:"MAX_TOOL_REQUEST_TIMES"`
 	MaxSubtaskExecMinutes int              `json:"MAX_SUBTASK_EXECUTION_TIME_MINUTES"`
@@ -63,6 +65,7 @@ type templateManifest struct {
 	PlanTask              *manifestConversation `json:"PLAN_TASK,omitempty"`
 	MemoryCompressionTask manifestConversation  `json:"MEMORY_COMPRESSION_TASK"`
 	MaxTokens             int                   `json:"MAX_TOKENS"`
+	MaxCompletionTokens   int                   `json:"MAX_COMPLETION_TOKENS,omitempty"`
 	MaxToolRequestTimes   int                   `json:"MAX_TOOL_REQUEST_TIMES"`
 	PlanModeLineThreshold int                   `json:"PLAN_MODE_LINE_THRESHOLD"`
 	ReLocationTask        *manifestConversation `json:"RE_LOCATION_TASK,omitempty"`
@@ -109,6 +112,7 @@ func LoadDefault() (*Template, error) {
 
 	var tpl Template
 	tpl.MaxTokens = m.MaxTokens
+	tpl.MaxCompletionTokens = m.MaxCompletionTokens
 	tpl.MaxToolRequestTimes = m.MaxToolRequestTimes
 	tpl.PlanModeLineThreshold = m.PlanModeLineThreshold
 
@@ -137,6 +141,22 @@ func LoadScanDefault() (*ScanTemplate, error) {
 		return nil, fmt.Errorf("unmarshal default scan template: %w", err)
 	}
 	return &tpl, nil
+}
+
+// CompletionTokenLimit keeps output caps independent of context overrides.
+// Legacy templates without a completion cap retain their previous behavior.
+func (t Template) CompletionTokenLimit() int {
+	if t.MaxCompletionTokens > 0 {
+		return t.MaxCompletionTokens
+	}
+	return t.MaxTokens
+}
+
+func (t ScanTemplate) CompletionTokenLimit() int {
+	if t.MaxCompletionTokens > 0 {
+		return t.MaxCompletionTokens
+	}
+	return t.MaxTokens
 }
 
 // applyLanguage appends instruction to all system-role messages in conv.
@@ -189,6 +209,9 @@ func (t *ScanTemplate) ApplyLanguage(lang string) {
 }
 
 func (t *Template) Validate() error {
+	if t.MaxCompletionTokens < 0 {
+		return fmt.Errorf("max_completion_tokens must be non-negative")
+	}
 	if t.MaxTokens <= 0 {
 		return fmt.Errorf("max_tokens must be positive")
 	}
@@ -203,6 +226,9 @@ func (t *Template) Validate() error {
 
 // Validate checks that a ScanTemplate has the minimum fields populated.
 func (t *ScanTemplate) Validate() error {
+	if t.MaxCompletionTokens < 0 {
+		return fmt.Errorf("scan: max_completion_tokens must be non-negative")
+	}
 	if t.MaxTokens <= 0 {
 		return fmt.Errorf("scan: max_tokens must be positive")
 	}

@@ -27,6 +27,7 @@ var completionTokensPaths = []string{
 }
 
 var cacheReadTokensPaths = []string{
+	"usage.prompt_tokens_details.cached_tokens",    // OpenAI-compatible cache hits are already included in prompt_tokens
 	"usage.cache_read_input_tokens",                // Anthropic
 	"cache_read_input_tokens",                      // flat at root
 	"usage.prompt_tokens_details.cache_tokens_hit", // some providers

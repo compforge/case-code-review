@@ -37,7 +37,7 @@ func ToolDefs(main []llm.ToolDef) []llm.ToolDef {
 			out = append(out, def)
 		}
 	}
-	out = append(out, WebSearchToolDef(), WebFetchToolDef(), AssessmentToolDef())
+	out = append(out, GoDependencyToolDef(), WebSearchToolDef(), WebFetchToolDef(), AssessmentToolDef())
 	return out
 }
 
@@ -121,4 +121,21 @@ func externalEvidenceUnavailableResult(
 		"receipt":          receipt,
 	})
 	return string(result), receipt
+}
+
+func GoDependencyToolDef() llm.ToolDef {
+	return llm.ToolDef{Type: "function", Function: llm.FunctionDef{
+		Name:        tool.ReadGoDependency.Name(),
+		Description: "Read Go standard-library source or a module version declared in reviewed go.mod, verified against reviewed go.sum and already present in the local module cache. No network or project execution. Pass import_path alone to list package Go files, then read file_path with a line range. Prefer this tool before web_search for Go library/API contracts; stdlib provenance identifies the installed Go toolchain, not the deployment runtime.",
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"import_path": map[string]any{"type": "string", "description": "Go import path, e.g. net/url or go.mongodb.org/mongo-driver/x/mongo/driver/connstring"},
+				"file_path":   map[string]any{"type": "string", "description": "One filename within the package; omit to discover package files"},
+				"start_line":  map[string]any{"type": "integer", "minimum": 1},
+				"end_line":    map[string]any{"type": "integer", "minimum": 1},
+			},
+			"required": []string{"import_path"},
+		},
+	}}
 }

@@ -52,6 +52,7 @@ type Executor struct {
 	postBulletin            bool
 	maxTurns                int
 	maxTokens               int
+	maxCompletionTokens     int
 	fileDedup               bool
 	fileEvict               bool
 	wrapUpPrompt            string
@@ -79,6 +80,7 @@ type ExecutorConfig struct {
 	Session                 *session.SessionHistory
 	MaxTurns                int
 	MaxTokens               int
+	MaxCompletionTokens     int
 	FileDedup               bool
 	FileEvict               bool
 	PostBulletin            bool
@@ -109,6 +111,7 @@ func NewExecutor(
 		postBulletin:            postBulletin,
 		maxTurns:                config.MaxTurns,
 		maxTokens:               config.MaxTokens,
+		maxCompletionTokens:     config.MaxCompletionTokens,
 		fileDedup:               config.FileDedup,
 		fileEvict:               config.FileEvict,
 		wrapUpPrompt:            InvestigationWrapUpPrompt,
@@ -148,7 +151,7 @@ func (e *Executor) Run(
 		Events:                  run,
 		TurnContext:             turnContext,
 		MaxTurns:                e.maxTurns,
-		MaxTokens:               e.maxTokens,
+		MaxTokens:               outputLimit(e.maxTokens, e.maxCompletionTokens),
 		ContextWindow:           e.maxTokens,
 		FileDedupEnabled:        e.fileDedup,
 		FileEvictEnabled:        e.fileEvict,
@@ -491,4 +494,11 @@ func eventResultText(raw json.RawMessage) string {
 		return text
 	}
 	return string(raw)
+}
+
+func outputLimit(contextTokens, completionTokens int) int {
+	if completionTokens > 0 {
+		return completionTokens
+	}
+	return contextTokens
 }

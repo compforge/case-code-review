@@ -38,6 +38,11 @@ The analogy explains separation of duties; these are code-review stages, not leg
 
 These stages form an incremental pipeline rather than three global batches. A mature Hypothesis can enter Review 2 and Trial while other Units are still being investigated, so accepted work survives later timeouts. Conversely, a simple change with no remaining material lead can finish immediately; a budget is a ceiling, not a target runtime.
 
+Large repositories can raise snapshot capture budgets with `--max-files` and
+`--max-snapshot-bytes`. These limits control preparation, independently of model
+context and output limits; exceeding them fails explicitly rather than reviewing
+a truncated snapshot.
+
 ### Language Knowledge and Project Knowledge
 
 Two knowledge foundations support Unit formation and both review stages:

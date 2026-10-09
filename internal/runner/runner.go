@@ -104,6 +104,9 @@ type Args struct {
 	MaxConcurrency int
 	// MaxUnits is a grouping threshold; the effective target is at least the selected-file count.
 	MaxUnits int
+	// MaxFiles bounds repocli snapshot capture; zero uses its default.
+	MaxFiles         int
+	MaxSnapshotBytes int64
 
 	// ConcurrentTaskTimeout limits Unit exploration in minutes, including planning
 	// and briefing. Zero disables the limit; wrap-up has no time limit.
@@ -234,9 +237,13 @@ func New(args Args) *Runner {
 			Features:    args.Features.Resolved(),
 			ToolVersion: args.Version,
 			Params: map[string]any{
-				"group_diff_tokens": formation.DefaultGroupDiffTokens,
-				"max_tokens_budget": args.MaxTokensBudget,
-				"max_units":         args.MaxUnits,
+				"group_diff_tokens":     formation.DefaultGroupDiffTokens,
+				"max_tokens_budget":     args.MaxTokensBudget,
+				"max_units":             args.MaxUnits,
+				"max_files":             args.MaxFiles,
+				"max_snapshot_bytes":    args.MaxSnapshotBytes,
+				"max_tokens":            args.Template.MaxTokens,
+				"max_completion_tokens": args.Template.CompletionTokenLimit(),
 			},
 			GitHead: detectGitHead(context.Background(), args.RepoDir),
 		})
@@ -295,6 +302,7 @@ func New(args Args) *Runner {
 		Session:                 args.Session,
 		MaxTurns:                args.Template.MaxToolRequestTimes,
 		MaxTokens:               args.Template.MaxTokens,
+		MaxCompletionTokens:     args.Template.CompletionTokenLimit(),
 		FileDedup:               f.Enabled(feature.FileDedup),
 		FileEvict:               f.Enabled(feature.FileEvict),
 		PostBulletin:            f.Enabled(feature.PostBulletin),
@@ -446,6 +454,8 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 		provider = source.NewWorkspaceProvider(a.args.RepoDir, a.args.GitRunner)
 	}
 
+	provider.MaxFiles = a.args.MaxFiles
+	provider.MaxSnapshotBytes = a.args.MaxSnapshotBytes
 	parsed, err := provider.GetDiff(ctx)
 	if err != nil {
 		return fmt.Errorf("get diffs: %w", err)
@@ -1377,7 +1387,7 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc session.Scope, rawDiff
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
-		MaxTokens: a.args.Template.MaxTokens,
+		MaxTokens: a.args.Template.CompletionTokenLimit(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("plan request: %w", err)

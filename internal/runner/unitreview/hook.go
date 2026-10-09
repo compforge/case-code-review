@@ -113,7 +113,7 @@ func (h *HypothesisHook) relocate(
 		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, session.ReLocationTask)
 	}
 	_, response, _ := finding.ReLocateComment(
-		ctx, draft, ch, client, h.Template.ReLocationTask, h.Model, h.Template.MaxTokens,
+		ctx, draft, ch, client, h.Template.ReLocationTask, h.Model, h.Template.CompletionTokenLimit(),
 	)
 	if response != nil && h.RecordUsage != nil {
 		h.RecordUsage(response.Usage)

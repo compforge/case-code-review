@@ -163,8 +163,9 @@ func New(args Args) *Runner {
 // toFindingTemplate maps the relocation settings consumed by Finding's hook.
 func toFindingTemplate(s template.ScanTemplate) template.Template {
 	return template.Template{
-		MaxTokens:      s.MaxTokens,
-		ReLocationTask: s.ReLocationTask,
+		MaxTokens:           s.MaxTokens,
+		MaxCompletionTokens: s.CompletionTokenLimit(),
+		ReLocationTask:      s.ReLocationTask,
 	}
 }
 
@@ -601,7 +602,7 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
-		MaxTokens: a.args.Template.MaxTokens,
+		MaxTokens: a.args.Template.CompletionTokenLimit(),
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
@@ -651,7 +652,7 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
-		MaxTokens: a.args.Template.MaxTokens,
+		MaxTokens: a.args.Template.CompletionTokenLimit(),
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan project summary failed: %v\n", err)
@@ -723,7 +724,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
 		Messages:  messages,
-		MaxTokens: a.args.Template.MaxTokens,
+		MaxTokens: a.args.Template.CompletionTokenLimit(),
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
