@@ -22,9 +22,9 @@ ccr does not try to enumerate every possible defect. It focuses bounded agent ex
 
 A **Unit** brings related changes into a complete, bounded review context. It can cover one declaration, a region of a file, or cooperating changes across files.
 
-CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships. For example, a changed caller and callee can be reviewed together; unrelated functions in the same file can remain separate. Deleted code is interpreted against the pre-change source.
+CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships, so changes such as a caller and its callee can be reviewed together. Deleted code is interpreted against the pre-change source.
 
-CCR starts with one Unit per changed file, then groups related changes across files while keeping each file’s remaining edits together. A changed caller and callee can share one Unit while an unrelated function remains separate. If the Unit count exceeds the grouping target, ccr combines groups under common namespace ancestors using CodeGraph ownership facts. The target passed to repocli is `max(selected-file count, --max-units)`; the flag defaults to 0. Strong relationships can yield fewer Units. Missing common namespaces or size limits can prevent reaching it, which ccr reports while retaining every target edit. After grouping, CCR skips Units whose element counts contain only imports; mixed Units remain review targets. Large Units remain review targets under the execution’s context, time, and token limits.
+Grouping stays within capacity limits. When those limits prevent further merging, CCR retains the changes for review and reports the boundary. See [Unit formation](docs/unit-model.md) for grouping rules and configuration.
 
 ### Review 1 discovers; Review 2 verifies; Review 3 gates
 
