@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -321,5 +322,51 @@ func TestWaitingUnitStartsItsOwnClockAfterDiscoverySlot(t *testing.T) {
 		if calls.Load() != 2 {
 			t.Fatalf("calls=%d", calls.Load())
 		}
+	})
+}
+
+// +case:id=unit_budget_cancels_resolution_queue,desc=`Another Unit occupies the relocation worker past this Unit deadline`,expect=`Queued anchoring retires on its own deadline, preserving the accepted hypothesis and closing the Unit`
+func TestUnitTimeoutDoesNotWaitForAnotherUnitsResolutionWorker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var r1Calls atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if req.Messages[0].ExtractText() == "R2" {
+				return confirmed(), nil
+			}
+			if r1Calls.Add(1) == 1 {
+				return suspicion("queued"), nil
+			}
+			return reviewText("done"), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		pool := harness.NewWorkerPool(1)
+		occupied, release := make(chan struct{}), make(chan struct{})
+		unblock := sync.OnceFunc(func() { close(release) })
+		defer unblock()
+		pool.Submit(func() error { close(occupied); <-release; return nil })
+		<-occupied
+		a.args.WorkerPool, a.hypothesisHook.WorkerPool = pool, pool
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			findings, err := a.dispatchUnits(history.Context(context.Background()))
+			if err != nil || len(findings) != 1 {
+				t.Errorf("accepted hypothesis lost: %v %v", findings, err)
+			}
+		}()
+		time.Sleep(11 * time.Minute)
+		synctest.Wait()
+		closed := false
+		for _, record := range timeoutTranscript(t, history) {
+			if record["type"] == "debrief" {
+				closed = record["outcome"] == "timeout"
+			}
+		}
+		if !closed {
+			t.Error("Unit completion waited for another Unit's worker")
+		}
+		unblock()
+		<-finished
 	})
 }

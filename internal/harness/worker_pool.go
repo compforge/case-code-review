@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"context"
 	"fmt"
 	"runtime/debug"
 	"sync"
@@ -28,15 +29,35 @@ func NewWorkerPool(workerCount int) *WorkerPool {
 
 // Submit runs f in a background goroutine bounded by the semaphore.
 func (p *WorkerPool) Submit(f func() error) {
+	p.SubmitContext(context.Background(), f, nil)
+}
+
+// SubmitContext bounds queueing by ctx. Exactly one of f or onCanceled runs;
+// onCanceled must only perform local finalization, without acquiring a worker.
+// Once admitted, f owns cancellation of its running work.
+func (p *WorkerPool) SubmitContext(ctx context.Context, f func() error, onCanceled func()) {
 	p.wg.Go(func() {
-		p.semaphore <- struct{}{}
-		defer func() { <-p.semaphore }()
 		defer func() {
 			if r := recover(); r != nil {
 				fmt.Fprintf(console.Out(), "[ccr] WorkerPool panic: %v\n%s\n", r, debug.Stack())
 			}
 		}()
-
+		admitted := false
+		select {
+		case p.semaphore <- struct{}{}:
+			admitted = true
+		case <-ctx.Done():
+		}
+		if ctx.Err() != nil {
+			if admitted {
+				<-p.semaphore
+			}
+			if onCanceled != nil {
+				onCanceled()
+			}
+			return
+		}
+		defer func() { <-p.semaphore }()
 		if err := f(); err != nil {
 			fmt.Fprintf(console.Out(), "[ccr] WorkerPool error: %v\n", err)
 		}
