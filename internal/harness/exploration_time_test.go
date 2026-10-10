@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -29,15 +30,19 @@ func (c *explorationClockClient) CompletionsWithCtx(ctx context.Context, request
 	}
 }
 
-// +case:id=exploration_expiry_preserves_wrapup,desc=`a model response arrives after the exploration limit`,expect=`new investigation tools are blocked and a mature result can finish without a wrap-up deadline`
-func TestExplorationExpiryDuringModelCallPreservesWrapUp(t *testing.T) {
+// +case:id=exploration_expiry_preserves_wrapup,desc=`a tool finishes after the exploration limit`,expect=`the next model request enters wrap-up and retains the caller deadline`
+func TestExplorationExpiryDuringToolCallPreservesWrapUp(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
 			toolCallResponse("read_files", `{"reads":[{"file_path":"a.go"}]}`, nil),
 			toolCallResponseID("result", "submit_result", `{}`, nil),
-		}}, delays: []time.Duration{6 * time.Minute, 10 * time.Minute}}
+		}}, delays: []time.Duration{4 * time.Minute, 10 * time.Minute}}
 		submitted := 0
 		handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+			if request.Tool.Name() == "read_files" {
+				time.Sleep(2 * time.Minute)
+				return tool.Of("evidence"), true
+			}
 			if request.Tool.Name() != "submit_result" {
 				t.Errorf("investigation tool executed after expiry: %s", request.Tool.Name())
 				return tool.TaskCheckpoint{}, true
@@ -123,4 +128,79 @@ func TestDynamicWrapUpBoundaryControlsTurnsAndInFlightTools(t *testing.T) {
 			t.Fatal("in-flight expiry lost wrap-up reminder")
 		}
 	})
+}
+
+// +case:id=exploration_model_deadline,desc=`an exploration call starts one second before its deadline`,expect=`the request stops at that deadline while its parent remains live; no automatic wrap-up recovery is claimed`
+func TestExplorationModelCallUsesRemainingDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		began := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		client := &explorationClockClient{scriptedClient: &scriptedClient{}, delays: []time.Duration{time.Minute}}
+		time.Sleep(5*time.Minute - time.Second)
+		result, err := runExecution(ctx, ExecutionSpec{
+			LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
+			MaxTurns: 10, WrapUpAt: began.Add(5 * time.Minute), WrapUpPrompt: "finish", NaturalCompletion: true,
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || result.State != OutcomeLLMError {
+			t.Fatalf("request timeout was not propagated: result=%+v err=%v", result, err)
+		}
+		if ctx.Err() != nil || time.Since(began) != 5*time.Minute {
+			t.Fatalf("wrong cancellation boundary: elapsed=%s parent=%v", time.Since(began), ctx.Err())
+		}
+	})
+}
+
+func TestModelMiddlewareDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		parent, fixed, dynamic time.Duration
+		wrapUp                 bool
+		kind                   agentgo.ExecutionKind
+		want                   time.Duration
+	}{
+		{name: "exploration", parent: 10 * time.Minute, fixed: 5 * time.Minute, want: 5 * time.Minute},
+		{name: "shorter caller", parent: time.Minute, fixed: 5 * time.Minute, want: time.Minute},
+		{name: "dynamic boundary", parent: 10 * time.Minute, fixed: 5 * time.Minute, dynamic: 3 * time.Minute, want: 3 * time.Minute},
+		{name: "wrap-up", parent: 10 * time.Minute, fixed: 5 * time.Minute, wrapUp: true, want: 10 * time.Minute},
+		{name: "no exploration limit", parent: 10 * time.Minute, want: 10 * time.Minute},
+		{name: "unlimited"},
+		{name: "summarization", parent: 10 * time.Minute, fixed: 5 * time.Minute, kind: agentgo.ExecutionKindCompact, want: 5 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			began := time.Now()
+			ctx := context.Background()
+			if tc.parent > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, began.Add(tc.parent))
+				defer cancel()
+			}
+			spec := ExecutionSpec{WrapUpPrompt: "finish"}
+			if tc.fixed > 0 {
+				spec.WrapUpAt = began.Add(tc.fixed)
+			}
+			if tc.dynamic > 0 {
+				spec.WrapUpDeadline = func() time.Time { return began.Add(tc.dynamic) }
+			}
+			e := &Execution{turns: newTurnController(spec)}
+			e.turns.wrapUpIssued = tc.wrapUp
+			kind := tc.kind
+			if kind == "" {
+				kind = agentgo.ExecutionKindModel
+			}
+			_, err := e.modelMiddleware()(ctx, agentgo.ModelExecution{Execution: agentgo.Execution{Kind: kind}}, func(callCtx context.Context, _ agentgo.ModelExecution) (agentgo.ModelResult, error) {
+				deadline, limited := callCtx.Deadline()
+				if limited != (tc.want > 0) || limited && !deadline.Equal(began.Add(tc.want)) {
+					t.Fatalf("deadline=%s limited=%v want=%s", deadline, limited, tc.want)
+				}
+				return agentgo.ModelResult{}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ctx.Err() != nil {
+				t.Fatalf("model cleanup canceled parent: %v", ctx.Err())
+			}
+		})
+	}
 }

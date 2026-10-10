@@ -135,7 +135,7 @@ func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
 	})
 }
 
-func TestUnitTimeoutRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testing.T) {
+func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls, r2Calls atomic.Int32
 		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
@@ -168,20 +168,22 @@ func TestUnitTimeoutRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testin
 		if err != nil || len(findings) != 1 {
 			t.Fatalf("accepted Finding lost: %v %v", findings, err)
 		}
-		if elapsed := time.Since(began); elapsed > 10*time.Minute || elapsed < 9*time.Minute {
-			t.Fatalf("deadline renewed: %v", elapsed)
+		// R1 finished at one minute. R2 explores for 85% of the remaining
+		// interval ending at 9m58s, so its request expires at 8m37.3s.
+		if elapsed := time.Since(began); elapsed != 8*time.Minute+37300*time.Millisecond {
+			t.Fatalf("wrong exploration deadline: %v", elapsed)
 		}
-		assessments, timedOut := 0, false
+		assessments, incomplete := 0, false
 		for _, record := range timeoutTranscript(t, history) {
 			if record["artifact_kind"] == "review_assessment" {
 				assessments++
 			}
 			if record["type"] == "debrief" {
-				timedOut = record["outcome"] == "timeout"
+				incomplete = record["outcome"] == harness.OutcomeLLMError
 			}
 		}
-		if !timedOut || assessments != 1 {
-			t.Fatalf("timeout=%v assessments=%d", timedOut, assessments)
+		if !incomplete || assessments != 1 {
+			t.Fatalf("incomplete=%v assessments=%d", incomplete, assessments)
 		}
 	})
 }
@@ -296,16 +298,16 @@ func TestAsyncHypothesisResolutionStaysInsideUnitLifecycle(t *testing.T) {
 func TestWaitingUnitStartsItsOwnClockAfterDiscoverySlot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		began := time.Now()
 		client := timedReviewClient(func(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+			deadline, ok := ctx.Deadline()
+			// Each newly admitted Unit receives its own 5m55.81s exploration
+			// interval (70% of 9m58s, then 85% exploration).
+			if !ok || time.Until(deadline) != 355810*time.Millisecond {
+				t.Errorf("Unit did not receive a fresh exploration deadline: %s", time.Until(deadline))
+			}
 			if calls.Add(1) == 1 {
-				if err := waitReview(ctx, 6*time.Minute); err != nil {
+				if err := waitReview(ctx, 5*time.Minute); err != nil {
 					return nil, err
-				}
-			} else {
-				deadline, ok := ctx.Deadline()
-				if !ok || deadline.Sub(began) < 12*time.Minute {
-					t.Errorf("queued Unit inherited an old deadline: %s", deadline.Sub(began))
 				}
 			}
 			return reviewText("done"), nil

@@ -92,6 +92,21 @@ func (c *turnController) WrapUpIssued() bool {
 	return c.wrapUpIssued
 }
 
+// modelDeadline snapshots the exploration boundary for one physical request.
+// Later budget updates apply to subsequent requests; in-flight contexts keep
+// their original deadline. Zero leaves the caller's context unchanged.
+func (c *turnController) modelDeadline() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.wrapUpIssued || c.wrapUpPrompt == "" {
+		return time.Time{}
+	}
+	if c.wrapUpDeadline != nil {
+		return c.wrapUpDeadline()
+	}
+	return c.wrapUpAt
+}
+
 func (c *turnController) observeUsage(usage *llm.UsageInfo) {
 	if usage == nil {
 		return

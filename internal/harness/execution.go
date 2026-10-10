@@ -59,7 +59,7 @@ type ExecutionSpec struct {
 	// context. Zero disables this boundary; callers retain cancellation ownership.
 	WrapUpAt time.Time
 	// WrapUpDeadline supplies an adjustable exploration boundary, evaluated at
-	// turn and tool boundaries. It must be safe for concurrent calls.
+	// turn, model-call and tool boundaries. It must be safe for concurrent calls.
 	WrapUpDeadline func() time.Time
 	// WrapUpAllowedTools are the result tools permitted during the first
 	// wrap-up request. Tool schemas stay stable; middleware enforces this policy.
@@ -292,10 +292,17 @@ func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
 		execution agentgo.ModelExecution,
 		next agentgo.ModelExecuteFunc,
 	) (agentgo.ModelResult, error) {
-		if execution.Kind != agentgo.ExecutionKindModel {
-			return next(ctx, execution)
+		// Bound each exploration request, including context summarization. The
+		// child deadline cannot cancel the loop or extend its caller's deadline.
+		// Once wrap-up starts, requests retain only the caller's hard deadline.
+		if deadline := e.turns.modelDeadline(); !deadline.IsZero() {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
 		}
-		e.prepareWrapUpRequest(execution)
+		if execution.Kind == agentgo.ExecutionKindModel {
+			e.prepareWrapUpRequest(execution)
+		}
 		return next(ctx, execution)
 	}
 }
