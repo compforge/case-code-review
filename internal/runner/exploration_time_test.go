@@ -16,6 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -55,6 +56,16 @@ func confirmed() *llm.ChatResponse {
 }
 func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *session.SessionHistory) {
 	t.Helper()
+	// The manager workers and Session must share the synctest clock.
+	shutdownTimeline, err := telemetry.InitTimeline()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := shutdownTimeline(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
 	repo := t.TempDir()
 	history := session.New(repo, "main", "test", session.SessionOptions{})
 	tpl := template.Template{

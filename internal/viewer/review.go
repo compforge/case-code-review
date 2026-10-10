@@ -115,7 +115,7 @@ type ToolUsage struct {
 // nodes carry the complete recorded model input; no message-dedup heuristic is
 // used to reconstruct context after compaction.
 type ConversationNode struct {
-	Timeline         *timeline.Document
+	Timeline         *timeline.Snapshot
 	ID               string
 	Kind             string
 	Label            string

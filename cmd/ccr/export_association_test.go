@@ -11,7 +11,7 @@ import (
 // the opposite order to their declarations. Neither ordering implies ownership.
 func TestExportExecutionAndToolIdentity(t *testing.T) {
 	records := []map[string]any{
-		{"type": "session_start", "schema_version": 11, "sessionId": "run"},
+		{"type": "session_start", "schema_version": 12, "sessionId": "run"},
 	}
 	for _, id := range []string{"e1", "e2"} {
 		records = append(records,
@@ -24,10 +24,12 @@ func TestExportExecutionAndToolIdentity(t *testing.T) {
 			records = append(records, map[string]any{"type": "tool_result", "scope_id": "lane", "execution_id": id, "stage_id": id + "/tool/" + call, "request_id": id + "/request", "tool_call_id": call, "result": id + call})
 		}
 	}
+	var stages []map[string]any
 	for i, id := range []string{"e1", "e2"} {
 		outcome := []string{"completed", "timeout"}[i]
-		records = append(records, map[string]any{"type": "timeline_update", "timeline_id": "run", "update": map[string]any{"Stages": []map[string]any{{"id": id, "name": "execution", "revision": 2, "parent_id": "operation:run", "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z", "status": "succeeded", "attributes": map[string]any{"execution_id": id, "scope_id": "lane", "outcome": outcome}}}}})
+		stages = append(stages, map[string]any{"id": id, "name": "execution", "parent_id": "operation:run", "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z", "status": "succeeded", "attributes": map[string]any{"execution_id": id, "scope_id": "lane", "outcome": outcome}})
 	}
+	records = append(records, map[string]any{"type": "timeline_snapshot", "timeline_id": "run", "snapshot": map[string]any{"id": "run", "stages": stages}})
 	file := filepath.Join(t.TempDir(), "run.jsonl")
 	f, err := os.Create(file)
 	if err != nil {

@@ -13,8 +13,8 @@ def artifact(kind, **data):
 
 
 def execution(outcome):
-    return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
-        "id": "exec", "name": "execution", "revision": 2,
+    return {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{
+        "id": "exec", "name": "execution",
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
         "attributes": {"outcome": outcome},
     }]}}

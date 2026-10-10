@@ -9,9 +9,9 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agentgo v0.0.2-0.20261009014237-f883a8196dd1
-	github.com/compforge/codegraph v0.10.6-0.20261008085442-d75a61b6fec1
-	github.com/compforge/go-stdx v0.0.4-0.20261005064845-5d5688c0caea
-	github.com/compforge/repocli/toolkit/go v0.0.0-20261010014229-1ca66787b625
+	github.com/compforge/codegraph v0.10.6-0.20261010020504-8bc19a1b244d
+	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
+	github.com/compforge/repocli/toolkit/go v0.0.0-20261010101146-aec47bdcf34e
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8
@@ -54,6 +54,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
+	github.com/jellydator/ttlcache/v3 v3.4.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect

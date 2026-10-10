@@ -7,19 +7,19 @@ import (
 )
 
 func TestAnalyzeSession(t *testing.T) {
-	lines := `{"type":"session_start","cwd":"/r","gitBranch":"b","timestamp":"2026-07-02T10:00:00Z","schema_version":11}
+	lines := `{"type":"session_start","cwd":"/r","gitBranch":"b","timestamp":"2026-07-02T10:00:00Z","schema_version":12}
 {"type":"llm_request","scope_id":"u1","taskType":"main_task","timestamp":"2026-07-02T10:00:01Z","stage_id":"request-1","timeline_id":"s1"}
-{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"}]}}
+{"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"}]}}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","timestamp":"2026-07-02T10:00:11Z","stage_id":"request-1","timeline_id":"s1"}
 {"type":"tool_result","scope_id":"u1","tool_name":"read_files","ok":true,"result":"x","timestamp":"2026-07-02T10:00:11Z"}
 {"type":"llm_request","scope_id":"u1","taskType":"main_task","timestamp":"2026-07-02T10:00:12Z","stage_id":"request-2","timeline_id":"s1"}
-{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:50+00:00","status":"succeeded"}]}}
+{"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"},{"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:50+00:00","status":"succeeded"}]}}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","timestamp":"2026-07-02T10:01:02Z","stage_id":"request-2","timeline_id":"s1"}
 {"type":"llm_request","scope_id":"u2","taskType":"main_task","timestamp":"2026-07-02T10:00:01Z","stage_id":"request-3","timeline_id":"s1"}
-{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-3","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:20+00:00","status":"succeeded"}]}}
+{"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"},{"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:50+00:00","status":"succeeded"},{"id":"request-3","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:20+00:00","status":"succeeded"}]}}
 {"type":"llm_response","scope_id":"u2","filePath":"b.go","model":"m2","timestamp":"2026-07-02T10:00:21Z","stage_id":"request-3","timeline_id":"s1"}
 {"type":"tool_result","scope_id":"u2","tool_name":"search_code","ok":false,"result":"","timestamp":"2026-07-02T10:00:21Z"}
-{"type":"timeline_update","timeline_id":"s1","update":{"Stages":[{"revision":2,"id":"request-4","parent_id":"operation:s1","name":"llm.request","started_at":"2026-07-02T10:00:21Z","finished_at":"2026-07-02T10:00:30Z","status":"failed"}]}}
+{"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"},{"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:50+00:00","status":"succeeded"},{"id":"request-3","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:20+00:00","status":"succeeded"},{"id":"request-4","parent_id":"operation:s1","name":"llm.request","started_at":"2026-07-02T10:00:21Z","finished_at":"2026-07-02T10:00:30Z","status":"failed"}]}}
 {"type":"llm_error","scope_id":"u2","timestamp":"2026-07-02T10:00:30Z","stage_id":"request-4","timeline_id":"s1"}
 `
 	f := filepath.Join(t.TempDir(), "s.jsonl")

@@ -91,7 +91,6 @@ type exportEvent struct {
 	RequestID              string           `json:"request_id"`
 	ToolCallID             string           `json:"tool_call_id"`
 	TimelineID             string           `json:"timeline_id"`
-	TimelineUpdate         timeline.Update  `json:"update"`
 	Type                   string           `json:"type"`
 	Timestamp              string           `json:"timestamp"`
 	SessionID              string           `json:"sessionId"`

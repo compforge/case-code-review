@@ -12,19 +12,21 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 func recordedRequest(t *testing.T, run func(context.Context) error) timeline.Snapshot {
 	t.Helper()
-	recorder, err := timeline.New("test-request")
-	if err != nil {
+	id := t.Name()
+	defer telemetry.ReleaseTimeline(id)
+	if err := timeline.Start(id, "llm.request"); err != nil {
 		t.Fatal(err)
 	}
-	if err := recorder.Start(context.Background(), "llm.request"); err != nil {
-		t.Fatal(err)
+	err := run(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}))
+	if finishErr := timeline.Finish(id, err); finishErr != nil {
+		t.Fatal(finishErr)
 	}
-	err = run(timeline.NewContext(context.Background(), recorder))
-	snapshot, collectErr := recorder.Finish(context.Background(), err)
+	snapshot, collectErr := timeline.Read(context.Background(), id, false)
 	if collectErr != nil {
 		t.Fatal(collectErr)
 	}

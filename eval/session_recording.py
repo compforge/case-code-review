@@ -11,6 +11,8 @@ from pathlib import Path
 def read_records(path: Path) -> tuple[list[dict], list[str]]:
     records: list[dict] = []
     gaps: list[str] = []
+    latest_snapshot = None
+    timeline_id = None
     with path.open("rb") as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
@@ -23,7 +25,18 @@ def read_records(path: Path) -> tuple[list[dict], list[str]]:
                 kind = "truncated final record" if not line.endswith(b"\n") else "corrupt record"
                 gaps.append(f"line {number}: {kind}")
                 break
-            records.append(record)
+            if record.get("type") == "timeline_snapshot":
+                snapshot = record.get("snapshot")
+                identity = record.get("timeline_id")
+                if not isinstance(snapshot, dict) or not identity or snapshot.get("id") != identity or timeline_id not in (None, identity):
+                    gaps.append(f"line {number}: inconsistent timeline ID")
+                    break
+                timeline_id = identity
+                latest_snapshot = record
+            else:
+                records.append(record)
+    if latest_snapshot is not None:
+        records.append(latest_snapshot)
     return records, gaps
 
 
@@ -33,26 +46,18 @@ def _finished(stage: dict) -> bool:
 
 
 def timeline_stages(records: list[dict]) -> dict[str, dict]:
-    """Merge stage revisions before projecting execution or cost facts."""
+    """Read the latest complete snapshot in the Session's append order."""
     stages: dict[str, dict] = {}
+    timeline_id = None
     for record in records:
-        if record.get("type") != "timeline_update":
+        if record.get("type") != "timeline_snapshot":
             continue
-        update = record.get("update") or {}
-        for stage in update.get("Stages") or []:
-            identity = stage["id"]
-            previous = stages.get(identity)
-            if previous is not None:
-                revision, old_revision = stage["revision"], previous["revision"]
-                if revision < old_revision:
-                    continue
-                if revision == old_revision:
-                    if stage != previous:
-                        raise ValueError(f"conflicting timeline stage: {identity}")
-                    continue
-                if _finished(previous):
-                    raise ValueError(f"timeline stage changed after completion: {identity}")
-            stages[identity] = stage
+        snapshot = record["snapshot"]
+        identity = record["timeline_id"]
+        if not identity or snapshot["id"] != identity or timeline_id not in (None, identity):
+            raise ValueError("inconsistent timeline ID")
+        timeline_id = identity
+        stages = {stage["id"]: stage for stage in snapshot.get("stages", [])}
     return stages
 
 
@@ -63,10 +68,7 @@ def execution_facts(records: list[dict]) -> dict[str, dict]:
     for identity, stage in stages.items():
         if stage.get("name") != "execution":
             continue
-        attributes = stage.get("attributes")
-        if attributes is None:
-            attributes = stage.get("fields")  # Sessions recorded before the upstream rename.
-        facts = dict(attributes or {})
+        facts = dict(stage.get("attributes") or {})
         if not _finished(stage):
             facts.pop("outcome", None)
         else:
@@ -98,7 +100,7 @@ class Recording:
                 seen.add(identity)
             unique.append(record)
         for record in unique:
-            if record.get("type") == "session_start" and record.get("schema_version", 11) != 11:
+            if record.get("type") == "session_start" and record.get("schema_version", 12) != 12:
                 gaps.append(f"unsupported session schema: {record.get('schema_version')}")
         try:
             timeline_stages(unique)

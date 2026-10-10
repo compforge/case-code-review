@@ -3,41 +3,56 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from eval.session_recording import execution_facts, read_records
+from eval.session_recording import execution_facts, read_records, timeline_stages
 
 
 class SessionRecordingTests(unittest.TestCase):
-    def test_attributes_and_legacy_fields_preserve_execution_outcome(self):
+    def test_reader_retains_only_latest_snapshot_and_all_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.jsonl"
+            first = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{"id": "first"}]}}
+            latest = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{"id": "latest"}]}}
+            content = {"type": "llm_request", "seq": 2}
+            path.write_text("\n".join(json.dumps(record) for record in [first, content, latest]) + "\n")
+            records, gaps = read_records(path)
+            self.assertEqual(records, [content, latest])
+            self.assertEqual(gaps, [])
+            with path.open("a") as stream:
+                stream.write(json.dumps({**latest, "timeline_id": "foreign"}) + "\n")
+            records, gaps = read_records(path)
+            self.assertEqual(records, [content, latest])
+            self.assertIn("inconsistent timeline ID", gaps[0])
+
+    def test_snapshot_attributes_preserve_execution_outcome(self):
         for attributes in (
             {"attributes": {"outcome": "completed"}},
-            {"fields": {"outcome": "completed"}},
-            {"attributes": None, "fields": {"outcome": "completed"}},
-            {"attributes": {"outcome": "completed"}, "fields": {"outcome": "failed"}},
         ):
             with self.subTest(attributes=attributes):
-                stage = {"id": "exec", "name": "execution", "revision": 2,
+                stage = {"id": "exec", "name": "execution",
                          "started_at": "2026-10-01T00:00:00Z",
                          "finished_at": "2026-10-01T00:00:01Z", **attributes}
-                record = {"type": "timeline_update", "update": {"Stages": [stage]}}
+                record = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [stage]}}
                 facts = execution_facts([record])["exec"]
                 self.assertEqual(facts["outcome"], "completed")
                 self.assertEqual(facts["duration_ms"], 1000)
         stage["attributes"] = {}
         self.assertNotIn("outcome", execution_facts([record])["exec"])
 
-    def test_zero_go_time_is_running_and_revisions_merge(self):
-        stage = {"id": "exec", "name": "execution", "revision": 1,
+    def test_zero_go_time_is_running_and_latest_snapshot_wins(self):
+        stage = {"id": "exec", "name": "execution",
                  "started_at": "2026-10-01T00:00:00Z",
                  "finished_at": "0001-01-01T00:00:00Z",
-                 "fields": {"outcome": "completed"}}
-        begin = {"type": "timeline_update", "update": {"Stages": [stage]}}
+                 "attributes": {"outcome": "completed"}}
+        begin = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [stage]}}
         self.assertNotIn("outcome", execution_facts([begin])["exec"])
-        end = {**stage, "revision": 2, "finished_at": "2026-10-01T00:00:01Z"}
-        finish = {"type": "timeline_update", "update": {"Stages": [end]}}
-        facts = execution_facts([begin, finish, begin, finish])["exec"]
+        end = {**stage, "finished_at": "2026-10-01T00:00:01Z"}
+        finish = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [end]}}
+        facts = execution_facts([begin, finish, finish])["exec"]
         self.assertEqual(facts["outcome"], "completed")
         self.assertEqual(facts["duration_ms"], 1000)
-        conflict = {"type": "timeline_update", "update": {"Stages": [{**end, "revision": 3}]}}
+        empty = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": []}}
+        self.assertEqual(timeline_stages([finish, empty]), {})
+        conflict = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "other", "stages": [end]}}
         with self.assertRaises(ValueError):
             execution_facts([finish, conflict])
 

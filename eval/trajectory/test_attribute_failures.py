@@ -14,8 +14,8 @@ from eval.trajectory.attribute_failures import (
 
 
 def execution_stage(fields: dict) -> dict:
-    return {"type": "timeline_update", "timeline_id": "run", "update": {"Stages": [{
-        "id": fields["scope_id"], "revision": 2, "name": "execution", "parent_id": "operation:run",
+    return {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{
+        "id": fields["scope_id"], "name": "execution", "parent_id": "operation:run",
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
         "status": "failed", "attributes": fields,
     }]}}

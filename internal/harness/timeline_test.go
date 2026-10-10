@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 type tracedTestClient struct{ llm.LLMClient }
@@ -67,11 +69,20 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		}
 	}
 	history.Finalize()
-	recorder, _ := timeline.FromContext(ctx)
-	snapshot, err := recorder.Snapshot(context.Background())
+	path, err := history.TranscriptPath()
 	if err != nil {
 		t.Fatal(err)
 	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	transcript, err := session.ReadTranscript(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := transcript.Timeline
 	byID := map[timeline.StageID]timeline.Stage{}
 	counts := map[string]int{}
 	for _, stage := range snapshot.Stages {
@@ -88,7 +99,7 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		t.Fatalf("stage counts = %v", counts)
 	}
 	for _, stage := range snapshot.Stages {
-		if stage.ParentID != snapshot.RootStageID {
+		if stage.ParentID != "" && stage.ParentID != snapshot.RootStageID {
 			if _, ok := byID[stage.ParentID]; !ok {
 				t.Errorf("orphan stage %+v", stage)
 			}
@@ -107,19 +118,20 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 }
 
 func TestExecutionTimelineUsesSourceTimeAndLeavesMissingEndIncomplete(t *testing.T) {
-	recorder, _ := timeline.New("run")
-	if err := recorder.Start(context.Background(), "review"); err != nil {
+	id := t.Name()
+	defer telemetry.ReleaseTimeline(id)
+	if err := timeline.Start(id, "review"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, root := timeline.BeginContext(timeline.NewContext(context.Background(), recorder), recorder, "execution", timeline.WithStageID("exec"))
-	r := &executionTimeline{ctx: ctx, timeline: recorder, id: "exec", root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	ctx, root := telemetry.BeginTimelineStage(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}), "execution", timeline.WithStageID("exec"))
+	r := &executionTimeline{ctx: ctx, timelineID: id, id: "exec", root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 	start := time.Now().Add(-time.Second)
 	r.observe(agentgo.Event{Type: agentgo.EventTurnStart, TurnIndex: 1, Timestamp: start})
 	execution := agentgo.Execution{ID: "model-1", Kind: agentgo.ExecutionKindModel, TurnIndex: 1, Attempt: 1}
 	r.observe(agentgo.Event{Type: agentgo.EventModelExecStart, Execution: &execution, Timestamp: start})
 	r.observe(agentgo.Event{Type: agentgo.EventModelExecEnd, Execution: &execution, Timestamp: start.Add(20 * time.Millisecond)})
 	r.finish(ExecutionResult{State: OutcomeCompleted}, nil)
-	snapshot, err := recorder.Snapshot(context.Background())
+	snapshot, err := timeline.Read(context.Background(), id, false)
 	if err != nil {
 		t.Fatal(err)
 	}

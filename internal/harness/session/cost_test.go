@@ -11,17 +11,17 @@ import (
 
 func TestCostsKeepFailedAndUnfinishedCallsAndUnionChildTime(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	stage := func(id, parent string, a, b int) timeline.StageUpdate {
+	stage := func(id, parent string, a, b int) timeline.Stage {
 		s := timeline.Stage{ID: timeline.StageID(id), ParentID: timeline.StageID(parent), Name: id, StartedAt: start.Add(time.Duration(a) * time.Second), Status: timeline.Running}
 		if b > 0 {
 			s.FinishedAt = start.Add(time.Duration(b) * time.Second)
 			s.Status = timeline.Succeeded
 		}
-		return timeline.StageUpdate{Stage: s, Revision: 1}
+		return s
 	}
 	records := []map[string]any{
 		{"type": "session_start", "schema_version": SchemaVersion},
-		{"type": "timeline_update", "timeline_id": "cost", "update": timeline.Update{Stages: []timeline.StageUpdate{
+		{"type": "timeline_snapshot", "timeline_id": "cost", "snapshot": timeline.Snapshot{ID: "cost", Stages: []timeline.Stage{
 			stage("execution", "operation:cost", 0, 10), stage("req1", "execution", 1, 7), stage("req2", "execution", 3, 9), stage("req3", "execution", 9, 0),
 		}}},
 		{"type": "llm_request", "stage_id": "req1"},

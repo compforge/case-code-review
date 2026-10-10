@@ -12,19 +12,32 @@ import (
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
-func main() {
+func main() { os.Exit(run()) }
+
+func run() int {
 	llm.AppVersion = Version
 	llm.InitEmbeddedLoader()
 
 	ctx := context.Background()
+	shutdownTimeline, err := telemetry.InitTimeline()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+		return 1
+	}
+	defer func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		telemetry.ReportTimelineError(shutdownTimeline(closeCtx))
+	}()
 	if telemetry.Init(ctx) {
 		defer telemetry.ShutdownWithTimeout(ctx, 5*time.Second)
 	}
 
 	if err := dispatch(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // dispatch routes top-level subcommands or global flags.

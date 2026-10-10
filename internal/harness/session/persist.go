@@ -22,9 +22,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v11 uses Stage identities
-// for execution lifecycle and associated content.
-const SchemaVersion = 11
+// protocol instead of guessing old record semantics. v12 uses complete native
+// timeline snapshots and Stage identities for associated content.
+const SchemaVersion = 12
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,

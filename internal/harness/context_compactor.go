@@ -6,6 +6,7 @@ import (
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 )
@@ -29,18 +30,18 @@ func newContextCompactor(spec ExecutionSpec, model agentgo.ChatModel, window, re
 }
 
 func recordZoneCompaction(ctx context.Context, report compactor.Report) {
-	t, ok := timeline.FromContext(ctx)
+	ref, ok := timeline.StageFromContext(ctx)
 	if !ok {
 		return
 	}
-	_, stage := timeline.BeginContext(ctx, t, "context.zones", timeline.WithStartTime(report.Started), timeline.WithAttributes(
+	_, stage := telemetry.BeginTimelineStage(ctx, "context.zones", timeline.WithParent(ref.StageID), timeline.WithStartTime(report.Started), timeline.WithAttributes(
 		timeline.Attribute{Key: "fixed", Value: report.Fixed},
 		timeline.Attribute{Key: "active", Value: report.Active},
 		timeline.Attribute{Key: "history", Value: report.History},
 		timeline.Attribute{Key: "tokens_before", Value: report.Before},
 		timeline.Attribute{Key: "tokens_target", Value: report.Target},
 	))
-	stage.End(report.Err, timeline.WithEndTime(report.Started.Add(report.Duration)), timeline.WithEndAttributes(
+	telemetry.EndTimelineStage(ctx, stage, report.Err, timeline.WithEndTime(report.Started.Add(report.Duration)), timeline.WithEndAttributes(
 		timeline.Attribute{Key: "tokens_after", Value: report.After},
 		timeline.Attribute{Key: "strategies", Value: report.Stages},
 		timeline.Attribute{Key: "target_met", Value: report.After <= report.Target},

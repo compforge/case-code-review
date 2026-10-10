@@ -3,6 +3,7 @@ package session
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -10,10 +11,11 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
-	prefix := `{"type":"session_start","schema_version":11}` + "\n"
+	prefix := `{"type":"session_start","schema_version":12}` + "\n"
 	for _, tc := range []struct {
 		name, tail     string
 		truncated, bad bool
@@ -34,23 +36,24 @@ func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
 			}
 		})
 	}
-	if _, err := ReadTranscript(strings.NewReader(`{"type":"session_start","schema_version":10}`)); err == nil {
+	if _, err := ReadTranscript(strings.NewReader(`{"type":"session_start","schema_version":11}`)); err == nil {
 		t.Fatal("accepted an old schema")
 	}
 }
 
-func TestTranscriptNativeStageRevisions(t *testing.T) {
+func TestTranscriptUsesLatestCompleteSnapshot(t *testing.T) {
 	start := time.Now().UTC()
 	stage := timeline.Stage{ID: "execution", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"outcome": json.RawMessage(`"completed"`)}}
 	var stream bytes.Buffer
 	enc := json.NewEncoder(&stream)
-	write := func(revision uint64) {
+	write := func() {
 		t.Helper()
-		if err := enc.Encode(map[string]any{"type": "timeline_update", "timeline_id": "run", "update": timeline.Update{Stages: []timeline.StageUpdate{{Stage: stage, Revision: revision}}}}); err != nil {
+		snapshot := timeline.Snapshot{ID: "run", RootStageID: "operation:run", Stages: []timeline.Stage{stage}}
+		if err := enc.Encode(map[string]any{"type": "timeline_snapshot", "timeline_id": "run", "snapshot": snapshot}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write(1)
+	write()
 	partial, err := ReadTranscript(bytes.NewReader(stream.Bytes()))
 	if err != nil {
 		t.Fatal(err)
@@ -60,11 +63,14 @@ func TestTranscriptNativeStageRevisions(t *testing.T) {
 	}
 	stage.FinishedAt = start.Add(7 * time.Millisecond)
 	stage.Status = timeline.Succeeded
-	write(2)
-	write(2)
+	write()
+	write()
 	transcript, err := ReadTranscript(&stream)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(transcript.Records) != 0 {
+		t.Fatal("reader retained repeated snapshot payloads")
 	}
 	facts := transcript.ExecutionFacts()
 	if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["duration_ms"] != float64(7) {
@@ -72,22 +78,20 @@ func TestTranscriptNativeStageRevisions(t *testing.T) {
 	}
 }
 
-func TestTranscriptReadsAttributesAndLegacyFields(t *testing.T) {
-	for _, key := range []string{"attributes", "fields"} {
-		t.Run(key, func(t *testing.T) {
-			raw := `{"type":"timeline_update","timeline_id":"run","update":{"Stages":[{"revision":2,"id":"exec","name":"execution","started_at":"2026-10-01T00:00:00Z","finished_at":"2026-10-01T00:00:01Z","status":"succeeded","` + key + `":{"execution_id":"exec","outcome":"completed","turns":3}}]}}`
-			transcript, err := ReadTranscript(strings.NewReader(raw))
-			if err != nil {
-				t.Fatal(err)
-			}
-			facts := transcript.ExecutionFacts()
-			if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["turns"] != float64(3) || facts[0]["duration_ms"] != float64(1000) {
-				t.Fatalf("lost execution facts: %v", facts)
-			}
-			if transcript.Timeline.Stages[0].Revision != 2 {
-				t.Fatal("lost stage revision")
-			}
-		})
+func TestTranscriptSnapshotIdentityAndActors(t *testing.T) {
+	raw := `{"type":"timeline_snapshot","timeline_id":"run","snapshot":{"id":"run","actors":[{"id":"worker"}],"stages":[{"id":"exec","name":"execution","actor_ref":1,"started_at":"2026-10-01T00:00:00Z","finished_at":"2026-10-01T00:00:01Z","status":"succeeded","attributes":{"execution_id":"exec","outcome":"completed","turns":3}}]}}`
+	transcript, err := ReadTranscript(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := transcript.ExecutionFacts()
+	if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["turns"] != float64(3) || transcript.Timeline.Stages[0].Actor.ID != "worker" {
+		t.Fatalf("lost snapshot facts: %+v", transcript)
+	}
+	for _, bad := range []string{strings.Replace(raw, `"id":"run"`, `"id":"other"`, 1), strings.Replace(raw, `"actor_ref":1`, `"actor_ref":2`, 1)} {
+		if _, err := ReadTranscript(strings.NewReader(bad)); err == nil {
+			t.Fatal("accepted invalid snapshot")
+		}
 	}
 }
 
@@ -99,10 +103,16 @@ type failingSink struct {
 func (f *failingSink) Write(p []byte) (int, error) { f.calls++; return 0, f.err }
 
 func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
+	id := t.Name()
+	defer telemetry.ReleaseTimeline(id)
+	if err := timeline.Start(id, "review"); err != nil {
+		t.Fatal(err)
+	}
+	defer timeline.Finish(id, nil)
 	var data bytes.Buffer
-	writer := &jsonlWriter{sessionID: "run", startTime: time.Now(), writer: bufio.NewWriter(&data)}
+	writer := &jsonlWriter{sessionID: id, startTime: time.Now(), writer: bufio.NewWriter(&data)}
 	writer.writeRecordLocked(map[string]any{"type": "llm_request"})
-	if err := writer.writeTimeline("run", timeline.Update{}); err != nil {
+	if _, err := writer.writeTimeline(id); err != nil {
 		t.Fatal(err)
 	}
 	writer.writeRecordLocked(map[string]any{"type": "artifact"})
@@ -112,7 +122,7 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	}
 	seen := map[any]bool{}
 	for i, record := range transcript.Records {
-		if record["seq"] != float64(i+1) || record["sessionId"] != "run" || seen[record["uuid"]] {
+		if record["seq"] != float64(2*i+1) || record["sessionId"] != id || seen[record["uuid"]] {
 			t.Fatalf("envelope=%v", record)
 		}
 		if _, ok := record["parentUuid"]; ok {
@@ -125,10 +135,13 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	if _, err := writer.appendLocked(map[string]any{"type": "artifact"}); !errors.Is(err, sink.err) {
 		t.Fatalf("write error=%v", err)
 	}
-	if err := writer.writeTimeline("run", timeline.Update{}); !errors.Is(err, sink.err) {
+	if _, err := writer.writeTimeline(id); !errors.Is(err, sink.err) {
 		t.Fatalf("timeline error=%v", err)
 	}
 	if sink.calls != 1 || writer.sequence != 3 {
 		t.Fatalf("failed recording kept advancing: calls=%d seq=%d", sink.calls, writer.sequence)
+	}
+	if _, err := timeline.Read(context.Background(), id, false); err != nil {
+		t.Fatal("failed export discarded cached facts", err)
 	}
 }
