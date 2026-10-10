@@ -44,7 +44,7 @@ func targetUnit(t *testing.T, us []unit.Unit, symbol string) unit.Unit {
 	t.Fatalf("target %s absent", symbol)
 	return unit.Unit{}
 }
-func TestGraphFormationExtractsChangedCallsAndKeepsUnrelatedRemainder(t *testing.T) {
+func TestGraphFormationPacksSmallSameFileRemainderAfterChangedCalls(t *testing.T) {
 	files := map[string]string{"go.mod": "module example\n", "a.go": "package p\nfunc A(){ B() }\nfunc Other(){}\n", "b.go": "package p\nfunc B(){}\n"}
 	changes := []change.Change{edit("a.go", files["a.go"], 2, "func A(){}", "func A(){ B() }"), edit("b.go", files["b.go"], 2, "func B(){panic(0)}", "func B(){}")}
 	changes[0].Diff += "@@ -3 +3 @@\n-func Other(){panic(0)}\n+func Other(){}\n"
@@ -55,21 +55,21 @@ func TestGraphFormationExtractsChangedCallsAndKeepsUnrelatedRemainder(t *testing
 	a := targetUnit(t, us, "a.go::A")
 	b := targetUnit(t, us, "b.go::B")
 	other := targetUnit(t, us, "a.go::Other")
-	if len(us) != 2 || a.ID != b.ID || a.ID == other.ID || len(a.Grouping) == 0 {
+	if len(us) != 1 || a.ID != b.ID || a.ID != other.ID || len(a.Grouping) == 0 {
 		t.Fatalf("wrong partition: %+v", us)
 	}
 	if len(a.Paths()) != 2 {
 		t.Fatal(a.Paths())
 	}
 }
-func TestGraphFormationAliasesRetainBoundaryAtTarget(t *testing.T) {
+func TestGraphFormationAliasesMergeBelowCountCeiling(t *testing.T) {
 	files := map[string]string{"lib.ts": "export const LIMIT = 2;\n", "app.ts": "import { LIMIT as cap } from './lib';\nexport function run(){ return cap; }\n"}
-	us, err := Form(Config{Changes: []change.Change{edit("lib.ts", files["lib.ts"], 1, "export const LIMIT = 1;", "export const LIMIT = 2;"), edit("app.ts", files["app.ts"], 2, "export function run(){ return 0; }", "export function run(){ return cap; }")}, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 1})
+	us, err := Form(Config{Changes: []change.Change{edit("lib.ts", files["lib.ts"], 1, "export const LIMIT = 1;", "export const LIMIT = 2;"), edit("app.ts", files["app.ts"], 2, "export function run(){ return 0; }", "export function run(){ return cap; }")}, Analyzer: graphRepo(t, files), CallChain: true, MaxUnits: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 2 || len(us[0].Paths()) != 1 || len(us[0].Boundaries) == 0 || len(us[1].Boundaries) == 0 {
-		t.Fatalf("alias use should remain evidenced across target boundaries: %+v", us)
+	if len(us) != 1 || len(us[0].Paths()) != 2 || len(us[0].Grouping) == 0 || len(us[0].Boundaries) != 0 {
+		t.Fatalf("alias use should join changed declarations with evidence: %+v", us)
 	}
 }
 func TestGraphFormationDoesNotJoinCommonUnchangedDependency(t *testing.T) {
@@ -130,8 +130,8 @@ func TestGraphFormationPartitionsLargeGraphDeterministically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(us) != 24 {
-		t.Fatalf("expected grouping to stop at selected-file target, got %d", len(us))
+	if len(us) < (24+maxGroupFiles-1)/maxGroupFiles || len(us) >= 24 {
+		t.Fatalf("expected bounded grouping of the caller/callee chain, got %d", len(us))
 	}
 	covered := map[string]bool{}
 	var ids []string

@@ -163,7 +163,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.IntVar(&opts.maxCompletionTokens, "max-completion-tokens", 0, "single model response token cap (0 = template default)")
 	a.Int64Var(&opts.maxSnapshotBytes, "max-snapshot-bytes", 0, "snapshot source byte budget (0 = repocli default)")
 	a.IntVar(&opts.maxFiles, "max-files", 0, "snapshot file count budget (0 = repocli default)")
-	a.IntVar(&opts.maxUnits, "max-units", 0, "grouping threshold; target = max(selected-file count, value); best effort")
+	a.IntVar(&opts.maxUnits, "max-units", 0, "soft Unit count ceiling = min(selected-file count, value); 0 uses file count; best effort")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited)")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
@@ -295,7 +295,7 @@ Flags:
   -c, --commit string     single commit hash or tag to review (vs its parent)
   -f, --format string     output format: text, json, or jsonl (default "text")
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env
-  --max-units int         grouping threshold; target = max(selected-file count, value)
+  --max-units int         soft Unit count ceiling = min(selected-file count, positive value); 0 uses file count
   --max-completion-tokens int  single model response cap (default 16384)
   --max-files int         snapshot file count budget (0 = repocli default)
   --max-snapshot-bytes int snapshot source byte budget (0 = 128 MiB)
