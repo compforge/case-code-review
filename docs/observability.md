@@ -71,6 +71,36 @@ Go 消费方共用 Session reader：读取最后一份完整 timeline 快照，�
 Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
 Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
 
+### 本地记录保留与清理
+
+CCR 默认保留最近 **7 天**的 Session，并将 `~/.casecodereview/sessions` 中 JSONL 与配套日志的
+总量控制在 **5 GiB**。`review/scan` 创建录制前自动清理，录制期间每 10 分钟再次检查；
+help、preview、dry-run review 和 Viewer 等读取操作不会触发清理。
+
+淘汰单位是一整个 Session：先删除超期记录，容量仍超限时继续按修改时间从旧到新删除，
+同时删除同名 `.log`。JSONL 不截断、不丢弃开头，保留下来的会话仍可供 Viewer、stats、export 和 eval 完整读取。
+需要长期保留的评测样本应复制到独立数据目录，避免受本地历史保留策略影响。
+
+```sh
+ccr clean --dry-run                        # 预览可回收容量，不删除记录
+ccr clean                                  # 立即按当前策略清理
+ccr config set retention.days 7
+ccr config set retention.max_mib 5120       # MiB，5120 = 5 GiB
+ccr clean --days 14 --max-mib 10240         # 仅本次覆盖配置
+ccr clean --test-sessions                   # 独立清理测试录制目录
+```
+
+两个配置项中，`0` 表示禁用对应限制；两项均为 `0` 时关闭自动清理。配置文件使用
+`"retention": {"days": 7, "max_mib": 5120}`，省略的字段使用默认值。
+自动清理只管理 `sessions`；`test-sessions` 需显式选择，配置、规则、评测数据目录均不在清理范围。
+
+运行中的会话通过文件锁保护，最近一小时写入的记录也会保留。因此容量是保留目标，
+活跃会话本身过大时允许暂时超限，CCR 会报告未达到目标，而不会截断当前录制。
+进程异常退出后锁自动释放，后续清理可以回收这些未完成记录。
+没有文件锁的旧版未完成会话默认保留，因为无法判断是否仍在录制；
+确认旧版 CCR 进程均已停止后，可用 `ccr clean --include-incomplete --dry-run` 预览，
+再去掉 `--dry-run` 清理。该选项仍然保护新版本正在录制的会话和最近一小时的文件。
+
 ### 时间与 token 成本归属
 
 `ccr stats <session.jsonl> --format json` 从共同 Session reader 输出整轮成本和各 Stage 的成本。

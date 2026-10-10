@@ -190,6 +190,9 @@ func runScan(args []string) error {
 	}
 	tools := buildToolRegistry(rt.Findings, fileReader, nil, false)
 
+	stopCleanup := startSessionCleanup(rt.AppCfg)
+	defer stopCleanup()
+
 	ag := scan.New(scan.Args{
 		RepoDir:               cc.RepoDir,
 		Paths:                 scanPaths,

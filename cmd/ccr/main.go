@@ -61,6 +61,8 @@ func dispatch() error {
 		return runReview(args[1:])
 	case "scan", "s":
 		return runScan(args[1:])
+	case "clean":
+		return runClean(args[1:])
 	case "config":
 		return runConfig(args[1:])
 	case "llm":
@@ -96,6 +98,7 @@ Commands:
   viewer       Start the WebUI session viewer
   stats        Analyze session transcripts (latency, tools, slow chains)
   export       Export session transcripts as ATIF trajectories
+  clean        Prune old session recordings (use --dry-run to preview)
   version      Show version information
 
 Examples:

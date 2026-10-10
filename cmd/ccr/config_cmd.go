@@ -173,6 +173,7 @@ type Config struct {
 	CustomProviders map[string]ProviderEntry `json:"custom_providers,omitempty"`
 	Llm             LlmConfig                `json:"llm,omitempty"`
 	Language        string                   `json:"language,omitempty"`
+	Retention       *RetentionConfig         `json:"retention,omitempty"`
 	Telemetry       *TelemetryConfig         `json:"telemetry,omitempty"`
 	// Features holds feature-gate defaults (gate name -> on/off), overridden by
 	// CCR_FEATURES env and --feature CLI. See internal/runner/feature.
@@ -237,6 +238,8 @@ func setConfigValue(cfg *Config, key, value string) error {
 	}
 
 	switch key {
+	case "retention.days", "retention.max_mib":
+		return setRetentionValue(cfg, key, value)
 	case "provider":
 		if cfg.Provider != value {
 			cfg.Model = ""
