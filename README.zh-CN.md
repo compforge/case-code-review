@@ -22,9 +22,9 @@ ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现
 
 **Unit 让相关改动得到完整、有界的共同评审**。它可以覆盖一个声明、文件中的一个区域，或跨文件协作的多处改动。
 
-CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 定位改动涉及的声明和绑定，并沿源码关系组织评审。例如，改动的调用方与被调用方可以一起审；同文件中无关的函数可以分开审。删除的代码依据改动前的源码理解。
+CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 定位改动涉及的声明和绑定，并沿源码关系组织评审，让调用方与被调用方等相关改动一起审。删除的代码依据改动前的源码理解。
 
-CCR 先按每个改动文件建立 Unit，再提取跨文件关联改动共同评审，剩余改动按文件收拢。调用方与被调用方可以共享一个 Unit，无关函数留在文件的剩余改动 Unit 中。数量超出目标时，沿 CodeGraph 中的共同 namespace 祖先继续归拢。CCR 传给 repocli 的数量目标是 `max(待评审文件数, --max-units)`，参数默认 0；强关系可以聚合出更少的 Unit。缺少共同 namespace 或受大小预算限制时报告未达标，保留全部目标改动。聚合完成后，CCR 跳过 element counts 仅含 import 的 Unit，混合类型 Unit 保留。大 Unit 仍进入评审，由执行的上下文、时间和 token 预算控制。
+分组受容量预算约束；无法继续合并时，CCR 保留改动进入评审并报告边界。具体分组规则与配置见 [Unit 模型](docs/unit-model.md)。
 
 ### Review 1 发现，Review 2 验证，Review 3 门禁
 

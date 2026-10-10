@@ -39,9 +39,12 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 			paths[ch.Path()] = true
 		}
 	}
-	// Count-driven coalescing should not force a target below the selected-file count.
-	// Strong source relations may still produce fewer Units.
-	maxUnits := max(len(paths), config.MaxUnits)
+	// The count ceiling limits weak namespace packing. Evidenced relations and
+	// file-local packing continue within capacity even below this ceiling.
+	maxUnits := len(paths)
+	if config.MaxUnits > 0 {
+		maxUnits = min(maxUnits, config.MaxUnits)
+	}
 	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{Exclude: config.Exclude, FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
 	if err != nil {
 		finish(err)

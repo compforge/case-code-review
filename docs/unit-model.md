@@ -52,8 +52,10 @@ Formation 调用 repocli 的拆分与组装能力，复用当前 run 的前后�
 合并策略；Language 为这些源码范围关联 CCR 的图身份，供契约与邻域查询使用。
 
 CCR 提供 diff token 计量和合并预算，保留分阶段数量、namespace 证明、预算边界与解析缺口。
-CCR 将 `max(进入 formation 的不同文件数, --max-units)` 作为数量软目标传给 repocli。
-强关系可以聚合出更少的 Unit；大小预算可能阻止降到目标，此时报告超限并保留全部改动。
+CCR 默认以进入 formation 的不同文件数作为数量软上限；`--max-units` 为正数时取两者的较小值，
+为零时沿用文件数。用户配置可以收紧上限，不能把默认上限抬高。
+同一声明、caller/callee 等明确关系在容量允许时尽量合并，不因数量低于上限而停止；同文件小组继续归并，
+数量上限只决定是否需要 namespace 等更弱的兜底归并。大小预算可能使结果超限，此时保留全部改动并报告边界。
 Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态仍由 CCR 管理。
 
 聚合完成后，CCR 跳过前后两侧 element counts 满足 `import count == total count` 的 Unit，包含空 counts；

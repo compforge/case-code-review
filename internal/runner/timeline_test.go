@@ -87,10 +87,10 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 			if err := json.Unmarshal(record.Data["step"], &step); err != nil {
 				t.Fatal(err)
 			}
-			if step.Strategy != "local" || step.Input != 1 || step.Output != 1 || stages[record.StageID] != "unit.grouping" {
+			if (step.Strategy != "local" && step.Strategy != "relations" && step.Strategy != "file") || step.Input != 1 || step.Output != 1 || stages[record.StageID] != "unit.grouping" {
 				t.Fatalf("step=%+v stage=%s", step, record.StageID)
 			}
-			foundStep = true
+			foundStep = foundStep || step.Strategy == "local"
 		case "unit_formation":
 			var report struct {
 				Initial int `json:"initial_units"`
@@ -197,7 +197,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	}
 }
 
-func TestGroupingStopsAtFileTargetAndPersistsStage(t *testing.T) {
+func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {
 	home, repo := t.TempDir(), t.TempDir()
 	t.Setenv("HOME", home)
 	src := "package p\nfunc A(){}\n"
@@ -236,15 +236,15 @@ func TestGroupingStopsAtFileTargetAndPersistsStage(t *testing.T) {
 			continue
 		}
 		step := record.Data.Step
-		if record.StageID == "" || step.OutputUnits != 2 || a.grouping.MaxUnits != 2 || a.grouping.FinalUnits != 2 {
+		if record.StageID == "" || step.OutputUnits != 2 || a.grouping.MaxUnits != 1 || a.grouping.FinalUnits != 1 {
 			t.Fatalf("step=%+v stage=%s grouping=%+v", step, record.StageID, a.grouping)
 		}
 		for _, grouped := range a.grouping.Steps {
-			if grouped.Strategy == "namespace" {
-				t.Fatalf("namespace grouping continued after reaching target: %+v", grouped)
+			if grouped.Strategy == "namespace" && grouped.OutputUnits == 1 && len(grouped.Merges) == 1 {
+				return
 			}
 		}
-		return
+		t.Fatal("namespace merge to configured ceiling missing")
 	}
 	t.Fatal("local grouping artifact missing")
 }

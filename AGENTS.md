@@ -63,7 +63,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有代码图与关系绑定，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 以相关改动为边界**：repocli 拥有 Fragment 分类与 Unit 组装，按包含、调用、import、同文件、namespace 逐步聚合；CCR 提供评审目标、token 预算并适配 Clue 与运行状态。
+2. **Unit 以相关改动为边界**：repocli 拥有 Fragment 分类与 Unit 组装，按同一声明、包含、调用、import、同文件、namespace 逐步聚合；明确关系不因数量达到上限而停止归并。CCR 提供评审数量软上限、token 预算并适配 Clue 与运行状态。
    Fragment 编辑身份唯一，Unit 可共享 import 引用；合并后去重。缺少图关系或预算不足时保留目标并报告边界，不能强行满足数量目标。
    通用理念见 [repocli Unit 文档](https://github.com/compforge/repocli/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性

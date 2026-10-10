@@ -102,7 +102,7 @@ type Args struct {
 
 	// Concurrency limit for per-file subtasks. Defaults to number of CPUs.
 	MaxConcurrency int
-	// MaxUnits is a grouping threshold; the effective target is at least the selected-file count.
+	// MaxUnits tightens the selected-file count ceiling when positive; it never stops semantic merges.
 	MaxUnits int
 	// MaxFiles bounds repocli snapshot capture; zero uses its default.
 	MaxFiles         int
@@ -958,7 +958,7 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 		OnGrouped: func(report formation.GroupingReport) {
 			a.grouping = report
 			if report.LimitExceeded && a.executor != nil {
-				a.recordWarning("unit_grouping_limit", "", fmt.Sprintf("%d Units remain above grouping target %d; source relationships or size budgets prevent further grouping", report.FinalUnits, report.MaxUnits))
+				a.recordWarning("unit_grouping_limit", "", fmt.Sprintf("%d Units remain above grouping count ceiling %d; source relationships or size budgets prevent further grouping", report.FinalUnits, report.MaxUnits))
 			}
 		},
 		OnStep: func(stepCtx context.Context, step formation.GroupingStep) {

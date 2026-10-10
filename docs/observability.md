@@ -132,7 +132,7 @@ Session timeline
 
 `unit_grouping` artifact 通过 Stage ID 关联每个归拢阶段，保留输入／输出组数、namespace 合并依据（snapshot、Node ID 与 CodeGraph 原生证明路径）、
 预算阻止的候选数量与缺少共同 namespace 的组数。`unit_formation.grouping` 和 dry-run JSON 的
-`grouping` 提供整轮数量目标、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法达到数量目标，
+`grouping` 提供整轮数量软上限、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法满足数量上限，
 所有目标仍进入评审。耗时读取对应 timeline stage。
 
 每次阶段转换将原生 `timeline.Update` 增量写入 Session JSONL。Update 属于整轮 Session；Unit、Lane、
