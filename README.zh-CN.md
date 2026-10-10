@@ -103,6 +103,8 @@ ccr viewer                      # session、token/time/tool 总览、prompt 与�
 
 Session JSONL 持久化真实 message、模型回复、工具调用、阶段产物、warning 和完成状态；Viewer 将它们组织成 run 级统计和每个 loop 的时间线，用于分析效果、成本与未完成评审。
 
+本地 Session 默认按 7 天、5 GiB 自动淘汰，review/scan 录制期间持续检查，并保护运行中和最近写入的会话。用 `ccr clean --dry-run` 预览；配置和旧版未完成记录的处理见[保留与清理](docs/observability.md#本地记录保留与清理)。需要长期保存的评测样本应复制到 Session 目录之外。
+
 ### 可选作者 Knowledge 与 Feature Gate
 
 把生成的 `spec.json` 放到 `.casecodereview/spec.json`、通过 `--spec` 传入，或配置用户级契约，即可补充 spec/case/rule/link。具名 feature gate 可用于消融：

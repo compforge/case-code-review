@@ -12,6 +12,7 @@ require (
 	github.com/compforge/codegraph v0.10.6-0.20261010020504-8bc19a1b244d
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
 	github.com/compforge/repocli/toolkit/go v0.0.0-20261010101146-aec47bdcf34e
+	github.com/gofrs/flock v0.13.0
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8

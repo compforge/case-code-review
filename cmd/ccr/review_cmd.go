@@ -94,6 +94,9 @@ func runReview(args []string) error {
 		stream = newJSONLEmitter(os.Stdout)
 	}
 
+	stopCleanup := startSessionCleanup(rt.AppCfg)
+	defer stopCleanup()
+
 	ag := runner.New(runner.Args{
 		MaxSnapshotBytes:      opts.maxSnapshotBytes,
 		MaxFiles:              opts.maxFiles,

@@ -398,6 +398,8 @@ Examples:
   ccr config set llm.extra_body '{"thinking":{"type":"disabled"}}'
   ccr config set language English
   ccr config set telemetry.enabled true
+  ccr config set retention.days 7
+  ccr config set retention.max_mib 5120
 
 Supported keys: provider, model, providers.<name>.<field>, custom_providers.<name>.<field>, llm.url, llm.auth_token, llm.auth_header, llm.model, llm.use_anthropic, llm.extra_body, language, telemetry.enabled, telemetry.exporter, telemetry.otlp_endpoint, telemetry.content_logging
 Provider fields: api_key, url, protocol, model, models, auth_header, extra_body`)

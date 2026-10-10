@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/gofrs/flock"
 
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
@@ -45,6 +46,7 @@ type jsonlWriter struct {
 	diffTo     string
 	diffCommit string
 	opts       SessionOptions // manifest fields (features/version/params)
+	lease      *flock.Flock
 	file       *os.File
 	writer     *bufio.Writer
 	sequence   uint64
@@ -137,11 +139,22 @@ func (jw *jsonlWriter) open() error {
 	}
 
 	filename := filepath.Join(sessionDir, jw.sessionID+".jsonl")
-	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	// Acquire the lease before publishing the transcript. Session IDs are never reused.
+	lease := flock.New(filename+".lock", flock.SetPermissions(0600))
+	locked, err := lease.TryLock()
 	if err != nil {
+		return fmt.Errorf("lock session: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("session already active: %s", jw.sessionID)
+	}
+	f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0600)
+	if err != nil {
+		_ = lease.Close()
 		return fmt.Errorf("open session file: %w", err)
 	}
 
+	jw.lease = lease
 	jw.file = f
 	jw.writer = bufio.NewWriter(f)
 	return nil
@@ -542,6 +555,9 @@ func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []s
 	if jw.file != nil {
 		jw.file.Close()
 	}
+	if jw.lease != nil {
+		_ = jw.lease.Close()
+	}
 }
 
 func (jw *jsonlWriter) flushAndClose() {
@@ -553,5 +569,8 @@ func (jw *jsonlWriter) flushAndClose() {
 	jw.closed = true
 	if jw.file != nil {
 		jw.file.Close()
+	}
+	if jw.lease != nil {
+		_ = jw.lease.Close()
 	}
 }

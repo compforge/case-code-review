@@ -109,6 +109,8 @@ ccr viewer                      # sessions, token/time/tool totals, prompts and 
 
 Session JSONL preserves the actual messages, model responses, tool calls, artifacts, warnings, and completion state. The Viewer turns that trace into run-level statistics and per-loop timelines for diagnosing quality, cost, and incomplete reviews.
 
+Local session recordings rotate automatically during review/scan: 7 days and 5 GiB by default, with active and recently written sessions protected. Use `ccr clean --dry-run` to preview cleanup; see [retention settings](docs/observability.md#本地记录保留与清理) for configuration and legacy unfinished recordings. Copy evaluation samples outside the session store for long-term retention.
+
 ### Optional authored context and feature gates
 
 Place a generated `spec.json` at `.casecodereview/spec.json`, pass `--spec`, or configure user-level contracts to add authored spec/case/rule/link context. Named feature gates support ablation, for example:
