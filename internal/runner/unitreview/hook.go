@@ -70,7 +70,7 @@ func (h *HypothesisHook) HandleTool(
 			ch = h.ChangeLookup(hypothesis.Path)
 		}
 		if ch != nil && !finding.ResolveComment(&draft, ch) &&
-			h.Relocation && h.Template.ReLocationTask != nil {
+			h.Relocation && h.Template.ReLocationTask != nil && workCtx.Err() == nil {
 			h.relocate(workCtx, call.Scope, &draft, ch)
 		}
 		hypothesis.Side = draft.Side
@@ -92,14 +92,18 @@ func (h *HypothesisHook) HandleTool(
 			scope = h.Session.GetOrCreateScope(call.Scope)
 			scope.BeginAsync()
 		}
-		h.WorkerPool.Submit(func() error {
+		finishResolution := func() error {
 			if scope != nil {
 				defer scope.EndAsync()
 			}
 			resolveAndCollect(asyncCtx)
 			telemetry.PrintToolCallFinished(call.Tool.Name(), time.Since(started))
 			return nil
-		})
+		}
+		// A queued relocation must not hold its Unit open past the R1 deadline.
+		// Preserve local anchoring and the accepted candidate; canceled context
+		// skips model relocation and lets R2 use the remaining Unit allowance.
+		h.WorkerPool.SubmitContext(asyncCtx, finishResolution, func() { _ = finishResolution() })
 		telemetry.RecordToolCall(asyncCtx, call.Tool.Name(), time.Since(started), true)
 		return tool.CompleteWith(HypothesisSubmitted), true
 	}
