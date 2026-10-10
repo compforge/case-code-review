@@ -165,7 +165,7 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.IntVar(&opts.maxFiles, "max-files", 0, "snapshot file count budget (0 = repocli default)")
 	a.IntVar(&opts.maxUnits, "max-units", 0, "soft Unit count ceiling = min(selected-file count, value); 0 uses file count; best effort")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
-	a.IntVar(&opts.perFileTimeout, "timeout", 10, "Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited)")
+	a.IntVar(&opts.perFileTimeout, "timeout", 10, "per-Unit R1/R2/R3 total timeout in minutes, including queueing and wrap-up (0 = unlimited)")
 	a.StringVar(&opts.audience, "audience", "human", "output audience: human (show progress) or agent (summary only)")
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the review")
 	a.StringVar(&opts.bizID, "biz-id", "", "opaque caller-owned business identity persisted with the session")
@@ -311,7 +311,7 @@ Flags:
   --rule string           path to JSON file with system review rules
   --spec string           path to spec.json (specgen output); also auto-loaded from .casecodereview/spec.json
   --history string        path to prior-findings JSON (symbol-id/path → findings); injected per unit so the reviewer reconciles them
-  --timeout int           Review 1 exploration limit in minutes; wrap-up has no extra time limit (0 = unlimited) (default 10)
+  --timeout int           per-Unit R1/R2/R3 total timeout in minutes, including queueing and wrap-up (0 = unlimited) (default 10)
   --to string             target ref to end diff at (e.g., 'feature-branch')
   --tools string          path to JSON tools config file (default: embedded)`)
 

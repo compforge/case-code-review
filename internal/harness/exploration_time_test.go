@@ -99,3 +99,28 @@ func TestExplorationClockHasNoEarlyTimeReserve(t *testing.T) {
 		}
 	})
 }
+
+func TestDynamicWrapUpBoundaryControlsTurnsAndInFlightTools(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		began := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		boundary := began.Add(50 * time.Second)
+		c := newTurnController(ExecutionSpec{WrapUpPrompt: "finish", WrapUpDeadline: func() time.Time { return boundary }})
+		turn := agentgo.BeforeTurnContext{TurnIndex: 1}
+		messages, _ := c.BeforeTurn(ctx, turn)
+		if len(messages) != 0 {
+			t.Fatal("generic 90-second reserve overrode explicit budget")
+		}
+		boundary = began.Add(20 * time.Second)
+		time.Sleep(21 * time.Second)
+		c.checkTime(ctx)
+		if !c.WrapUpIssued() {
+			t.Fatal("adjusted deadline not checked before tool execution")
+		}
+		messages, _ = c.BeforeTurn(ctx, turn)
+		if len(messages) != 1 {
+			t.Fatal("in-flight expiry lost wrap-up reminder")
+		}
+	})
+}

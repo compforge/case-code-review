@@ -135,28 +135,44 @@ func Run(units []unit.Unit) ([]finding.Finding, []unit.TrialDecision) {
 // Bypass preserves the former one-stage behavior for the feature-gate
 // ablation; production delivery should use Run.
 func Bypass(units []unit.Unit) ([]finding.Finding, []unit.TrialDecision) {
+	gate := NewGate()
+	gate.Bypass(units)
+	return gate.Results()
+}
+
+// Bypass applies the one-stage ablation to completed Units incrementally,
+// retaining the same run-wide deduplication and Unit finalization boundary.
+func (g *Gate) Bypass(units []unit.Unit) ([]finding.Finding, []unit.TrialDecision) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	entries := trialEntries(units)
-	delivered := make(map[string]bool, len(entries))
 	out := make([]finding.Finding, 0, len(entries))
 	decisions := make([]unit.TrialDecision, 0, len(entries))
 	for _, entry := range entries {
 		hypothesis := entry.hypothesis
+		if g.decided[hypothesis.ID] {
+			continue
+		}
+		g.decided[hypothesis.ID] = true
 		fingerprint := hypothesis.Fingerprint
 		if fingerprint == "" {
 			fingerprint = unitreview.FingerprintFor(hypothesis)
 		}
 		decision := unit.TrialDecision{HypothesisID: hypothesis.ID, Passed: true}
-		if delivered[fingerprint] {
+		if g.delivered[fingerprint] {
 			entry.unit.AddTrialDecision(decision)
 			decisions = append(decisions, decision)
 			continue
 		}
-		delivered[fingerprint] = true
+		g.delivered[fingerprint] = true
 		decision.Delivered = true
 		entry.unit.AddTrialDecision(decision)
 		decisions = append(decisions, decision)
-		out = append(out, unitreview.FindingFor(hypothesis))
+		result := unitreview.FindingFor(hypothesis)
+		out = append(out, result)
+		g.findings = append(g.findings, deliveredFinding{hypothesisID: hypothesis.ID, finding: result})
 	}
+	g.decisions = append(g.decisions, decisions...)
 	return out, decisions
 }
 

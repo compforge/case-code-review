@@ -8,7 +8,7 @@ import (
 )
 
 // Debrief is a unit's terminal record — one line per review Unit written when
-// its loop ends. It captures what the run knew at that moment and what post-hoc
+// its pipeline ends. It captures what the run knew at that moment and what post-hoc
 // analysis cannot reconstruct (outcome vs policy skip, unit formation, context
 // degradations), plus a per-unit cost rollup so eval never re-aggregates raw
 // llm_response records.
@@ -17,7 +17,7 @@ import (
 // robustness, formed → granularity, clues/source preloads/usage → context, the
 // aggregated tail → cost.
 type Debrief struct {
-	// Outcome is the Harness execution's terminal state: completed / truncated /
+	// Outcome is the owning pipeline's terminal state: completed / truncated /
 	// timeout / llm_error, or "skipped_policy" when a governor (token guard)
 	// decided not to run the loop at all — a deliberate skip, not a failure.
 	Outcome string

@@ -29,6 +29,9 @@ type HypothesisHook struct {
 	// OnResolved runs after anchoring/relocation, when the
 	// Hypothesis is stable enough to enter downstream Lane assignment.
 	OnResolved func(Hypothesis)
+	// BeginResolution registers accepted output with its Unit before asynchronous
+	// relocation can race R1 completion. The returned context owns its deadline.
+	BeginResolution func(string) (context.Context, func())
 }
 
 var _ harness.ToolHandler = (*HypothesisHook)(nil)
@@ -54,7 +57,13 @@ func (h *HypothesisHook) HandleTool(
 	hypothesis.Alias = call.Alias
 	hypothesis.OriginUnit = call.Scope.ID
 
+	resolutionCtx := ctx
+	resolved := func() {}
+	if h.BeginResolution != nil {
+		resolutionCtx, resolved = h.BeginResolution(call.Scope.ID)
+	}
 	resolveAndCollect := func(workCtx context.Context) {
+		defer resolved()
 		draft := FindingFor(hypothesis)
 		var ch *change.Change
 		if h.ChangeLookup != nil {
@@ -77,7 +86,7 @@ func (h *HypothesisHook) HandleTool(
 	}
 
 	if h.WorkerPool != nil {
-		asyncCtx := context.WithoutCancel(ctx)
+		asyncCtx := resolutionCtx
 		var scope *session.ScopeSession
 		if h.Session != nil {
 			scope = h.Session.GetOrCreateScope(call.Scope)
@@ -95,7 +104,7 @@ func (h *HypothesisHook) HandleTool(
 		return tool.CompleteWith(HypothesisSubmitted), true
 	}
 
-	resolveAndCollect(ctx)
+	resolveAndCollect(resolutionCtx)
 	duration := time.Since(started)
 	telemetry.RecordToolCall(ctx, call.Tool.Name(), duration, true)
 	telemetry.PrintToolCallFinished(call.Tool.Name(), duration)

@@ -67,7 +67,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    Fragment 编辑身份唯一，Unit 可共享 import 引用；合并后去重。缺少图关系或预算不足时保留目标并报告边界，不能强行满足数量目标。
    通用理念见 [repocli Unit 文档](https://github.com/compforge/repocli/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
-   规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。
+   规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
    Session 唯一持有整轮 timeline：Stage 是执行身份、层级与生命周期事实，内容记录通过 Stage ID 关联，不并存另一套边界和计时。

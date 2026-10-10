@@ -22,31 +22,30 @@ import (
 const laneReviewWorkers = 2
 
 type lanePoolConfig struct {
-	Context      context.Context
-	Units        []unit.Unit
-	Selections   map[string]fileSelection
-	Concurrency  int
-	Review       func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult
-	OnHypothesis func(unitreview.Hypothesis)
-	OnAssigned   func(hypothesisreview.ReviewInput, string)
-	OnAssessment func(unit.Unit, unitreview.Hypothesis, hypothesisreview.Assessment)
+	Context       context.Context
+	Units         []unit.Unit
+	Selections    map[string]fileSelection
+	Concurrency   int
+	Review        func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult
+	ReviewContext func(string) context.Context
+	OnHypothesis  func(unitreview.Hypothesis)
+	OnAssigned    func(hypothesisreview.ReviewInput, string)
+	OnAssessment  func(unit.Unit, unitreview.Hypothesis, hypothesisreview.Assessment)
+	OnFinished    func(hypothesisreview.ReviewInput, hypothesisreview.ReviewResult)
 }
 
-// lanePool is Review 2's only scheduler. Related Hypotheses share one serial
-// Lane and therefore one retained AgentGo context, while unrelated Lanes may
-// run in parallel under the global worker bound.
+// lanePool serializes related hypotheses while independent Lanes share workers.
+// Queued work retains the originating Unit's context, not the Lane's lifetime.
 type lanePool struct {
-	config lanePoolConfig
-	units  map[string]unit.Unit
-
-	candidates chan reviewCandidate
-	finish     chan struct{}
-	loopDone   chan struct{}
-
-	mu     sync.Mutex
-	seen   map[string]bool
-	laneWG sync.WaitGroup
-	sem    chan struct{}
+	config  lanePoolConfig
+	units   map[string]unit.Unit
+	mu      sync.Mutex
+	seen    map[string]bool
+	lanes   []*reviewLane
+	closed  bool
+	pending sync.WaitGroup
+	laneWG  sync.WaitGroup
+	sem     chan struct{}
 }
 
 type reviewCandidate struct {
@@ -61,17 +60,104 @@ type reviewCandidate struct {
 
 type queuedReview struct {
 	input      hypothesisreview.ReviewInput
+	ctx        context.Context
 	finishWait func(error)
+	onFinished func(hypothesisreview.ReviewInput, hypothesisreview.ReviewResult)
+	mu         sync.Mutex
+	running    bool
+	finished   bool
+}
+
+func (q *queuedReview) begin() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.finished || q.ctx.Err() != nil {
+		return false
+	}
+	q.running = true
+	q.finishWait(nil)
+	return true
+}
+
+// expire retires waiting candidates even when another Unit occupies the Lane.
+// Running work owns its completion so its accepted evidence is retained first.
+func (q *queuedReview) expire() {
+	q.mu.Lock()
+	if q.running || q.finished {
+		q.mu.Unlock()
+		return
+	}
+	q.finished = true
+	q.mu.Unlock()
+	q.finishWait(q.ctx.Err())
+	state := harness.OutcomeAborted
+	if q.ctx.Err() == context.DeadlineExceeded {
+		state = harness.OutcomeTimeout
+	}
+	if q.onFinished != nil {
+		q.onFinished(q.input, hypothesisreview.ReviewResult{Execution: harness.ExecutionResult{State: state, Reason: q.ctx.Err().Error()}})
+	}
+}
+
+func (q *queuedReview) complete(result hypothesisreview.ReviewResult) {
+	q.mu.Lock()
+	q.finished = true
+	q.mu.Unlock()
+	if q.onFinished != nil {
+		q.onFinished(q.input, result)
+	}
 }
 
 type reviewLane struct {
 	id           string
 	candidates   []reviewCandidate
-	inputs       chan queuedReview
+	queueMu      sync.Mutex
+	queue        []*queuedReview
+	ready        chan struct{}
+	closed       bool
 	contextIDs   map[string]bool
 	priorResults []hypothesisreview.Assessment
 	evidence     []hypothesisreview.EvidenceReceipt
 	continuation *harness.ExecutionResult
+}
+
+func (l *reviewLane) enqueue(q *queuedReview) {
+	l.queueMu.Lock()
+	l.queue = append(l.queue, q)
+	l.queueMu.Unlock()
+	select {
+	case l.ready <- struct{}{}:
+	default:
+	}
+}
+
+func (l *reviewLane) close() {
+	l.queueMu.Lock()
+	l.closed = true
+	l.queueMu.Unlock()
+	select {
+	case l.ready <- struct{}{}:
+	default:
+	}
+}
+
+func (l *reviewLane) next() *queuedReview {
+	for {
+		l.queueMu.Lock()
+		if len(l.queue) > 0 {
+			q := l.queue[0]
+			l.queue[0] = nil
+			l.queue = l.queue[1:]
+			l.queueMu.Unlock()
+			return q
+		}
+		closed := l.closed
+		l.queueMu.Unlock()
+		if closed {
+			return nil
+		}
+		<-l.ready
+	}
 }
 
 func newLanePool(config lanePoolConfig) *lanePool {
@@ -81,92 +167,31 @@ func newLanePool(config lanePoolConfig) *lanePool {
 	if config.Concurrency <= 0 {
 		config.Concurrency = laneReviewWorkers
 	}
-	p := &lanePool{
-		config:     config,
-		units:      make(map[string]unit.Unit, len(config.Units)),
-		candidates: make(chan reviewCandidate, len(config.Units)*2+1),
-		finish:     make(chan struct{}),
-		loopDone:   make(chan struct{}),
-		seen:       make(map[string]bool),
-		sem:        make(chan struct{}, config.Concurrency),
+	p := &lanePool{config: config, units: make(map[string]unit.Unit, len(config.Units)), seen: make(map[string]bool), sem: make(chan struct{}, config.Concurrency)}
+	for _, u := range config.Units {
+		u.InitReviewState()
+		p.units[u.ID] = u
 	}
-	for _, reviewUnit := range config.Units {
-		reviewUnit.InitReviewState()
-		p.units[reviewUnit.ID] = reviewUnit
-	}
-	go p.loop()
 	return p
 }
 
-func (p *lanePool) Submit(hypothesis unitreview.Hypothesis) {
-	if hypothesis.ID == "" {
-		return
-	}
-	candidate := newReviewCandidate(hypothesis, p.units[hypothesis.OriginUnit], p.config)
-	select {
-	case p.candidates <- candidate:
-	case <-p.loopDone:
-	case <-p.config.Context.Done():
-	}
-}
-
-func (p *lanePool) Finish() {
-	select {
-	case p.finish <- struct{}{}:
-	case <-p.loopDone:
-	}
-	<-p.loopDone
-	p.laneWG.Wait()
-}
-
-func (p *lanePool) loop() {
-	defer close(p.loopDone)
-	var lanes []*reviewLane
-	for {
-		select {
-		case candidate := <-p.candidates:
-			p.assign(&lanes, candidate)
-		case <-p.finish:
-			for {
-				select {
-				case candidate := <-p.candidates:
-					p.assign(&lanes, candidate)
-				default:
-					for _, lane := range lanes {
-						close(lane.inputs)
-					}
-					return
-				}
-			}
-		case <-p.config.Context.Done():
-			for _, lane := range lanes {
-				close(lane.inputs)
-			}
-			return
-		}
-	}
-}
-
-func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
+// Submit acknowledges ownership synchronously. The producer can then seal its
+// Unit without racing a dispatcher that has not yet registered the candidate.
+func (p *lanePool) Submit(h unitreview.Hypothesis) bool {
 	p.mu.Lock()
-	if p.seen[candidate.hypothesis.ID] {
-		p.mu.Unlock()
-		return
+	defer p.mu.Unlock()
+	if h.ID == "" || p.closed || p.seen[h.ID] {
+		return false
 	}
-	p.seen[candidate.hypothesis.ID] = true
-	p.mu.Unlock()
+	p.seen[h.ID] = true
+	candidate := newReviewCandidate(h, p.units[h.OriginUnit], p.config)
 	if p.config.OnHypothesis != nil {
-		p.config.OnHypothesis(candidate.hypothesis)
+		p.config.OnHypothesis(h)
 	}
-
-	lane := selectLane(*lanes, candidate)
+	lane := selectLane(p.lanes, candidate)
 	if lane == nil {
-		lane = &reviewLane{
-			id:         laneID(candidate.hypothesis.ID),
-			inputs:     make(chan queuedReview, len(p.units)+1),
-			contextIDs: make(map[string]bool),
-		}
-		*lanes = append(*lanes, lane)
+		lane = &reviewLane{id: laneID(h.ID), ready: make(chan struct{}, 1), contextIDs: make(map[string]bool)}
+		p.lanes = append(p.lanes, lane)
 		p.laneWG.Add(1)
 		go p.runLane(lane)
 	}
@@ -176,36 +201,53 @@ func (p *lanePool) assign(lanes *[]*reviewLane, candidate reviewCandidate) {
 	if p.config.OnAssigned != nil {
 		p.config.OnAssigned(input, "lane_assigned")
 	}
-	_, finishWait := session.Begin(p.config.Context, "lane.queue", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID})
-	lane.inputs <- queuedReview{input: input, finishWait: finishWait}
+	ctx := p.config.Context
+	if p.config.ReviewContext != nil {
+		ctx = p.config.ReviewContext(h.OriginUnit)
+	}
+	_, finishWait := session.Begin(ctx, "lane.queue", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: h.ID})
+	queued := &queuedReview{input: input, ctx: ctx, finishWait: finishWait, onFinished: func(input hypothesisreview.ReviewInput, result hypothesisreview.ReviewResult) {
+		defer p.pending.Done()
+		if p.config.OnFinished != nil {
+			p.config.OnFinished(input, result)
+		}
+	}}
+	p.pending.Add(1)
+	context.AfterFunc(ctx, queued.expire)
+	lane.enqueue(queued)
+	return true
+}
+
+func (p *lanePool) Finish() {
+	p.mu.Lock()
+	p.closed = true
+	for _, l := range p.lanes {
+		l.close()
+	}
+	p.mu.Unlock()
+	p.laneWG.Wait()
+	p.pending.Wait()
 }
 
 func (p *lanePool) runLane(lane *reviewLane) {
 	defer p.laneWG.Done()
-	// Cancellation ends known waits, including entries that never acquired a slot.
-	defer func() {
-		for pending := range lane.inputs {
-			pending.finishWait(p.config.Context.Err())
+	for queued := lane.next(); queued != nil; queued = lane.next() {
+		select {
+		case p.sem <- struct{}{}:
+		case <-queued.ctx.Done():
+			queued.expire()
+			continue
 		}
-	}()
-	for queued := range lane.inputs {
+		if !queued.begin() {
+			<-p.sem
+			queued.expire()
+			continue
+		}
 		input := queued.input
 		lane.takeContextDelta(&input)
 		input.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
 		input.PriorEvidence = append(input.PriorEvidence, lane.evidence...)
-		select {
-		case p.sem <- struct{}{}:
-		case <-p.config.Context.Done():
-			queued.finishWait(p.config.Context.Err())
-			return
-		}
-		if err := p.config.Context.Err(); err != nil {
-			<-p.sem
-			queued.finishWait(err)
-			return
-		}
-		queued.finishWait(nil)
-		reviewCtx, finishReview := session.Begin(p.config.Context, "review.hypothesis", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Attribute{Key: "unit_id", Value: input.Unit.ID})
+		reviewCtx, finishReview := session.Begin(queued.ctx, "review.hypothesis", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Attribute{Key: "unit_id", Value: input.Unit.ID})
 		result := hypothesisreview.ReviewResult{}
 		if p.config.Review != nil {
 			result = p.config.Review(reviewCtx, input, lane.continuation)
@@ -219,12 +261,10 @@ func (p *lanePool) runLane(lane *reviewLane) {
 			reviewErr = reviewCtx.Err()
 		}
 		finishReview(reviewErr)
+		// Setup failures must not replace retained context or mark snapshots injected.
 		if result.Execution.State != "" {
 			execution := result.Execution
 			lane.continuation = &execution
-			// Commit context identities only after an Execution actually retained
-			// the projected messages. A setup failure leaves no continuation, so
-			// the next hypothesis must receive the snapshots again.
 			lane.rememberUnitContext(input.Unit)
 		}
 		lane.priorResults = append(lane.priorResults, result.Assessments...)
@@ -234,11 +274,10 @@ func (p *lanePool) runLane(lane *reviewLane) {
 				p.config.OnAssessment(input.Unit, input.Hypothesis, assessment)
 			}
 		}
-		// The ledger is cumulative. A panicking or failed reviewer may return no
-		// result, but must not erase receipts already earned by this Lane.
 		if len(result.EvidenceReceipts) > 0 {
 			lane.evidence = append([]hypothesisreview.EvidenceReceipt(nil), result.EvidenceReceipts...)
 		}
+		queued.complete(result)
 	}
 }
 

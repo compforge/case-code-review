@@ -2,59 +2,322 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
+	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-type explorationPlanClient struct {
-	t        *testing.T
-	requests []llm.ChatRequest
+type timedReviewClient func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error)
+
+func (f timedReviewClient) CompletionsWithCtx(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+	return f(ctx, req)
 }
 
-func (c *explorationPlanClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
-	if _, ok := ctx.Deadline(); ok {
-		c.t.Error("exploration deadline must not cancel model calls or wrap-up")
+func waitReview(ctx context.Context, delay time.Duration) error {
+	select {
+	case <-time.After(delay):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	c.requests = append(c.requests, request)
-	time.Sleep(6 * time.Minute)
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	content := "No material leads remain."
-	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", Content: &content}, FinishReason: "stop"}}, Usage: &llm.UsageInfo{PromptTokens: 10, CompletionTokens: 5}}, nil
 }
-
-func TestExplorationTimeIncludesPlanAndLeavesWrapUpAlive(t *testing.T) {
+func reviewText(text string) *llm.ChatResponse {
+	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", Content: &text}, FinishReason: "stop"}}}
+}
+func reviewCall(id, name string, arguments any) *llm.ChatResponse {
+	data, _ := json.Marshal(arguments)
+	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: id, Type: "function", Function: llm.FunctionCall{Name: name, Arguments: string(data)}}}}, FinishReason: "tool_calls"}}}
+}
+func suspicion(id string) *llm.ChatResponse {
+	return reviewCall(id, "submit_hypothesis", map[string]any{
+		"path": "a.go", "existing_code": "_ = 0", "content": id,
+		"trigger": id, "impact": id, "change_attribution": "changed assignment",
+		"evidence": []string{"a.go:4"}, "uncertainty": "verify caller", "category": "bug", "severity": "high",
+	})
+}
+func confirmed() *llm.ChatResponse {
+	return reviewCall("assessment", "submit_assessment", map[string]any{
+		"support": "supported", "attribution": "caused", "value": "actionable", "novelty": "new",
+		"reason": "Unit diff proves the changed assignment", "evidence": []string{"a.go:4"},
+	})
+}
+func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *session.SessionHistory) {
+	t.Helper()
 	repo := t.TempDir()
-	synctest.Test(t, func(t *testing.T) {
-		history := session.New(repo, "main", "test", session.SessionOptions{})
-		defer history.Finalize()
-		client := &explorationPlanClient{t: t}
-		conversation := template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}
-		a := New(Args{RepoDir: repo, Session: history, LLMClient: client, MaxConcurrency: 1, ConcurrentTaskTimeout: 5, Template: template.Template{MainTask: conversation, PlanTask: &conversation, MaxTokens: 10000, MaxToolRequestTimes: 5}})
-		a.changes = []change.Change{goDiff("p.go", 1)}
-		if _, err := a.dispatchUnits(context.Background()); err != nil {
+	history := session.New(repo, "main", "test", session.SessionOptions{})
+	tpl := template.Template{
+		MainTask:             template.LlmConversation{Messages: []template.ChatMessage{{Role: "system", Content: "R1"}, {Role: "user", Content: "{{diff}}"}}},
+		HypothesisReviewTask: &template.LlmConversation{Messages: []template.ChatMessage{{Role: "system", Content: "R2"}, {Role: "user", Content: "{{hypothesis}}"}}},
+		MaxTokens:            100000, MaxToolRequestTimes: 30,
+	}
+	a := New(Args{RepoDir: repo, Session: history, LLMClient: client, MaxConcurrency: 1, ConcurrentTaskTimeout: 10,
+		MainToolDefs: []llm.ToolDef{unitreview.HypothesisToolDef()}, Template: tpl})
+	a.changes = []change.Change{goDiff("a.go", 1)}
+	return a, history
+}
+func timeoutTranscript(t *testing.T, history *session.SessionHistory) []map[string]any {
+	t.Helper()
+	history.Flush()
+	path, err := history.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatal(err)
 		}
-		if len(client.requests) != 2 {
-			t.Fatalf("requests=%d, want plan and wrap-up", len(client.requests))
+		records = append(records, record)
+	}
+	return records
+}
+
+// +case:id=unit_budget_borrows_discovery_time,desc=`R1 ends after three minutes and R2 needs four more`,expect=`R2 completes past the nominal three-minute allocation before the shared Unit deadline; debrief follows Trial`
+func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var r1Calls atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if req.Messages[0].ExtractText() == "R2" {
+				if err := waitReview(ctx, 4*time.Minute); err != nil {
+					return nil, err
+				}
+				return confirmed(), nil
+			}
+			if r1Calls.Add(1) == 1 {
+				if err := waitReview(ctx, 3*time.Minute); err != nil {
+					return nil, err
+				}
+				return suspicion("first"), nil
+			}
+			return reviewText("done"), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		began := time.Now()
+		findings, err := a.dispatchUnits(history.Context(context.Background()))
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("findings=%v err=%v", findings, err)
 		}
-		var text strings.Builder
-		for _, m := range client.requests[1].Messages {
-			text.WriteString(m.ExtractText())
+		if elapsed := time.Since(began); elapsed != 7*time.Minute {
+			t.Fatalf("elapsed=%v", elapsed)
 		}
-		if !strings.Contains(text.String(), "BUDGET NEARLY EXHAUSTED") {
-			t.Fatalf("plan time not charged to exploration: %s", text.String())
+		var trialSeq, debriefSeq float64
+		for _, record := range timeoutTranscript(t, history) {
+			if record["artifact_kind"] == "trial_decision" {
+				trialSeq = record["seq"].(float64)
+			}
+			if record["type"] == "debrief" {
+				debriefSeq = record["seq"].(float64)
+				if record["outcome"] != "completed" {
+					t.Fatalf("debrief=%v", record)
+				}
+			}
 		}
-		if history.LLMFailures() != 0 {
-			t.Fatal("exploration expiry recorded as a model failure")
+		if trialSeq == 0 || debriefSeq <= trialSeq {
+			t.Fatalf("Trial=%v debrief=%v", trialSeq, debriefSeq)
+		}
+	})
+}
+
+func TestUnitTimeoutRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var r1Calls, r2Calls atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if req.Messages[0].ExtractText() == "R2" {
+				delay := 2 * time.Minute
+				if r2Calls.Add(1) > 1 {
+					delay = 20 * time.Minute
+				}
+				if err := waitReview(ctx, delay); err != nil {
+					return nil, err
+				}
+				return confirmed(), nil
+			}
+			switch r1Calls.Add(1) {
+			case 1:
+				if err := waitReview(ctx, time.Minute); err != nil {
+					return nil, err
+				}
+				return suspicion("first"), nil
+			case 2:
+				return suspicion("second"), nil
+			default:
+				return reviewText("done"), nil
+			}
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		began := time.Now()
+		findings, err := a.dispatchUnits(history.Context(context.Background()))
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("accepted Finding lost: %v %v", findings, err)
+		}
+		if elapsed := time.Since(began); elapsed > 10*time.Minute || elapsed < 9*time.Minute {
+			t.Fatalf("deadline renewed: %v", elapsed)
+		}
+		assessments, timedOut := 0, false
+		for _, record := range timeoutTranscript(t, history) {
+			if record["artifact_kind"] == "review_assessment" {
+				assessments++
+			}
+			if record["type"] == "debrief" {
+				timedOut = record["outcome"] == "timeout"
+			}
+		}
+		if !timedOut || assessments != 1 {
+			t.Fatalf("timeout=%v assessments=%d", timedOut, assessments)
+		}
+	})
+}
+
+func TestUnitTimeoutIncludesPlanAndBoundsWrapUp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		var reminders atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			n := calls.Add(1)
+			if n == 1 {
+				if err := waitReview(ctx, 6*time.Minute); err != nil {
+					return nil, err
+				}
+				return reviewText("plan"), nil
+			}
+			for _, message := range req.Messages {
+				if strings.Contains(message.ExtractText(), "BUDGET NEARLY EXHAUSTED") {
+					reminders.Add(1)
+				}
+			}
+			if err := waitReview(ctx, 20*time.Minute); err != nil {
+				return nil, err
+			}
+			return reviewText("done"), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		a.args.Template.PlanTask = &template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "plan"}}}
+		began := time.Now()
+		_, err := a.dispatchUnits(history.Context(context.Background()))
+		if err == nil || calls.Load() != 2 || reminders.Load() != 1 {
+			t.Fatalf("calls=%d wrapups=%d err=%v", calls.Load(), reminders.Load(), err)
+		}
+		if elapsed := time.Since(began); elapsed < 6*time.Minute || elapsed >= 7*time.Minute {
+			t.Fatalf("R1 deadline not enforced: %v", elapsed)
+		}
+	})
+}
+
+func TestReview1SlotReleasedWhileReview2StillRuns(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var r1Calls atomic.Int32
+		r2Started := make(chan struct{})
+		secondUnit := make(chan struct{})
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if req.Messages[0].ExtractText() == "R2" {
+				close(r2Started)
+				<-secondUnit
+				return confirmed(), nil
+			}
+			switch r1Calls.Add(1) {
+			case 1:
+				return suspicion("first"), nil
+			case 2:
+				<-r2Started
+				return reviewText("done"), nil
+			default:
+				close(secondUnit)
+				return reviewText("done"), nil
+			}
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		a.changes = append(a.changes, goDiff("b.go", 1))
+		findings, err := a.dispatchUnits(history.Context(context.Background()))
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("%v %v", findings, err)
+		}
+	})
+}
+
+func TestAsyncHypothesisResolutionStaysInsideUnitLifecycle(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var r1Calls atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if req.Messages[0].ExtractText() == "R2" {
+				if err := waitReview(ctx, 4*time.Minute); err != nil {
+					return nil, err
+				}
+				return confirmed(), nil
+			}
+			if r1Calls.Add(1) == 1 {
+				return suspicion("async"), nil
+			}
+			return reviewText("done"), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		pool := harness.NewWorkerPool(1)
+		occupied := make(chan struct{})
+		pool.Submit(func() error { close(occupied); time.Sleep(time.Minute); return nil })
+		<-occupied
+		a.args.WorkerPool = pool
+		a.hypothesisHook.WorkerPool = pool
+		began := time.Now()
+		findings, err := a.dispatchUnits(history.Context(context.Background()))
+		if err != nil || len(findings) != 1 {
+			t.Fatalf("late candidate lost: %v %v", findings, err)
+		}
+		if elapsed := time.Since(began); elapsed != 5*time.Minute {
+			t.Fatalf("elapsed=%v", elapsed)
+		}
+		for _, record := range timeoutTranscript(t, history) {
+			if record["type"] == "debrief" && record["outcome"] != "completed" {
+				t.Fatalf("debrief=%v", record)
+			}
+		}
+	})
+}
+
+func TestWaitingUnitStartsItsOwnClockAfterDiscoverySlot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		began := time.Now()
+		client := timedReviewClient(func(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+			if calls.Add(1) == 1 {
+				if err := waitReview(ctx, 6*time.Minute); err != nil {
+					return nil, err
+				}
+			} else {
+				deadline, ok := ctx.Deadline()
+				if !ok || deadline.Sub(began) < 12*time.Minute {
+					t.Errorf("queued Unit inherited an old deadline: %s", deadline.Sub(began))
+				}
+			}
+			return reviewText("done"), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		a.changes = append(a.changes, goDiff("b.go", 1))
+		if _, err := a.dispatchUnits(history.Context(context.Background())); err != nil {
+			t.Fatal(err)
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("calls=%d", calls.Load())
 		}
 	})
 }
