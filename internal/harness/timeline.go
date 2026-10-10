@@ -8,32 +8,31 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 // executionTimeline translates runtime facts at the Harness boundary. Middleware
 // only propagates stage identity into actual calls; Event timestamps own timing.
 // The channel consumer owns these maps, including concurrent tool events.
 type executionTimeline struct {
-	ctx      context.Context
-	timeline timeline.Timeline
-	id       string
-	started  time.Time
-	root     timeline.StageHandle
-	stages   map[timeline.StageID]timeline.StageHandle
-	parents  map[string]timeline.StageID
+	ctx        context.Context
+	timelineID string
+	id         string
+	started    time.Time
+	root       timeline.StageHandle
+	stages     map[timeline.StageID]timeline.StageHandle
+	parents    map[string]timeline.StageID
 }
 
 func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (context.Context, *executionTimeline) {
 	ctx = e.spec.Session.Context(ctx)
-	t, ok := timeline.FromContext(ctx)
-	if !ok {
+	ref, ok := timeline.StageFromContext(ctx)
+	if !ok || ref.TimelineID == "" {
 		return ctx, nil
 	}
-	ctx, root := timeline.BeginContext(ctx, t, "execution", timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
+	ctx, root := telemetry.BeginTimelineStage(ctx, "execution", timeline.WithParent(ref.StageID), timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
 		timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
-	session.FlushTimeline(ctx)
-	return ctx, &executionTimeline{ctx: ctx, timeline: t, id: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	return ctx, &executionTimeline{ctx: ctx, timelineID: ref.TimelineID, id: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
 
 func (r *executionTimeline) coordinate(kind string, e agentgo.Execution) timeline.StageID {
@@ -46,7 +45,7 @@ func (r *executionTimeline) bind(ctx context.Context, kind string, e agentgo.Exe
 	if r == nil {
 		return ctx
 	}
-	return timeline.NewStageContext(ctx, timeline.StageRef{TimelineID: r.timeline.ID(), StageID: r.coordinate(kind, e)})
+	return timeline.NewStageContext(ctx, timeline.StageRef{TimelineID: r.timelineID, StageID: r.coordinate(kind, e)})
 }
 func (r *executionTimeline) model(ctx context.Context, e agentgo.ModelExecution, next agentgo.ModelExecuteFunc) (agentgo.ModelResult, error) {
 	return next(r.bind(ctx, "model", e.Execution), e)
@@ -105,11 +104,15 @@ func (r *executionTimeline) observe(ev agentgo.Event) {
 		return
 	}
 	if begin {
-		r.stages[id] = r.timeline.Begin(name, timeline.WithStageID(id), timeline.WithParent(parent), timeline.WithStartTime(ev.Timestamp), timeline.WithAttributes(attributes...))
+		stage, err := timeline.Begin(r.timelineID, name, timeline.WithStageID(id), timeline.WithParent(parent), timeline.WithStartTime(ev.Timestamp), timeline.WithAttributes(attributes...))
+		if err != nil {
+			telemetry.ReportTimelineError(err)
+			return
+		}
+		r.stages[id] = stage
 	} else {
 		r.end(id, ev)
 	}
-	session.FlushTimeline(r.ctx)
 }
 
 func (r *executionTimeline) end(id timeline.StageID, ev agentgo.Event) {
@@ -118,7 +121,7 @@ func (r *executionTimeline) end(id timeline.StageID, ev agentgo.Event) {
 		if err == nil && ev.IsError {
 			err = errors.New("tool returned an error result")
 		}
-		stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndAttributes(timeline.Attribute{Key: "disposition", Value: ev.Disposition}))
+		telemetry.ReportTimelineError(stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndAttributes(timeline.Attribute{Key: "disposition", Value: ev.Disposition})))
 		delete(r.stages, id)
 	}
 	// Missing starts/ends remain missing evidence; do not invent successful work.
@@ -138,8 +141,7 @@ func (r *executionTimeline) finish(result ExecutionResult, err error) {
 		options = append(options, timeline.WithEndTime(r.started.Add(result.Duration)))
 	}
 	options = append(options, timeline.WithEndAttributes(timeline.Attribute{Key: "outcome", Value: result.State}, timeline.Attribute{Key: "reason", Value: result.Reason}, timeline.Attribute{Key: "turns", Value: result.Turns}, timeline.Attribute{Key: "tool_calls", Value: result.ToolCalls}, timeline.Attribute{Key: "tool_errors", Value: result.ToolErrors}, timeline.Attribute{Key: "incomplete_stages", Value: len(r.stages)}))
-	r.root.End(err, options...)
-	session.FlushTimeline(r.ctx)
+	telemetry.EndTimelineStage(r.ctx, r.root, err, options...)
 }
 
 // eventStage is shared by runtime timing and content recording, including attempts.

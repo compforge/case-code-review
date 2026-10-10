@@ -1,71 +1,42 @@
 package session
 
 import (
-	"bufio"
+	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/compforge/go-stdx/timeline/store"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 type waitingTimelineClient struct{ ready chan struct{} }
 
 func (c waitingTimelineClient) CompletionsWithCtx(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
-	recorder, _ := timeline.FromContext(ctx)
-	_, phase := timeline.BeginContext(ctx, recorder, "await_response")
-	if err := recorder.Flush(context.Background()); err != nil {
-		return nil, err
-	}
+	ref, _ := timeline.StageFromContext(ctx)
+	ctx, phase := telemetry.BeginTimelineStage(ctx, "await_response", timeline.WithParent(ref.StageID))
 	close(c.ready)
 	<-ctx.Done()
-	phase.End(ctx.Err())
-	if err := recorder.Flush(context.Background()); err != nil {
-		return nil, err
-	}
+	telemetry.EndTimelineStage(ctx, phase, ctx.Err())
 	return nil, ctx.Err()
 }
 
-func readRequestTimeline(t *testing.T, path string) (timeline.Document, []map[string]any) {
+func readRequestTimeline(t *testing.T, path string) (timeline.Snapshot, []map[string]any) {
 	t.Helper()
 	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(nil, 1024*1024)
-	var doc timeline.Document
-	var records []map[string]any
-	for scanner.Scan() {
-		var record map[string]any
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			t.Fatal(err)
-		}
-		records = append(records, record)
-		if record["type"] != "timeline_update" {
-			continue
-		}
-		var event struct {
-			ID     string          `json:"timeline_id"`
-			Update timeline.Update `json:"update"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			t.Fatal(err)
-		}
-		doc, _, err = timeline.MergeDocument(event.ID, doc, event.Update)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := scanner.Err(); err != nil {
+	transcript, err := ReadTranscript(f)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return doc, records
+	return transcript.Timeline, transcript.Records
 }
 
 func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) {
@@ -89,13 +60,18 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 		t.Fatal("provider did not start")
 	}
 	doc, records := readRequestTimeline(t, path)
-	if doc.Status != timeline.Running || len(doc.Stages) != 2 || doc.Stages[0].Status != timeline.Running {
+	deadline := time.Now().Add(5 * time.Second)
+	for len(doc.Stages) != 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		doc, records = readRequestTimeline(t, path)
+	}
+	if doc.Status != timeline.Unknown || len(doc.Stages) != 2 || doc.Stages[0].Status != timeline.Running {
 		t.Fatalf("running facts not persisted: %+v", doc)
 	}
 	var request timeline.Stage
 	for _, stage := range doc.Stages {
 		if stage.Name == "llm.request" {
-			request = stage.Stage
+			request = stage
 		}
 	}
 	executionID, _ := timeline.AttributeValue[string](request.Attributes, "execution_id")
@@ -120,7 +96,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 		t.Fatal("request did not stop")
 	}
 	doc, records = readRequestTimeline(t, path)
-	if doc.Status != timeline.Running || doc.Stages[0].Status != timeline.Canceled {
+	if doc.Status != timeline.Unknown || doc.Stages[0].Status != timeline.Canceled {
 		t.Fatalf("terminal facts lost after cancellation: %+v", doc)
 	}
 	errorPersisted := false
@@ -140,4 +116,43 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	if record.Error == "" {
 		t.Fatal("missing LLM error")
 	}
+}
+
+func TestFinalSnapshotSurvivesCacheReleaseAndSessionsStayIsolated(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	first := New(t.TempDir(), "main", "model", SessionOptions{})
+	second := New(t.TempDir(), "main", "model", SessionOptions{})
+	defer first.Finalize()
+	defer second.Finalize()
+	ctx, finish := Begin(first.Context(context.Background()), "first-work")
+	_, finishSecond := Begin(second.Context(ctx), "second-work")
+	finish(nil)
+	first.Finalize()
+	if _, err := timeline.Read(context.Background(), first.SessionID, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("finished Session retained cache: %v", err)
+	}
+	path, err := first.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, records := readRequestTimeline(t, path)
+	if snapshot.Status != timeline.Succeeded || len(snapshot.Stages) != 1 || snapshot.Stages[0].Name != "first-work" {
+		t.Fatalf("lost final snapshot: %+v", snapshot)
+	}
+	if records[len(records)-1]["type"] != "session_end" {
+		t.Fatal("final snapshot was not exported before Session close")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
+	if !bytes.Contains(lines[len(lines)-2], []byte(`"type":"timeline_snapshot"`)) {
+		t.Fatal("final snapshot must precede session_end")
+	}
+	other, err := timeline.Read(context.Background(), second.SessionID, false)
+	if err != nil || len(other.Stages) != 1 || other.Stages[0].Name != "second-work" || other.Stages[0].ParentID != "" {
+		t.Fatalf("Session contexts shared parentage or cache: %+v %v", other, err)
+	}
+	finishSecond(nil)
 }

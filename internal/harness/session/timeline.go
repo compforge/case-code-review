@@ -6,59 +6,86 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
-// Context binds the Session's single timeline without replacing a stage already
-// carried by this operation. Session owns Start/Finish; nested work owns stages.
+// Context carries only Session/stage identity.
+// Existing parentage is preserved when it belongs to this Session.
 func (sh *SessionHistory) Context(ctx context.Context) context.Context {
-	if sh == nil || sh.timeline == nil {
+	if sh == nil {
 		return ctx
 	}
-	return timeline.NewContext(ctx, sh.timeline)
+	ref, ok := timeline.StageFromContext(ctx)
+	if !ok || ref.TimelineID != sh.SessionID {
+		ctx = timeline.NewStageContext(ctx, timeline.StageRef{TimelineID: sh.SessionID, StageID: ""})
+	}
+	return ctx
 }
 
 func (sh *SessionHistory) startTimeline() {
-	t, _ := timeline.New(sh.SessionID, timeline.WithStore(&sessionTimelineStore{MemoryStore: timeline.NewMemoryStore(), session: sh}))
-	sh.timeline = t
 	operation := "review"
 	if sh.ReviewMode == ReviewModeFullScan {
 		operation = "scan"
 	}
-	reportTimelineError(t.Start(context.Background(), operation))
+	if err := timeline.Start(sh.SessionID, operation); err != nil {
+		telemetry.ReportTimelineError(err)
+		return
+	}
+	sh.CheckpointTimeline()
+	if sh.persist != nil {
+		sh.checkpointStop = make(chan struct{})
+		sh.checkpointDone = make(chan struct{})
+		go sh.checkpointLoop()
+	}
 }
 
-// Begin flushes both transitions at the owning boundary. Recording failures
-// remain diagnostics; they do not change the operation's business result.
+func (sh *SessionHistory) checkpointTimeline() (timeline.Snapshot, error) {
+	if sh.persist != nil {
+		return sh.persist.writeTimeline(sh.SessionID)
+	}
+	return timeline.Read(context.Background(), sh.SessionID, false)
+}
+
+// CheckpointTimeline exports at Session-owned request and execution boundaries.
+func (sh *SessionHistory) CheckpointTimeline() {
+	if sh == nil || sh.SessionID == "" {
+		return
+	}
+	_, err := sh.checkpointTimeline()
+	telemetry.ReportTimelineError(err)
+}
+
+// A periodic checkpoint exposes long waits without putting file IO on HTTP or
+// AgentGo event paths. Abrupt exit can lose facts since the last completed write.
+func (sh *SessionHistory) checkpointLoop() {
+	defer close(sh.checkpointDone)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sh.checkpointStop:
+			return
+		case <-ticker.C:
+			sh.CheckpointTimeline()
+		}
+	}
+}
+
+// Begin records work with explicit parentage supplied by this Session adapter.
 func Begin(ctx context.Context, name string, attributes ...timeline.Attribute) (context.Context, func(error)) {
 	return BeginStage(ctx, name, timeline.WithAttributes(attributes...))
 }
 
 func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) (context.Context, func(error)) {
-	t, ok := timeline.FromContext(ctx)
-	if !ok {
-		return ctx, func(error) {}
-	}
-	ctx, stage := timeline.BeginContext(ctx, t, name, opts...)
-	FlushTimeline(ctx)
-	return ctx, func(err error) { stage.End(err); FlushTimeline(ctx) }
-}
-
-func FlushTimeline(ctx context.Context) {
-	if t, ok := timeline.FromContext(ctx); ok {
-		reportTimelineError(t.Flush(context.Background()))
-	}
-}
-
-func reportTimelineError(err error) {
-	if err != nil {
-		fmt.Fprintf(console.Err(), "[ccr timeline] persistence failed: %v\n", err)
-	}
+	ref, _ := timeline.StageFromContext(ctx)
+	opts = append([]timeline.StageOption{timeline.WithParent(ref.StageID)}, opts...)
+	ctx, stage := telemetry.BeginTimelineStage(ctx, name, opts...)
+	return ctx, func(err error) { telemetry.EndTimelineStage(ctx, stage, err) }
 }
 
 // Call records a request under its execution, or under the Session for auxiliary
-// calls. Routing and HTTP instrumentation inherit this stage and recording store.
+// calls. Routing and HTTP instrumentation inherit this stage and timeline ID.
 func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request llm.ChatRequest) (*llm.ChatResponse, error) {
 	if tr == nil {
 		return client.CompletionsWithCtx(ctx, request)
@@ -71,10 +98,10 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 		attributes = append(attributes, timeline.Attribute{Key: "scope_id", Value: tr.scopeSession.ID})
 	}
 	started := time.Now()
-	var stage timeline.StageHandle
-	if t, ok := timeline.FromContext(ctx); ok {
-		ctx, stage = timeline.BeginContext(ctx, t, "llm.request", timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
-		FlushTimeline(ctx)
+	ref, _ := timeline.StageFromContext(ctx)
+	ctx, stage := telemetry.BeginTimelineStage(ctx, "llm.request", timeline.WithParent(ref.StageID), timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
+	if tr.scopeSession != nil {
+		tr.scopeSession.session.CheckpointTimeline()
 	}
 	response, err := client.CompletionsWithCtx(ctx, request)
 	finished := time.Now()
@@ -87,10 +114,10 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	} else {
 		tr.SetResponse(response, duration)
 	}
-	// The stage flush includes its preceding response/error, even on cancellation.
-	if stage != nil {
-		stage.End(err, timeline.WithEndTime(finished))
-		FlushTimeline(ctx)
+	// Export the terminal stage after its response/error, even on cancellation.
+	telemetry.EndTimelineStage(ctx, stage, err, timeline.WithEndTime(finished))
+	if tr.scopeSession != nil {
+		tr.scopeSession.session.CheckpointTimeline()
 	}
 	return response, err
 }
@@ -109,24 +136,15 @@ func (c *recordingClient) CompletionsWithCtx(ctx context.Context, request llm.Ch
 	return c.scope.AppendTaskRecord(c.taskType, request.Messages).Call(ctx, c.client, request)
 }
 
-type sessionTimelineStore struct {
-	*timeline.MemoryStore
-	session *SessionHistory
-}
-
-func (s *sessionTimelineStore) Merge(ctx context.Context, id string, update timeline.Update) error {
-	if err := s.MemoryStore.Merge(ctx, id, update); err != nil {
-		return err
-	}
-	if s.session.persist != nil {
-		return s.session.persist.writeTimeline(id, update)
-	}
-	return nil
-}
-
-func (jw *jsonlWriter) writeTimeline(id string, update timeline.Update) error {
+// Read under the JSONL lock so concurrent checkpoints cannot append an older
+// snapshot after a newer one. Export is CCR-owned; timeline never performs file IO.
+func (jw *jsonlWriter) writeTimeline(id string) (timeline.Snapshot, error) {
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
-	_, err := jw.appendLocked(map[string]any{"type": "timeline_update", "timeline_id": id, "update": update})
-	return err
+	snapshot, err := timeline.Read(context.Background(), id, false)
+	if err != nil {
+		return snapshot, err
+	}
+	_, err = jw.appendLocked(map[string]any{"type": "timeline_snapshot", "timeline_id": id, "snapshot": snapshot})
+	return snapshot, err
 }

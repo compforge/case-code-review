@@ -239,7 +239,7 @@ func peekSession(path string) (SessionSummary, error) {
 type ViewSession struct {
 	Cost             session.CostReport
 	RecordingWarning string
-	Timeline         *timeline.Document
+	Timeline         *timeline.Snapshot
 	Summary          SessionSummary
 	Diagnostics      SessionDiagnostics
 	TokenUsage       TokenUsageSummary
@@ -317,7 +317,7 @@ const (
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
 	StageID     string
-	Timeline    *timeline.Document
+	Timeline    *timeline.Snapshot
 	ExecutionID string
 	Sequence    int
 	// Request holds the complete recorded message list sent in this call.

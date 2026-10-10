@@ -48,7 +48,7 @@ func TestSessionAndReviewTemplatesRender(t *testing.T) {
 			Conversation: []ConversationNode{
 				{ID: "execution-1-1", Kind: "compaction", Label: "Context Compacted", Preview: "threshold · 200 → 120 tokens", Compaction: &ContextCompaction{Reason: "threshold", Committed: true, TokensBefore: 200, TokensAfter: 120, MessagesBefore: 4, MessagesAfter: 3, Summarized: true}},
 				{ID: "execution-1-2", Kind: "prompt", Label: "Prompt Snapshot · Turn 1", Preview: "2 messages", Messages: turn.Request, TurnNo: 1, PromptTokens: 120},
-				{ID: "execution-1-timing", Kind: "timeline", Label: "Request Timeline", Timeline: &timeline.Document{OperationRecord: timeline.OperationRecord{Status: timeline.Running}, Stages: []timeline.StageUpdate{{Stage: timeline.Stage{Name: "await_response", Status: timeline.Running}}, {Stage: timeline.Stage{Name: "request_write", Status: timeline.Succeeded, Elapsed: time.Millisecond, FinishedAt: time.Now()}}}}},
+				{ID: "execution-1-timing", Kind: "timeline", Label: "Request Timeline", Timeline: &timeline.Snapshot{Status: timeline.Running, Stages: []timeline.Stage{{Name: "await_response", Status: timeline.Running}, {Name: "request_write", Status: timeline.Succeeded, Elapsed: time.Millisecond, FinishedAt: time.Now()}}}},
 				{ID: "execution-1-3", Kind: "assistant", Label: "Assistant · Turn 1", Preview: "inspect", Text: "I will inspect the file.", Reasoning: "The changed path needs context.", TurnNo: 1},
 			},
 			Metrics: ReviewMetrics{LLMCalls: 1, TurnCount: 1, PromptTokens: 120, Compactions: 1, Summaries: 1},

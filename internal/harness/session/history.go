@@ -16,6 +16,7 @@ import (
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 // TaskType identifies the kind of LLM request within a file subtask.
@@ -39,22 +40,23 @@ const (
 // SessionHistory is the top-level container for an entire CR run.
 // It is safe for concurrent use by multiple goroutines.
 type SessionHistory struct {
-	mu          sync.Mutex
-	SessionID   string
-	RepoDir     string
-	GitBranch   string
-	Model       string
-	ReviewMode  string
-	DiffFrom    string
-	DiffTo      string
-	DiffCommit  string
-	BizID       string
-	StartTime   time.Time
-	EndTime     time.Time
-	persist     *jsonlWriter
-	timeline    timeline.Timeline
-	Scopes      map[string]*ScopeSession
-	llmFailures int64
+	mu             sync.Mutex
+	SessionID      string
+	RepoDir        string
+	GitBranch      string
+	Model          string
+	ReviewMode     string
+	DiffFrom       string
+	DiffTo         string
+	DiffCommit     string
+	BizID          string
+	StartTime      time.Time
+	EndTime        time.Time
+	persist        *jsonlWriter
+	checkpointStop chan struct{}
+	checkpointDone chan struct{}
+	Scopes         map[string]*ScopeSession
+	llmFailures    int64
 	// diff totals for the session_end record (cost normalization denominators);
 	// set once diffs are loaded via SetDiffStats.
 	diffFiles      int
@@ -413,14 +415,20 @@ func (sh *SessionHistory) Finalize(operationErr ...error) {
 	stats := diffStats{files: sh.diffFiles, insertions: sh.diffInsertions, deletions: sh.diffDeletions}
 	sh.mu.Unlock()
 
-	if sh.timeline != nil {
-		snapshot, err := sh.timeline.Finish(context.Background(), errors.Join(operationErr...))
+	if sh.checkpointStop != nil {
+		close(sh.checkpointStop)
+		<-sh.checkpointDone
+	}
+	telemetry.ReportTimelineError(timeline.Finish(sh.SessionID, errors.Join(operationErr...)))
+	snapshot, err := sh.checkpointTimeline()
+	telemetry.ReportTimelineError(err)
+	if err == nil {
 		duration = snapshot.Duration()
-		reportTimelineError(err)
 	}
 	if p != nil {
 		p.WriteSessionEnd(duration, filesReviewed, failures, stats)
 	}
+	telemetry.ReleaseTimeline(sh.SessionID)
 }
 
 // AppendTaskRecord adds a new task record to this scope session for the given

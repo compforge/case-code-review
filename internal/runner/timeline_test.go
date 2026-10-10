@@ -15,6 +15,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -32,11 +33,7 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 		t.Fatal(err)
 	}
 	history.Finalize()
-	recorder, _ := timeline.FromContext(ctx)
-	snapshot, err := recorder.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshot := readFinishedTimeline(t, history)
 	names := map[string]bool{}
 	for _, stage := range snapshot.Stages {
 		names[stage.Name] = true
@@ -118,11 +115,7 @@ func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {
 	if _, err := a.Run(context.Background()); err == nil {
 		t.Fatal("expected diff load failure")
 	}
-	recorder, _ := timeline.FromContext(a.session.Context(context.Background()))
-	snapshot, err := recorder.Snapshot(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	snapshot := readFinishedTimeline(t, a.session)
 	if snapshot.Status != timeline.Failed || snapshot.FinishedAt.IsZero() {
 		t.Fatalf("run=%+v", snapshot)
 	}
@@ -132,11 +125,12 @@ func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {
 }
 
 func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
-	recorder, _ := timeline.New("lanes")
-	if err := recorder.Start(context.Background(), "review"); err != nil {
+	id := t.Name()
+	defer telemetry.ReleaseTimeline(id)
+	if err := timeline.Start(id, "review"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(timeline.NewContext(context.Background(), recorder))
+	ctx, cancel := context.WithCancel(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}))
 	defer cancel()
 	units := []unit.Unit{testReviewUnit("u1", "a.go", "a.go::A"), testReviewUnit("u2", "b.go", "b.go::B")}
 	started := make(chan struct{}, 2)
@@ -173,7 +167,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	if len(started) != 0 {
 		t.Fatal("waiting review started after cancellation")
 	}
-	snapshot, err := recorder.Snapshot(context.Background())
+	snapshot, err := timeline.Read(context.Background(), id, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +189,24 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	if queues != 2 || reviews != 1 {
 		t.Fatalf("queues=%d reviews=%d", queues, reviews)
 	}
+}
+
+func readFinishedTimeline(t *testing.T, history *session.SessionHistory) timeline.Snapshot {
+	t.Helper()
+	path, err := history.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	transcript, err := session.ReadTranscript(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return transcript.Timeline
 }
 
 func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {

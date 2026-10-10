@@ -229,6 +229,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 
 	startedAt := time.Now()
 	ctx, timing := e.beginTimeline(ctx, startedAt)
+	e.spec.Session.CheckpointTimeline()
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
@@ -283,6 +284,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	result.ID = e.id
 	result.Duration = time.Since(startedAt)
 	timing.finish(result, err)
+	e.spec.Session.CheckpointTimeline()
 	return result, err
 }
 

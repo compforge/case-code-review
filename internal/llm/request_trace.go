@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 const (
@@ -102,9 +103,6 @@ func (a *httpAttempt) transition(name string, attributes ...timeline.Attribute) 
 func (a *httpAttempt) wroteRequest() {
 	a.stage.SetAttributes(timeline.Attribute{Key: "request_written", Value: true})
 	a.transition(requestPhaseAwaitResponse)
-	if t, ok := timeline.FromContext(a.ctx); ok {
-		flushTimeline(t)
-	}
 }
 
 func (a *httpAttempt) finish(err error) {
@@ -161,9 +159,9 @@ func (p *requestTrace) attributes() map[string]any {
 	}
 	p.current.mu.Lock()
 	defer p.current.mu.Unlock()
-	t, _ := timeline.FromContext(p.ctx)
-	snapshot, err := t.Snapshot(context.Background())
-	reportTimelineError(t, err)
+	ref, _ := timeline.StageFromContext(p.ctx)
+	snapshot, err := timeline.Read(context.Background(), ref.TimelineID, false)
+	telemetry.ReportTimelineError(err)
 	var request timeline.Stage
 	for _, stage := range snapshot.Stages {
 		if stage.ID == p.current.stage.ID() {

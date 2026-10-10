@@ -13,17 +13,19 @@ import (
 func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 	root := t.TempDir()
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
-	update := timeline.Update{
-		Operation: &timeline.OperationRecord{Revision: 1, Operation: "review", StartedAt: start, Status: timeline.Running},
-		Stages:    []timeline.StageUpdate{{Revision: 1, Stage: timeline.Stage{ID: "wait-1", ParentID: "request-1", Name: "await_response", StartedAt: start, Status: timeline.Running}}},
+	snapshot := timeline.Snapshot{
+		ID: "session-1", RootStageID: "operation:session-1", Operation: "review", StartedAt: start, Status: timeline.Unknown,
+		Stages: []timeline.Stage{
+			{ID: "wait-1", ParentID: "request-1", Name: "await_response", StartedAt: start, Status: timeline.Running},
+			{ID: "exec-1", ParentID: "operation:session-1", Name: "execution", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"execution_id": json.RawMessage(`"exec-1"`), "scope_id": json.RawMessage(`"unit-1"`), "kind": json.RawMessage(`"unit"`), "scope": json.RawMessage(`"file"`), "task_type": json.RawMessage(`"main_task"`)}},
+		},
 	}
-	update.Stages = append(update.Stages, timeline.StageUpdate{Revision: 1, Stage: timeline.Stage{ID: "request-1", ParentID: "operation:session-1", Name: "llm.request", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"scope_id": json.RawMessage(`"unit-1"`), "execution_id": json.RawMessage(`"exec-1"`), "request_no": json.RawMessage(`1`), "task_type": json.RawMessage(`"main_task"`)}}})
-	raw, err := json.Marshal(map[string]any{"type": "timeline_update", "execution_id": "exec-1", "scope_id": "unit-1", "taskType": "main_task", "request_no": 1, "timeline_id": "session-1", "update": update})
+	snapshot.Stages = append(snapshot.Stages, timeline.Stage{ID: "request-1", ParentID: "exec-1", Name: "llm.request", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"scope_id": json.RawMessage(`"unit-1"`), "execution_id": json.RawMessage(`"exec-1"`), "request_no": json.RawMessage(`1`), "task_type": json.RawMessage(`"main_task"`)}})
+	raw, err := json.Marshal(map[string]any{"type": "timeline_snapshot", "timeline_id": "session-1", "snapshot": snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}
 	writeViewerSession(t, root, "repo", "session-1", sessionStart("session-1"),
-		`{"type":"timeline_update","timeline_id":"session-1","update":{"Stages":[{"revision":1,"id":"exec-1","parent_id":"operation:session-1","name":"execution","started_at":"2026-08-02T00:00:00+00:00","status":"running","fields":{"execution_id":"exec-1","scope_id":"unit-1","kind":"unit","scope":"file","task_type":"main_task"}}]}}`,
 		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":1,"messages":[{"role":"user","content":"first"}],"stage_id":"request-1","timeline_id":"session-1"}`,
 		`{"type":"llm_request","kind":"unit","scope":"file","filePath":"a.go","execution_id":"exec-1","scope_id":"unit-1","taskType":"main_task","request_no":2,"messages":[{"role":"user","content":"second"}],"stage_id":"request-2","timeline_id":"session-1"}`,
 		string(raw),
@@ -60,9 +62,9 @@ func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 
 func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	start := time.Now().Add(-time.Second)
-	doc := &timeline.Document{ID: "run", RootStageID: "operation:run", OperationRecord: timeline.OperationRecord{StartedAt: start, Status: timeline.Running}, Stages: []timeline.StageUpdate{
-		{Stage: timeline.Stage{ID: "child", ParentID: "parent", Name: "model.attempt", StartedAt: start.Add(10 * time.Millisecond), FinishedAt: start.Add(30 * time.Millisecond), Status: timeline.Succeeded, Attributes: map[string]json.RawMessage{"attempt": json.RawMessage(`3`)}}},
-		{Stage: timeline.Stage{ID: "parent", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running}},
+	doc := &timeline.Snapshot{ID: "run", RootStageID: "operation:run", StartedAt: start, Status: timeline.Unknown, Stages: []timeline.Stage{
+		{ID: "child", ParentID: "parent", Name: "model.attempt", StartedAt: start.Add(10 * time.Millisecond), FinishedAt: start.Add(30 * time.Millisecond), Status: timeline.Succeeded, Attributes: map[string]json.RawMessage{"attempt": json.RawMessage(`3`)}},
+		{ID: "parent", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running},
 	}}
 	rows := timelineRows(doc)
 	if len(rows) != 2 || rows[0].Name != "execution" || rows[1].DurationMS != 20 || rows[1].OffsetMS != 10 || rows[1].Depth != 1 || !rows[0].HasChildren {
@@ -83,12 +85,26 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	}
 }
 
+func TestEmptyParentIsIndependentRatherThanMissing(t *testing.T) {
+	start := time.Now()
+	doc := &timeline.Snapshot{ID: "run", StartedAt: start, Stages: []timeline.Stage{
+		{ID: "top", Name: "work", StartedAt: start},
+		{ID: "orphan", ParentID: "absent", Name: "remote work", StartedAt: start},
+	}}
+	rows := timelineRows(doc)
+	for _, row := range rows {
+		if row.MissingParent != (row.ID == "orphan") || row.Depth != 0 {
+			t.Fatalf("incorrect parent semantics: %+v", row)
+		}
+	}
+}
+
 func TestTimelineWaterfallPreservesParallelIntervalsAndUnknownEnds(t *testing.T) {
 	start := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
-	doc := &timeline.Document{RootStageID: "root", OperationRecord: timeline.OperationRecord{StartedAt: start, FinishedAt: start.Add(10 * time.Second)}, Stages: []timeline.StageUpdate{
-		{Stage: timeline.Stage{ID: "a", ParentID: "root", Name: "parallel-a", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second), Elapsed: 3 * time.Second}},
-		{Stage: timeline.Stage{ID: "b", ParentID: "root", Name: "parallel-b", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second)}},
-		{Stage: timeline.Stage{ID: "unknown", ParentID: "missing", Name: "await_response", StartedAt: start.Add(9 * time.Second), Status: timeline.Running}},
+	doc := &timeline.Snapshot{RootStageID: "root", StartedAt: start, FinishedAt: start.Add(10 * time.Second), Stages: []timeline.Stage{
+		{ID: "a", ParentID: "root", Name: "parallel-a", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second), Elapsed: 3 * time.Second},
+		{ID: "b", ParentID: "root", Name: "parallel-b", StartedAt: start.Add(2 * time.Second), FinishedAt: start.Add(6 * time.Second)},
+		{ID: "unknown", ParentID: "missing", Name: "await_response", StartedAt: start.Add(9 * time.Second), Status: timeline.Running},
 	}}
 	view := layoutTimeline(doc)
 	if view.WindowMS != 10000 || view.Incomplete != 1 {

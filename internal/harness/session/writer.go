@@ -11,7 +11,7 @@ import (
 )
 
 // appendLocked owns the envelope and visibility boundary for every record,
-// including native timeline updates. Sequence is storage order, not causality.
+// including timeline snapshots. Sequence is storage order, not causality.
 func (jw *jsonlWriter) appendLocked(rec map[string]any) (string, error) {
 	if jw.closed {
 		return "", fmt.Errorf("session %s is closed", jw.sessionID)

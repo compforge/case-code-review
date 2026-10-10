@@ -12,7 +12,7 @@ func (vs *ViewSession) projectRequestTimelines() {
 	if vs.Timeline == nil {
 		return
 	}
-	children := map[timeline.StageID][]timeline.StageUpdate{}
+	children := map[timeline.StageID][]timeline.Stage{}
 	for _, stage := range vs.Timeline.Stages {
 		children[stage.ParentID] = append(children[stage.ParentID], stage)
 	}
@@ -21,7 +21,7 @@ func (vs *ViewSession) projectRequestTimelines() {
 			continue
 		}
 
-		doc := timeline.Document{ID: string(stage.ID), RootStageID: stage.ID, OperationRecord: timeline.OperationRecord{Operation: stage.Name, StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, Status: stage.Status, Error: stage.Error}}
+		doc := timeline.Snapshot{ID: string(stage.ID), RootStageID: stage.ID, Operation: stage.Name, StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, Status: stage.Status, Error: stage.Error}
 		var appendChildren func(timeline.StageID)
 		seen := map[timeline.StageID]bool{}
 		appendChildren = func(id timeline.StageID) {
@@ -57,11 +57,11 @@ type timelineRow struct {
 }
 
 // Layout preserves hierarchy and overlapping intervals; it never sums durations.
-func timelineRows(doc *timeline.Document) []timelineRow {
+func timelineRows(doc *timeline.Snapshot) []timelineRow {
 	if doc == nil {
 		return nil
 	}
-	stages := append([]timeline.StageUpdate(nil), doc.Stages...)
+	stages := append([]timeline.Stage(nil), doc.Stages...)
 	sort.SliceStable(stages, func(i, j int) bool {
 		if stages[i].StartedAt.Equal(stages[j].StartedAt) {
 			return stages[i].ID < stages[j].ID
@@ -72,7 +72,7 @@ func timelineRows(doc *timeline.Document) []timelineRow {
 	children := map[timeline.StageID][]timeline.Stage{}
 	for _, stage := range stages {
 		known[stage.ID] = true
-		children[stage.ParentID] = append(children[stage.ParentID], stage.Stage)
+		children[stage.ParentID] = append(children[stage.ParentID], stage)
 	}
 	seen := map[timeline.StageID]bool{}
 	var rows []timelineRow
@@ -82,19 +82,19 @@ func timelineRows(doc *timeline.Document) []timelineRow {
 			return
 		}
 		seen[stage.ID] = true
-		rows = append(rows, timelineRow{Stage: stage, OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
+		rows = append(rows, timelineRow{Stage: stage, OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: stage.ParentID != "" && !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
 		for _, child := range children[stage.ID] {
 			visit(child, depth+1)
 		}
 	}
 	for _, stage := range stages {
 		if stage.ParentID == doc.RootStageID || !known[stage.ParentID] {
-			visit(stage.Stage, 0)
+			visit(stage, 0)
 		}
 	}
 	for _, stage := range stages {
 		if !seen[stage.ID] {
-			visit(stage.Stage, 0)
+			visit(stage, 0)
 		}
 	}
 	return rows
@@ -108,7 +108,7 @@ type timelineView struct {
 
 // spec: Bars share source timestamps; unknown end times are markers, never
 // intervals extended to the current wall clock. Elapsed is kept for the label.
-func layoutTimeline(doc *timeline.Document) timelineView {
+func layoutTimeline(doc *timeline.Snapshot) timelineView {
 	view := timelineView{Rows: timelineRows(doc)}
 	if doc == nil {
 		return view

@@ -13,6 +13,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
@@ -25,17 +26,18 @@ func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
 }
 
 func TestContextZoneReportUsesTimeline(t *testing.T) {
-	tm, err := timeline.New("zone-test")
-	if err != nil {
+	id := t.Name()
+	defer telemetry.ReleaseTimeline(id)
+	if err := timeline.Start(id, "compaction"); err != nil {
 		t.Fatal(err)
 	}
-	ctx := timeline.NewContext(t.Context(), tm)
+	ctx := timeline.NewStageContext(t.Context(), timeline.StageRef{TimelineID: id})
 	manager := newContextManager(ExecutionSpec{ContextWindow: 400, FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}})
-	_, err = manager.Compact(ctx, agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))}}, agentgo.CompactReasonThreshold)
+	_, err := manager.Compact(ctx, agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))}}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := tm.Snapshot(ctx)
+	snapshot, err := timeline.Read(ctx, id, false)
 	if err != nil {
 		t.Fatal(err)
 	}

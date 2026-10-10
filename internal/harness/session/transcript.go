@@ -17,7 +17,7 @@ import (
 // adjacent JSONL entries. Runtime handles never cross the recording boundary.
 type Transcript struct {
 	Records       []map[string]any
-	Timeline      timeline.Document
+	Timeline      timeline.Snapshot
 	TruncatedTail bool
 }
 
@@ -48,20 +48,20 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 			if record["type"] == "session_start" && record["schema_version"] != float64(SchemaVersion) {
 				return nil, fmt.Errorf("unsupported session schema %v; requires %d", record["schema_version"], SchemaVersion)
 			}
-			if record["type"] == "timeline_update" {
-				raw, _ := json.Marshal(record["update"])
-				var update timeline.Update
-				if e := json.Unmarshal(raw, &update); e != nil {
+			if record["type"] == "timeline_snapshot" {
+				raw, _ := json.Marshal(record["snapshot"])
+				var snapshot timeline.Snapshot
+				if e := json.Unmarshal(raw, &snapshot); e != nil {
 					return nil, fmt.Errorf("session line %d: %w", lineNo, e)
 				}
 				id, _ := record["timeline_id"].(string)
-				doc, _, e := timeline.MergeDocument(id, t.Timeline, update)
-				if e != nil {
-					return nil, fmt.Errorf("session line %d: %w", lineNo, e)
+				if id == "" || snapshot.ID != id || (t.Timeline.ID != "" && t.Timeline.ID != id) {
+					return nil, fmt.Errorf("session line %d: inconsistent timeline ID", lineNo)
 				}
-				t.Timeline = doc
+				t.Timeline = snapshot
+			} else {
+				t.Records = append(t.Records, record)
 			}
-			t.Records = append(t.Records, record)
 		}
 		if err == io.EOF {
 			break
@@ -74,7 +74,7 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 func (t *Transcript) StageIndex() map[timeline.StageID]timeline.Stage {
 	stages := make(map[timeline.StageID]timeline.Stage, len(t.Timeline.Stages))
 	for _, stage := range t.Timeline.Stages {
-		stages[stage.ID] = stage.Stage
+		stages[stage.ID] = stage
 	}
 	return stages
 }
