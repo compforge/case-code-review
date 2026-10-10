@@ -81,6 +81,8 @@ ccr review --background "需求背景"      # 注入业务或需求上下文
 ccr review --format json                # 面向 CI / bot 的机器可读输出
 ```
 
+`ccr review --timeout` 设置每个 Unit 的全流程总时限（分钟），包含发现、复核排队、裁决与收卷；默认 10，0 表示不设置 Unit 时间上限。
+
 连续评审 PR/MR 时，可用 `--history prior.json` 传入之前已经交付的 Finding。Forge comments 是持久事实源；调用方在每个 revision 拉取它们，使 ccr 能区分新问题与重复交付。
 
 `review` 和 `scan` 均可用 `--max-tokens-budget 200000` 设置整轮输入 + 输出 token 预算（默认不限）。报告用量达到上限后停止新模型调用，保留已接受结果；已放行的请求可以完成，因此这是软上限。

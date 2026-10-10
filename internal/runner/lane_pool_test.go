@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/qiankunli/case-code-review/internal/harness"
@@ -264,4 +265,63 @@ func testHypothesis(id, origin, file, evidence string) unitreview.Hypothesis {
 		ID: id, OriginUnit: origin, Path: file, Content: "issue", ExistingCode: "x",
 		Trigger: "call", Impact: "failure", ChangeAttribution: "changed", Evidence: []string{evidence},
 	}
+}
+
+// +case:id=expired_unit_does_not_cancel_lane,desc=`a short-lived Unit queues behind another Unit in the same Lane`,expect=`it expires on time without a model call; later Units reuse the Lane and continue`
+func TestLaneQueuedUnitExpiresWithoutCancelingSharedLane(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		units := []unit.Unit{testReviewUnit("a", "a.go", "a.go::A"), testReviewUnit("b", "b.go", "b.go::B"), testReviewUnit("c", "c.go", "c.go::C")}
+		short, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		started := make(chan string, 3)
+		finished := make(chan string, 3)
+		var calls atomic.Int32
+		pool := newLanePool(lanePoolConfig{
+			Context: context.Background(), Units: units, Concurrency: 1,
+			ReviewContext: func(id string) context.Context {
+				if id == "b" {
+					return short
+				}
+				return context.Background()
+			},
+			Review: func(ctx context.Context, input hypothesisreview.ReviewInput, prior *harness.ExecutionResult) hypothesisreview.ReviewResult {
+				calls.Add(1)
+				started <- input.Hypothesis.ID
+				if input.Unit.ID == "a" {
+					time.Sleep(2 * time.Minute)
+				}
+				if input.Unit.ID == "c" && prior == nil {
+					t.Error("shared Lane context was lost")
+				}
+				return hypothesisreview.ReviewResult{Execution: harness.ExecutionResult{State: harness.OutcomeCompleted}}
+			},
+			OnFinished: func(input hypothesisreview.ReviewInput, result hypothesisreview.ReviewResult) {
+				if input.Unit.ID == "b" && result.Execution.State != harness.OutcomeTimeout {
+					t.Errorf("expired outcome=%v", result.Execution)
+				}
+				finished <- input.Hypothesis.ID
+			},
+		})
+		pool.Submit(testHypothesis("ha", "a", "a.go", "shared.go:1"))
+		<-started
+		pool.Submit(testHypothesis("hb", "b", "b.go", "shared.go:1"))
+		pool.Submit(testHypothesis("hc", "c", "c.go", "shared.go:1"))
+		time.Sleep(time.Minute)
+		synctest.Wait()
+		select {
+		case id := <-finished:
+			if id != "hb" {
+				t.Fatalf("first completion=%s", id)
+			}
+		default:
+			t.Fatal("queued expiry waited for busy Lane")
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("expired candidate started: calls=%d", calls.Load())
+		}
+		pool.Finish()
+		if calls.Load() != 2 || len(finished) != 2 {
+			t.Fatalf("calls=%d remaining completions=%d", calls.Load(), len(finished))
+		}
+	})
 }

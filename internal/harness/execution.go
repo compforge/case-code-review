@@ -58,6 +58,9 @@ type ExecutionSpec struct {
 	// WrapUpAt closes investigation at this instant without canceling Run's
 	// context. Zero disables this boundary; callers retain cancellation ownership.
 	WrapUpAt time.Time
+	// WrapUpDeadline supplies an adjustable exploration boundary, evaluated at
+	// turn and tool boundaries. It must be safe for concurrent calls.
+	WrapUpDeadline func() time.Time
 	// WrapUpAllowedTools are the result tools permitted during the first
 	// wrap-up request. Tool schemas stay stable; middleware enforces this policy.
 	// The final corrective request permits only the completion tool, if present.

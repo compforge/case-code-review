@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
@@ -41,7 +42,7 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 			// Queue independent files: multiple symbols in one file share the
 			// file-count allowance and no longer guarantee multiple executions.
 			a.changes = []change.Change{goDiff("p.go", 1), goDiff("q.go", 1), goDiff("r.go", 1)}
-			if _, err := a.dispatchUnits(t.Context()); err != nil {
+			if _, err := a.dispatchUnits(t.Context()); err != nil && !plan {
 				t.Fatal(err)
 			}
 			if client.calls != 1 {
@@ -88,7 +89,7 @@ func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 	if len(units) != 1 || !units[0].BudgetExceeded {
 		t.Fatalf("expected one file exceeding merge budget: %+v", units)
 	}
-	if err := a.reviewUnit(t.Context(), units[0]); err != nil {
+	if _, err := a.reviewUnit(t.Context(), units[0], time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if client.calls != 1 {

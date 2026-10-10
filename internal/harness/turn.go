@@ -29,19 +29,20 @@ type tokenAllowance interface {
 // only projects and compacts messages; business-neutral turn timing belongs to
 // the Execution lifecycle exposed by AgentGo's BeforeTurn hook.
 type turnController struct {
-	maxTurns     int
-	wrapUpAfter  int
-	wrapUpAt     time.Time
-	currentTurn  int
-	wrapUpPrompt string
-	scope        session.Scope
-	provider     TurnContextProvider
-	budget       tokenAllowance
-	history      *session.SessionHistory
-	maxOutput    int
-	toolTokens   int
-	outputs      [3]int64
-	outputIndex  int
+	maxTurns       int
+	wrapUpAfter    int
+	wrapUpAt       time.Time
+	wrapUpDeadline func() time.Time
+	currentTurn    int
+	wrapUpPrompt   string
+	scope          session.Scope
+	provider       TurnContextProvider
+	budget         tokenAllowance
+	history        *session.SessionHistory
+	maxOutput      int
+	toolTokens     int
+	outputs        [3]int64
+	outputIndex    int
 
 	mu            sync.Mutex
 	wrapUpIssued  bool
@@ -52,16 +53,17 @@ func newTurnController(spec ExecutionSpec) *turnController {
 	budget, _ := spec.LLMClient.(tokenAllowance)
 	schemas, _ := json.Marshal(spec.ToolDefs)
 	return &turnController{
-		budget:       budget,
-		history:      spec.Session,
-		maxOutput:    spec.MaxTokens,
-		toolTokens:   llm.CountTokens(string(schemas)),
-		maxTurns:     spec.MaxTurns,
-		wrapUpAfter:  spec.WrapUpAfterTurns,
-		wrapUpAt:     spec.WrapUpAt,
-		wrapUpPrompt: spec.WrapUpPrompt,
-		scope:        spec.Scope,
-		provider:     spec.TurnContext,
+		budget:         budget,
+		history:        spec.Session,
+		maxOutput:      spec.MaxTokens,
+		toolTokens:     llm.CountTokens(string(schemas)),
+		maxTurns:       spec.MaxTurns,
+		wrapUpAfter:    spec.WrapUpAfterTurns,
+		wrapUpAt:       spec.WrapUpAt,
+		wrapUpDeadline: spec.WrapUpDeadline,
+		wrapUpPrompt:   spec.WrapUpPrompt,
+		scope:          spec.Scope,
+		provider:       spec.TurnContext,
 	}
 }
 
@@ -110,13 +112,18 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int, messag
 		return false
 	}
 
+	wrapUpAt := c.wrapUpAt
+	if c.wrapUpDeadline != nil {
+		wrapUpAt = c.wrapUpDeadline()
+	}
 	plannedWrapUp := c.wrapUpAfter > 0 && turnIndex > c.wrapUpAfter
 	nearTurnLimit := c.maxTurns > 0 && c.maxTurns-turnIndex+1 <= wrapUpTurnReserve
 	timeLeft := time.Duration(0)
 	nearDeadline := false
 	if deadline, ok := ctx.Deadline(); ok {
 		timeLeft = time.Until(deadline)
-		nearDeadline = timeLeft < wrapUpTimeReserve
+		// Explicit budgets own the reserve; a shorter caller deadline still wins.
+		nearDeadline = (wrapUpAt.IsZero() || deadline.Before(wrapUpAt)) && timeLeft < wrapUpTimeReserve
 	}
 	var reasons []string
 	if plannedWrapUp {
@@ -125,7 +132,7 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int, messag
 	if nearTurnLimit {
 		reasons = append(reasons, "turn_limit")
 	}
-	if !c.wrapUpAt.IsZero() && !time.Now().Before(c.wrapUpAt) {
+	if !wrapUpAt.IsZero() && !time.Now().Before(wrapUpAt) {
 		reasons = append(reasons, "investigation_time")
 	}
 	if nearDeadline {
@@ -149,7 +156,7 @@ func (c *turnController) shouldWrapUp(ctx context.Context, turnIndex int, messag
 			c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
 				"scope_id": c.scope.ID, "turn": turnIndex, "reasons": reasons,
 				"remaining_time_ms": timeLeft.Milliseconds(), "token_limited": limited,
-				"investigation_deadline": c.wrapUpAt,
+				"investigation_deadline": wrapUpAt,
 				"remaining_tokens":       remaining, "investigation_tokens": investigation, "wrap_up_tokens": wrapUp,
 			})
 		}
@@ -189,14 +196,18 @@ func (c *turnController) forecast(messages []agentgo.AgentMessage) (investigatio
 func (c *turnController) checkTime(ctx context.Context) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.wrapUpIssued || c.wrapUpPrompt == "" || c.wrapUpAt.IsZero() || time.Now().Before(c.wrapUpAt) {
+	wrapUpAt := c.wrapUpAt
+	if c.wrapUpDeadline != nil {
+		wrapUpAt = c.wrapUpDeadline()
+	}
+	if c.wrapUpIssued || c.wrapUpPrompt == "" || wrapUpAt.IsZero() || time.Now().Before(wrapUpAt) {
 		return
 	}
 	c.wrapUpIssued, c.wrapUpPending = true, true
 	if c.history != nil {
 		c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
 			"scope_id": c.scope.ID, "turn": c.currentTurn, "reasons": []string{"investigation_time"},
-			"investigation_deadline": c.wrapUpAt,
+			"investigation_deadline": wrapUpAt,
 		})
 	}
 }

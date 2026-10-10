@@ -174,9 +174,22 @@ terminal tool 的执行在 wrap-up 阶段由 Harness 检查是否成功完成。
 
 ### 3. 探索预算结束后硬关闭调查工具
 
-`ccr review --timeout` 是每个 Unit 的探索时长，计入计划与交底，排队等待不计入。
-到点后关闭新的探索调用并进入收卷，收卷没有独立时间上限；已发出的调用可以完成，仍受单次请求超时约束。
-调用方取消和外层 deadline 继续有效。探索时间到达本身不把 Unit 标为 timeout。
+`ccr review --timeout` 是每个 Unit 从 Review 1 开始到 Review 2、Trial 和结果落盘结束的总时限。
+Unit 启动前的排队不计入；启动后的计划、上下文准备、候选交接、Review 2 排队和收卷共同使用这个期限。
+零值不设置 Unit 时间上限，调用方取消、外层 deadline、单次请求和轮次限制仍有效。
+
+Runner 为 Review 1 设置较早的交接截止时间，阶段内先停止探索，再收卷。Review 2 在候选到达时就开始，
+不等待 Review 1 结束；Review 1 提前结束后，剩余时间全部可用于 Review 2，并按实际剩余时间重新安排
+复核与收卷边界。同一个 Unit 的所有候选继承同一期限，新增候选和重新排队不会重置预算。
+Trial 随 Assessment 到达即时执行，总预算还保留少量本地收尾余量。
+
+时间分配由模板的 `REVIEW_TIME_BUDGET` 集中配置：`review1_fraction` 默认 0.7，表示 Review 1 最晚
+结束的位置；`exploration_fraction` 默认 0.85，表示各阶段用于探索的比例。其余部分用于收卷。
+比例描述 elapsed time 的边界，不把并行执行的 Review 1 / Review 2 耗时相加扣减。
+
+探索到点会关闭调查工具；阶段或 Unit 硬期限到达会取消仍在运行的调用。已接受结果保留，未评估候选
+明确记录为 incomplete。Unit debrief 在发现、复核和 Trial 都收尾后写出；R1 的完成状态单独保留在轨迹中，
+不能代替整个 Unit 的完成状态。
 
 执行层将“探索预算”和“终态预留”分开。轮次、时间和累计 token 任一条件达到收卷边界后，
 Harness 追加模式提示，保持工具 schema 与 tool choice 不变，由 Tool middleware 关闭调查调用。

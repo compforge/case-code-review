@@ -11,6 +11,7 @@ import (
 // Template holds the native agent task template configuration.
 // Scan-mode fields live in ScanTemplate, not here.
 type Template struct {
+	ReviewTimeBudget      ReviewTimeBudget `json:"REVIEW_TIME_BUDGET,omitempty"`
 	MainTask              LlmConversation  `json:"MAIN_TASK"`
 	PlanTask              *LlmConversation `json:"PLAN_TASK,omitempty"`
 	MemoryCompressionTask LlmConversation  `json:"MEMORY_COMPRESSION_TASK"`
@@ -61,6 +62,7 @@ type manifestConversation struct {
 }
 
 type templateManifest struct {
+	ReviewTimeBudget      ReviewTimeBudget      `json:"REVIEW_TIME_BUDGET,omitempty"`
 	MainTask              manifestConversation  `json:"MAIN_TASK"`
 	PlanTask              *manifestConversation `json:"PLAN_TASK,omitempty"`
 	MemoryCompressionTask manifestConversation  `json:"MEMORY_COMPRESSION_TASK"`
@@ -111,6 +113,7 @@ func LoadDefault() (*Template, error) {
 	}
 
 	var tpl Template
+	tpl.ReviewTimeBudget = m.ReviewTimeBudget
 	tpl.MaxTokens = m.MaxTokens
 	tpl.MaxCompletionTokens = m.MaxCompletionTokens
 	tpl.MaxToolRequestTimes = m.MaxToolRequestTimes
@@ -209,6 +212,9 @@ func (t *ScanTemplate) ApplyLanguage(lang string) {
 }
 
 func (t *Template) Validate() error {
+	if err := t.ReviewTimeBudget.Validate(); err != nil {
+		return err
+	}
 	if t.MaxCompletionTokens < 0 {
 		return fmt.Errorf("max_completion_tokens must be non-negative")
 	}

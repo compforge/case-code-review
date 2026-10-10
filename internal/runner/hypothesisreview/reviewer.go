@@ -21,6 +21,8 @@ import (
 )
 
 type Config struct {
+	WrapUpDeadline          func() time.Time
+	ExplorationFraction     float64
 	Task                    template.LlmConversation
 	LLMClient               llm.LLMClient
 	Model                   string
@@ -75,7 +77,13 @@ func Review(
 	}
 	messages = append(messages, reviewContextMessages(input)...)
 
+	var taskWrapUp time.Time
 	if config.Task.Timeout > 0 {
+		fraction := config.ExplorationFraction
+		if fraction == 0 {
+			fraction = .85
+		}
+		taskWrapUp = time.Now().Add(time.Duration(float64(time.Duration(config.Task.Timeout)*time.Second) * fraction))
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(config.Task.Timeout)*time.Second)
 		defer cancel()
@@ -107,14 +115,24 @@ func Review(
 			ID: "hypothesis_review:" + input.LaneID, Kind: "lane",
 			Type: "hypothesis_review", Paths: input.Paths(),
 		},
-		TaskType:                session.HypothesisReviewTask,
-		Events:                  config.Events,
-		MaxTurns:                config.MaxTurns,
-		MaxTokens:               outputLimit(config.MaxTokens, config.MaxCompletionTokens),
-		ContextWindow:           config.MaxTokens,
-		FileDedupEnabled:        config.FileDedup,
-		FileEvictEnabled:        config.FileEvict,
-		WrapUpPrompt:            WrapUpPrompt,
+		TaskType:         session.HypothesisReviewTask,
+		Events:           config.Events,
+		MaxTurns:         config.MaxTurns,
+		MaxTokens:        outputLimit(config.MaxTokens, config.MaxCompletionTokens),
+		ContextWindow:    config.MaxTokens,
+		FileDedupEnabled: config.FileDedup,
+		FileEvictEnabled: config.FileEvict,
+		WrapUpPrompt:     WrapUpPrompt,
+		WrapUpDeadline: func() time.Time {
+			at := taskWrapUp
+			if config.WrapUpDeadline != nil {
+				unitAt := config.WrapUpDeadline()
+				if !unitAt.IsZero() && (at.IsZero() || unitAt.Before(at)) {
+					at = unitAt
+				}
+			}
+			return at
+		},
 		WrapUpAllowedTools:      []string{SubmitAssessment.Name()},
 		CompletionTool:          SubmitAssessment.Name(),
 		CompletionPrompt:        "The review is not complete until the current hypothesis has a valid assessment. Submit it with submit_assessment, using insufficient/unknown where evidence is incomplete.",

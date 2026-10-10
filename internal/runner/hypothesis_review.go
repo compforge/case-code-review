@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/compforge/go-stdx/timeline"
 
@@ -37,7 +38,13 @@ func (a *Runner) reviewHypothesis(
 			result = hypothesisreview.ReviewResult{}
 		}
 	}()
+	var wrapUpDeadline func() time.Time
+	if run := a.unitRuns[input.Unit.ID]; run != nil {
+		wrapUpDeadline = run.budget.wrapUpDeadline
+	}
 	result = hypothesisreview.Review(ctx, hypothesisreview.Config{
+		WrapUpDeadline:          wrapUpDeadline,
+		ExplorationFraction:     a.args.Template.ReviewTimeBudget.WithDefaults().ExplorationFraction,
 		Task:                    *task,
 		LLMClient:               a.args.LLMClient,
 		Model:                   a.args.Model,

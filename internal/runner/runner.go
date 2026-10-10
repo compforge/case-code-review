@@ -10,7 +10,6 @@ import (
 	"github.com/compforge/repocli/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"os"
-	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -108,8 +107,8 @@ type Args struct {
 	MaxFiles         int
 	MaxSnapshotBytes int64
 
-	// ConcurrentTaskTimeout limits Unit exploration in minutes, including planning
-	// and briefing. Zero disables the limit; wrap-up has no time limit.
+	// ConcurrentTaskTimeout bounds each Unit from R1 start through R2 and R3,
+	// including verification queueing and wrap-up. Minutes; zero disables it.
 	ConcurrentTaskTimeout int
 
 	// Findings stores only post-Trial findings. Investigative hypotheses use a
@@ -171,6 +170,7 @@ type Runner struct {
 	totalDeletions   int64
 	currentDate      string
 	session          *session.SessionHistory
+	unitRuns         map[string]*unitRun
 	unitFailed       int64 // count of failed unit reviews, accessed atomically
 	executor         *unitreview.Executor
 	// Splitting locates graph-owned edits; Formation groups them before any
@@ -554,6 +554,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 	a.persistFormedUnits(formationCtx, units)
 	unitByID := make(map[string]unit.Unit, len(units))
+	a.unitRuns = make(map[string]*unitRun, len(units))
 	changeStatus := make(map[string]string, len(a.changes))
 	for _, changed := range a.changes {
 		changeStatus[effectivePath(changed)] = diffStatus(changed)
@@ -564,6 +565,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 			units[i].Fragments[j].Status = changeStatus[units[i].Fragments[j].Path]
 		}
 		unitByID[units[i].ID] = units[i]
+		a.unitRuns[units[i].ID] = &unitRun{}
 	}
 
 	if a.features.Enabled(feature.RepoMap) {
@@ -574,18 +576,19 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 
 	var reviewLanes *lanePool
-	var deliveryGate *trial.Gate
+	deliveryGate := trial.NewGate()
 	if a.features.Enabled(feature.HypothesisReview) {
 		task := a.args.Template.HypothesisReviewTask
 		if task != nil && len(task.Messages) > 0 {
-			deliveryGate = trial.NewGate()
 			reviewLanes = newLanePool(lanePoolConfig{
 				Context: ctx, Units: units, Selections: a.fileSelections,
-				Concurrency:  laneReviewWorkers,
-				Review:       a.reviewHypothesis,
-				OnHypothesis: a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
+				Concurrency:   laneReviewWorkers,
+				Review:        a.reviewHypothesis,
+				ReviewContext: func(id string) context.Context { return a.unitRuns[id].budget.reviewCtx },
+				OnFinished:    a.finishHypothesis,
+				OnHypothesis:  a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
-					trialCtx, finishTrial := session.Begin(ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
+					trialCtx, finishTrial := session.Begin(a.unitRuns[reviewUnit.ID].budget.ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
 					defer finishTrial(nil)
 					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
@@ -598,12 +601,21 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 			})
 		}
 	}
+	a.hypothesisHook.BeginResolution = func(id string) (context.Context, func()) {
+		run := a.unitRuns[id]
+		run.resolving.Add(1)
+		return run.budget.discoveryCtx, run.resolving.Done
+	}
 	a.hypothesisHook.OnResolved = func(hypothesis unitreview.Hypothesis) {
 		if reviewUnit, ok := unitByID[hypothesis.OriginUnit]; ok {
 			reviewUnit.AddHypothesis(hypothesis)
 		}
 		if reviewLanes != nil {
-			reviewLanes.Submit(hypothesis)
+			run := a.unitRuns[hypothesis.OriginUnit]
+			run.pending.Add(1)
+			if !reviewLanes.Submit(hypothesis) {
+				run.pending.Done()
+			}
 		}
 	}
 
@@ -619,7 +631,16 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	var dispatched int64
 	for i := range units {
 		_, finishQueue := session.Begin(ctx, "unit.queue", timeline.Attribute{Key: "unit_id", Value: units[i].ID})
-		sem <- struct{}{} // acquire before rechecking usage from completed peers
+		select {
+		case sem <- struct{}{}: // Unit queueing is outside its own deadline.
+		case <-ctx.Done():
+			finishQueue(ctx.Err())
+			wg.Wait()
+			if reviewLanes != nil {
+				reviewLanes.Finish()
+			}
+			return a.args.Findings.Comments(), ctx.Err()
+		}
 		finishQueue(ctx.Err())
 		if a.budget != nil && a.budget.Check() != nil {
 			<-sem
@@ -634,34 +655,9 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 		go func(u unit.Unit) {
 			defer wg.Done()
-			defer func() { <-sem }() // release
-			// A panic while reviewing one unit must be isolated exactly like an
-			// error return: counted in unitFailed and recorded as a unit_error
-			// warning, so other units still complete and the all-failed rollup
-			// below stays correct. Exploration expiry switches the mode instead
-			// of canceling this context, so wrap-up can still deliver results.
-			defer func() {
-				if r := recover(); r != nil {
-					atomic.AddInt64(&a.unitFailed, 1)
-					fmt.Fprintf(console.Out(), "[ccr] Unit review panic for %s: %v\n%s\n", u.ID, r, debug.Stack())
-					telemetry.ErrorEvent(ctx, "unit.panic", fmt.Errorf("panic: %v", r),
-						telemetry.AnyToAttr("file.path", u.Path()))
-					a.recordWarning("unit_error", u.Path(), fmt.Sprintf("panic: %v", r))
-					// The unit never reached its own Close — end the lifecycle
-					// here so the panic is visible in debriefs, not just logs.
-					a.session.CloseScope(
-						session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()},
-						session.Debrief{Formed: string(u.Formed), Outcome: "panic", Reason: fmt.Sprintf("%v", r)})
-				}
-			}()
-
-			if err := a.reviewUnit(ctx, u); err != nil {
-				atomic.AddInt64(&a.unitFailed, 1)
-				fmt.Fprintf(console.Out(), "[ccr] Unit review error for %s: %v\n", u.ID, err)
-				telemetry.ErrorEvent(ctx, "unit.error", err,
-					telemetry.AnyToAttr("file.path", u.Path()))
-				a.recordWarning("unit_error", u.Path(), err.Error())
-			}
+			release := sync.OnceFunc(func() { <-sem })
+			defer release()
+			a.runUnitPipeline(ctx, u, a.unitRuns[u.ID], deliveryGate, release)
 		}(units[i])
 	}
 
@@ -695,45 +691,12 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		return nil, fmt.Errorf("all %d unit review(s) failed — inspect unit warnings for the cause", dispatched)
 	}
 
-	ctx, finishTrial := session.Begin(ctx, "trial.finalize")
-	defer finishTrial(nil)
-	var comments []finding.Finding
-	var decisions []unit.TrialDecision
-	persistAllDecisions := true
-	if a.features.Enabled(feature.HypothesisReview) {
-		if reviewLanes == nil && len(hypotheses) > 0 {
-			a.recordWarning(
-				"hypothesis_review_unavailable", "",
-				"hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured",
-			)
-		}
-		if deliveryGate != nil {
-			finalFindings, finalDecisions := deliveryGate.Finalize(units)
-			a.persistTrialDecisions(ctx, units, finalDecisions)
-			for _, comment := range finalFindings {
-				a.deliverFinding(ctx, comment, units)
-			}
-			comments, decisions = deliveryGate.Results()
-			persistAllDecisions = false
-		} else {
-			comments, decisions = trial.Run(units)
-		}
-	} else {
-		// Gate-off is the one-stage baseline used by eval ablations.
-		comments, decisions = trial.Bypass(units)
+	if a.features.Enabled(feature.HypothesisReview) && reviewLanes == nil && len(hypotheses) > 0 {
+		a.recordWarning("hypothesis_review_unavailable", "", "hypotheses cannot pass Trial because HYPOTHESIS_REVIEW_TASK is not configured")
 	}
-	if persistAllDecisions {
-		a.persistTrialDecisions(ctx, units, decisions)
-	}
-	if deliveryGate != nil {
-		// Incremental delivery already performed the externally visible side
-		// effects. Rebuild enriched copies only for the deterministic final list.
-		comments = a.prepareFindings(comments)
-	} else {
-		for i := range comments {
-			comments[i] = a.deliverFinding(ctx, comments[i], units)
-		}
-	}
+	// Each Unit already persisted Trial and delivery before closing its scope.
+	comments, _ := deliveryGate.Results()
+	comments = a.prepareFindings(comments)
 	a.persistBoardPosts()
 	return comments, nil
 }
@@ -1116,11 +1079,7 @@ func relationClueLabel(c unit.Clue) string {
 }
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
-func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) {
-	var wrapUpAt time.Time
-	if a.args.ConcurrentTaskTimeout > 0 {
-		wrapUpAt = time.Now().Add(time.Duration(a.args.ConcurrentTaskTimeout) * time.Minute)
-	}
+func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time) (deb session.Debrief, reviewErr error) {
 	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {
 		if p := recover(); p != nil {
@@ -1137,7 +1096,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	telemetry.SetAttr(span, "lines.deleted", u.Deletions())
 
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return deb, ctx.Err()
 	}
 
 	newPath := u.Path()
@@ -1173,13 +1132,13 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 
 	// Phase 2: Main task loop
 	if len(a.args.Template.MainTask.Messages) == 0 {
-		return fmt.Errorf("main_task.messages is empty in template")
+		return deb, fmt.Errorf("main_task.messages is empty in template")
 	}
 
 	// The debrief is this unit's terminal record: what only this moment knows
 	// (formation, source-preload fate, outcome) — post-hoc analysis can't rebuild it.
 	// Cost rollup is filled by WriteDebrief from the scope's task records.
-	deb := session.Debrief{
+	deb = session.Debrief{
 		Formed:       string(u.Formed),
 		Fragments:    len(u.Fragments),
 		Insertions:   u.Insertions(),
@@ -1202,10 +1161,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit) (reviewErr error) 
 	deb.BoardPulled = outcome.BoardPulled
 	deb.BoardInjectedTokens = outcome.BoardInjectedTokens
 	deb.BoardPosted = outcome.BoardPosted
-	// Close ends the unit's lifecycle: the debrief persists now, or — when
-	// async comment work is still in flight — the moment its last task ends.
-	a.session.CloseScope(sc, deb)
-	return err
+	return deb, err
 }
 
 // clueRefs collects the deduped symbol-ids a Unit's clues point at, in clue
