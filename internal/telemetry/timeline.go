@@ -16,7 +16,7 @@ var timelineManager *timeline.Manager
 // the returned cleanup after producers stop. Serial tests can use the same
 // lifetime inside a synctest bubble, keeping its workers on the fake clock.
 func InitTimeline() (func(context.Context) error, error) {
-	m, err := timeline.NewManager(nil, timeline.Config{Actor: timeline.Actor{ID: "ccr"}})
+	m, err := timeline.NewManager(nil, timeline.Config{})
 	if err != nil {
 		return nil, err
 	}

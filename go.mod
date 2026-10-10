@@ -10,7 +10,7 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agentgo v0.0.2-0.20261009014237-f883a8196dd1
 	github.com/compforge/codegraph v0.10.6-0.20261010020504-8bc19a1b244d
-	github.com/compforge/go-stdx v0.1.1-0.20261010095231-772a1b737939
+	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
 	github.com/compforge/repocli/toolkit/go v0.0.0-20261010101146-aec47bdcf34e
 	github.com/odvcencio/gotreesitter v0.55.1
 	github.com/openai/openai-go/v3 v3.39.0

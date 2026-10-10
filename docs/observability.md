@@ -109,7 +109,7 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 ### 整轮时间线
 
 Session 拥有一个 `go-stdx/timeline` ID：进程安装共用的 NoopStore Manager，各层通过根包入口记录，
-应用启动时安装带 CCR Actor 的 Manager，退出时在生产者结束后关闭。Context 只传播 timeline / stage ID，
+单机运行省略 Actor，应用退出时在生产者结束后关闭 Manager。Context 只传播 timeline / stage ID，
 录制处显式指定 ParentID；调用 repocli 时使用同一 StageRef，使库阶段归入调用方阶段。
 从创建 Session 到 Runner 收尾，diff 加载、项目选择、CodeGraph
 构建、Unit formation、Unit 等待与 Review 1、Lane 等待与 Review 2、Trial 以及辅助模型请求都向其贡献
