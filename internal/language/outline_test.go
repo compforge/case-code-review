@@ -57,7 +57,7 @@ interface Request { id: string; }
     def run(self):
         local = "not-an-attribute"
 `,
-			want:   []string{"- class class Service:", "- method def run(self):"},
+			want:   []string{"- class class Service:", "  - field token — L2", "  - field retries — L3", "- method def run(self):"},
 			reject: []string{"do-not-keep", "not-an-attribute", "local", "- attribute"},
 		},
 	}
@@ -81,6 +81,53 @@ interface Request { id: string; }
 			}
 		})
 	}
+}
+
+// +case:id=python_binding_outline,desc=`Annotated, chained and unpacked Python bindings retain names and owners`,expect=`Outline omits initializers while definitions retain full signatures and callable defaults`
+func TestPythonOutlineOmitsBindingInitializers(t *testing.T) {
+	source := Source{Path: "settings.py", Content: `token: str = "module-value"
+first, second = "first-value", "second-value"
+left = right = "shared-value"
+class Settings:
+    enabled: bool = True
+    primary, fallback = "primary-value", "fallback-value"
+    def run(self, mode="key=value"):
+        return mode
+`}
+	analyzer := NewAnalyzer("")
+	outline, err := analyzer.FileOutline(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := outline.Render()
+	for _, want := range []string{
+		"- variable token — L1", "- variable first — L2", "- variable second — L2",
+		"- variable left — L3", "- variable right — L3", "- class class Settings:",
+		"  - field enabled — L5", "  - field primary — L6", "  - field fallback — L6",
+		`  - method def run(self, mode="key=value"):`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("outline missing %q:\n%s", want, got)
+		}
+	}
+	for _, reject := range []string{"module-value", "first-value", "second-value", "shared-value", "True", "primary-value", "fallback-value", "return mode"} {
+		if strings.Contains(got, reject) {
+			t.Errorf("outline retained %q:\n%s", reject, got)
+		}
+	}
+	analysis, err := analyzer.Analyze(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range analysis.Definitions {
+		if definition.Name == "token" {
+			if definition.Signature != `token: str = "module-value"` {
+				t.Fatalf("outline policy changed definition signature: %q", definition.Signature)
+			}
+			return
+		}
+	}
+	t.Fatal("module binding missing from definitions")
 }
 
 func TestFileOutlineRangeKeepsOwnerAndIntersectingMembers(t *testing.T) {

@@ -33,7 +33,9 @@ func (a *Runner) Preview(ctx context.Context) (*Preview, error) {
 	if err := a.loadChanges(ctx); err != nil {
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
-	a.prepareFileSelections(ctx)
+	if err := a.prepareFileSelections(ctx); err != nil {
+		return nil, err
+	}
 	return a.buildPreview(), nil
 }
 

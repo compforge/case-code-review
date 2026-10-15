@@ -9,7 +9,7 @@ Project Knowledge 解释一份代码在当前项目里扮演什么角色，以�
 
 ```text
 Repository
-  ├─ Component（manifest 定义的项目边界）
+  ├─ Component（repocli 提供的工程边界）
   │    └─ File ─▶ FileRole[]
   │                 ├─ source / test
   │                 ├─ entrypoint / handler
@@ -21,7 +21,7 @@ Repository
 | 对象 | 语义 |
 |---|---|
 | `Repository` | 本次被评审的 Git snapshot，也是解析 Component 的入口 |
-| `Component` | Repository 内由项目 manifest 定义的静态项目边界 |
+| `Component` | repocli 从被评审快照识别的工程操作边界 |
 | `FileRole` | 文件在所属 Component 中可组合的稳定职责 |
 | Authored Biz Knowledge | 作者声明的业务契约、场景、关系和说明，通过 Language 绑定到代码身份 |
 | Project Clue | Project 事实面向一个 Unit 的上下文投影，不是独立事实源 |
@@ -36,18 +36,22 @@ FileRole 不是互斥枚举，也不表示证据强度。`main.go` 可以是 `so
 
 ### 2.1 在被评审的 snapshot 中解析 Component
 
-每个 Change 从自身目录向 Repository 根查找最近的项目 manifest。当前内置 profile 为：
+`DiffReport.Inspect(before)` 从已捕获的比较两侧提供 Layout，CCR 按文件路径查询工程 Component。
+查询不重新读取工作区；删除文件使用旧侧归属，其余文件使用新侧归属。文件角色仍由 CCR 投影，
+不再根据 语言角色规则的 manifest 标记自行发现 Component。当前语言角色规则为：
 
-| Component | manifest | source | 补充角色与项目文件 |
+| 语言角色 | manifest | source | 补充角色与项目文件 |
 |---|---|---|---|
 | Python | `pyproject.toml` / `setup.py` | `.py` / `.pyi` | `test_*.py`、`*_test.py`、`conftest.py` 为 test；`__main__.py` 为 entrypoint；`uv.lock` 为 lock |
 | Go | `go.mod` | `.go` | `*_test.go` 为 test；`main.go` 为 entrypoint；`go.sum` 为 lock；Component 根 `VERSION` 为 version |
 | TypeScript | `package.json` | `.ts/.tsx/.js/.jsx/.mjs/.cjs` | `*.test.*` / `*.spec.*` 为 test；`main.*` 为 entrypoint；`tsconfig*.json` 为 manifest；常见包管理器 lockfile 为 lock |
 
-monorepo 中嵌套 manifest 形成更近的 Component。一个目录同时存在多种 manifest 时，优先选择能解释
-当前文件的 profile；若多个 profile 都不能明确归属，保持 unowned / unknown，而不是任意挑选。
+Component 采用 repocli 的工程粒度：根项目下可有多个组件，非根 manifest 组件内的嵌套 manifest
+不自动形成新组件；Makefile-only 边界也由 repocli 提供。同目录多语言 manifest 共享一个工程身份，
+Component 主要语言是元数据，文件角色按文件自身判断。未知文件可有明确归属，同时保留 unknown 角色。
+`CodeGraph.LockfileTag` 提供通用锁文件分类，CCR 不另维护锁文件名称列表。
 
-Repository 的存在性查询必须面向 workspace、range target 或 commit target 对应的同一 snapshot。
+Repository 布局必须面向 workspace、range target 或 commit target 对应的同一 snapshot。
 不能用当前 checkout 的 manifest 判断旧 commit 的 Component，否则 diff、源码和项目知识会来自不同时间点。
 
 ### 2.2 将稳定角色投影为当前 Review 策略
@@ -120,9 +124,9 @@ Unit 负责当前行为范围，prompt 排版仍由各 Review 阶段决定。
 `FileRole` 不能直接等同于 target/context/excluded。角色是可复用事实，admission 是当前 Reviewer 的
 策略；把两者混在一起，会让新增 Review 视角时被迫修改 Project 模型。
 
-### 3.2 最近 Component 优先，Repository 不是传播边界
+### 3.2 工程 Component 是项目上下文边界
 
-Repository 可以包含多个语言和多个 Component。项目上下文按最近 manifest 归属，只在明确 Component
+Repository 可以包含多个语言和多个 Component。项目上下文按 repocli 的工程归属，只在明确 Component
 内传播；Repository 级 README、docs 或规则未来可以作为 Repository Knowledge，但不能借“同仓”默认
 注入所有 Unit。
 
@@ -131,11 +135,10 @@ Repository 可以包含多个语言和多个 Component。项目上下文按最�
 无法识别 manifest、文件角色或语言语义时保持 unknown，交给全局规则降级。Project Knowledge 的价值
 来自减少无意义 loop 和补充可靠先验，不来自用目录名或扩展名制造看似丰富的猜测。
 
-### 3.4 新生态通过 profile 扩展
+### 3.4 工程发现与角色投影分别扩展
 
-新增语言项目时，profile 至少应明确 manifest、source、test、entrypoint、context 文件和 snapshot
-行为，并用 Repository 级测试覆盖 nested component、polyglot、unknown 与 role composition。只有稳定
-项目事实进入 Project；代码语义解析继续留在 Language。
+新语言的工程发现能力进入 repocli；CCR 角色规则只补充所需的 source、test、entrypoint 和 context 投影。
+跨仓测试覆盖 nested component、polyglot、unknown、role composition 及历史快照，代码语义解析继续留在 Language。
 
 ## References
 

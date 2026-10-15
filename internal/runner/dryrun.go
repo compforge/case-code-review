@@ -72,7 +72,9 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 	if err := a.loadChanges(ctx); err != nil {
 		return nil, nil, "", fmt.Errorf("load diffs: %w", err)
 	}
-	a.prepareFileSelections(ctx)
+	if err := a.prepareFileSelections(ctx); err != nil {
+		return nil, nil, "", err
+	}
 	preview := a.buildPreview()
 	formationCtx, finish := session.Begin(ctx, "unit.formation")
 	units, err := a.splitUnits(formationCtx)

@@ -5,32 +5,26 @@ import (
 	"strings"
 )
 
-var pythonProfile = profile{
-	kind:    Python,
-	markers: []string{"pyproject.toml", "setup.py"},
-	classify: func(root, file string) FileRoles {
-		switch strings.ToLower(path.Base(file)) {
-		case "pyproject.toml", "setup.py":
-			return FileRoles{RoleManifest}
-		case "uv.lock":
-			return FileRoles{RoleLock}
+func pythonFileRoles(root, file string) FileRoles {
+	switch strings.ToLower(path.Base(file)) {
+	case "pyproject.toml", "setup.py":
+		return FileRoles{RoleManifest}
+	}
+	extension := strings.ToLower(path.Ext(file))
+	switch extension {
+	case ".py", ".pyi":
+		roles := FileRoles{RoleSource}
+		base := strings.ToLower(path.Base(file))
+		if extension == ".py" && (base == "conftest.py" || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")) {
+			roles = append(roles, RoleTest)
 		}
-		extension := strings.ToLower(path.Ext(file))
-		switch extension {
-		case ".py", ".pyi":
-			roles := FileRoles{RoleSource}
-			base := strings.ToLower(path.Base(file))
-			if extension == ".py" && (base == "conftest.py" || strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")) {
-				roles = append(roles, RoleTest)
-			}
-			if extension == ".py" && base == "__main__.py" {
-				roles = append(roles, RoleEntrypoint)
-			}
-			return roles
-		default:
-			return FileRoles{RoleUnknown}
+		if extension == ".py" && base == "__main__.py" {
+			roles = append(roles, RoleEntrypoint)
 		}
-	},
+		return roles
+	default:
+		return FileRoles{RoleUnknown}
+	}
 }
 
 func enrichPythonRoles(file string, roles FileRoles, decorators, calls []string) FileRoles {

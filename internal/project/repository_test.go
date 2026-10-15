@@ -1,21 +1,42 @@
 package project
 
-import "testing"
+import (
+	"context"
+	"github.com/compforge/repocli/toolkit/go"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
 
-func repositoryWith(files ...string) *Repository {
-	present := make(map[string]bool, len(files))
-	for _, file := range files {
-		present[file] = true
+func repositoryWith(t *testing.T, files ...string) *Repository {
+	t.Helper()
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", root).CombinedOutput(); err != nil {
+		t.Fatalf("init: %s: %v", out, err)
 	}
-	return NewRepository("/repo", func(path string) bool { return present[path] })
+	for _, file := range files {
+		name := filepath.Join(root, file)
+		if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+			t.Fatal(err)
+		}
+		content := ""
+		if filepath.Base(file) == "package.json" {
+			content = `{"devDependencies":{"typescript":"*"}}`
+		}
+		if err := os.WriteFile(name, []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := repocli.Inspect(context.Background(), repocli.InputRequest{Repository: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewRepository(report.Layout)
 }
 
 func TestRepositoryClassifiesNearestComponent(t *testing.T) {
-	r := repositoryWith("backend/pyproject.toml", "go.mod")
-	if r.Root != "/repo" {
-		t.Fatalf("repository root = %q, want /repo", r.Root)
-	}
-
+	r := repositoryWith(t, "backend/pyproject.toml", "go.mod")
 	tests := []struct {
 		path  string
 		root  string
@@ -49,9 +70,7 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 }
 
 func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
-	component := Component{Root: "backend", Kind: Python}
 	roles := EnrichFileRoles(
-		component,
 		"backend/api/v1/endpoints/items.py",
 		FileRoles{RoleSource},
 		[]string{"router.post"},
@@ -62,7 +81,6 @@ func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
 	}
 
 	plain := EnrichFileRoles(
-		component,
 		"backend/api/v1/routes.py",
 		FileRoles{RoleSource},
 		nil,
@@ -73,7 +91,6 @@ func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
 	}
 
 	main := EnrichFileRoles(
-		component,
 		"backend/main.py",
 		FileRoles{RoleSource},
 		[]string{"app.get"},
@@ -84,7 +101,6 @@ func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
 	}
 
 	apiRoute := EnrichFileRoles(
-		component,
 		"backend/api/v1/endpoints/items.py",
 		FileRoles{RoleSource},
 		[]string{"router.api_route"},
@@ -95,19 +111,19 @@ func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
 	}
 }
 
-func TestRepositoryDoesNotGuessBetweenPolyglotComponents(t *testing.T) {
-	r := repositoryWith("go.mod", "pyproject.toml", "package.json")
+func TestRepositoryKeepsOnePolyglotEngineeringComponent(t *testing.T) {
+	r := repositoryWith(t, "go.mod", "pyproject.toml", "package.json")
 
-	if got, roles, ok := r.Resolve("config.yaml"); ok {
-		t.Fatalf("ambiguous config unexpectedly owned by %+v as %q", got, roles)
+	if got, roles, ok := r.Resolve("config.yaml"); !ok || got.Root != "." || roles.Known() {
+		t.Fatalf("polyglot ownership/role = %+v %v %v", got, roles, ok)
 	}
-	if got, roles, ok := r.Resolve("main.go"); !ok || got.Kind != Go || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
+	if got, roles, ok := r.Resolve("main.go"); !ok || got.Kind != Python || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
 		t.Fatalf("Go source = (%+v, %q, %t)", got, roles, ok)
 	}
 	if got, roles, ok := r.Resolve("main.py"); !ok || got.Kind != Python || !roles.Has(RoleSource) {
 		t.Fatalf("Python source = (%+v, %q, %t)", got, roles, ok)
 	}
-	if got, roles, ok := r.Resolve("main.ts"); !ok || got.Kind != TypeScript || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
+	if got, roles, ok := r.Resolve("main.ts"); !ok || got.Kind != Python || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
 		t.Fatalf("TypeScript source = (%+v, %q, %t)", got, roles, ok)
 	}
 }
@@ -115,7 +131,7 @@ func TestRepositoryDoesNotGuessBetweenPolyglotComponents(t *testing.T) {
 func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
 	// Mirrors Doctor (TypeScript CLI + Python server) and Baton's nested
 	// package workspace without teaching Project either repository by name.
-	r := repositoryWith(
+	r := repositoryWith(t,
 		"cli/package.json", "server/pyproject.toml", "server/harness/pyproject.toml",
 		"package.json", "packages/plugin/package.json",
 	)
@@ -133,7 +149,7 @@ func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
 		{"server/app.py", "server", Python, FileRoles{RoleSource}},
 		{"server/tests/test_app.py", "server", Python, FileRoles{RoleSource, RoleTest}},
 		{"server/conftest.py", "server", Python, FileRoles{RoleSource, RoleTest}},
-		{"server/harness/runtime.py", "server/harness", Python, FileRoles{RoleSource}},
+		{"server/harness/runtime.py", "server", Python, FileRoles{RoleSource}},
 		{"src/index.ts", ".", TypeScript, FileRoles{RoleSource}},
 		{"src/cli/launcher.cjs", ".", TypeScript, FileRoles{RoleSource}},
 		{"packages/plugin/src/index.ts", "packages/plugin", TypeScript, FileRoles{RoleSource}},
@@ -152,7 +168,7 @@ func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
 }
 
 func TestRepositoryLeavesRepositoryFileUnowned(t *testing.T) {
-	r := repositoryWith("backend/pyproject.toml")
+	r := repositoryWith(t, "backend/pyproject.toml")
 	if got, roles, ok := r.Resolve("README.md"); ok {
 		t.Fatalf("repository README unexpectedly owned by %+v as %q", got, roles)
 	}

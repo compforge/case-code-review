@@ -68,7 +68,9 @@ Package、Module、Namespace 种类与 Exact 置信度，并保留上游的距�
 
 FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 只消费 Graph 的 Node 与 Relation：
 encloses 提供词法结构，contains 可将 Go 方法归到同文件接收者类型下，节点提供签名和位置。
-JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
+Python 赋值绑定（Field、Variable、Constant）的签名可能包含完整赋值语句；outline 只展示上游提供的
+符号名，省略类型注解和初始值，不自行切割签名。函数和方法仍展示完整声明头；此取舍不改变图节点
+或评审 Definition 的签名。JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
 
 Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败时，保留已有的源码/路径回退；初始 outline
 尝试仍记录成功、失败与预算淘汰原因。展示层的取舍不会反向改变 symbol graph。

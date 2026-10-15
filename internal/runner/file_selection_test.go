@@ -2,6 +2,8 @@ package runner
 
 import (
 	"context"
+	"github.com/compforge/repocli/toolkit/go"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +17,11 @@ import (
 )
 
 func writeSelectionFile(t *testing.T, root, path string) {
-	writeSelectionContent(t, root, path, "test\n")
+	content := "test\n"
+	if filepath.Base(path) == "package.json" {
+		content = `{"devDependencies":{"typescript":"*"}}`
+	}
+	writeSelectionContent(t, root, path, content)
 }
 
 func writeSelectionContent(t *testing.T, root, path, content string) {
@@ -54,7 +60,7 @@ func TestProjectFilesBecomeContextInsteadOfUnits(t *testing.T) {
 			{NewPath: "backend/uv.lock"},
 		},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	if got := a.countReviewable(a.changes); got != 1 {
 		t.Fatalf("reviewable files = %d, want only app.py", got)
@@ -96,7 +102,7 @@ func TestTypeScriptProjectFilesBecomeContextInsteadOfUnits(t *testing.T) {
 			{NewPath: "bun.lock"},
 		},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	if got := a.countReviewable(a.changes); got != 1 {
 		t.Fatalf("reviewable files = %d, want only src/main.ts", got)
@@ -137,7 +143,7 @@ func TestProjectContextDoesNotLeakAcrossComponents(t *testing.T) {
 			{NewPath: "tools/pyproject.toml"},
 		},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
 	backend := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "backend/app.py"}}})
@@ -159,7 +165,7 @@ func TestSourceRolesBecomeReviewClues(t *testing.T) {
 		args:    Args{RepoDir: repo},
 		changes: []change.Change{{NewPath: "cmd/server/main.go"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	selection, ok := a.selectionFor(a.changes[0])
 	if !ok || !selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
@@ -190,7 +196,7 @@ async def create_item():
 		args:    Args{RepoDir: repo},
 		changes: []change.Change{{NewPath: path}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	selection, ok := a.selectionFor(a.changes[0])
 	if !ok || !selection.Roles.Has(project.RoleHandler) {
@@ -210,7 +216,7 @@ func TestOnlyManifestProducesNoUnitTarget(t *testing.T) {
 		args:    Args{RepoDir: repo},
 		changes: []change.Change{{NewPath: "pyproject.toml"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	if got := a.filterDiffs(a.changes); len(got) != 0 {
 		t.Fatalf("manifest unexpectedly became Unit target: %+v", got)
@@ -229,7 +235,7 @@ func TestVersionRoleProducesNoUnitOrContext(t *testing.T) {
 		args:    Args{RepoDir: repo},
 		changes: []change.Change{{NewPath: "VERSION"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	if got := a.filterDiffs(a.changes); len(got) != 0 {
 		t.Fatalf("VERSION unexpectedly became Unit target: %+v", got)
@@ -252,7 +258,7 @@ func TestExplicitIncludeCanForceManifestUnit(t *testing.T) {
 		},
 		changes: []change.Change{{NewPath: "pyproject.toml"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	selection, _ := a.selectionFor(a.changes[0])
 	if !selection.Target || selection.Context {
@@ -267,7 +273,7 @@ func TestUnownedTomlKeepsGlobalAdmissionBehavior(t *testing.T) {
 		args:    Args{RepoDir: repo},
 		changes: []change.Change{{NewPath: "config.toml"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 
 	selection, _ := a.selectionFor(a.changes[0])
 	if !selection.Target || selection.HasComponent {
@@ -296,9 +302,77 @@ func TestComponentDetectionUsesReviewedCommitTree(t *testing.T) {
 		args:    Args{RepoDir: repo, Commit: target},
 		changes: []change.Change{{NewPath: "app.py"}},
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 	selection, _ := a.selectionFor(a.changes[0])
 	if !selection.Target || !selection.HasComponent || selection.Component.Kind != "python" {
 		t.Fatalf("historical selection = %+v", selection)
+	}
+}
+
+func prepareSelectionFixture(t *testing.T, a *Runner) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(a.args.RepoDir, ".git")); os.IsNotExist(err) {
+		runSelectionGit(t, a.args.RepoDir, "init", "-q")
+	}
+	d, err := repocli.Diff(context.Background(), repocli.DiffRequest{Repository: a.args.RepoDir, EmptyBase: true, Head: a.args.Commit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.repositoryDiff = d
+	a.afterSource = sourceview.NewCaptured(d, false)
+	a.beforeSource = sourceview.NewCaptured(d, true)
+	if err := a.prepareFileSelections(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// +case:id=engineering_component_context,desc=`Nested manifests and mixed language files share repocli ownership`,expect=`Review context follows engineering roots while file roles retain their own language semantics`
+func TestProjectContextUsesEngineeringComponent(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"server/pyproject.toml", "server/web/package.json", "server/web/main.ts", "other/go.mod", "other/main.go"} {
+		writeSelectionFile(t, root, path)
+	}
+	a := &Runner{args: Args{RepoDir: root}, changes: []change.Change{{NewPath: "server/pyproject.toml"}, {NewPath: "server/web/main.ts"}, {NewPath: "other/main.go"}}}
+	prepareSelectionFixture(t, a)
+	selection := a.fileSelections["server/web/main.ts"]
+	if selection.Component.Root != "server" || selection.Component.Kind != project.Python || !selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
+		t.Fatalf("selection: %+v", selection)
+	}
+	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
+	clues := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "server/web/main.ts"}}})
+	if len(clues) != 2 {
+		t.Fatalf("missing parent manifest or file role clue: %+v", clues)
+	}
+	other := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "other/main.go"}}})
+	for _, clue := range other {
+		if clue.Ref == "server/pyproject.toml" {
+			t.Fatal("component context leaked", clue)
+		}
+	}
+}
+
+func TestDeletedComponentUsesCapturedBaseLayout(t *testing.T) {
+	root := t.TempDir()
+	runSelectionGit(t, root, "init", "-q")
+	runSelectionGit(t, root, "config", "user.email", "test@example.com")
+	runSelectionGit(t, root, "config", "user.name", "Test")
+	writeSelectionFile(t, root, "old/go.mod")
+	writeSelectionFile(t, root, "old/main.go")
+	runSelectionGit(t, root, "add", ".")
+	runSelectionGit(t, root, "commit", "-qm", "base")
+	if err := os.RemoveAll(filepath.Join(root, "old")); err != nil {
+		t.Fatal(err)
+	}
+	d, err := repocli.Diff(context.Background(), repocli.DiffRequest{Repository: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Runner{args: Args{RepoDir: root}, changes: d.Changes, repositoryDiff: d, afterSource: sourceview.NewCaptured(d, false)}
+	if err := a.prepareFileSelections(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	selection := a.fileSelections["old/main.go"]
+	if !selection.HasComponent || selection.Component.Root != "old" || selection.Component.Kind != project.Go {
+		t.Fatalf("deleted ownership: %+v", selection)
 	}
 }

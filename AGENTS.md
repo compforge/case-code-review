@@ -34,7 +34,7 @@ case-code-review/
 ├── eval/           benchmark 效果分析 → 原 Session 的 trajectory 分析；共享环境和事实读取，入口见 `eval/README.md`
 └── internal/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
-    ├── project/    Repository、manifest 定义的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
+    ├── project/    Repository、repocli 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
     ├── language/   ★ CodeGraph 接入边界：选择 review snapshot 的 Document，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
     ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool`/`session` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力，`llmloop` 作为旧实现隔离保留。详见 `docs/harness.md`
@@ -59,7 +59,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 
 ## 关键约定
 
-1. **Knowledge owner 唯一**：Project Knowledge 包含 Repository / Component / FileRole 等结构事实和
+1. **Knowledge owner 唯一**：Project Knowledge 消费 repocli 的 Repository / Component，提供 FileRole 等评审投影和
    `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有代码图与关系绑定，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。

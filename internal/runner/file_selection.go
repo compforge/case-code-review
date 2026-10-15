@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/compforge/repocli/toolkit/go"
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
+	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/project"
@@ -25,7 +27,7 @@ type fileSelection struct {
 	Reason       ExcludeReason
 }
 
-func (a *Runner) prepareFileSelections(ctx context.Context) {
+func (a *Runner) prepareFileSelections(ctx context.Context) error {
 	a.fileSelections = make(map[string]fileSelection, len(a.changes))
 	a.componentClues = make(map[string][]unit.Clue)
 	a.contextFileCount = 0
@@ -37,15 +39,33 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 		Runner:   a.args.GitRunner,
 	}
 	reader.Ref, _ = reader.Mode.RefValue(a.args.To, a.args.Commit)
-	repository := project.NewRepository(a.args.RepoDir, func(path string) bool {
-		_, err := reader.Read(ctx, path)
-		return err == nil
-	})
+	after, err := a.repositoryDiff.Inspect(false)
+	if err != nil {
+		return fmt.Errorf("inspect captured target layout: %w", err)
+	}
+	before, err := a.repositoryDiff.Inspect(true)
+	if err != nil {
+		return fmt.Errorf("inspect captured base layout: %w", err)
+	}
+	for _, side := range []struct {
+		name   string
+		report repocli.InspectReport
+	}{{"before", before}, {"after", after}} {
+		for _, diagnostic := range side.report.Diagnostics {
+			fmt.Fprintf(console.Err(), "[ccr] project layout %s snapshot %s: %s path=%q: %s\n", side.name, side.report.Snapshot, diagnostic.Code, diagnostic.Path, diagnostic.Message)
+		}
+	}
+
+	repository, oldRepository := project.NewRepository(after.Layout), project.NewRepository(before.Layout)
 
 	for i := range a.changes {
 		d := &a.changes[i]
 		path := effectivePath(*d)
-		selection := a.selectFile(*d, repository)
+		owner := repository
+		if d.IsDeleted {
+			owner = oldRepository
+		}
+		selection := a.selectFile(*d, owner)
 		selection = a.enrichFileSelection(ctx, path, selection, reader)
 		a.fileSelections[path] = selection
 		if !selection.Context {
@@ -63,6 +83,7 @@ func (a *Runner) prepareFileSelections(ctx context.Context) {
 			),
 		})
 	}
+	return nil
 }
 
 func (a *Runner) enrichFileSelection(
@@ -88,7 +109,7 @@ func (a *Runner) enrichFileSelection(
 		calls = append(calls, call.Name)
 	}
 	selection.Roles = project.EnrichFileRoles(
-		selection.Component, path, selection.Roles, analysis.Decorators, calls,
+		path, selection.Roles, analysis.Decorators, calls,
 	)
 	return selection
 }
@@ -143,7 +164,7 @@ func (a *Runner) selectionFor(d change.Change) (fileSelection, bool) {
 }
 
 func componentKey(c project.Component) string {
-	return string(c.Kind) + "\x00" + c.Root
+	return c.Root
 }
 
 // componentFinder projects changed manifest/lock files onto Units after Unit
