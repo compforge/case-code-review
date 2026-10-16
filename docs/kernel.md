@@ -93,7 +93,7 @@ Hypothesis 可以按真实完成顺序交错出现，最终输出顺序不等于
 
 ### 3.1 事实、作用域、执行和结论各有唯一 owner
 
-- repocli 拥有快照内的 Repository / Component 工程事实，Project 消费它们并提供 FileRole 与评审上下文投影；
+- repocli 拥有快照内的 Repository / Component 工程事实，Project 消费其文件角色和 CodeGraph 语义事实，提供评审上下文投影；
 - CodeGraph 拥有源码事实与置信度，Language 负责快照输入和 CCR 适配；
 - Unit 拥有一次 run 的行为作用域、不可变文件/diff/搜索快照和已接受的阶段结果；
 - Harness 拥有 execution 生命周期、工具机制、预算和观测事件；

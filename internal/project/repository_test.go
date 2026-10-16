@@ -49,7 +49,7 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 		{"backend/app/__main__.py", "backend", Python, FileRoles{RoleSource, RoleEntrypoint}, true},
 		{"backend/pyproject.toml", "backend", Python, FileRoles{RoleManifest}, true},
 		{"backend/uv.lock", "backend", Python, FileRoles{RoleLock}, true},
-		{"cmd/ccr/main.go", ".", Go, FileRoles{RoleSource, RoleEntrypoint}, true},
+		{"cmd/ccr/main.go", ".", Go, FileRoles{RoleSource}, true},
 		{"internal/project/repository_test.go", ".", Go, FileRoles{RoleSource, RoleTest}, true},
 		{"go.mod", ".", Go, FileRoles{RoleManifest}, true},
 		{"go.sum", ".", Go, FileRoles{RoleLock}, true},
@@ -69,55 +69,13 @@ func TestRepositoryClassifiesNearestComponent(t *testing.T) {
 	}
 }
 
-func TestPythonSemanticRolesRequireSourceFacts(t *testing.T) {
-	roles := EnrichFileRoles(
-		"backend/api/v1/endpoints/items.py",
-		FileRoles{RoleSource},
-		[]string{"router.post"},
-		nil,
-	)
-	if !roles.Has(RoleHandler) {
-		t.Fatalf("decorated endpoint roles = %v, want handler", roles)
-	}
-
-	plain := EnrichFileRoles(
-		"backend/api/v1/routes.py",
-		FileRoles{RoleSource},
-		nil,
-		[]string{"APIRouter", "include_router"},
-	)
-	if plain.Has(RoleHandler) {
-		t.Fatalf("router aggregator roles = %v, must not be handler", plain)
-	}
-
-	main := EnrichFileRoles(
-		"backend/main.py",
-		FileRoles{RoleSource},
-		[]string{"app.get"},
-		[]string{"FastAPI"},
-	)
-	if !main.Has(RoleEntrypoint) || !main.Has(RoleHandler) {
-		t.Fatalf("FastAPI main roles = %v, want entrypoint + handler", main)
-	}
-
-	apiRoute := EnrichFileRoles(
-		"backend/api/v1/endpoints/items.py",
-		FileRoles{RoleSource},
-		[]string{"router.api_route"},
-		nil,
-	)
-	if !apiRoute.Has(RoleHandler) {
-		t.Fatalf("api_route endpoint roles = %v, want handler", apiRoute)
-	}
-}
-
 func TestRepositoryKeepsOnePolyglotEngineeringComponent(t *testing.T) {
 	r := repositoryWith(t, "go.mod", "pyproject.toml", "package.json")
 
 	if got, roles, ok := r.Resolve("config.yaml"); !ok || got.Root != "." || roles.Known() {
 		t.Fatalf("polyglot ownership/role = %+v %v %v", got, roles, ok)
 	}
-	if got, roles, ok := r.Resolve("main.go"); !ok || got.Kind != Python || !roles.Has(RoleSource) || !roles.Has(RoleEntrypoint) {
+	if got, roles, ok := r.Resolve("main.go"); !ok || got.Kind != Python || !roles.Has(RoleSource) {
 		t.Fatalf("Go source = (%+v, %q, %t)", got, roles, ok)
 	}
 	if got, roles, ok := r.Resolve("main.py"); !ok || got.Kind != Python || !roles.Has(RoleSource) {

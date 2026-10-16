@@ -168,3 +168,21 @@ func (s *Snapshot) Entries(ctx context.Context) ([]Entry, error) {
 	})
 	return s.entries, s.entriesErr
 }
+
+// SnapshotID, SourceFiles and ReadSource expose the existing view to repocli's
+// material loader. Graph construction shares this view with review tools.
+func (s *Snapshot) SnapshotID() string { return s.ID }
+func (s *Snapshot) SourceFiles(ctx context.Context) ([]repocli.SourceFile, error) {
+	entries, err := s.Entries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]repocli.SourceFile, 0, len(entries))
+	for _, entry := range entries {
+		out = append(out, repocli.SourceFile{Path: entry.Path, Size: entry.Size})
+	}
+	return out, nil
+}
+func (s *Snapshot) ReadSource(ctx context.Context, name string) (string, error) {
+	return s.Read(ctx, name)
+}

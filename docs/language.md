@@ -30,8 +30,9 @@ Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后
 构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
 ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
-RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的源码集合，提供 Go module 根，
-将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
+RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 repocli 的
+`GraphFromSource`，由它枚举和选择材料、应用该快照的 ignore 规则并构图。`go.mod` 作为 Document
+交给 CodeGraph 提取模块身份，CCR 不再单独解析 module path 或扫描文件系统。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
 
 Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区以固定基线叠加捕获的改动内容，
@@ -44,7 +45,7 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
 另记录输入加载缺口。Session 的 `codegraph` / `codegraph_before` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
 不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。源码量相同也可能产生不同的图密度；
-构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。
+CCR 显式开启 repocli 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
 
 ### 评审身份与源码范围
 

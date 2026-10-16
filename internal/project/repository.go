@@ -3,9 +3,7 @@ package project
 
 import (
 	"path"
-	"slices"
 
-	cg "github.com/compforge/codegraph"
 	"github.com/compforge/repocli/toolkit/go"
 )
 
@@ -14,8 +12,6 @@ import (
 type Repository struct{ layout repocli.Layout }
 
 func NewRepository(layout repocli.Layout) *Repository { return &Repository{layout: layout} }
-
-var materialTags, _ = cg.NewTagMatcher(nil)
 
 // Resolve keeps engineering ownership independent of each file's language.
 // +spec=`Component roots come only from the captured repocli layout; nested manifests and mixed languages do not create CCR-only boundaries`
@@ -28,13 +24,15 @@ func (r *Repository) Resolve(file string) (Component, FileRoles, bool) {
 	}
 	kind := Kind(owner.Language)
 	component := Component{Root: owner.Root, Kind: kind}
-	if slices.Contains(materialTags.Match(file), cg.LockfileTag) {
-		return component, FileRoles{RoleLock}, true
+	if path.Dir(file) == owner.Root && path.Base(file) == "VERSION" && (kind == Go || kind == TypeScript || kind == JavaScript) {
+		return component, FileRoles{RoleVersion}, true
 	}
-	for _, classify := range roleClassifiers {
-		if roles := classify(owner.Root, file); roles.Known() {
-			return component, roles, true
-		}
+	var roles FileRoles
+	for _, role := range repocli.SourceRoles(file, nil) {
+		roles = roles.With(FileRole(role))
 	}
-	return component, FileRoles{RoleUnknown}, true
+	if len(roles) == 0 {
+		roles = FileRoles{RoleUnknown}
+	}
+	return component, roles, true
 }

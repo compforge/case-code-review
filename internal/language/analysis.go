@@ -167,6 +167,7 @@ type Analysis struct {
 	SupertypeReferences []SupertypeReference
 	Imports             []Import
 	Decorators          []string
+	FileRoles           []string
 	outlineEntries      []outlineEntry
 }
 

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	cg "github.com/compforge/codegraph"
+	"github.com/compforge/repocli/toolkit/go"
 )
 
 // projectAnalysis preserves CCR's symbol join keys and review presentation;
@@ -11,7 +12,7 @@ import (
 func projectAnalysis(source Source, graph *cg.Graph) Analysis {
 	path := documentPath(source.Path)
 	doc, _ := graph.Node(cg.DocumentID(path))
-	a := Analysis{Language: Language(doc.Language), Quality: QualitySyntax}
+	a := Analysis{Language: Language(doc.Language), Quality: QualitySyntax, FileRoles: repocli.SourceRoles(path, graph)}
 	if len(graph.Report().Diagnostics) > 0 {
 		a.Quality = QualityPartial
 	}

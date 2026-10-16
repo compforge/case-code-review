@@ -26,6 +26,7 @@ type Analyzer struct {
 	git                    *gitcmd.Runner
 	repoDir                string
 	extractor              *cg.Extractor
+	extractionCache        *cg.ExtractionCache
 	repositoryOnce         sync.Once
 	repository             *RepositoryIndex
 	documents              map[string]string // captured changed documents, configured before publication
@@ -34,7 +35,7 @@ type Analyzer struct {
 func NewAnalyzer(repoDir string) *Analyzer {
 	cache, _ := cg.NewExtractionCache(2000, 32<<20)
 	extractor, _ := cg.NewExtractor(cg.ExtractionOptions{Cache: cache})
-	return &Analyzer{repoDir: repoDir, extractor: extractor}
+	return &Analyzer{repoDir: repoDir, extractor: extractor, extractionCache: cache}
 }
 
 // NewSnapshotAnalyzer reads graph inputs from the reviewed Git ref. An empty

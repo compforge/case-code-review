@@ -18,6 +18,9 @@ import (
 
 func writeSelectionFile(t *testing.T, root, path string) {
 	content := "test\n"
+	if filepath.Base(path) == "main.go" {
+		content = "package main\nfunc main() {}\n"
+	}
 	if filepath.Base(path) == "package.json" {
 		content = `{"devDependencies":{"typescript":"*"}}`
 	}
@@ -374,5 +377,28 @@ func TestDeletedComponentUsesCapturedBaseLayout(t *testing.T) {
 	selection := a.fileSelections["old/main.go"]
 	if !selection.HasComponent || selection.Component.Root != "old" || selection.Component.Kind != project.Go {
 		t.Fatalf("deleted ownership: %+v", selection)
+	}
+}
+
+// +case:id=semantic_entrypoint_clues,desc=`Go entrypoint declarations need not live in main.go`,expect=`Review entrypoint clues follow graph facts rather than filenames`
+func TestGoEntrypointCluesFollowDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeSelectionContent(t, root, "go.mod", "module example.org/app\n")
+	writeSelectionContent(t, root, "cmd/start.go", "package main\nfunc main(){}\n")
+	writeSelectionContent(t, root, "lib/main.go", "package lib\nfunc Helper(){}\n")
+	a := &Runner{args: Args{RepoDir: root}, changes: []change.Change{{NewPath: "cmd/start.go"}, {NewPath: "lib/main.go"}}}
+	prepareSelectionFixture(t, a)
+	for _, tc := range []struct {
+		path  string
+		entry bool
+	}{{"cmd/start.go", true}, {"lib/main.go", false}} {
+		selection := a.fileSelections[tc.path]
+		if !selection.Target || selection.Roles.Has(project.RoleEntrypoint) != tc.entry {
+			t.Errorf("%s: %+v", tc.path, selection)
+		}
+		clues := sourceRoleClues(tc.path, selection.Roles)
+		if (len(clues) > 0) != tc.entry {
+			t.Errorf("%s: %+v", tc.path, clues)
+		}
 	}
 }

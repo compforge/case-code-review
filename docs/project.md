@@ -43,7 +43,7 @@ FileRole 不是互斥枚举，也不表示证据强度。`main.go` 可以是 `so
 | 语言角色 | manifest | source | 补充角色与项目文件 |
 |---|---|---|---|
 | Python | `pyproject.toml` / `setup.py` | `.py` / `.pyi` | `test_*.py`、`*_test.py`、`conftest.py` 为 test；`__main__.py` 为 entrypoint；`uv.lock` 为 lock |
-| Go | `go.mod` | `.go` | `*_test.go` 为 test；`main.go` 为 entrypoint；`go.sum` 为 lock；Component 根 `VERSION` 为 version |
+| Go | `go.mod` | `.go` | `*_test.go` 为 test；CodeGraph 标记的 Go `main` / `init` 声明所在文件为 entrypoint；`go.sum` 为 lock；Component 根 `VERSION` 为 version |
 | TypeScript | `package.json` | `.ts/.tsx/.js/.jsx/.mjs/.cjs` | `*.test.*` / `*.spec.*` 为 test；`main.*` 为 entrypoint；`tsconfig*.json` 为 manifest；常见包管理器 lockfile 为 lock |
 
 Component 采用 repocli 的工程粒度：根项目下可有多个组件，非根 manifest 组件内的嵌套 manifest
@@ -103,10 +103,10 @@ DiffMap。用户显式 include/exclude 保留
 
 ### 2.3 用 Language 事实绑定和丰富项目语义
 
-Project 与 Language 各自拥有不同事实：Language 提取 decorator、call、symbol 和 span，Project
-解释这些事实在特定生态里的含义。例如 Python 文件只有出现 FastAPI route decorator 才增加
-`handler` 角色；`routers/`、`routes.py`、`handlers/` 等路径名本身不是充分证据。`main.py` 只有实际
-创建 `FastAPI` 时才增加 entrypoint 角色。
+源码事实、仓库角色和评审策略分别归属不同组件：CodeGraph 提供 decorator、call、symbol、span 和语言入口，repocli
+据此提供仓库角色，CCR 解释角色对 Review 的意义。例如 Python 中已关联声明的 `app.get` 等 route
+decorator 可提供 `handler` 提示，`main.py` 中名为 `FastAPI` 的调用可提供 entrypoint 提示。
+这些是名称与结构约定，不证明实际绑定到某个框架；`routers/`、`routes.py`、`handlers/` 等路径名本身不提供 handler 提示。
 
 同样，Language 识别注释、装饰器、symbol-id / fqn 和 relation，负责把 `spec / case / link / rule / doc`
 绑定到具体代码；Project Knowledge 负责这些声明表达的契约和业务场景。知识分类不要求把现有实现
@@ -137,8 +137,8 @@ Repository 可以包含多个语言和多个 Component。项目上下文按 repo
 
 ### 3.4 工程发现与角色投影分别扩展
 
-新语言的工程发现能力进入 repocli；CCR 角色规则只补充所需的 source、test、entrypoint 和 context 投影。
-跨仓测试覆盖 nested component、polyglot、unknown、role composition 及历史快照，代码语义解析继续留在 Language。
+新语言的工程发现与通用角色进入 repocli；语言声明和入口语义进入 CodeGraph；CCR 只补充角色到 Review 的投影。
+跨仓测试覆盖 nested component、polyglot、unknown、role composition 及历史快照，Language 继续消费 CodeGraph 的解析结果。
 
 ## References
 

@@ -104,13 +104,9 @@ func (a *Runner) enrichFileSelection(
 	if err != nil {
 		return selection
 	}
-	calls := make([]string, 0, len(analysis.Calls))
-	for _, call := range analysis.Calls {
-		calls = append(calls, call.Name)
+	for _, role := range analysis.FileRoles {
+		selection.Roles = selection.Roles.With(project.FileRole(role))
 	}
-	selection.Roles = project.EnrichFileRoles(
-		path, selection.Roles, analysis.Decorators, calls,
-	)
 	return selection
 }
 

@@ -16,11 +16,3 @@ type Component struct {
 	Root string
 	Kind Kind
 }
-
-var roleClassifiers = []func(root, file string) FileRoles{pythonFileRoles, goFileRoles, typeScriptFileRoles}
-
-// EnrichFileRoles projects source-language facts into Component semantics.
-// Language owns extraction; Project owns what those facts mean to review.
-func EnrichFileRoles(file string, roles FileRoles, decorators, calls []string) FileRoles {
-	return enrichPythonRoles(file, roles, decorators, calls)
-}
