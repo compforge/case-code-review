@@ -26,6 +26,7 @@ type Transcript struct {
 // export use this contract so an interrupted run has the same evidence in each.
 func ReadTranscript(r io.Reader) (*Transcript, error) {
 	t := &Transcript{}
+	var recording timelineRecording
 	reader := bufio.NewReader(r)
 	for lineNo := 1; ; lineNo++ {
 		line, err := reader.ReadBytes('\n')
@@ -45,20 +46,20 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 				}
 				return nil, fmt.Errorf("session line %d: %w", lineNo, decodeErr)
 			}
-			if record["type"] == "session_start" && record["schema_version"] != float64(SchemaVersion) {
-				return nil, fmt.Errorf("unsupported session schema %v; requires %d", record["schema_version"], SchemaVersion)
+			if record["type"] == "session_start" {
+				version, _ := record["schema_version"].(float64)
+				if version != float64(int(version)) || !SupportedSchemaVersion(int(version)) {
+					return nil, fmt.Errorf("unsupported session schema %v; supports 12 and %d", record["schema_version"], SchemaVersion)
+				}
 			}
-			if record["type"] == "timeline_snapshot" {
-				raw, _ := json.Marshal(record["snapshot"])
-				var snapshot timeline.Snapshot
-				if e := json.Unmarshal(raw, &snapshot); e != nil {
+			if record["type"] == "timeline_snapshot" || record["type"] == "timeline_delta" {
+				var entry timelineRecord
+				if e := json.Unmarshal(line, &entry); e != nil {
 					return nil, fmt.Errorf("session line %d: %w", lineNo, e)
 				}
-				id, _ := record["timeline_id"].(string)
-				if id == "" || snapshot.ID != id || (t.Timeline.ID != "" && t.Timeline.ID != id) {
-					return nil, fmt.Errorf("session line %d: inconsistent timeline ID", lineNo)
+				if e := recording.apply(entry); e != nil {
+					return nil, fmt.Errorf("session line %d: %w", lineNo, e)
 				}
-				t.Timeline = snapshot
 			} else {
 				t.Records = append(t.Records, record)
 			}
@@ -67,6 +68,7 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 			break
 		}
 	}
+	t.Timeline = recording.snapshot()
 	return t, nil
 }
 

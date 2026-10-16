@@ -23,9 +23,13 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v12 uses complete native
-// timeline snapshots and Stage identities for associated content.
-const SchemaVersion = 12
+// protocol instead of guessing old record semantics. v13 adds timeline deltas
+// linked to checkpoints; v12 complete snapshots remain readable.
+const SchemaVersion = 13
+
+func SupportedSchemaVersion(version int) bool {
+	return version == 12 || version == SchemaVersion
+}
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -36,23 +40,25 @@ const evalTagEnv = "CCR_EVAL_TAG"
 // $HOME/.casecodereview/sessions/<encoded-repo-path>/<session-id>.jsonl.
 // It is safe for concurrent use by multiple goroutines.
 type jsonlWriter struct {
-	mu         sync.Mutex
-	sessionID  string
-	repoDir    string
-	gitBranch  string
-	model      string
-	reviewMode string
-	diffFrom   string
-	diffTo     string
-	diffCommit string
-	opts       SessionOptions // manifest fields (features/version/params)
-	lease      *flock.Flock
-	file       *os.File
-	writer     *bufio.Writer
-	sequence   uint64
-	writeErr   error
-	closed     bool
-	startTime  time.Time
+	mu                 sync.Mutex
+	sessionID          string
+	repoDir            string
+	gitBranch          string
+	model              string
+	reviewMode         string
+	diffFrom           string
+	diffTo             string
+	diffCommit         string
+	opts               SessionOptions // manifest fields (features/version/params)
+	lease              *flock.Flock
+	file               *os.File
+	writer             *bufio.Writer
+	sequence           uint64
+	writeErr           error
+	closed             bool
+	startTime          time.Time
+	timelineState      timelineRecording
+	timelineCheckpoint time.Time
 }
 
 // newJSONLWriter creates and opens a new JSONL writer for the given session.
