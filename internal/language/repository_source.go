@@ -2,108 +2,77 @@ package language
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io/fs"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"sort"
+
+	"github.com/compforge/repocli/toolkit/go"
 )
 
-type repositoryEntry struct {
-	path string
-	size int64
+// reviewGraphSource overlays captured diff bytes when no shared Snapshot was
+// supplied. Material enumeration and reading remain repocli capabilities.
+type reviewGraphSource struct {
+	repocli.GraphSource
+	documents map[string]string
+	id        string
+	overlay   *repocli.SourceTree
 }
 
-func (a *Analyzer) repositoryEntries(ctx context.Context) ([]repositoryEntry, string, error) {
-	var entries []repositoryEntry
-	if a.snapshot != nil {
-		files, err := a.snapshot.Entries(ctx)
-		for _, f := range files {
-			if !skipRepositoryPath(f.Path) {
-				entries = append(entries, repositoryEntry{path: f.Path, size: f.Size})
-			}
-		}
-		return entries, a.snapshot.ID, err
+func (s reviewGraphSource) SnapshotID() string {
+	if s.id != "" {
+		return s.id
 	}
-	if a.ref != "" {
-		resolved, err := a.git.Output(ctx, a.repoDir, "rev-parse", "--verify", "--end-of-options", a.ref+"^{commit}")
-		if err != nil {
-			return nil, "", fmt.Errorf("resolve graph snapshot: %w", err)
-		}
-		snapshot := strings.TrimSpace(string(resolved))
-		tree, err := a.git.Output(ctx, a.repoDir, "ls-tree", "-rlz", "--full-tree", snapshot)
-		if err != nil {
-			return nil, snapshot, fmt.Errorf("list graph snapshot: %w", err)
-		}
-		for _, record := range strings.Split(string(tree), "\x00") {
-			metadata, path, ok := strings.Cut(record, "\t")
-			if !ok {
-				continue
-			}
-			fields := strings.Fields(metadata)
-			if len(fields) != 4 || (fields[0] != "100644" && fields[0] != "100755") || skipRepositoryPath(path) {
-				continue
-			}
-			size, err := strconv.ParseInt(fields[3], 10, 64)
-			if err != nil {
-				return nil, snapshot, fmt.Errorf("source size for %s: %w", path, err)
-			}
-			entries = append(entries, repositoryEntry{path: path, size: size})
-		}
-		return entries, snapshot, nil
-	}
-	err := filepath.WalkDir(a.repoDir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(a.repoDir, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if entry.IsDir() {
-			if rel != "." && skipRepositoryPath(rel+"/") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		entries = append(entries, repositoryEntry{path: rel, size: info.Size()})
-		return nil
-	})
-	return entries, "review-worktree", err
+	return s.GraphSource.SnapshotID()
 }
 
-func skipRepositoryPath(path string) bool {
-	parts := strings.Split(path, "/")
-	for _, dir := range parts[:len(parts)-1] {
-		if strings.HasPrefix(dir, ".") || repositorySkipDirs[dir] {
-			return true
-		}
+func newReviewGraphSource(source repocli.GraphSource, documents map[string]string) (reviewGraphSource, error) {
+	files := make([]repocli.SourceFile, 0, len(documents))
+	for name, data := range documents {
+		files = append(files, repocli.SourceFile{Path: name, Size: int64(len(data))})
 	}
-	return false
+	tree, err := repocli.NewSourceTree(files)
+	return reviewGraphSource{GraphSource: source, documents: documents, overlay: tree}, err
 }
 
-func (a *Analyzer) readRepositoryFile(ctx context.Context, snapshot, path string) ([]byte, error) {
-	if a.snapshot != nil {
-		content, err := a.snapshot.Read(ctx, path)
-		return []byte(content), err
+func (s reviewGraphSource) ReadDirectory(ctx context.Context, name string) (repocli.SourceDirectory, error) {
+	base, err := s.GraphSource.ReadDirectory(ctx, name)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return repocli.SourceDirectory{}, err
 	}
-	if content, ok := a.documents[path]; ok {
-		return []byte(content), nil
+	overlay, overlayErr := s.overlay.ReadDirectory(ctx, name)
+	if overlayErr != nil && !errors.Is(overlayErr, fs.ErrNotExist) {
+		return repocli.SourceDirectory{}, overlayErr
 	}
-	if a.ref != "" {
-		return a.git.Output(ctx, a.repoDir, "show", snapshot+":"+path)
+	if err != nil && overlayErr != nil {
+		return repocli.SourceDirectory{}, err
 	}
-	return os.ReadFile(filepath.Join(a.repoDir, filepath.FromSlash(path)))
+	dirs := map[string]bool{}
+	files := map[string]repocli.SourceFile{}
+	for _, d := range []repocli.SourceDirectory{base, overlay} {
+		for _, child := range d.Directories {
+			dirs[child] = true
+		}
+		for _, file := range d.Documents {
+			files[file.Path] = file
+		}
+	}
+	var out repocli.SourceDirectory
+	for child := range dirs {
+		out.Directories = append(out.Directories, child)
+	}
+	for _, file := range files {
+		out.Documents = append(out.Documents, file)
+	}
+	sort.Strings(out.Directories)
+	sort.Slice(out.Documents, func(i, j int) bool { return out.Documents[i].Path < out.Documents[j].Path })
+	return out, nil
+}
+func (s reviewGraphSource) ReadSource(ctx context.Context, name string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if data, ok := s.documents[name]; ok {
+		return data, nil
+	}
+	return s.GraphSource.ReadSource(ctx, name)
 }

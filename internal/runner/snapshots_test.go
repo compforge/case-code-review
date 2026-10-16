@@ -169,7 +169,9 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			write("deleted.go", "package p\nfunc SurpriseDeleted() {}\n")
 			write(".casecodereview/spec.json", `{"a.go::A":{"spec":"later contract"}}`)
 			commit()
-			a.prepareFileSelections(context.Background())
+			if err := a.prepareFileSelections(context.Background()); err != nil {
+				t.Fatal(err)
+			}
 			if !a.fileSelections["a.go"].HasComponent {
 				t.Fatal("component drifted away from captured manifest")
 			}

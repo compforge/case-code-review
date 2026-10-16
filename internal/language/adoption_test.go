@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	cg "github.com/compforge/codegraph"
 )
 
 func TestAnalyzerKeepsDocumentVersionsAndDetachedViews(t *testing.T) {
@@ -148,5 +150,29 @@ func TestRepositorySeparatesReceiversAndRejectsAmbiguousJoinKeys(t *testing.T) {
 	}
 	if got := index.CallNeighbors("duplicate.py::entry", false); len(got) != 0 {
 		t.Fatalf("ambiguous CCR identity admitted = %v", got)
+	}
+}
+
+func TestRepositoryGraphIncludesModuleDeclarations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.org/service\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "service.go"), []byte("package service\nfunc Serve(){}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	index := NewAnalyzer(root).Repository()
+	if index.Graph == nil {
+		t.Fatal(index.Gaps)
+	}
+	if index.Graph.Snapshot() != "review-worktree" {
+		t.Fatalf("review identity changed: %s", index.Graph.Snapshot())
+	}
+	document, ok := index.Graph.Node(cg.DocumentID("go.mod"))
+	if !ok || document.Manifest == nil || document.Manifest.Name != "example.org/service" {
+		t.Fatalf("module document: %+v", document)
+	}
+	if len(index.Definitions["service.go"]) != 1 {
+		t.Fatalf("definitions: %+v", index.Definitions)
 	}
 }

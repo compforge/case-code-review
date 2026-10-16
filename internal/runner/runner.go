@@ -346,8 +346,12 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	}
 	finishDiff(nil)
 	selectionCtx, finishSelection := session.Begin(ctx, "project.select")
-	a.prepareFileSelections(selectionCtx)
-	finishSelection(nil)
+	selectionErr := a.prepareFileSelections(selectionCtx)
+	finishSelection(selectionErr)
+	if selectionErr != nil {
+		diffSpan.End()
+		return nil, selectionErr
+	}
 	telemetry.SetAttr(diffSpan, "files.changed", len(a.changes))
 	telemetry.SetAttr(diffSpan, "lines.inserted", int64(a.totalInsertions))
 	telemetry.SetAttr(diffSpan, "lines.deleted", int64(a.totalDeletions))

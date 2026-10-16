@@ -8,12 +8,12 @@ require (
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/anthropics/anthropic-sdk-go v1.47.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/compforge/agentgo v0.0.2-0.20261009014237-f883a8196dd1
-	github.com/compforge/codegraph v0.10.6-0.20261010020504-8bc19a1b244d
+	github.com/compforge/agentgo v0.0.2-0.20261015115023-84ca5c9d1150
+	github.com/compforge/codegraph v0.15.4-0.20261016022818-36dfad9f3724
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
-	github.com/compforge/repocli/toolkit/go v0.0.0-20261010101146-aec47bdcf34e
+	github.com/compforge/repocli/toolkit/go v0.0.0-20261016031051-6d6a8b2724f1
 	github.com/gofrs/flock v0.13.0
-	github.com/odvcencio/gotreesitter v0.55.1
+	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/openai/openai-go/v3 v3.39.0
 	github.com/pkoukk/tiktoken-go v0.1.8
 	go.opentelemetry.io/otel v1.43.0

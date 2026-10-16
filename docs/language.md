@@ -30,9 +30,15 @@ Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后
 构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
 ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
-RepositoryIndex 在一次 review 中延迟构建并共享。CCR 选择有界的源码集合，提供 Go module 根，
-将提取结果交给 Builder 一次构造关系图。测试源码可以提供 caller/usage 证据，但不进入 repo map
-的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
+RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 repocli 的
+`GraphFromSource`，由它枚举和选择材料、应用该快照的 ignore 规则并构图。`go.mod` 作为 Document
+交给 CodeGraph 提取模块身份，CCR 不再单独解析 module path 或扫描文件系统。测试源码可以提供 caller/usage 证据，但不进入 repo map
+的定义候选集；过大的文件不参与分析。
+
+仓库构图通过 repocli 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
+工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repocli 执行。
+CCR 显式排除 dependency、test_fixture、generated、tooling、cache 和 build_output 标签，
+并用 review 支持的格式选择 Document；`IsSourceMaterial` 只作为格式识别，不承担排除策略。
 
 Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区以固定基线叠加捕获的改动内容，
 未改文件按需从基线读取；commit/range 模式从固定的目标 commit 读取。graph、源码预加载、读取与搜索工具、
@@ -44,7 +50,7 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
 另记录输入加载缺口。Session 的 `codegraph` / `codegraph_before` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
 不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。源码量相同也可能产生不同的图密度；
-构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。
+CCR 显式开启 repocli 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
 
 ### 评审身份与源码范围
 
@@ -68,7 +74,9 @@ Package、Module、Namespace 种类与 Exact 置信度，并保留上游的距�
 
 FileOutline 负责源码消息的结构摘要和范围裁剪。代码 outline 只消费 Graph 的 Node 与 Relation：
 encloses 提供词法结构，contains 可将 Go 方法归到同文件接收者类型下，节点提供签名和位置。
-JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
+Python 赋值绑定（Field、Variable、Constant）的签名可能包含完整赋值语句；outline 只展示上游提供的
+符号名，省略类型注解和初始值，不自行切割签名。函数和方法仍展示完整声明头；此取舍不改变图节点
+或评审 Definition 的签名。JSON key 和 Markdown 标题由 CCR 的文档展示逻辑处理。
 
 Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败时，保留已有的源码/路径回退；初始 outline
 尝试仍记录成功、失败与预算淘汰原因。展示层的取舍不会反向改变 symbol graph。

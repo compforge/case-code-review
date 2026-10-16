@@ -8,6 +8,8 @@ import (
 
 // CCR presents lexical structure from encloses. A Go receiver method may also
 // be grouped under a same-file type using the independently proven contains edge.
+// +spec=`Python assignment bindings appear by name in outlines, without initializers; graph signatures remain unchanged`
+// +link=component://docs/language.md
 func graphOutlineEntries(graph *cg.Graph, path string) []outlineEntry {
 	nodes := graph.Find(path, "", "")
 	byID := make(map[string]cg.Node, len(nodes))
@@ -42,6 +44,14 @@ func graphOutlineEntries(graph *cg.Graph, path string) []outlineEntry {
 
 		label := strings.ToLower(string(node.Kind))
 		signature := displaySignature(node.Signature)
+		if node.Language == "python" {
+			switch node.Kind {
+			case cg.Field, cg.Variable, cg.Constant:
+				// Assignment signatures include values. Use the published name
+				// rather than parsing a second declaration header in CCR.
+				signature = displaySignature(node.Name)
+			}
+		}
 		if node.Language == "go" {
 			switch node.Kind {
 			case cg.Struct, cg.Interface, cg.Type, cg.TypeAlias:

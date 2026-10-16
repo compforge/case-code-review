@@ -25,7 +25,7 @@ func TestArtifactSelectionMatchesPreviewAndRetainsRelatedDiffs(t *testing.T) {
 	for _, path := range paths {
 		a.changes = append(a.changes, change.Change{NewPath: path, Tags: allowedext.Classify(path), Diff: "diff for " + path})
 	}
-	a.prepareFileSelections(context.Background())
+	prepareSelectionFixture(t, a)
 	preview := a.buildPreview()
 	if preview.ReviewableCount != 2 || preview.ContextCount != 2 || preview.ExcludedCount != 3 {
 		t.Fatalf("unexpected selection counts: %+v", preview)
@@ -83,7 +83,7 @@ func TestArtifactSelectionHonorsUserOverrides(t *testing.T) {
 				args:    Args{RepoDir: repo, FileFilter: tt.filter},
 				changes: []change.Change{{NewPath: tt.path, Tags: allowedext.Classify(tt.path), IsBinary: tt.binary}},
 			}
-			a.prepareFileSelections(context.Background())
+			prepareSelectionFixture(t, a)
 			selection, _ := a.selectionFor(a.changes[0])
 			if selection.Target != tt.target || selection.Reason != tt.reason || selection.Context {
 				t.Fatalf("unexpected selection: %+v", selection)
