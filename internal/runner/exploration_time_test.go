@@ -147,6 +147,7 @@ func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
 	})
 }
 
+// +case:id=review2_wrapup_recovery_hard_deadline,desc=`R2 retains one Assessment then both exploration and wrap-up calls expire`,expect=`one recovery uses the remaining Unit budget and the accepted Finding survives with timeout status`
 func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls, r2Calls atomic.Int32
@@ -181,21 +182,25 @@ func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t
 			t.Fatalf("accepted Finding lost: %v %v", findings, err)
 		}
 		// R1 finished at one minute. R2 explores for 85% of the remaining
-		// interval ending at 9m58s, so its request expires at 8m37.3s.
-		if elapsed := time.Since(began); elapsed != 8*time.Minute+37300*time.Millisecond {
-			t.Fatalf("wrong exploration deadline: %v", elapsed)
+		// interval ending at 9m58s. The exploration call expires at 8m37.3s;
+		// one wrap-up call uses the remainder and must stop at the hard boundary.
+		if elapsed := time.Since(began); elapsed != 9*time.Minute+58*time.Second {
+			t.Fatalf("wrong wrap-up hard deadline: %v", elapsed)
 		}
-		assessments, incomplete := 0, false
+		assessments, resumed, incomplete := 0, 0, false
 		for _, record := range timeoutTranscript(t, history) {
 			if record["artifact_kind"] == "review_assessment" {
 				assessments++
 			}
+			if record["artifact_kind"] == "execution_wrap_up_resumed" {
+				resumed++
+			}
 			if record["type"] == "debrief" {
-				incomplete = record["outcome"] == harness.OutcomeLLMError
+				incomplete = record["outcome"] == harness.OutcomeTimeout
 			}
 		}
-		if !incomplete || assessments != 1 {
-			t.Fatalf("incomplete=%v assessments=%d", incomplete, assessments)
+		if !incomplete || assessments != 1 || resumed != 1 || r2Calls.Load() != 3 {
+			t.Fatalf("incomplete=%v assessments=%d resumed=%d calls=%d", incomplete, assessments, resumed, r2Calls.Load())
 		}
 	})
 }

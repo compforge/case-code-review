@@ -81,7 +81,7 @@ func (c *turnController) BeforeTurn(
 	contextMessages := append(append([]agentgo.AgentMessage(nil), turn.Context.Messages...), messages...)
 	c.shouldWrapUp(ctx, turn.TurnIndex, contextMessages)
 	if c.takeReminder() {
-		messages = append(messages, msg.Text("user", c.wrapUpPrompt))
+		messages = append(messages, msg.FixedText("user", c.wrapUpPrompt))
 	}
 	return rawMessages(messages), nil
 }
@@ -223,6 +223,24 @@ func (c *turnController) checkTime(ctx context.Context) {
 		c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
 			"scope_id": c.scope.ID, "turn": c.currentTurn, "reasons": []string{"investigation_time"},
 			"investigation_deadline": wrapUpAt,
+		})
+	}
+}
+
+// finishExploration also handles a snapshotted model deadline whose dynamic
+// source moved while the request was in flight: an expired call cannot resume
+// exploration merely because the next request would have a later boundary.
+func (c *turnController) finishExploration(ctx context.Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.wrapUpIssued {
+		return
+	}
+	c.wrapUpIssued, c.wrapUpPending = true, true
+	if c.history != nil {
+		c.history.WriteArtifactContext(ctx, "wrap_up", map[string]any{
+			"scope_id": c.scope.ID, "turn": c.currentTurn,
+			"reasons": []string{"investigation_time"}, "trigger": "model_deadline",
 		})
 	}
 }

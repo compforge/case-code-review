@@ -133,7 +133,7 @@ func TestContextCompactionEventPersistsWithExecutionIdentity(t *testing.T) {
 			TokensBefore: 1000, TokensAfter: 600,
 			MessagesBefore: 8, MessagesAfter: 5, Summarized: true,
 		},
-	})
+	}, recorder.executionID)
 	history.Finalize()
 
 	if emitted.Type != EventContextCompacted || emitted.Compaction == nil || emitted.Compaction.TokensAfter != 600 {

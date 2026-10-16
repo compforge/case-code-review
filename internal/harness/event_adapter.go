@@ -9,10 +9,10 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
-func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event) {
+func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agentgo.Event, runID string) {
 	if event.Type == agentgo.EventContextProjected {
 		if recorder != nil {
-			recorder.recordContextProjected(event.ContextItems, executionEventStage(recorder.executionID, "model", event))
+			recorder.recordContextProjected(event.ContextItems, executionEventStage(runID, "model", event))
 		}
 		return
 	}
@@ -24,7 +24,7 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 			Summarized: event.Compaction.Summarized,
 		}
 		if recorder != nil {
-			recorder.recordCompaction(*compaction, executionEventStage(recorder.executionID, "context", event))
+			recorder.recordCompaction(*compaction, executionEventStage(runID, "context", event))
 		}
 		if sink != nil {
 			sink.OnExecutionEvent(ExecutionEvent{Type: EventContextCompacted, Compaction: compaction})

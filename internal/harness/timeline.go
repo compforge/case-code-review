@@ -18,6 +18,7 @@ type executionTimeline struct {
 	ctx        context.Context
 	timelineID string
 	id         string
+	runID      string
 	started    time.Time
 	root       timeline.StageHandle
 	stages     map[timeline.StageID]timeline.StageHandle
@@ -32,14 +33,14 @@ func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (conte
 	}
 	ctx, root := telemetry.BeginTimelineStage(ctx, "execution", timeline.WithParent(ref.StageID), timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
 		timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
-	return ctx, &executionTimeline{ctx: ctx, timelineID: ref.TimelineID, id: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	return ctx, &executionTimeline{ctx: ctx, timelineID: ref.TimelineID, id: e.id, runID: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
 
 func (r *executionTimeline) coordinate(kind string, e agentgo.Execution) timeline.StageID {
-	return executionStageID(r.id, kind, e)
+	return executionStageID(r.runID, kind, e)
 }
 func (r *executionTimeline) turn(index int) timeline.StageID {
-	return timeline.StageID(fmt.Sprintf("%s/turn/%d", r.id, index))
+	return timeline.StageID(fmt.Sprintf("%s/turn/%d", r.runID, index))
 }
 func (r *executionTimeline) bind(ctx context.Context, kind string, e agentgo.Execution) context.Context {
 	if r == nil {
