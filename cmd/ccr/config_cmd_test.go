@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -337,5 +339,104 @@ func TestUnsetInvalidKey(t *testing.T) {
 				t.Errorf("unsetCustomProvider(%q): err=%v, wantErr=%v", tt.name, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+// +case:id=dotted_provider_config,desc=`Configure and delete a provider whose name contains dots`,expect=`The full provider name survives parsing and persistence`
+func TestDottedProviderConfigLifecycle(t *testing.T) {
+	for _, prefix := range []string{"providers.", "custom_providers."} {
+		t.Run(prefix, func(t *testing.T) {
+			const name = "company.gateway.v1"
+			cfg := &Config{}
+			for _, setting := range [][2]string{
+				{prefix + name + ".protocol", "openai"},
+				{"provider", name},
+				{prefix + name + ".url", "https://example.com/v1"},
+				{prefix + name + ".model", "test-model"},
+				{prefix + name + ".extra_body", `{"reasoning":{"effort":"low"}}`},
+			} {
+				if err := setConfigValue(cfg, setting[0], setting[1]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			configPath := t.TempDir() + "/config.json"
+			if err := saveConfig(configPath, cfg); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := loadOrCreateConfig(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry, ok := loaded.CustomProviders[name]
+			if !ok || len(loaded.CustomProviders) != 1 || len(loaded.Providers) != 0 || loaded.Provider != name {
+				t.Fatalf("provider identity changed: %+v", loaded)
+			}
+			if entry.URL != "https://example.com/v1" || entry.Protocol != "openai" || entry.Model != "test-model" || entry.ExtraBody["reasoning"] == nil {
+				t.Fatalf("provider fields lost: %+v", entry)
+			}
+			if err := unsetCustomProvider(configPath, name); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err = loadOrCreateConfig(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Provider != "" || loaded.Model != "" || len(loaded.CustomProviders) != 0 {
+				t.Fatalf("active provider not removed: %+v", loaded)
+			}
+		})
+	}
+}
+
+func TestProviderNamesRejectEmptySegmentsWithoutMutation(t *testing.T) {
+	for _, name := range []string{".gateway", "gateway.", "company..gateway", "company. .gateway"} {
+		for _, prefix := range []string{"", "providers.", "custom_providers."} {
+			t.Run(prefix+name, func(t *testing.T) {
+				cfg := &Config{Provider: "anthropic", Model: "keep-model"}
+				before, err := json.Marshal(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				key, value := "provider", name
+				if prefix != "" {
+					key, value = prefix+name+".url", "https://example.com/v1"
+				}
+				if err := setConfigValue(cfg, key, value); err == nil {
+					t.Fatal("invalid provider name accepted")
+				}
+				after, err := json.Marshal(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(before) != string(after) {
+					t.Fatalf("invalid name changed config: %s", after)
+				}
+			})
+		}
+	}
+}
+
+func TestDottedProviderRejectsUnknownFieldWithoutMutation(t *testing.T) {
+	cfg := &Config{}
+	if err := setConfigValue(cfg, "provider", "company.gateway"); err != nil {
+		t.Fatal(err)
+	}
+	err := setConfigValue(cfg, "custom_providers.company.gateway.unknown", "value")
+	if err == nil || !strings.Contains(err.Error(), `unknown provider field "unknown"`) {
+		t.Fatalf("wrong field parsed: %v", err)
+	}
+	if len(cfg.CustomProviders) != 1 {
+		t.Fatalf("unknown field created a provider: %+v", cfg.CustomProviders)
+	}
+}
+
+func TestCustomProviderFormRejectsInvalidName(t *testing.T) {
+	cfg := &Config{}
+	err := applyCustomProviderConfig(t.TempDir()+"/config.json", cfg, providerTUIResult{provider: "company..gateway", model: "test-model"})
+	if err == nil || !strings.Contains(err.Error(), "provider name") {
+		t.Fatalf("invalid provider name accepted: %v", err)
+	}
+	if cfg.Provider != "" || cfg.CustomProviders != nil {
+		t.Fatal("invalid provider name changed config")
 	}
 }

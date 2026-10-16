@@ -241,6 +241,11 @@ func setConfigValue(cfg *Config, key, value string) error {
 	case "retention.days", "retention.max_mib":
 		return setRetentionValue(cfg, key, value)
 	case "provider":
+		if value != "" {
+			if err := validateProviderName(value); err != nil {
+				return err
+			}
+		}
 		if cfg.Provider != value {
 			cfg.Model = ""
 		}
@@ -421,40 +426,55 @@ func modelListContains(models []string, target string) bool {
 	return false
 }
 
+// +spec=`Provider names may contain dots; only the final key segment names a field`
 func setProviderValue(cfg *Config, key, value string) error {
-	parts := strings.SplitN(key, ".", 3)
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+	dot := strings.LastIndex(key, ".")
+	if dot <= len("providers.") || dot == len(key)-1 {
 		return fmt.Errorf("invalid provider key %q: expected providers.<name>.<field>", key)
 	}
-	if _, isPreset := llm.LookupProvider(parts[1]); !isPreset {
-		return setCustomProviderField(cfg, parts[1], parts[2], key, value)
+	name, field := key[len("providers."):dot], key[dot+1:]
+	if _, isPreset := llm.LookupProvider(name); !isPreset {
+		return setCustomProviderField(cfg, name, field, key, value)
+	}
+	entry := cfg.Providers[name]
+	if err := applyProviderField(&entry, field, key, value); err != nil {
+		return err
 	}
 	if cfg.Providers == nil {
 		cfg.Providers = make(map[string]ProviderEntry)
 	}
-	entry := cfg.Providers[parts[1]]
-	if err := applyProviderField(&entry, parts[2], key, value); err != nil {
-		return err
-	}
-	cfg.Providers[parts[1]] = entry
+	cfg.Providers[name] = entry
 	return nil
 }
 
 func setCustomProviderValue(cfg *Config, key, value string) error {
-	parts := strings.SplitN(key, ".", 3)
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+	dot := strings.LastIndex(key, ".")
+	if dot <= len("custom_providers.") || dot == len(key)-1 {
 		return fmt.Errorf("invalid custom provider key %q: expected custom_providers.<name>.<field>", key)
 	}
-	return setCustomProviderField(cfg, parts[1], parts[2], key, value)
+	name, field := key[len("custom_providers."):dot], key[dot+1:]
+	return setCustomProviderField(cfg, name, field, key, value)
+}
+
+func validateProviderName(name string) error {
+	for _, segment := range strings.Split(name, ".") {
+		if strings.TrimSpace(segment) == "" {
+			return fmt.Errorf("invalid provider name %q: dot-separated segments must not be empty or whitespace", name)
+		}
+	}
+	return nil
 }
 
 func setCustomProviderField(cfg *Config, name, field, key, value string) error {
-	if cfg.CustomProviders == nil {
-		cfg.CustomProviders = make(map[string]ProviderEntry)
+	if err := validateProviderName(name); err != nil {
+		return fmt.Errorf("%s: %w", key, err)
 	}
 	entry := cfg.CustomProviders[name]
 	if err := applyProviderField(&entry, field, key, value); err != nil {
 		return err
+	}
+	if cfg.CustomProviders == nil {
+		cfg.CustomProviders = make(map[string]ProviderEntry)
 	}
 	cfg.CustomProviders[name] = entry
 	return nil
