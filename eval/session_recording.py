@@ -11,8 +11,7 @@ from pathlib import Path
 def read_records(path: Path) -> tuple[list[dict], list[str]]:
     records: list[dict] = []
     gaps: list[str] = []
-    latest_snapshot = None
-    timeline_id = None
+    timeline = _TimelineRecording()
     with path.open("rb") as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
@@ -25,19 +24,91 @@ def read_records(path: Path) -> tuple[list[dict], list[str]]:
                 kind = "truncated final record" if not line.endswith(b"\n") else "corrupt record"
                 gaps.append(f"line {number}: {kind}")
                 break
-            if record.get("type") == "timeline_snapshot":
-                snapshot = record.get("snapshot")
-                identity = record.get("timeline_id")
-                if not isinstance(snapshot, dict) or not identity or snapshot.get("id") != identity or timeline_id not in (None, identity):
-                    gaps.append(f"line {number}: inconsistent timeline ID")
+            if record.get("type") in ("timeline_snapshot", "timeline_delta"):
+                try:
+                    timeline.apply(record)
+                except (ValueError, TypeError, KeyError) as error:
+                    gaps.append(f"line {number}: {error}")
                     break
-                timeline_id = identity
-                latest_snapshot = record
             else:
                 records.append(record)
-    if latest_snapshot is not None:
-        records.append(latest_snapshot)
+    if timeline.record is not None:
+        records.append(timeline.snapshot_record())
     return records, gaps
+
+
+def _actor_key(actor: dict) -> str:
+    if actor.get("id"):
+        return "id:" + actor["id"]
+    return "name:" + actor["name"] if actor.get("name") else ""
+
+
+def _decode_stages(snapshot: dict) -> dict[tuple[str, str], dict]:
+    actors = snapshot.get("actors", [])
+    stages = {}
+    for source in snapshot.get("stages", []):
+        stage = dict(source)
+        ref = stage.pop("actor_ref", 0)
+        if ref:
+            if not isinstance(ref, int) or ref < 1 or ref > len(actors) or not actors[ref - 1]:
+                raise ValueError("invalid timeline actor_ref")
+            stage["actor"] = actors[ref - 1]
+        stages[(stage["id"], _actor_key(stage.get("actor", {})))] = stage
+    return stages
+
+
+class _TimelineRecording:
+    """Reconstruct checkpoints and chained stage upserts; never hide missing deltas."""
+
+    def __init__(self):
+        self.record: dict | None = None
+        self.stages: dict[tuple[str, str], dict] = {}
+        self.sequence = 0
+        self.has_deltas = False
+
+    def apply(self, record: dict) -> None:
+        snapshot = record.get("snapshot")
+        identity = record.get("timeline_id")
+        if (not isinstance(snapshot, dict) or not identity or snapshot.get("id") != identity
+                or self.record is not None and self.record["timeline_id"] != identity):
+            raise ValueError("inconsistent timeline ID")
+        delta = record["type"] == "timeline_delta"
+        sequence = record.get("seq", 0)
+        if (not isinstance(sequence, int) or sequence < 0
+                or delta and (not self.sequence or record.get("base_seq") != self.sequence or sequence <= self.sequence)):
+            raise ValueError("timeline delta sequence gap")
+        stages = _decode_stages(snapshot)
+        if delta:
+            self.stages.update(stages)
+        else:
+            self.stages = stages
+        self.record, self.sequence, self.has_deltas = record, sequence, delta
+
+    def snapshot_record(self) -> dict:
+        if not self.has_deltas:
+            return self.record
+        actors = []
+        stages = []
+
+        def order(stage):
+            start = datetime.fromisoformat(stage.get("started_at", "0001-01-01T00:00:00Z").replace("Z", "+00:00"))
+            return start, stage["id"], _actor_key(stage.get("actor", {}))
+
+        for source in sorted(self.stages.values(), key=order):
+            stage = dict(source)
+            actor = stage.pop("actor", {})
+            if actor:
+                if actor not in actors:
+                    actors.append(actor)
+                stage["actor_ref"] = actors.index(actor) + 1
+            stages.append(stage)
+        snapshot = {**self.record["snapshot"], "stages": stages}
+        snapshot.pop("actors", None)
+        if actors:
+            snapshot["actors"] = actors
+        record = {**self.record, "type": "timeline_snapshot", "snapshot": snapshot}
+        record.pop("base_seq", None)
+        return record
 
 
 def _finished(stage: dict) -> bool:
@@ -100,7 +171,7 @@ class Recording:
                 seen.add(identity)
             unique.append(record)
         for record in unique:
-            if record.get("type") == "session_start" and record.get("schema_version", 12) != 12:
+            if record.get("type") == "session_start" and record.get("schema_version", 12) not in (12, 13):
                 gaps.append(f"unsupported session schema: {record.get('schema_version')}")
         try:
             timeline_stages(unique)

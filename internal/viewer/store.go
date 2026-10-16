@@ -111,7 +111,7 @@ func readSessionStart(path string) (SessionSummary, error) {
 		return SessionSummary{}, fmt.Errorf("first record is not session_start")
 	}
 	version := intValue(record["schema_version"])
-	if version != session.SchemaVersion {
+	if !session.SupportedSchemaVersion(version) {
 		return SessionSummary{}, fmt.Errorf("unsupported session schema %d", version)
 	}
 	summary := SessionSummary{
@@ -438,8 +438,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		switch typ {
 		case "session_start":
 			version := intValue(rec["schema_version"])
-			if version != session.SchemaVersion {
-				return nil, fmt.Errorf("unsupported session schema %d; viewer requires %d", version, session.SchemaVersion)
+			if !session.SupportedSchemaVersion(version) {
+				return nil, fmt.Errorf("unsupported session schema %d; viewer supports 12 and %d", version, session.SchemaVersion)
 			}
 			hasCurrentSchema = true
 			vs.Summary.SchemaVersion = version

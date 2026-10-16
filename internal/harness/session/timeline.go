@@ -56,8 +56,9 @@ func (sh *SessionHistory) CheckpointTimeline() {
 	telemetry.ReportTimelineError(err)
 }
 
-// A periodic checkpoint exposes long waits without putting file IO on HTTP or
-// AgentGo event paths. Abrupt exit can lose facts since the last completed write.
+// Periodic checks persist new stage facts without putting file IO on HTTP or
+// AgentGo event paths. Unchanged waits write nothing; abrupt exit can lose facts
+// since the last completed write.
 func (sh *SessionHistory) checkpointLoop() {
 	defer close(sh.checkpointDone)
 	ticker := time.NewTicker(time.Second)
@@ -145,6 +146,6 @@ func (jw *jsonlWriter) writeTimeline(id string) (timeline.Snapshot, error) {
 	if err != nil {
 		return snapshot, err
 	}
-	_, err = jw.appendLocked(map[string]any{"type": "timeline_snapshot", "timeline_id": id, "snapshot": snapshot})
+	err = jw.appendTimelineLocked(snapshot)
 	return snapshot, err
 }

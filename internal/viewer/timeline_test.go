@@ -3,6 +3,7 @@ package viewer
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -124,5 +125,32 @@ func TestTimelineWaterfallPreservesParallelIntervalsAndUnknownEnds(t *testing.T)
 	doc.FinishedAt = time.Time{}
 	if got := layoutTimeline(doc).WindowMS; got != 9000 {
 		t.Fatalf("unclosed timeline should end at last evidence, got %d", got)
+	}
+}
+
+// The same interrupted schema 13 recording is consumed by Go Session and Python eval tests.
+func TestViewerLoadsDeltaRecordingAndListsSchema13(t *testing.T) {
+	raw, err := os.ReadFile("../harness/session/testdata/timeline-deltas.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeViewerSession(t, root, "repo", "run", strings.TrimSpace(string(raw)))
+	view, err := LoadSession(root, "repo", "run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Summary.SchemaVersion != 13 || view.Timeline == nil || len(view.Timeline.Stages) != 2 {
+		t.Fatalf("missing delta timeline: %+v", view)
+	}
+	if view.Timeline.Stages[0].Status != timeline.Succeeded || view.Timeline.Stages[1].Status != timeline.Failed {
+		t.Fatalf("viewer lost terminal facts: %+v", view.Timeline)
+	}
+	summaries, err := ListSessions(root, "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(summaries) != 1 || summaries[0].SchemaVersion != 13 {
+		t.Fatalf("schema 13 recording hidden: %+v", summaries)
 	}
 }

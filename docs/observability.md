@@ -34,7 +34,7 @@ Stage 记录一次动作的身份、父子关系、源头时间、状态；内�
 ```text
 Session JSONL
   ├─ session_start / session_end     # 输入身份、配置与最终汇总
-  ├─ timeline_snapshot              # 关键边界读取的完整 timeline.Snapshot
+  ├─ timeline_snapshot / timeline_delta  # 完整 checkpoint 与阶段增量
   │    └─ execution → model.attempt → llm.request
   │                 → tool.execution → tool.invoke
   └─ 内容记录 ── stage_id ──▶ Stage
@@ -52,7 +52,7 @@ Viewer、export 和 eval 都不从最后一条 assistant 文本、终态工具�
 追加相邻不代表父子关系，不写 `parentUuid`；执行父子关系只来自 Stage 的 `parent_id`。
 `timeline_id` / `stage_id` 连接内容与执行，模型响应引用请求 Stage，工具结果还通过 `request_id` 和
 `tool_call_id` 连接发起它的模型请求与调用。并发返回不依赖相邻记录、工具名或返回顺序配对。
-Stage 可能在内容记录之后刷新落盘，读取时先选择最新的完整 Snapshot，再按 ID 连接。
+Stage 可能在内容记录之后刷新落盘，读取时从完整 checkpoint 重放后续增量，再按 ID 连接。
 
 请求、工具、Execution 和 Formation 的耗时从对应 Stage 推导，不在内容记录中再存一份计时。
 `session_end` 和 debrief 保留领域汇总：前者的 duration 来自 Operation，后者的 duration 是模型调用耗时之和，
@@ -64,7 +64,7 @@ Stage 可能在内容记录之后刷新落盘，读取时先选择最新的完�
 `policy/admission` 错误详情，不累加 provider 失败计数。首次 context projection 是 Initial Context exposure，
 并不由模型请求快照反推。
 
-Go 消费方共用 Session reader：读取最后一份完整 timeline 快照，接受完整前缀后的截断末行并显式标记缺口；
+Go 消费方共用 Session reader：重建最后一份 timeline 状态，接受完整前缀后的截断末行并显式标记缺口；
 完整行损坏则报错。写入失败会报告并停止继续追加，避免其后的记录看似连续。Python eval 同样检查输入完整性，
 零值结束时间表示未结束，缺少结束事实不能当成零耗时或成功；损坏数据不参与完整覆盖判定。
 
@@ -147,16 +147,19 @@ Session 拥有一个 `go-stdx/timeline` ID：进程安装共用的 NoopStore Man
 与 HTTP 阶段。子阶段只开始和结束自己的工作，Session 唯一负责整轮 Start / Finish。
 
 ```text
-Session timeline
+Session timeline（一次 review）
   ├─ diff.load / project.select / codegraph.build / unit.formation
   │                                                └─ unit.grouping.relations / unit.grouping.namespace
-  ├─ unit.queue → review.unit → execution → turn
-  │                              ├─ context.project / context.recover_overflow
-  │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
-  │                              ├─ retry.wait
-  │                              └─ tool.queue → tool.execution → tool.invoke
-  ├─ lane.queue → review.hypothesis → execution → turn …
-  └─ trial.assess / trial.finalize
+  ├─ unit.queue（等待启动 Unit）
+  ├─ review.pipeline（Unit A，attributes.unit_id 标识）
+  │  ├─ review.unit（R1）→ execution → turn
+  │  │                              ├─ context.project / context.recover_overflow
+  │  │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
+  │  │                              ├─ retry.wait
+  │  │                              └─ tool.queue → tool.execution → tool.invoke
+  │  ├─ lane.queue → review.hypothesis（R2，每个 Hypothesis）→ execution → turn …
+  │  └─ trial.assess / trial.finalize（R3，记录裁决及 Finding）
+  └─ review.pipeline（Unit B …）
 ```
 
 图中箭头表达流转，实际父子关系由 stage ID 决定。Review 2 可在 Review 1 尚未结束时启动；两个 Review
@@ -168,20 +171,32 @@ Session timeline
 `grouping` 提供整轮数量软上限、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法满足数量上限，
 所有目标仍进入评审。耗时读取对应 timeline stage。
 
-Session 在请求和 Execution 的开始、结束边界及每秒定时调用 `timeline.Read(ctx, id, false)`，由 CCR 的 JSONL writer 写入完整
-`timeline_snapshot`；读取与追加共用 writer 锁，避免并发导出把旧快照排在新快照之后。
-HTTP 回调和 AgentGo 事件只记录内存事实，不触发文件写入。定时导出让长时间等待可以被观察，
-突然退出可能丢失上次成功 checkpoint 之后的事实。取消请求后仍可读取内存事实；
-整轮结束时先停止定时导出，Finish 后写入最终快照和 session_end，再释放该 ID 的缓存。
-timeline 只负责缓存中的录制和查询，JSONL 的格式、时机和文件 IO 全部由 CCR 持有，无需调用 Flush。
-读取端保留最新的完整 timeline 快照和内容记录，不保留各次 checkpoint 的重复完整副本。
+Session 在请求和 Execution 的开始、结束边界及每秒兜底检查 `timeline.Read(ctx, id, false)`。
+CCR 的 JSONL writer 比较原生阶段状态，只有新增、更新或整轮元数据变化才落盘；仅 `captured_at`
+变化不产生记录。HTTP 回调和 AgentGo 事件继续只记录内存事实，不在回调中执行文件 IO。
+每次 Model / Tool call 的起止时间、结果和父子关系保留；prompt、response、工具结果通过 Stage ID 关联。
+
+Schema 13 使用 `timeline_snapshot` 完整 checkpoint 与 `timeline_delta` 增量：
+
+- 首次、整轮结束及距上次完整 checkpoint 至少一分钟后的下一次变化写完整快照；阶段集合缩减也写完整快照。
+- 增量的 `snapshot` 保留完整整轮元数据，`stages` 仅含变化阶段，以 `(Stage ID, Actor.Key)` 替换整条状态。
+  每个 payload 的 Actor table 独立解码，不能跨记录直接合并 `actor_ref`。
+- `base_seq` 指向上一条成功写入的 timeline 记录；内容记录可穿插其间，不要求两条 timeline 的 `seq` 相邻。
+  读取端验证引用连续，再还原原生 Snapshot。缺少 checkpoint、丢失增量或错误引用均显式报告缺口。
+- 只有成功写入才推进比较基线。完整 checkpoint 可独立读取；有效前缀后的截断末行不破坏已确认的事实。
+
+读取、比较与追加共用 writer 锁，避免并发导出倒序。突然退出可能丢失上次成功写入之后的事实；
+`captured_at` 表示最后持久化观测时间，不把无新记录的等待当成额外的存活证明。
+取消请求后仍可读取内存事实；整轮结束时先停止定时检查，Finish 后写入最终 checkpoint 和 session_end，
+再释放该 ID 的缓存。timeline 负责缓存中的录制和查询，JSONL 格式、时机和文件 IO 由 CCR 持有。
+读取端只保留重建后的最新状态和内容记录，不保留 checkpoint 的重复完整副本。
 快照属于整轮 Session；Unit、Lane、
 Hypothesis、CCR Execution 和请求身份保存在对应 stage attributes。AgentGo 的逻辑执行 ID 以 CCR Execution
 为命名空间，物理尝试另带 Attempt，因此并发 loop 即使发出同名 tool call 也不碰撞。Middleware 把 stage
 身份传入真实调用，Event 以源头 Timestamp 记录开始和结束；消费者处理事件的延迟不算作模型或工具耗时。
 
-属性统一写入原生 `attributes`。Schema 12 的 Go Session reader 与 Python eval 均按追加顺序
-选择最后一份完整 Snapshot，不再依赖持久化修订号。旧 schema 显式报告不兼容。
+属性统一写入原生 `attributes`。Go Session reader、Viewer 与 Python eval 支持 Schema 13 增量和
+Schema 12 完整快照；更早或未知 schema 显式报告不兼容。消费者仍接收重建的完整 Snapshot。
 
 JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
 原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为

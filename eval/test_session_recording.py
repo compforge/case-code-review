@@ -23,6 +23,39 @@ class SessionRecordingTests(unittest.TestCase):
             self.assertEqual(records, [content, latest])
             self.assertIn("inconsistent timeline ID", gaps[0])
 
+    def test_shared_delta_fixture_and_gaps(self):
+        fixture = Path(__file__).resolve().parents[1] / "internal/harness/session/testdata/timeline-deltas.jsonl"
+        raw = fixture.read_text()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "session.jsonl"
+            path.write_text(raw)
+            records, gaps = read_records(path)
+            self.assertFalse(gaps)
+            self.assertEqual(len(records), 3)
+            snapshot = records[-1]["snapshot"]
+            self.assertEqual(snapshot["attributes"], {"done": True})
+            self.assertEqual(snapshot["actors"], [{"id": "worker-a"}, {"id": "worker-b"}])
+            self.assertEqual([(s["id"], s["actor_ref"], s["status"]) for s in snapshot["stages"]],
+                             [("shared", 1, "succeeded"), ("shared", 2, "failed")])
+            path.write_text(raw + '{"type":"timeline_delta",')
+            partial, gaps = read_records(path)
+            self.assertIn("truncated", gaps[0])
+            self.assertEqual(partial, records)
+            for broken in (
+                raw.replace('"base_seq":4', '"base_seq":3'),
+                raw.replace('"seq":5', '"seq":4'),
+                raw.replace('"actor_ref":1', '"actor_ref":9', 1),
+                "\n".join(raw.splitlines()[3:]),
+            ):
+                path.write_text(broken)
+                _, gaps = read_records(path)
+                self.assertTrue(gaps)
+            # A complete checkpoint replaces the projection, without carrying old stages.
+            path.write_text(raw + json.dumps({"type": "timeline_snapshot", "seq": 6, "timeline_id": "run", "snapshot": {"id": "run"}}) + "\n")
+            replaced, gaps = read_records(path)
+            self.assertFalse(gaps)
+            self.assertEqual(timeline_stages(replaced), {})
+
     def test_snapshot_attributes_preserve_execution_outcome(self):
         for attributes in (
             {"attributes": {"outcome": "completed"}},
