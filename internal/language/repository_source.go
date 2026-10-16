@@ -2,6 +2,8 @@ package language
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"sort"
 
 	"github.com/compforge/repocli/toolkit/go"
@@ -13,6 +15,7 @@ type reviewGraphSource struct {
 	repocli.GraphSource
 	documents map[string]string
 	id        string
+	overlay   *repocli.SourceTree
 }
 
 func (s reviewGraphSource) SnapshotID() string {
@@ -22,23 +25,46 @@ func (s reviewGraphSource) SnapshotID() string {
 	return s.GraphSource.SnapshotID()
 }
 
-func (s reviewGraphSource) SourceFiles(ctx context.Context) ([]repocli.SourceFile, error) {
-	files, err := s.GraphSource.SourceFiles(ctx)
-	if err != nil {
-		return nil, err
+func newReviewGraphSource(source repocli.GraphSource, documents map[string]string) (reviewGraphSource, error) {
+	files := make([]repocli.SourceFile, 0, len(documents))
+	for name, data := range documents {
+		files = append(files, repocli.SourceFile{Path: name, Size: int64(len(data))})
 	}
-	sizes := map[string]int64{}
+	tree, err := repocli.NewSourceTree(files)
+	return reviewGraphSource{GraphSource: source, documents: documents, overlay: tree}, err
+}
+
+func (s reviewGraphSource) ReadDirectory(ctx context.Context, name string) (repocli.SourceDirectory, error) {
+	base, err := s.GraphSource.ReadDirectory(ctx, name)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return repocli.SourceDirectory{}, err
+	}
+	overlay, overlayErr := s.overlay.ReadDirectory(ctx, name)
+	if overlayErr != nil && !errors.Is(overlayErr, fs.ErrNotExist) {
+		return repocli.SourceDirectory{}, overlayErr
+	}
+	if err != nil && overlayErr != nil {
+		return repocli.SourceDirectory{}, err
+	}
+	dirs := map[string]bool{}
+	files := map[string]repocli.SourceFile{}
+	for _, d := range []repocli.SourceDirectory{base, overlay} {
+		for _, child := range d.Directories {
+			dirs[child] = true
+		}
+		for _, file := range d.Documents {
+			files[file.Path] = file
+		}
+	}
+	var out repocli.SourceDirectory
+	for child := range dirs {
+		out.Directories = append(out.Directories, child)
+	}
 	for _, file := range files {
-		sizes[file.Path] = file.Size
+		out.Documents = append(out.Documents, file)
 	}
-	for name, data := range s.documents {
-		sizes[name] = int64(len(data))
-	}
-	out := make([]repocli.SourceFile, 0, len(sizes))
-	for name, size := range sizes {
-		out = append(out, repocli.SourceFile{Path: name, Size: size})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	sort.Strings(out.Directories)
+	sort.Slice(out.Documents, func(i, j int) bool { return out.Documents[i].Path < out.Documents[j].Path })
 	return out, nil
 }
 func (s reviewGraphSource) ReadSource(ctx context.Context, name string) (string, error) {

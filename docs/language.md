@@ -33,7 +33,12 @@ ExtractionCache，缓存按路径与内容区分版本。声明、导入、使�
 RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 repocli 的
 `GraphFromSource`，由它枚举和选择材料、应用该快照的 ignore 规则并构图。`go.mod` 作为 Document
 交给 CodeGraph 提取模块身份，CCR 不再单独解析 module path 或扫描文件系统。测试源码可以提供 caller/usage 证据，但不进入 repo map
-的定义候选集；依赖目录、隐藏目录和过大的文件不参与分析。
+的定义候选集；过大的文件不参与分析。
+
+仓库构图通过 repocli 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
+工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repocli 执行。
+CCR 显式排除 dependency、test_fixture、generated、tooling、cache 和 build_output 标签，
+并用 review 支持的格式选择 Document；`IsSourceMaterial` 只作为格式识别，不承担排除策略。
 
 Git provider 固定比较基线与目标 commit，捕获改动文件的前后内容。工作区以固定基线叠加捕获的改动内容，
 未改文件按需从基线读取；commit/range 模式从固定的目标 commit 读取。graph、源码预加载、读取与搜索工具、

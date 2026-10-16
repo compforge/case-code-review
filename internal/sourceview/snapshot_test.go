@@ -65,3 +65,23 @@ func TestDiffSearchUsesCapturedUnchangedAndChangedFiles(t *testing.T) {
 		t.Fatalf("captured search: %q %q %v", out, detail, err)
 	}
 }
+
+func TestCapturedDirectoryIndexDoesNotOpenCheckout(t *testing.T) {
+	root := t.TempDir()
+	view := New(root, "", "captured", map[string]File{"nested/a.go": {Content: "package p\n"}, "nested/missing.go": {Unavailable: true}}, nil)
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	entries, err := view.ReadDirectory(ctx, ".")
+	if err != nil || len(entries.Directories) != 1 || entries.Directories[0] != "nested" {
+		t.Fatalf("root: %+v %v", entries, err)
+	}
+	entries, err = view.ReadDirectory(ctx, "nested")
+	if err != nil || len(entries.Documents) != 2 || entries.Documents[1].Size != -1 {
+		t.Fatalf("nested: %+v %v", entries, err)
+	}
+	if data, err := view.ReadSource(ctx, "nested/a.go"); err != nil || data != "package p\n" {
+		t.Fatalf("captured bytes: %q %v", data, err)
+	}
+}

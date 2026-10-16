@@ -36,16 +36,19 @@ type Entry struct {
 // +spec=`All review consumers read identical bytes for a path in one snapshot; missing captured content never falls back to live files`
 // +why=`A fixed baseline plus captured changes gives workspace review stable inputs without copying the whole repository`
 type Snapshot struct {
-	RepoDir    string
-	Ref        string
-	ID         string
-	git        *gitcmd.Runner
-	overlay    map[string]File
-	once       sync.Once
-	entries    []Entry
-	entriesErr error
-	captured   *repocli.DiffReport
-	before     bool
+	RepoDir       string
+	Ref           string
+	ID            string
+	git           *gitcmd.Runner
+	overlay       map[string]File
+	once          sync.Once
+	entries       []Entry
+	entriesErr    error
+	captured      *repocli.DiffReport
+	before        bool
+	graphTreeOnce sync.Once
+	graphTree     *repocli.SourceTree
+	graphTreeErr  error
 }
 
 func New(repoDir, ref, id string, overlay map[string]File, runner *gitcmd.Runner) *Snapshot {
@@ -157,6 +160,8 @@ func (s *Snapshot) Entries(ctx context.Context) ([]Entry, error) {
 		for name, f := range s.overlay {
 			if f.Deleted {
 				delete(files, name)
+			} else if f.Unavailable {
+				files[name] = -1
 			} else {
 				files[name] = int64(len(f.Content))
 			}
@@ -169,19 +174,31 @@ func (s *Snapshot) Entries(ctx context.Context) ([]Entry, error) {
 	return s.entries, s.entriesErr
 }
 
-// SnapshotID, SourceFiles and ReadSource expose the existing view to repocli's
-// material loader. Graph construction shares this view with review tools.
+// SnapshotID, ReadDirectory and ReadSource expose one captured view to repocli.
 func (s *Snapshot) SnapshotID() string { return s.ID }
-func (s *Snapshot) SourceFiles(ctx context.Context) ([]repocli.SourceFile, error) {
-	entries, err := s.Entries(ctx)
-	if err != nil {
-		return nil, err
+
+// +spec=`Directory enumeration never recaptures source bytes or opens the live checkout`
+// +link=repo://docs/language.md
+func (s *Snapshot) ReadDirectory(ctx context.Context, name string) (repocli.SourceDirectory, error) {
+	if err := ctx.Err(); err != nil {
+		return repocli.SourceDirectory{}, err
 	}
-	out := make([]repocli.SourceFile, 0, len(entries))
-	for _, entry := range entries {
-		out = append(out, repocli.SourceFile{Path: entry.Path, Size: entry.Size})
+	s.graphTreeOnce.Do(func() {
+		entries, err := s.Entries(ctx)
+		if err != nil {
+			s.graphTreeErr = err
+			return
+		}
+		files := make([]repocli.SourceFile, 0, len(entries))
+		for _, entry := range entries {
+			files = append(files, repocli.SourceFile{Path: entry.Path, Size: entry.Size})
+		}
+		s.graphTree, s.graphTreeErr = repocli.NewSourceTree(files)
+	})
+	if s.graphTreeErr != nil {
+		return repocli.SourceDirectory{}, s.graphTreeErr
 	}
-	return out, nil
+	return s.graphTree.ReadDirectory(ctx, name)
 }
 func (s *Snapshot) ReadSource(ctx context.Context, name string) (string, error) {
 	return s.Read(ctx, name)

@@ -66,7 +66,8 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	} else {
 		source, err = repocli.OpenGraphSource(ctx, repocli.InputRequest{Repository: a.repoDir, Head: a.ref})
 		if err == nil {
-			view := reviewGraphSource{GraphSource: source, documents: a.documents}
+			var view reviewGraphSource
+			view, err = newReviewGraphSource(source, a.documents)
 			if a.ref == "" {
 				view.id = "review-worktree"
 			}
@@ -83,8 +84,17 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	}
 	result, err := repocli.GraphFromSource(ctx, source, repocli.GraphOptions{
 		RetryOnBudget: true,
-		CodeGraph:     cg.Options{MaxDocuments: maxScanFiles, MaxDocumentBytes: maxFileBytes, MaxSourceBytes: 32 << 20, ExtractionCache: a.extractionCache},
-		Prioritize:    priority,
+		CodeGraph: cg.Options{
+			MaxDocuments:     maxScanFiles,
+			MaxDocumentBytes: maxFileBytes,
+			MaxSourceBytes:   32 << 20,
+			ExtractionCache:  a.extractionCache,
+			Admission: &cg.AdmissionPolicy{ExcludedTags: []cg.Tag{
+				cg.DependencyTag, cg.TestFixtureTag, cg.GeneratedTag,
+				cg.ToolingTag, cg.CacheTag, cg.BuildOutputTag,
+			}},
+		},
+		Prioritize: priority,
 		Select: func(name string, tags []cg.Tag) bool {
 			if !repocli.IsSourceMaterial(name) {
 				return false

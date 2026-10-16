@@ -9,16 +9,20 @@ import (
 	"github.com/qiankunli/case-code-review/internal/language"
 )
 
-const TestTag cg.Tag = "test"
+const TestTag cg.Tag = cg.TestTag
 const ReviewDataTag cg.Tag = "review_data"
 const ToolingTag cg.Tag = "tooling"
 
 // TagRules supplies the same classification to captured diffs and full scans.
 // CCR extends the vocabulary without teaching CodeGraph review policy.
+// +spec=`Dependency upgrades preserve CCR default review eligibility, including Python test_*.py`
+// +why=`The review exclusion patterns are narrower than general test-file classification`
 func TagRules() []cg.TagRule {
 	var rules []cg.TagRule
 	for _, rule := range cg.BuiltinTagRules() {
 		switch rule.Name {
+		case cg.TestTag:
+			continue // Preserve CCR's explicit review exclusion patterns below.
 		case cg.GeneratedTag, cg.DependencyTag, cg.BuildOutputTag, cg.MinifiedTag:
 			continue // The rules below include CCR's additional path conventions.
 		}
