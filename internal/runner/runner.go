@@ -508,15 +508,14 @@ func (a *Runner) loadChanges(ctx context.Context) error {
 // FileReadProvider (so a read of a path this diff moved or removed gets
 // redirected/explained instead of a raw git miss). Must be called after
 // loadChanges and before any concurrent access to the registry.
+// +spec=`Deleted files remain available as diff evidence under their original path`
 func (a *Runner) injectDiffMap() {
 	m := make(map[string]string, len(a.changes))
 	renamedTo := make(map[string]string)
 	deleted := make(map[string]bool)
 	for i := range a.changes {
 		d := &a.changes[i]
-		if d.NewPath != "/dev/null" {
-			m[d.NewPath] = d.Diff
-		}
+		m[effectivePath(*d)] = d.Diff
 		if d.IsRenamed && d.OldPath != "" && d.NewPath != "" && d.OldPath != d.NewPath {
 			renamedTo[d.OldPath] = d.NewPath
 		}

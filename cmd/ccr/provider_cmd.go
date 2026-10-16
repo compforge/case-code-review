@@ -115,8 +115,8 @@ func applyManualConfig(configPath string, cfg *Config, result providerTUIResult)
 }
 
 func applyCustomProviderConfig(configPath string, cfg *Config, result providerTUIResult) error {
-	if result.provider == "" {
-		return fmt.Errorf("provider name is required")
+	if err := validateProviderName(result.provider); err != nil {
+		return err
 	}
 	if result.model == "" {
 		return fmt.Errorf("model is required")

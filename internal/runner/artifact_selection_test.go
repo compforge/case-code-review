@@ -91,3 +91,36 @@ func TestArtifactSelectionHonorsUserOverrides(t *testing.T) {
 		})
 	}
 }
+
+// +case:id=deleted_diff_evidence,desc=`Read deleted-file evidence by its original path`,expect=`read_diffs returns the captured deletion diff`
+func TestInjectDiffMapIncludesDeletedFiles(t *testing.T) {
+	changes := []change.Change{
+		{NewPath: "added.go", IsNew: true, Diff: "added evidence"},
+		{OldPath: "changed.go", NewPath: "changed.go", Diff: "modified evidence"},
+		{OldPath: "old.go", NewPath: "renamed.go", IsRenamed: true, Diff: "renamed evidence"},
+		{OldPath: "deleted.go", NewPath: "/dev/null", IsDeleted: true, Diff: "deleted evidence"},
+	}
+	reader := tool.NewFileReadDiff(tool.NewDiffMap(nil))
+	registry := tool.NewRegistry()
+	registry.Register(reader)
+	runner := &Runner{args: Args{Tools: registry}, changes: changes}
+	runner.injectDiffMap()
+	for _, ch := range changes {
+		t.Run(effectivePath(ch), func(t *testing.T) {
+			result, err := reader.Execute(t.Context(), map[string]any{"paths": []any{effectivePath(ch)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(result, ch.Diff) {
+				t.Fatalf("missing captured diff: %s", result)
+			}
+		})
+	}
+	result, err := reader.Execute(t.Context(), map[string]any{"paths": []any{"/dev/null"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result, "deleted evidence") {
+		t.Fatal("deletion indexed under /dev/null")
+	}
+}
