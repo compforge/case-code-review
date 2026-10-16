@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Session Overview - CCR Viewer</title>
+    <title>Review Overview - CCR Viewer</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/timeline.js" defer></script>
 </head>
@@ -12,10 +12,10 @@
 <main>
 {{if .Session.RecordingWarning}}<p class="error">{{.Session.RecordingWarning}}</p>{{end}}
 <nav class="view-tabs" role="tablist" aria-label="Session views">
-    <a href="#session" id="tab-session" role="tab" aria-controls="panel-session" aria-selected="true">Session</a>
-    <a href="#timeline" id="tab-timeline" role="tab" aria-controls="panel-timeline" aria-selected="false" tabindex="-1">Timeline</a>
+    <a href="#session" id="tab-session" role="tab" aria-controls="panel-session" aria-selected="false" tabindex="-1">Review details</a>
+    <a href="#timeline" id="tab-timeline" role="tab" aria-controls="panel-timeline" aria-selected="true">Timeline</a>
 </nav>
-<section id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" hidden>
+<section id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline">
     <div class="timeline-heading"><h2>Run Timeline</h2><code>{{.Session.Summary.SessionID}}</code></div>
     {{if .Session.Timeline}}
     {{if .Session.Timeline.FinishedAt.IsZero}}<p class="timeline-notice">Run terminal state is not recorded (incomplete).</p>{{else}}<p class="section-note">Run result: {{.Session.Timeline.Status}}</p>{{end}}
@@ -23,13 +23,13 @@
     {{template "timeline" .Session.Timeline}}
     {{else}}<p class="empty-state">No timeline was recorded for this session.</p>{{end}}
 </section>
-<section id="panel-session" role="tabpanel" aria-labelledby="tab-session">
+<section id="panel-session" role="tabpanel" aria-labelledby="tab-session" hidden>
 {{$review1 := reviewsOfStage .Session.Reviews "review1"}}
 {{$review2 := reviewsOfStage .Session.Reviews "review2"}}
 {{$scans := reviewsOfStage .Session.Reviews "scan"}}
 
 <div class="session-header">
-    <h2>Session Overview</h2>
+    <h2>Review Overview</h2>
     <div class="session-id">{{.Session.Summary.SessionID}}</div>
     <div class="meta">
         <span><strong>CWD:</strong> {{.Session.Summary.CWD}}</span>

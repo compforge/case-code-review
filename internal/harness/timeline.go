@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"path/filepath"
+
 	"github.com/compforge/agentgo"
+	agentsession "github.com/compforge/agentgo/session"
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -15,6 +19,7 @@ import (
 // only propagates stage identity into actual calls; Event timestamps own timing.
 // The channel consumer owns these maps, including concurrent tool events.
 type executionTimeline struct {
+	run        *agentsession.Run
 	ctx        context.Context
 	timelineID string
 	id         string
@@ -32,7 +37,7 @@ func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (conte
 		return ctx, nil
 	}
 	ctx, root := telemetry.BeginTimelineStage(ctx, "execution", timeline.WithParent(ref.StageID), timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
-		timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
+		timeline.Attribute{Key: "session_file", Value: filepath.Base(e.sessionPath)}, timeline.Attribute{Key: "session_id", Value: e.sessionID()}, timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
 	return ctx, &executionTimeline{ctx: ctx, timelineID: ref.TimelineID, id: e.id, runID: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
 
@@ -65,6 +70,12 @@ func (r *executionTimeline) observe(ev agentgo.Event) {
 	attributes := []timeline.Attribute{{Key: "execution_id", Value: r.id}}
 	if ev.Execution != nil {
 		e := *ev.Execution
+		if e.Kind == agentgo.ExecutionKindCompact {
+			attributes = append(attributes, timeline.Attribute{Key: "task_type", Value: "memory_compression_task"})
+		}
+		if r.run != nil {
+			attributes = append(attributes, timeline.Attribute{Key: "session_ref", Value: r.run.Ref(e)})
+		}
 		parent = r.turn(e.TurnIndex)
 		if e.ParentID != "" {
 			if p, ok := r.parents[e.ParentID]; ok {
@@ -122,7 +133,7 @@ func (r *executionTimeline) end(id timeline.StageID, ev agentgo.Event) {
 		if err == nil && ev.IsError {
 			err = errors.New("tool returned an error result")
 		}
-		telemetry.ReportTimelineError(stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndAttributes(timeline.Attribute{Key: "disposition", Value: ev.Disposition})))
+		telemetry.ReportTimelineError(stage.End(err, timeline.WithEndTime(ev.Timestamp), timeline.WithEndAttributes(timeline.Attribute{Key: "disposition", Value: ev.Disposition}, timeline.Attribute{Key: "failure", Value: llm.DescribeError(ev.Err)})))
 		delete(r.stages, id)
 	}
 	// Missing starts/ends remain missing evidence; do not invent successful work.
@@ -145,20 +156,13 @@ func (r *executionTimeline) finish(result ExecutionResult, err error) {
 	telemetry.EndTimelineStage(r.ctx, r.root, err, options...)
 }
 
-// eventStage is shared by runtime timing and content recording, including attempts.
-func (r *executionTimeline) eventStage(ev agentgo.Event) timeline.StageID {
-	if r == nil || ev.Execution == nil {
-		return ""
-	}
-	return r.coordinate("tool", *ev.Execution)
-}
-
 func executionStageID(executionID, kind string, e agentgo.Execution) timeline.StageID {
 	return timeline.StageID(fmt.Sprintf("%s/%s/%s/%d", executionID, kind, e.ID, e.Attempt))
 }
-func executionEventStage(executionID, kind string, ev agentgo.Event) timeline.StageID {
-	if ev.Execution == nil {
-		return timeline.StageID(executionID)
+
+func (e *Execution) sessionID() string {
+	if e.localSession != nil {
+		return e.localSession.ID()
 	}
-	return executionStageID(executionID, kind, *ev.Execution)
+	return ""
 }

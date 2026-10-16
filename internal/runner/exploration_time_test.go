@@ -13,8 +13,8 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -54,7 +54,7 @@ func confirmed() *llm.ChatResponse {
 		"reason": "Unit diff proves the changed assignment", "evidence": []string{"a.go:4"},
 	})
 }
-func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *session.SessionHistory) {
+func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *recording.Review) {
 	t.Helper()
 	// The manager workers and Session must share the synctest clock.
 	shutdownTimeline, err := telemetry.InitTimeline()
@@ -67,7 +67,7 @@ func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *session.Sessio
 		}
 	})
 	repo := t.TempDir()
-	history := session.New(repo, "main", "test", session.SessionOptions{})
+	history := recording.New(repo, "main", "test", recording.SessionOptions{})
 	tpl := template.Template{
 		MainTask:             template.LlmConversation{Messages: []template.ChatMessage{{Role: "system", Content: "R1"}, {Role: "user", Content: "{{diff}}"}}},
 		HypothesisReviewTask: &template.LlmConversation{Messages: []template.ChatMessage{{Role: "system", Content: "R2"}, {Role: "user", Content: "{{hypothesis}}"}}},
@@ -78,7 +78,7 @@ func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *session.Sessio
 	a.changes = []change.Change{goDiff("a.go", 1)}
 	return a, history
 }
-func timeoutTranscript(t *testing.T, history *session.SessionHistory) []map[string]any {
+func timeoutTranscript(t *testing.T, history *recording.Review) []map[string]any {
 	t.Helper()
 	history.Flush()
 	path, err := history.TranscriptPath()

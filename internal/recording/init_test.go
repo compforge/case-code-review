@@ -1,4 +1,4 @@
-package session
+package recording
 
 // Redirect session writes to test-sessions/ so this package's tests don't
 // pollute the real sessions store.

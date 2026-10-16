@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
-func printCost(report session.CostReport) {
+func printCost(report recording.CostReport) {
 	total := report.Total
 	fmt.Printf("   tokens input=%d output=%d cache_read=%d cache_write=%d · estimated=%d unknown=%d pending=%d\n",
 		total.Tokens.PromptTokens, total.Tokens.CompletionTokens, total.Tokens.CacheReadTokens, total.Tokens.CacheWriteTokens, total.EstimatedUsage, total.UnknownUsage, total.Pending)

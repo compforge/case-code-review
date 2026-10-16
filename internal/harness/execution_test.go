@@ -12,9 +12,9 @@ import (
 	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestExecutionCompletesWithTaskDone(t *testing.T) {
@@ -421,8 +421,10 @@ func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
 	}}
 	client.responses[0].Alias = "route-a"
 
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
-	scope := session.Scope{
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
+	scope := recording.Scope{
 		ID:    "unit-1",
 		Kind:  "unit",
 		Type:  "func",
@@ -460,17 +462,14 @@ func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
 		t.Fatalf("handler context was not preserved: %+v", handled)
 	}
 
-	records := history.Scopes[scope.ID].TaskRecords[session.MainTask]
+	history.Finalize()
+	records := readExecutionRecords(t, history, "llm_response")
 	if len(records) != 2 {
-		t.Fatalf("task records = %d, want 2", len(records))
+		t.Fatalf("responses=%d", len(records))
 	}
-	if records[0].Response == nil || len(records[0].Response.ToolCalls) != 1 {
-		t.Fatalf("first response was not recorded: %+v", records[0])
-	}
-	if len(records[0].ToolResults) != 1 ||
-		records[0].ToolResults[0].ToolName != "code_comment" ||
-		records[0].ToolResults[0].Result != "submitted" {
-		t.Fatalf("tool result was not joined to its model turn: %+v", records[0].ToolResults)
+	results := readExecutionRecords(t, history, "tool_result")
+	if len(results) < 1 || results[0]["tool_name"] != "code_comment" || results[0]["result"] != "submitted" {
+		t.Fatalf("tool results=%v", results)
 	}
 
 	counts := make(map[ExecutionEventType]int)
@@ -1102,14 +1101,16 @@ func TestExecutionUsesSummaryAndRecordsItsUsage(t *testing.T) {
 		toolCallResponse("task_done", `{}`, &llm.UsageInfo{TotalTokens: 7}),
 	}}
 	client.responses[0].Usage = &llm.UsageInfo{TotalTokens: 5}
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient:     client,
 		Messages:      messages,
 		ToolDefs:      []llm.ToolDef{toolDef("task_done")},
 		Session:       history,
-		Scope:         session.Scope{ID: "unit-1"},
+		Scope:         recording.Scope{ID: "unit-1"},
 		MaxTurns:      1,
 		MaxTokens:     400,
 		ContextWindow: 400,
@@ -1120,13 +1121,17 @@ func TestExecutionUsesSummaryAndRecordsItsUsage(t *testing.T) {
 	if result.State != OutcomeCompleted || result.Usage.TotalTokens != 12 {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	scope := history.Scopes["unit-1"]
-	if len(scope.TaskRecords[session.MemoryCompressionTask]) != 1 {
-		t.Fatalf("compression records = %d, want 1", len(scope.TaskRecords[session.MemoryCompressionTask]))
+	history.Finalize()
+	records := readExecutionRecords(t, history, "llm_response")
+	counts := map[string]int{}
+	for _, record := range records {
+		key, _ := record["taskType"].(string)
+		counts[key]++
 	}
-	if len(scope.TaskRecords[session.MainTask]) != 1 {
-		t.Fatalf("main records = %d, want 1", len(scope.TaskRecords[session.MainTask]))
+	if counts[string(recording.MemoryCompressionTask)] != 1 || counts[string(recording.MainTask)] != 1 {
+		t.Fatalf("call ownership=%v", counts)
 	}
+
 	requests := client.Requests()
 	if len(requests) != 2 || !strings.Contains(requestText(requests[1]), "preserve the confirmed review facts") {
 		t.Fatalf("main request did not use the context summary: %#v", requests)
@@ -1229,7 +1234,7 @@ func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 	}}
 
 	pulls := 0
-	turnContext := turnContextFunc(func(_ context.Context, scope session.Scope) []agentgo.AgentMessage {
+	turnContext := turnContextFunc(func(_ context.Context, scope recording.Scope) []agentgo.AgentMessage {
 		pulls++
 		if scope.ID != "unit-1" || pulls > 1 {
 			return nil
@@ -1244,7 +1249,7 @@ func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 			toolDef("task_done"),
 		},
 		Tools:       registry,
-		Scope:       session.Scope{ID: "unit-1"},
+		Scope:       recording.Scope{ID: "unit-1"},
 		TurnContext: turnContext,
 		MaxTurns:    2,
 	})
@@ -1280,9 +1285,9 @@ func (f toolHandlerFunc) HandleTool(ctx context.Context, request ToolRequest) (t
 	return f(ctx, request)
 }
 
-type turnContextFunc func(context.Context, session.Scope) []agentgo.AgentMessage
+type turnContextFunc func(context.Context, recording.Scope) []agentgo.AgentMessage
 
-func (f turnContextFunc) PullTurnContext(ctx context.Context, scope session.Scope) []agentgo.AgentMessage {
+func (f turnContextFunc) PullTurnContext(ctx context.Context, scope recording.Scope) []agentgo.AgentMessage {
 	return f(ctx, scope)
 }
 
@@ -1431,4 +1436,23 @@ func TestWrapUpFinalCorrectionRejectsFurtherResults(t *testing.T) {
 			}
 		})
 	}
+}
+
+func readExecutionRecords(t *testing.T, review *recording.Review, kind string) []map[string]any {
+	t.Helper()
+	path, err := review.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	for _, record := range transcript.Records {
+		if record["type"] == kind {
+			records = append(records, record)
+		}
+	}
+	return records
 }

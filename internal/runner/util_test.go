@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
 
@@ -82,10 +82,10 @@ func TestReviewModeString(t *testing.T) {
 		from, to, commit string
 		want             string
 	}{
-		{"", "", "abc123", session.ReviewModeCommit},
-		{"main", "feature", "", session.ReviewModeRange},
-		{"", "", "", session.ReviewModeWorkspace},
-		{"main", "feature", "abc123", session.ReviewModeCommit},
+		{"", "", "abc123", recording.ReviewModeCommit},
+		{"main", "feature", "", recording.ReviewModeRange},
+		{"", "", "", recording.ReviewModeWorkspace},
+		{"main", "feature", "abc123", recording.ReviewModeCommit},
 	}
 
 	for _, tt := range tests {

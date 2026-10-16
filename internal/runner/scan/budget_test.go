@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
 
@@ -84,7 +84,7 @@ func TestBudgetGate_StopsBeforeExceeding(t *testing.T) {
 		Tools:           tool.NewRegistry(),
 		MaxConcurrency:  1, // serialize so the gate is deterministic
 		MaxTokensBudget: 120_000,
-		Session:         session.New(t.TempDir(), "main", "test", session.SessionOptions{ReviewMode: session.ReviewModeFullScan}),
+		Session:         recording.New(t.TempDir(), "main", "test", recording.SessionOptions{ReviewMode: recording.ReviewModeFullScan}),
 		SkipPlan:        true,
 		SkipDedup:       true,
 		SkipSummary:     true,
@@ -130,7 +130,7 @@ func TestBudgetGate_Unlimited(t *testing.T) {
 		Tools:           tool.NewRegistry(),
 		MaxConcurrency:  1,
 		MaxTokensBudget: 0, // unlimited
-		Session:         session.New(t.TempDir(), "main", "test", session.SessionOptions{ReviewMode: session.ReviewModeFullScan}),
+		Session:         recording.New(t.TempDir(), "main", "test", recording.SessionOptions{ReviewMode: recording.ReviewModeFullScan}),
 		SkipPlan:        true,
 		SkipDedup:       true,
 		SkipSummary:     true,
@@ -153,7 +153,7 @@ func TestRunningScanAndSummaryShareBudget(t *testing.T) {
 	tpl.PlanTask = &template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "plan"}}}
 	tpl.ProjectSummaryTask = &template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "summarize"}}}
 	fake := &fakeBudgetClient{perCallTokens: 100_000}
-	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{ReviewMode: session.ReviewModeFullScan})
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{ReviewMode: recording.ReviewModeFullScan})
 	defer history.Finalize()
 	a := New(Args{Template: tpl, LLMClient: fake, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100_000})
 	a.items = makeScanItems(3)

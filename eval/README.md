@@ -31,8 +31,9 @@ uv run --project eval python -m eval.trajectory.analyze_cases --help
 目录迁移不搬动已有数据；独立 worktree 不自动拥有主 worktree 的数据。
 公开仓只保留通用代码、配置模板和匿名测试，私有 forge adapter 继续留在本地。
 
-Session JSONL 是评审执行事实源，`session_recording.py` 负责共享读取，
-`eval_snapshot.py` 负责内容身份。benchmark 保存 dataset/case/run/arm → Session 的关联及内容 hash；
+Review manifest、业务 `.timeline` 与 `.sessions/` 内的 AgentGo Session 共同组成执行证据，
+`session_recording.py` 负责按 ID 关联读取，`eval_snapshot.py` 负责内容身份。保存样本时需复制整组文件。
+benchmark 保存 dataset/case/run/arm → Review 的关联及整组内容 hash；局部 Session 或 timeline 变更也会使 hash 失效；
 轨迹分析使用同一份记录。Review 2 的 Assessment 是被评测输出，不能替代独立参考标注。
 未完成运行和未判定的匹配显式保留，不能把 0 Finding 解释为 clean。
 

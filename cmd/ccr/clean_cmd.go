@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 // Pointers distinguish omitted defaults from an explicitly disabled limit.
@@ -31,11 +31,11 @@ func retentionLimits(cfg *Config) (days, mib int64) {
 	return
 }
 
-func retentionPolicy(days, mib int64) (session.RetentionPolicy, error) {
+func retentionPolicy(days, mib int64) (recording.RetentionPolicy, error) {
 	if days < 0 || days > int64((1<<63-1)/(24*time.Hour)) || mib < 0 || mib > (1<<63-1)/(1<<20) {
-		return session.RetentionPolicy{}, fmt.Errorf("retention limits must be non-negative and fit their storage units")
+		return recording.RetentionPolicy{}, fmt.Errorf("retention limits must be non-negative and fit their storage units")
 	}
-	return session.RetentionPolicy{MaxAge: time.Duration(days) * 24 * time.Hour, MaxBytes: mib * (1 << 20)}, nil
+	return recording.RetentionPolicy{MaxAge: time.Duration(days) * 24 * time.Hour, MaxBytes: mib * (1 << 20)}, nil
 }
 
 func setRetentionValue(cfg *Config, key, value string) error {
@@ -112,12 +112,12 @@ func runClean(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := session.Cleanup(root, policy, session.CleanupOptions{DryRun: *dryRun, IncludeIncomplete: *incomplete})
+	result, err := recording.Cleanup(root, policy, recording.CleanupOptions{DryRun: *dryRun, IncludeIncomplete: *incomplete})
 	printCleanup(result, *dryRun)
 	return err
 }
 
-func printCleanup(result session.CleanupResult, dryRun bool) {
+func printCleanup(result recording.CleanupResult, dryRun bool) {
 	if result.Busy {
 		fmt.Println("Cleanup skipped: another cleanup is running.")
 		return
@@ -150,7 +150,7 @@ func startSessionCleanup(cfg *Config) func() {
 	return startCleanupLoop(root, policy, 10*time.Minute)
 }
 
-func startCleanupLoop(root string, policy session.RetentionPolicy, interval time.Duration) func() {
+func startCleanupLoop(root string, policy recording.RetentionPolicy, interval time.Duration) func() {
 	cleanSessions(root, policy)
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
@@ -169,8 +169,8 @@ func startCleanupLoop(root string, policy session.RetentionPolicy, interval time
 	return func() { close(stop); <-done }
 }
 
-func cleanSessions(root string, policy session.RetentionPolicy) {
-	result, err := session.Cleanup(root, policy, session.CleanupOptions{})
+func cleanSessions(root string, policy recording.RetentionPolicy) {
+	result, err := recording.Cleanup(root, policy, recording.CleanupOptions{})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[ccr cleanup] %v\n", err)
 	}

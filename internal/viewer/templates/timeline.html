@@ -24,6 +24,7 @@
                     <button type="button" class="timeline-inspect" aria-expanded="false" aria-label="Details for {{.Name}}">Details</button>
                 </div>
                 <div class="timeline-details" hidden>
+                    {{if .ScopeID}}<p><a href="#session" data-timeline-scope="{{.ScopeID}}">Open loop details</a></p>{{end}}
                     <dl><dt>Stage ID</dt><dd><code>{{.ID}}</code></dd><dt>Parent ID</dt><dd><code>{{.ParentID}}</code></dd>
                     {{if .MissingParent}}<dt>Recording</dt><dd>parent not recorded</dd>{{end}}
                     {{if .Code}}<dt>Code</dt><dd>{{.Code}}</dd>{{end}}

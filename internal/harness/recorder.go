@@ -5,15 +5,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
-
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 type recordedCall struct {
-	record    *session.TaskRecord
 	alias     string
 	arguments string
 	duration  time.Duration
@@ -26,25 +22,24 @@ type recordedModel struct {
 }
 
 // executionRecorder joins model responses and later tool events by call ID.
-// A model turn owns its session TaskRecord; tools only append results to the
-// record of the assistant message that requested them.
+// Only UI routing, arguments, durations and aggregate usage are retained.
+// Native event recording belongs to the local AgentGo Session.
 type executionRecorder struct {
 	executionID string
-	taskType    session.TaskType
-	session     *session.SessionHistory
-	scope       session.Scope
+	taskType    recording.TaskType
+	session     *recording.Review
+	scope       recording.Scope
 
-	mu           sync.Mutex
-	calls        map[string][]recordedCall
-	models       []recordedModel
-	usage        llm.UsageInfo
-	projectionNo int
+	mu     sync.Mutex
+	calls  map[string][]recordedCall
+	models []recordedModel
+	usage  llm.UsageInfo
 }
 
 func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionRecorder {
 	taskType := spec.TaskType
 	if taskType == "" {
-		taskType = session.MainTask
+		taskType = recording.MainTask
 	}
 	return &executionRecorder{
 		executionID: executionID,
@@ -55,39 +50,20 @@ func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionReco
 	}
 }
 
-func (r *executionRecorder) recordCompaction(compaction session.ContextCompaction, stageID timeline.StageID) {
-	if r.session == nil {
-		return
-	}
-	r.session.WriteContextCompaction(r.scope, r.executionID, r.taskType, compaction, stageID)
-}
-
-func (r *executionRecorder) recordContextProjected(items []agentgo.ContextItem, stageID timeline.StageID) {
-	if r.session == nil {
-		return
-	}
-	r.mu.Lock()
-	r.projectionNo++
-	projectionNo := r.projectionNo
-	r.mu.Unlock()
-	r.session.WriteContextProjected(r.scope, r.executionID, r.taskType, projectionNo, items, stageID)
-}
-
 func (r *executionRecorder) beginModel(
-	taskType session.TaskType,
+	taskType recording.TaskType,
 	messages []llm.Message,
-) *session.TaskRecord {
+) *recording.TaskRecord {
 	if r.session == nil {
 		return nil
 	}
 	if taskType == "" {
-		taskType = session.MainTask
+		taskType = recording.MainTask
 	}
 	return r.session.GetOrCreateScope(r.scope).AppendExecutionTaskRecord(r.executionID, taskType, messages)
 }
 
 func (r *executionRecorder) finishModel(
-	record *session.TaskRecord,
 	response *llm.ChatResponse,
 	duration time.Duration,
 	trackEvent bool,
@@ -110,7 +86,6 @@ func (r *executionRecorder) finishModel(
 	}
 	for _, call := range response.ToolCalls() {
 		r.calls[call.ID] = append(r.calls[call.ID], recordedCall{
-			record:    record,
 			alias:     response.Alias,
 			arguments: call.Function.Arguments,
 		})
@@ -157,14 +132,13 @@ func (r *executionRecorder) finishToolExecution(id string, duration time.Duratio
 	}
 }
 
-func (r *executionRecorder) finishTool(id, name string, result []byte, isError bool, stageID timeline.StageID) {
+func (r *executionRecorder) finishTool(id string) {
 	r.mu.Lock()
 	calls := r.calls[id]
 	if len(calls) == 0 {
 		r.mu.Unlock()
 		return
 	}
-	call := calls[0]
 	if len(calls) == 1 {
 		delete(r.calls, id)
 	} else {
@@ -172,10 +146,6 @@ func (r *executionRecorder) finishTool(id, name string, result []byte, isError b
 	}
 	r.mu.Unlock()
 
-	if call.record == nil {
-		return
-	}
-	call.record.AddToolResultWithMetadata(id, name, call.arguments, toolResultText(result), !isError, call.duration, nil, stageID)
 }
 
 func toolResultText(raw []byte) string {

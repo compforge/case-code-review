@@ -75,7 +75,7 @@ class CCRSessionSourceTest(unittest.TestCase):
 def _write_session(path: Path, repo: Path, *, session_id: str, closed: bool) -> None:
     records = [
         {
-            "type": "session_start",
+            "type": "session_start", "schema_version": 13,
             "sessionId": session_id,
             "timestamp": "2026-08-20T10:00:00Z",
             "cwd": str(repo),

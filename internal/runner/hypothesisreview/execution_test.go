@@ -6,15 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/compforge/agentgo"
 	"time"
+
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -39,8 +40,8 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 		ToolDefs:       []llm.ToolDef{AssessmentToolDef()},
 		ToolHandler:    &AssessmentHook{Collector: collector},
 		CompletionTool: SubmitAssessment.Name(),
-		Session:        &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
-		Scope:          session.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
+		Session:        &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
+		Scope:          recording.Scope{ID: "hypothesis_review:l-1", Kind: "lane"},
 		MaxTurns:       2,
 		MaxTokens:      1_000,
 	})
@@ -71,7 +72,7 @@ func TestReviewBindsAssessmentToCurrentHypothesis(t *testing.T) {
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{prior_assessments}}"},
 		}},
 		LLMClient: client,
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  1,
 		MaxTokens: 2_000,
 	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
@@ -103,7 +104,7 @@ func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{evidence_paths}}"},
 		}},
 		LLMClient: client,
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  1,
 		MaxTokens: 2_000,
 	}, ReviewInput{LaneID: "l-1", Unit: reviewUnit, Hypothesis: hypothesis}, nil)
@@ -145,7 +146,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 		ToolDefs: []llm.ToolDef{{
 			Type: "function", Function: llm.FunctionDef{Name: tool.FileRead.Name()},
 		}},
-		Tools: registry, Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Tools: registry, Session: &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns: 2, MaxTokens: 2_000, FileDedup: true,
 	}, ReviewInput{LaneID: "l-1", Unit: reviewUnit, Hypothesis: hypothesis}, nil)
 
@@ -181,7 +182,7 @@ func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
 			{Role: "user", Content: "{{hypothesis}}"},
 		}},
 		LLMClient: client,
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  3,
 		MaxTokens: 2_000,
 	}, ReviewInput{LaneID: "l-1", Hypothesis: hypothesis}, nil)
@@ -210,7 +211,7 @@ func TestReviewTimeoutRemainsUnassessed(t *testing.T) {
 			{Role: "user", Content: "{{hypothesis}}"},
 		}},
 		LLMClient: &blockingAssessmentClient{},
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  2,
 		MaxTokens: 2_000,
 		OnAssessment: func(submission AssessmentSubmission) {

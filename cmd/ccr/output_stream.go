@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
@@ -52,7 +52,7 @@ func (e *jsonlEmitter) emit(event jsonlEvent) {
 	e.err = e.encoder.Encode(event)
 }
 
-func (e *jsonlEmitter) start(sh *session.SessionHistory) {
+func (e *jsonlEmitter) start(sh *recording.Review) {
 	event := jsonlEvent{Type: "run_started", Version: Version}
 	if sh != nil {
 		event.SessionID = sh.SessionID

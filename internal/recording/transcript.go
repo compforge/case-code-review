@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bufio"
@@ -19,6 +19,7 @@ type Transcript struct {
 	Records       []map[string]any
 	Timeline      timeline.Snapshot
 	TruncatedTail bool
+	Gaps          []string
 }
 
 // ReadTranscript accepts a valid prefix followed by a torn final line. A malformed

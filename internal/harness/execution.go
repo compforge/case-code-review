@@ -10,13 +10,16 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/agentgo/codec"
+	agentsession "github.com/compforge/agentgo/session"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 var errExplorationExpired = errors.New("exploration request deadline reached")
@@ -36,23 +39,25 @@ const (
 // +spec=`Messages contains full AgentMessages; Harness must not pre-project them before AgentGo ContextManager requests compaction`
 // +case:id=full_messages_enter_harness,desc=`execution starts with compactable domain messages`,expect=`first unconstrained model request sees full content and Raw remains full after later compaction`
 type ExecutionSpec struct {
-	LLMClient        llm.LLMClient
-	Model            string
-	Messages         []agentgo.AgentMessage
-	ToolDefs         []llm.ToolDef
-	Tools            *tool.Registry
-	ToolHandler      ToolHandler
-	Session          *session.SessionHistory
-	Scope            session.Scope
-	TaskType         session.TaskType
-	Events           EventSink
-	TurnContext      TurnContextProvider
-	MaxTurns         int
-	MaxTokens        int
-	ContextWindow    int
-	FileDedupEnabled bool
-	FileEvictEnabled bool
-	WrapUpPrompt     string
+	// SessionCodecOptions register caller-owned message representations. The Session protocol remains AgentGo-owned.
+	SessionCodecOptions []codec.Option
+	LLMClient           llm.LLMClient
+	Model               string
+	Messages            []agentgo.AgentMessage
+	ToolDefs            []llm.ToolDef
+	Tools               *tool.Registry
+	ToolHandler         ToolHandler
+	Session             *recording.Review
+	Scope               recording.Scope
+	TaskType            recording.TaskType
+	Events              EventSink
+	TurnContext         TurnContextProvider
+	MaxTurns            int
+	MaxTokens           int
+	ContextWindow       int
+	FileDedupEnabled    bool
+	FileEvictEnabled    bool
+	WrapUpPrompt        string
 	// WrapUpAfterTurns ends open-ended investigation after this many complete
 	// turns. Zero disables this investigation limit; turn, deadline, and token
 	// reserves still apply when WrapUpPrompt is set.
@@ -104,16 +109,21 @@ type ExecutionResult struct {
 	ToolCalls  int
 	ToolErrors int
 
-	context   []agentgo.AgentMessage
-	artifacts []agentgo.Artifact
+	context     []agentgo.AgentMessage
+	artifacts   []agentgo.Artifact
+	sessionPath string
 }
 
 // Execution owns one Harness run from immutable input through terminal result.
 // AgentGo, context projection, recording, tools, and completion state remain
 // private children of this lifecycle; callers only construct and Run it.
 type Execution struct {
-	id   string
-	spec ExecutionSpec
+	id           string
+	spec         ExecutionSpec
+	localSession *agentsession.Session
+	localRun     *agentsession.Run
+	sessionPath  string
+	recordingErr error
 
 	recorder             *executionRecorder
 	contextManager       *contextManager
@@ -181,7 +191,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 	e.recorder = newExecutionRecorder(spec, e.id)
 	taskType := spec.TaskType
 	if taskType == "" {
-		taskType = session.MainTask
+		taskType = recording.MainTask
 	}
 	e.model = &chatModel{
 		client:    spec.LLMClient,
@@ -196,7 +206,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		model:     spec.Model,
 		maxTokens: spec.MaxTokens,
 		recorder:  e.recorder,
-		taskType:  session.MemoryCompressionTask,
+		taskType:  recording.MemoryCompressionTask,
 	}
 	e.contextManager = newContextManager(spec, contextModel)
 	e.turns = newTurnController(spec)
@@ -231,9 +241,12 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
 	}
 
+	e.openSession()
+	defer e.closeSession()
+	e.beginRun()
 	startedAt := time.Now()
 	ctx, timing := e.beginTimeline(ctx, startedAt)
-	e.spec.Session.CheckpointTimeline()
+	e.bindRun(timing)
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
@@ -263,7 +276,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		agentgo.AgentContext{Messages: history, Tools: e.tools},
 		config,
 	)
-	end := e.consumeLoop(events, timing, e.id)
+	end := e.consumeLoop(events, timing, e.runID())
+	e.closeRun()
 	if errors.Is(e.runErr, errExplorationExpired) && ctx.Err() == nil && end.State != nil {
 		e.turns.finishExploration(ctx)
 		if e.spec.Session != nil {
@@ -276,12 +290,18 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		state.Progress.NextTurn = true
 		config.InitialState = state
 		e.runErr = nil
-		runID := e.id + "/wrap-up"
+		e.beginRun()
+		runID := e.runID()
+		if e.localRun == nil {
+			runID = e.id + "/wrap-up"
+		}
+		e.bindRun(timing)
 		if timing != nil {
 			timing.runID = runID
 		}
 		events = agentgo.AgentLoopContinue(ctx, agentgo.AgentContext{Messages: state.Messages, Tools: e.tools}, config)
 		end = e.consumeLoop(events, timing, runID)
+		e.closeRun()
 	}
 	if errors.Is(e.runErr, errExplorationExpired) {
 		emitExecutionEvent(e.spec.Events, e.recorder, agentgo.Event{Type: agentgo.EventError, Err: e.runErr}, e.id)
@@ -292,9 +312,9 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		result.artifacts = end.State.Artifacts
 	}
 	result.ID = e.id
+	result.sessionPath = e.sessionPath
 	result.Duration = time.Since(startedAt)
 	timing.finish(result, err)
-	e.spec.Session.CheckpointTimeline()
 	return result, err
 }
 
@@ -303,6 +323,9 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 func (e *Execution) consumeLoop(events <-chan agentgo.Event, timing *executionTimeline, runID string) agentgo.Event {
 	var end agentgo.Event
 	for event := range events {
+		if e.localRun != nil && e.recordingErr == nil {
+			e.recordingError(e.localRun.Record(recordableEvent(event)))
+		}
 		timing.observe(event)
 		switch event.Type {
 		case agentgo.EventError:
@@ -315,7 +338,7 @@ func (e *Execution) consumeLoop(events <-chan agentgo.Event, timing *executionTi
 		case agentgo.EventToolExecEnd:
 			emitExecutionEvent(e.spec.Events, e.recorder, event, runID)
 			if event.Tool != tool.TaskDone.Name() {
-				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError, timing.eventStage(event))
+				e.recorder.finishTool(event.ToolID)
 			}
 			continue
 		case agentgo.EventAgentEnd:
@@ -763,4 +786,70 @@ func normalizedToolDef(def llm.FunctionDef) llm.FunctionDef {
 		}
 	}
 	return def
+}
+
+func (e *Execution) recordingError(err error) {
+	if err == nil || e.recordingErr != nil {
+		return
+	}
+	e.recordingErr = err
+	telemetry.ReportTimelineError(fmt.Errorf("execution %s session: %w", e.id, err))
+	if e.spec.Session != nil {
+		e.spec.Session.WriteArtifact("recording_gap", map[string]any{"execution_id": e.id, "error": err.Error()})
+	}
+}
+func (e *Execution) openSession() {
+	previous := ""
+	if e.spec.ContinueFrom != nil {
+		previous = e.spec.ContinueFrom.sessionPath
+	}
+	var err error
+	e.localSession, e.sessionPath, err = e.spec.Session.OpenLoop(previous, e.spec.SessionCodecOptions...)
+	e.recordingError(err)
+}
+func (e *Execution) closeSession() {
+	if e.localSession != nil {
+		e.recordingError(e.localSession.Close())
+	}
+}
+func (e *Execution) beginRun() {
+	if e.localSession == nil || e.recordingErr != nil {
+		return
+	}
+	var err error
+	e.localRun, err = e.localSession.BeginRun()
+	e.recordingError(err)
+}
+func (e *Execution) closeRun() {
+	if e.localRun != nil {
+		e.recordingError(e.localRun.Close())
+		e.localRun = nil
+	}
+}
+func (e *Execution) runID() string {
+	if e.localRun != nil {
+		return e.localRun.ID()
+	}
+	return e.id
+}
+func (e *Execution) bindRun(timing *executionTimeline) {
+	if timing == nil {
+		return
+	}
+	timing.runID = e.runID()
+	timing.run = e.localRun
+	clear(timing.parents)
+}
+
+// CCR tools return human-readable bytes as well as JSON. Preserve those bytes
+// as a JSON string in the Session envelope without changing runtime tool data.
+func recordableEvent(event agentgo.Event) agentgo.Event {
+	if event.ToolResult != nil {
+		result := *event.ToolResult
+		if len(result.Content) > 0 && !json.Valid(result.Content) {
+			result.Content, _ = json.Marshal(string(result.Content))
+		}
+		event.ToolResult = &result
+	}
+	return event
 }

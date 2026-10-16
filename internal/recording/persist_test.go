@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bufio"
@@ -11,10 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/compforge/agentgo"
-
 	"github.com/compforge/go-stdx/uuid"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 func TestEncodeRepoPath(t *testing.T) {
@@ -137,9 +134,9 @@ func sessionJSONLPath(t *testing.T, repoDir, sessionID string) string {
 }
 
 func TestSetErrorIncrementsCounter(t *testing.T) {
-	sh := &SessionHistory{
+	sh := &Review{
 		SessionID: uuid.V4(),
-		Scopes:    make(map[string]*ScopeSession),
+		Scopes:    make(map[string]*ReviewScope),
 	}
 	fs := sh.GetOrCreateScope(Scope{ID: "test.go", Kind: "file", Type: "file", Paths: []string{"test.go"}})
 
@@ -155,143 +152,6 @@ func TestSetErrorIncrementsCounter(t *testing.T) {
 
 	if got := sh.LLMFailures(); got != 2 {
 		t.Errorf("after 2 errors: LLMFailures() = %d, want 2", got)
-	}
-}
-
-func TestSetErrorWritesJSONL(t *testing.T) {
-	repoDir := t.TempDir()
-	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
-	defer sh.Finalize()
-
-	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "file", Type: "file", Paths: []string{"foo.go"}})
-	rec := fs.AppendTaskRecord(MainTask, nil)
-	rec.SetError(fmt.Errorf("connection refused"), 500*time.Millisecond)
-
-	if sh.persist != nil {
-		sh.persist.mu.Lock()
-		sh.persist.writer.Flush()
-		sh.persist.mu.Unlock()
-	}
-
-	path := sessionJSONLPath(t, repoDir, sh.SessionID)
-	records := readJSONLRecords(t, path)
-
-	var found bool
-	for _, r := range records {
-		if r["type"] == "llm_error" {
-			found = true
-			if r["filePath"] != "foo.go" {
-				t.Errorf("filePath = %v, want foo.go", r["filePath"])
-			}
-			if r["taskType"] != string(MainTask) {
-				t.Errorf("taskType = %v, want %s", r["taskType"], MainTask)
-			}
-			if r["error"] != "connection refused" {
-				t.Errorf("error = %v, want connection refused", r["error"])
-			}
-			break
-		}
-	}
-	if !found {
-		t.Error("no llm_error record found in JSONL")
-	}
-}
-
-func TestLLMErrorWritesStructuredFailure(t *testing.T) {
-	repoDir := t.TempDir()
-	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
-	fs := sh.GetOrCreateScope(Scope{ID: "foo.go", Kind: "file", Type: "file", Paths: []string{"foo.go"}})
-	sh.persist.WriteLLMError(
-		fs, "exec-1", MainTask, 1, "request-1", "routing timed out",
-		&llm.ErrorDetails{
-			Kind: "llm", Phase: "routing", ErrorType: "timeout",
-			Code: "routing_budget_exhausted",
-			Attributes: map[string]any{
-				"request_phase": "await_response",
-			},
-		},
-	)
-	sh.Finalize()
-
-	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
-	for _, record := range records {
-		if record["type"] != "llm_error" {
-			continue
-		}
-		failure, ok := record["failure"].(map[string]any)
-		if !ok || failure["kind"] != "llm" || failure["phase"] != "routing" ||
-			failure["error_type"] != "timeout" || failure["code"] != "routing_budget_exhausted" {
-			t.Fatalf("failure = %+v", record["failure"])
-		}
-		attributes := failure["attributes"].(map[string]any)
-		if attributes["request_phase"] != "await_response" {
-			t.Fatalf("failure attributes = %+v", attributes)
-		}
-		return
-	}
-	t.Fatal("no llm_error record found in JSONL")
-}
-
-func TestResponseAndToolMetadataWriteJSONL(t *testing.T) {
-	repoDir := t.TempDir()
-	sh := New(repoDir, "main", "test-model", SessionOptions{ReviewMode: ReviewModeWorkspace})
-	scope := Scope{ID: "foo.go", Kind: "unit", Type: "file", Paths: []string{"foo.go"}}
-	fs := sh.GetOrCreateScope(scope)
-	sh.WriteContextProjected(scope, "exec-1", MainTask, 1, []agentgo.ContextItem{
-		{ContextKey: agentgo.ContextKey{Kind: "file", Identity: "foo.go"}, Representation: "source", Reason: "unit", Ref: "foo.go::F"},
-	}, "model-1")
-	rec := fs.AppendTaskRecord(MainTask, nil)
-	content := "I will inspect both files."
-	rec.SetResponse(&llm.ChatResponse{
-		Model: "served-model",
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Content:          &content,
-				ReasoningContent: "The paths are independent.",
-				ToolCalls: []llm.ToolCall{{
-					ID: "call-1", Type: "function",
-					Function: llm.FunctionCall{Name: "read_files", Arguments: `{"reads":[{"file_path":"foo.go"}]}`},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-	}, 120*time.Millisecond)
-	rec.AddToolResultWithMetadata(
-		"call-1", "read_files", `{"reads":[{"file_path":"foo.go"}]}`, "File: foo.go", true, 8*time.Millisecond,
-		map[string]any{"cache_status": "hit"}, "tool-stage",
-	)
-	sh.Finalize()
-
-	records := readJSONLRecords(t, sessionJSONLPath(t, repoDir, sh.SessionID))
-	var initial, response, toolCall map[string]any
-	for _, record := range records {
-		switch record["type"] {
-		case "context_projected":
-			initial = record
-		case "llm_response":
-			response = record
-		case "tool_result":
-			toolCall = record
-		}
-	}
-	if initial == nil || initial["execution_id"] != "exec-1" || initial["projection_no"] != float64(1) {
-		t.Fatalf("context projection record = %+v", initial)
-	}
-	items := initial["items"].([]any)
-	item := items[0].(map[string]any)
-	if item["kind"] != "file" || item["identity"] != "foo.go" ||
-		item["representation"] != "source" || item["reason"] != "unit" || item["ref"] != "foo.go::F" {
-		t.Fatalf("context projection items = %+v", items)
-	}
-	if response == nil || response["reasoning"] != "The paths are independent." || response["stop_reason"] != "tool_calls" {
-		t.Fatalf("response metadata = %+v", response)
-	}
-	if toolCall == nil || toolCall["tool_call_id"] != "call-1" || toolCall["request_id"] != string(rec.StageID) {
-		t.Fatalf("tool metadata = %+v", toolCall)
-	}
-	metadata, ok := toolCall["metadata"].(map[string]any)
-	if !ok || metadata["cache_status"] != "hit" {
-		t.Fatalf("tool context metadata = %+v", toolCall)
 	}
 }
 

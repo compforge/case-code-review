@@ -10,7 +10,7 @@ import (
 
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
@@ -59,7 +59,7 @@ func (a *Runner) finishHypothesis(input hypothesisreview.ReviewInput, result hyp
 }
 
 func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitRun, gate *trial.Gate, releaseDiscovery func()) {
-	ctx, finish := session.Begin(parent, "review.pipeline", timeline.Attribute{Key: "unit_id", Value: u.ID})
+	ctx, finish := recording.Begin(parent, "review.pipeline", timeline.Attribute{Key: "unit_id", Value: u.ID})
 	run.budget = newUnitBudget(ctx, time.Duration(a.args.ConcurrentTaskTimeout)*time.Minute, a.args.Template.ReviewTimeBudget, a.features.Enabled(feature.HypothesisReview))
 	defer run.budget.close()
 	a.session.WriteArtifactContext(ctx, "unit_budget", map[string]any{
@@ -67,7 +67,7 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 		"review1_deadline": run.budget.discoveryEnd, "review1_wrap_up": run.budget.discoveryWrapUp,
 		"review2_deadline": run.budget.reviewEnd, "review2_wrap_up": run.budget.wrapUpDeadline(),
 	})
-	deb := session.Debrief{Formed: string(u.Formed)}
+	deb := recording.Debrief{Formed: string(u.Formed)}
 	var reviewErr error
 	defer func() {
 		if p := recover(); p != nil {
@@ -98,7 +98,7 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 			if a.features.Enabled(feature.HypothesisReview) && len(snapshot.Assessments) < len(snapshot.Hypotheses) && deb.Outcome == harness.OutcomeCompleted {
 				deb.Outcome, deb.Reason = harness.OutcomeTruncated, "Review 2 has unassessed hypotheses"
 			}
-			trialCtx, finishTrial := session.Begin(run.budget.ctx, "trial.finalize", timeline.Attribute{Key: "unit_id", Value: u.ID})
+			trialCtx, finishTrial := recording.Begin(run.budget.ctx, "trial.finalize", timeline.Attribute{Key: "unit_id", Value: u.ID})
 			var findings []finding.Finding
 			var decisions []unit.TrialDecision
 			if a.features.Enabled(feature.HypothesisReview) {
@@ -127,7 +127,7 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 			a.recordWarning("unit_incomplete", u.Path(), fmt.Sprintf("unit %s: %s (%s)", u.ID, deb.Outcome, deb.Reason))
 			reviewErr = errors.Join(reviewErr, fmt.Errorf("%s: %s", deb.Outcome, deb.Reason))
 		}
-		a.session.CloseScope(session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}, deb)
+		a.session.CloseScope(recording.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}, deb)
 		a.session.Flush()
 		finish(reviewErr)
 	}()

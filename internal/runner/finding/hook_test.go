@@ -5,15 +5,15 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestHookAnchorsFindingToScope(t *testing.T) {
 	collector := NewCollector()
 	hook := &Hook{Collector: collector}
 	result, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
-		Scope: session.Scope{ID: "correct.go", Kind: "file", Type: "file", Paths: []string{"correct.go"}},
+		Scope: recording.Scope{ID: "correct.go", Kind: "file", Type: "file", Paths: []string{"correct.go"}},
 		Tool:  CodeComment,
 		Call:  llm.ToolCall{Function: llm.FunctionCall{Name: "code_comment"}},
 		Args: map[string]any{
@@ -36,7 +36,7 @@ func TestHookKeepsMemberPath(t *testing.T) {
 	collector := NewCollector()
 	hook := &Hook{Collector: collector}
 	_, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
-		Scope: session.Scope{ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"}},
+		Scope: recording.Scope{ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"}},
 		Tool:  CodeComment,
 		Call:  llm.ToolCall{Function: llm.FunctionCall{Name: "code_comment"}},
 		Args: map[string]any{

@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 const atifSchemaVersion = "ATIF-v1.8"
@@ -87,6 +87,8 @@ type atifFinal struct {
 // exportEvent is the read-side of session records for export — richer than
 // statsEvent (full messages / tool calls / usage), still decode-what-we-need.
 type exportEvent struct {
+	CallID                 string           `json:"call_id"`
+	SessionRef             map[string]any   `json:"session_ref"`
 	StageID                string           `json:"stage_id"`
 	RequestID              string           `json:"request_id"`
 	ToolCallID             string           `json:"tool_call_id"`
@@ -159,12 +161,12 @@ func runExport(args []string) error {
 		case "--pretty":
 			pretty = true
 		case "-h", "--help":
-			fmt.Println(`Usage: ccr export [session.jsonl | dir]... [--format atif] [--pretty]
+			fmt.Println(`Usage: ccr export [recording.jsonl | dir]... [--format atif] [--pretty]
 
 Convert session transcripts to ATIF (Agent Trajectory Interchange Format,
 Harbor RFC 0001): one root trajectory per session, one embedded subagent
 trajectory per review unit. Output is JSONL on stdout (one trajectory per
-session; --pretty indents). With no path, exports the most recent session.`)
+session; --pretty indents). With no path, exports the most recent recording.`)
 			return nil
 		default:
 			paths = append(paths, args[i])
@@ -250,7 +252,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		return c
 	}
 
-	transcript, err := session.ReadTranscript(f)
+	transcript, err := recording.ReadReview(f.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +343,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 					CachedTokens:     e.Usage.CacheReadTokens,
 					Extra:            map[string]any{"duration_ms": e.DurationMS},
 				},
-				Extra: map[string]any{"task_type": e.TaskType, "stage_id": e.StageID},
+				Extra: map[string]any{"task_type": e.TaskType, "stage_id": e.StageID, "session_ref": e.SessionRef},
 			}
 
 			if stage, ok := stages[timeline.StageID(e.StageID)]; !ok || stage.FinishedAt.IsZero() {
@@ -359,7 +361,11 @@ func exportSession(path string) (*atifTrajectory, error) {
 			c.total.TotalCompletionTokens += e.Usage.CompletionTokens
 			c.total.TotalCachedTokens += e.Usage.CacheReadTokens
 			c.steps = append(c.steps, st)
-			c.requests[e.StageID] = st
+			id := e.CallID
+			if id == "" {
+				id = e.StageID
+			}
+			c.requests[id] = st
 		case "tool_result":
 			c := get(e)
 			owner := c.requests[e.RequestID]
@@ -378,6 +384,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 			}
 			res.SourceCallID = e.ToolCallID
 			res.Extra["stage_id"] = e.StageID
+			res.Extra["session_ref"] = e.SessionRef
 			if owner.Observation == nil {
 				owner.Observation = &atifObs{}
 			}
@@ -386,7 +393,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		case "llm_error":
 			c := get(e)
 			c.stepID++
-			extra := map[string]any{"llm_error": e.Error, "stage_id": e.StageID}
+			extra := map[string]any{"llm_error": e.Error, "stage_id": e.StageID, "session_ref": e.SessionRef}
 			if stage, ok := stages[timeline.StageID(e.StageID)]; ok && !stage.FinishedAt.IsZero() {
 				extra["duration_ms"] = e.DurationMS
 			}

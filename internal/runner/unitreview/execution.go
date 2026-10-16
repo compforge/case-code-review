@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/agentgo/codec"
 
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -42,11 +43,12 @@ type Outcome struct {
 // review semantics such as Board publication and run-level aggregation; the
 // Harness receives only its domain-neutral interfaces.
 type Executor struct {
+	sessionCodecOptions     []codec.Option
 	llmClient               llm.LLMClient
 	model                   string
 	tools                   *tool.Registry
 	toolDefs                []llm.ToolDef
-	session                 *session.SessionHistory
+	session                 *recording.Review
 	handler                 harness.ToolHandler
 	board                   *board.Registry
 	postBulletin            bool
@@ -73,11 +75,12 @@ type Executor struct {
 }
 
 type ExecutorConfig struct {
+	SessionCodecOptions     []codec.Option
 	LLMClient               llm.LLMClient
 	Model                   string
 	Tools                   *tool.Registry
 	ToolDefs                []llm.ToolDef
-	Session                 *session.SessionHistory
+	Session                 *recording.Review
 	MaxTurns                int
 	MaxTokens               int
 	MaxCompletionTokens     int
@@ -101,6 +104,7 @@ func NewExecutor(
 		})
 	}
 	return &Executor{
+		sessionCodecOptions:     config.SessionCodecOptions,
 		llmClient:               config.LLMClient,
 		model:                   config.Model,
 		tools:                   config.Tools,
@@ -123,7 +127,7 @@ func NewExecutor(
 func (e *Executor) Run(
 	ctx context.Context,
 	messages []agentgo.AgentMessage,
-	scope session.Scope,
+	scope recording.Scope,
 	reviewUnit *unit.Unit,
 	wrapUpAt time.Time,
 ) (Outcome, error) {
@@ -139,6 +143,7 @@ func (e *Executor) Run(
 		turnContext = run
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
+		SessionCodecOptions:     e.sessionCodecOptions,
 		LLMClient:               e.llmClient,
 		Model:                   e.model,
 		Messages:                messages,
@@ -147,7 +152,7 @@ func (e *Executor) Run(
 		ToolHandler:             run,
 		Session:                 e.session,
 		Scope:                   scope,
-		TaskType:                session.MainTask,
+		TaskType:                recording.MainTask,
 		Events:                  run,
 		TurnContext:             turnContext,
 		MaxTurns:                e.maxTurns,
@@ -303,7 +308,7 @@ func (e *Executor) countableTool(name string) bool {
 type unitExecution struct {
 	executor   *Executor
 	ctx        context.Context
-	scope      session.Scope
+	scope      recording.Scope
 	reviewUnit *unit.Unit
 
 	mu             sync.Mutex
@@ -314,7 +319,7 @@ type unitExecution struct {
 	boardPosted    int64
 }
 
-func (r *unitExecution) PullTurnContext(_ context.Context, _ session.Scope) []agentgo.AgentMessage {
+func (r *unitExecution) PullTurnContext(_ context.Context, _ recording.Scope) []agentgo.AgentMessage {
 	r.mu.Lock()
 	r.turn++
 	r.mu.Unlock()

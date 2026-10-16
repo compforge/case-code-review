@@ -8,7 +8,7 @@ import (
 	agentcontext "github.com/compforge/agentgo/context"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -76,7 +76,7 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 		return nil, nil, "", err
 	}
 	preview := a.buildPreview()
-	formationCtx, finish := session.Begin(ctx, "unit.formation")
+	formationCtx, finish := recording.Begin(ctx, "unit.formation")
 	units, err := a.splitUnits(formationCtx)
 	if err == nil && a.session != nil {
 		a.persistFormedUnits(formationCtx, units)

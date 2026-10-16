@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/agentgo/codec"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -121,4 +122,28 @@ func (d *ClueMessage) ContextItems() []agentgo.ContextItem {
 		representation = "reference"
 	}
 	return []agentgo.ContextItem{{ContextKey: agentgo.ContextKey{Kind: "clue", Identity: (ClueArtifact{ClueKind: d.Kind, Text: d.Text}).ID()}, Representation: representation, Ref: d.Ref, Reason: d.label}}
+}
+
+func clueCodecOptions() []codec.Option {
+	return []codec.Option{codec.WithHandler[*ClueMessage, clueRecord]("ccr.clue.v1", clueCodec{}), codec.Type[ClueArtifact]("ccr.clue-artifact.v1")}
+}
+
+type clueRecord struct {
+	Kind        unit.ClueKind `codec:"kind"`
+	Relation    unit.Relation `codec:"relation"`
+	Text        string        `codec:"text"`
+	Ref         string        `codec:"ref"`
+	Snapshot    string        `codec:"snapshot"`
+	Timestamp   time.Time     `codec:"timestamp"`
+	Label       string        `codec:"label"`
+	Reference   bool          `codec:"reference"`
+	DuplicateOf string        `codec:"duplicate_of"`
+}
+type clueCodec struct{}
+
+func (clueCodec) Encode(m *ClueMessage) (clueRecord, error) {
+	return clueRecord{m.Kind, m.Relation, m.Text, m.Ref, m.Snapshot, m.timestamp, m.label, m.reference, m.duplicateOf}, nil
+}
+func (clueCodec) Decode(m clueRecord) (*ClueMessage, error) {
+	return &ClueMessage{Clue: unit.Clue{Kind: m.Kind, Relation: m.Relation, Text: m.Text, Ref: m.Ref, Snapshot: m.Snapshot}, timestamp: m.Timestamp, label: m.Label, reference: m.Reference, duplicateOf: m.DuplicateOf}, nil
 }

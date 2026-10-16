@@ -9,8 +9,8 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -31,7 +31,7 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := &budgetClient{}
 			repo := t.TempDir()
-			history := session.New(repo, "main", "test", session.SessionOptions{})
+			history := recording.New(repo, "main", "test", recording.SessionOptions{})
 
 			conversation := template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}
 			tpl := template.Template{MainTask: conversation, MaxTokens: 10000, MaxToolRequestTimes: 5}
@@ -76,7 +76,7 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 
 func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 	client := &budgetClient{}
-	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	// Explicitly admit the text fixture so this test isolates the merge budget.
 	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client, FileFilter: &rules.FileFilter{Include: []string{"large.txt"}},
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})

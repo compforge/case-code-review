@@ -10,9 +10,9 @@ import (
 
 	"github.com/compforge/agentgo"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 // chatModel keeps CCR's provider routing and retry behavior behind agentgo's
@@ -23,7 +23,7 @@ type chatModel struct {
 	model        string
 	maxTokens    int
 	recorder     *executionRecorder
-	taskType     session.TaskType
+	taskType     recording.TaskType
 	events       bool
 	observeUsage func(*llm.UsageInfo)
 }
@@ -53,7 +53,7 @@ func (m *chatModel) Generate(
 	if resp != nil && m.observeUsage != nil {
 		m.observeUsage(resp.Usage)
 	}
-	m.recorder.finishModel(record, resp, time.Since(started), m.events)
+	m.recorder.finishModel(resp, time.Since(started), m.events)
 	if err != nil {
 		return nil, err
 	}

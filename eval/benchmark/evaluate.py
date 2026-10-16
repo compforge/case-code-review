@@ -11,7 +11,7 @@ from harness_common.llm import LLMClient
 from eval.benchmark.matching import Matcher, match_reference
 from eval.benchmark.report import write_report
 from eval.benchmark.stages import project
-from eval.eval_snapshot import file_sha256
+from eval.eval_snapshot import review_sha256
 
 
 def selection_reasons(result: dict) -> list[str]:
@@ -42,7 +42,7 @@ async def evaluate(run: dict, matcher: Matcher) -> dict:
     session = Path(run["session"]) if run.get("session") else None
     if session is None or not session.is_file():
         result["gaps"] = ["session missing"]
-    elif file_sha256(session) != run.get("session_sha256"):
+    elif review_sha256(session) != run.get("session_sha256"):
         result["gaps"] = ["session changed since run capture"]
     else:
         try:

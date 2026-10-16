@@ -7,9 +7,9 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
@@ -22,8 +22,10 @@ func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
 		toolCallResponseID("read-2", "read_files", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":1}]}`, nil),
 		toolCallResponseID("done", "task_done", `{}`, nil),
 	}}
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
-	scope := session.Scope{ID: "bounded", Kind: "unit", Paths: []string{"pkg/a.go"}}
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
+	scope := recording.Scope{ID: "bounded", Kind: "unit", Paths: []string{"pkg/a.go"}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
 		LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("task_done")}, Tools: registry,
@@ -48,8 +50,9 @@ func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
 	if seen != 3 {
 		t.Fatalf("tool observations = %d, want 3", seen)
 	}
-	records := history.Scopes[scope.ID].TaskRecords[session.MainTask]
-	if records[0].ToolResults[0].Result != tool.EncodeFileReadResults([]string{provider.body}) {
-		t.Fatal("session lost original provider output")
+	history.Finalize()
+	records := readExecutionRecords(t, history, "tool_result")
+	if len(records) < 1 || records[0]["result"] != tool.EncodeFileReadResults([]string{provider.body}) {
+		t.Fatal("session lost original provider output", records)
 	}
 }

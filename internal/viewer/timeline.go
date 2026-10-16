@@ -17,7 +17,7 @@ func (vs *ViewSession) projectRequestTimelines() {
 		children[stage.ParentID] = append(children[stage.ParentID], stage)
 	}
 	for _, stage := range vs.Timeline.Stages {
-		if stage.Name != "llm.request" {
+		if stage.Name != "llm.request" && stage.Name != "model.attempt" {
 			continue
 		}
 
@@ -46,6 +46,7 @@ func (vs *ViewSession) projectRequestTimelines() {
 }
 
 type timelineRow struct {
+	ScopeID string
 	timeline.Stage
 	OffsetMS      int64
 	DurationMS    int64
@@ -68,6 +69,21 @@ func timelineRows(doc *timeline.Snapshot) []timelineRow {
 		}
 		return stages[i].StartedAt.Before(stages[j].StartedAt)
 	})
+	index := map[timeline.StageID]timeline.Stage{}
+	for _, stage := range stages {
+		index[stage.ID] = stage
+	}
+	scopeID := func(stage timeline.Stage) string {
+		seen := map[timeline.StageID]bool{}
+		for stage.ID != "" && !seen[stage.ID] {
+			seen[stage.ID] = true
+			if id, ok := timeline.AttributeValue[string](stage.Attributes, "scope_id"); ok && id != "" {
+				return id
+			}
+			stage = index[stage.ParentID]
+		}
+		return ""
+	}
 	known := map[timeline.StageID]bool{doc.RootStageID: true}
 	children := map[timeline.StageID][]timeline.Stage{}
 	for _, stage := range stages {
@@ -82,7 +98,7 @@ func timelineRows(doc *timeline.Snapshot) []timelineRow {
 			return
 		}
 		seen[stage.ID] = true
-		rows = append(rows, timelineRow{Stage: stage, OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: stage.ParentID != "" && !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
+		rows = append(rows, timelineRow{Stage: stage, ScopeID: scopeID(stage), OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: stage.ParentID != "" && !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
 		for _, child := range children[stage.ID] {
 			visit(child, depth+1)
 		}

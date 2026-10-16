@@ -1,84 +1,57 @@
 # 可观测性
 
-CCR 的可观测性建立在同一条链路上：Session JSONL 持久化执行事实，Viewer 帮助人理解一次运行，
-eval 使用这些事实和外部标注判断版本效果。三者依次是基础、诊断投影和效果验证，不能互相替代。
+CCR 按“先看业务运行情况，再看局部 loop 数据”组织观测。一次 Review 有一个业务 timeline，
+每个独立 R1/R2 loop 有一个 AgentGo Session。Session 的结构由框架定义，不随 CCR 的 Unit、Lane、
+Hypothesis 等业务概念变化；业务身份和父子阶段由 timeline 表达。
 
 ```text
-Review Execution
-      │
-      ▼
-Session JSONL                 # 基础：实际发生了什么
-      │
-      ├──────────▶ Viewer     # 诊断：这一次为什么会这样
-      │
-      └──────────▶ eval       # 验证：改动是否稳定提升效果
+<review-id>.jsonl             Review 元数据、配置、业务产物和最终汇总
+<review-id>.timeline          一次 Review 的业务阶段图，JSONL 增量更新
+<review-id>.sessions/
+  <local-file>.jsonl          AgentGo Session，保存模型与工具完整数据
 ```
 
-可观测性从三条互补的轴理解同一次 review：
+## 1. Review timeline 与局部 Session
 
-| 观察轴 | 主链路 | 回答的问题 |
-|---|---|---|
-| **成本轴** | `Run → Unit → Execution` | 整轮、一个行为范围和一次 agent loop 分别消耗了多少时间、token 与工具调用 |
-| **决策轴** | `Unit → Hypothesis → Assessment → Finding` | 一个问题主张如何产生、被复核并最终通过交付门禁 |
-| **时间轴** | `Formation → Review 1 → Queue → Review 2 → Review 3` | 一条评审路径何时形成、执行和等待，最终多久变成可交付建议 |
+`internal/recording.Review` 只管理业务元数据、产物、scope 计数和录制文件生命周期，
+不保留全局对话历史。Review 不支持恢复中断的整体执行；局部 loop 的 Session 能力归 AgentGo。
+同一 R2 Lane 保留上下文的连续 Execution 复用一个 Session，每次调用 loop 创建新的 Run。
+探索超时后的收卷也创建新的 Run，避免与失败尝试混淆。
 
-三条轴共享 Unit、Hypothesis 和 Execution 等稳定身份，但不能互相替代。并发 Unit 的 Execution
-duration 不能直接相加成 Run 的 wall-clock time；Lane 排队也不是模型执行成本，却是 Finding 交付时延的一部分。
-因此 Session 先保存可 join 的原始事实，Viewer、eval 和外部 comment 再按各自问题生成投影。
+AgentGo Session 使用原生 JSONL 协议，记录 `model_request`、`model_exec_end`、`tool_exec_end`、
+消息提交、context projection/compaction 和 run 边界。模型、工具正文只在这里存储。
+CCR 的领域消息通过 AgentGo codec 注册内容类型，保留原始证据和当前压缩视图，不修改 Session envelope。
+不自动写 checkpoint，也不复制 AgentState 或全局 Snapshot。辅助规划、定位等单次模型调用同样使用
+AgentGo Session 记录请求和结果。
 
-## 1. Session JSONL：共同事实源
+Timeline 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），并容纳构图、等待、HTTP 等非 loop 工作。
+调用 stage 的 `session_ref` 只有 `session_id`、`run_id`、`execution_id` 和 `attempt`；
+Execution stage 保存 scope、业务 outcome 和局部 Session 文件名。不能只用 provider tool call ID 关联，
+因为不同 loop 和不同 Run 可以重复使用同一个 ID。
 
-Session JSONL 是持久执行事实，timeline 是其中的执行结构，不是另一份旁路计时日志。
-Stage 记录一次动作的身份、父子关系、源头时间、状态；内容记录保存请求、响应和结果，并引用产生它的 Stage。
+Viewer 默认先展示 timeline，可从 stage 进入 scope 的 loop 详情；详情显示所读取的 Session reference。
+Go 的 `ReadReview(path)` 与 Python eval 在查询时重放 `.timeline` 更新，再按关联 ID 读取局部 Session。
+供 Viewer、stats、export、eval 使用的 `llm_request`/`llm_response`/`tool_result` 等对象是查询投影，
+不会再落盘成一份全局会话历史。业务 artifact、finding、debrief 仍保存在 Review 元数据文件。
 
-```text
-Session JSONL
-  ├─ session_start / session_end     # 输入身份、配置与最终汇总
-  ├─ timeline_snapshot              # 关键边界读取的完整 timeline.Snapshot
-  │    └─ execution → model.attempt → llm.request
-  │                 → tool.execution → tool.invoke
-  └─ 内容记录 ── stage_id ──▶ Stage
-       ├─ llm_request / llm_response / llm_error
-       ├─ tool_result / context_projected / context_compacted
-       └─ artifact / finding
-```
+Review manifest 的 schema 为 **13**，旧版 schema 显式不兼容；AgentGo Session 和 timeline JSONL
+分别有自己的格式版本。读端接受完整前缀后的截断末行并显示缺口，完整行损坏不静默跳过。
+局部 Session 缺失或损坏时保留可用 timeline，并标记记录不完整；不能将其解释成没有调用或已成功。
+写入失败报告 execution/session 身份，继续排空 loop 事件，不改变业务运行结果。
 
-Scope 是领域工作范围，一个 Lane 可以包含多次 Execution；Execution 是一次真实 AgentGo loop，
-其 `execution_id` 同时是对应 Stage 的 ID。Execution Stage 的最终 attributes 持有 outcome、reason、
-turn/tool 统计，Stage 本身持有起止时间。不存在另一套 `execution_start` / `execution_end` 完成事实；
-Viewer、export 和 eval 都不从最后一条 assistant 文本、终态工具或 Scope debrief 猜测 loop 是否完成。
-
-所有记录共用写入入口：`uuid` 标识记录，`seq` 表示追加顺序，`timestamp` / `elapsed_ms` 表示落盘时间。
-追加相邻不代表父子关系，不写 `parentUuid`；执行父子关系只来自 Stage 的 `parent_id`。
-`timeline_id` / `stage_id` 连接内容与执行，模型响应引用请求 Stage，工具结果还通过 `request_id` 和
-`tool_call_id` 连接发起它的模型请求与调用。并发返回不依赖相邻记录、工具名或返回顺序配对。
-Stage 可能在内容记录之后刷新落盘，读取时先选择最新的完整 Snapshot，再按 ID 连接。
-
-请求、工具、Execution 和 Formation 的耗时从对应 Stage 推导，不在内容记录中再存一份计时。
-`session_end` 和 debrief 保留领域汇总：前者的 duration 来自 Operation，后者的 duration 是模型调用耗时之和，
-不代表 Unit 的墙钟区间。Unit/Hypothesis/Assessment/Trial/Finding 保留业务身份和内容，通过 Stage 引用
-连接产生它们的工作；`hypothesis_review_execution` 只保存 Hypothesis 与 Execution 的关联，不复制完成结论。
-
-事实还包括实际发送的 prompt、response/reasoning、stop reason、usage、工具参数及结果、每次模型调用前
-可见的 ContextItem，以及 context compaction 的原因、提交状态和前后规模。模型预算拒绝使用
-`policy/admission` 错误详情，不累加 provider 失败计数。首次 context projection 是 Initial Context exposure，
-并不由模型请求快照反推。
-
-Go 消费方共用 Session reader：读取最后一份完整 timeline 快照，接受完整前缀后的截断末行并显式标记缺口；
-完整行损坏则报错。写入失败会报告并停止继续追加，避免其后的记录看似连续。Python eval 同样检查输入完整性，
-零值结束时间表示未结束，缺少结束事实不能当成零耗时或成功；损坏数据不参与完整覆盖判定。
-
-Session 只说明“发生了什么”，不直接说明“效果好不好”。它也不替代 Forge comment、代码仓和业务事实源。
-Session 可能包含源码、prompt 与工具结果，应默认作为本地敏感数据处理，不自动上传。
+Scope 是业务工作范围，Execution 是一次 Harness 执行；它可能包含收卷续接的多个框架 Run。
+Stage 保存源头起止时间与完成状态。多个 Unit 或 Lane 并发时，duration 不可相加作为 Review wall-clock。
+成本从实际请求/响应按调用身份计算，缺失 usage 保持 unknown，不依赖 debrief 是否生成。
+Session 与 timeline 都不替代 Forge comment、代码仓和业务事实源；本地正文不自动上传。
 
 ### 本地记录保留与清理
 
-CCR 默认保留最近 **7 天**的 Session，并将 `~/.casecodereview/sessions` 中 JSONL 与配套日志的
+CCR 默认保留最近 **7 天**的 Review，并将 `~/.casecodereview/sessions` 中 Review、timeline、局部 Session 与配套日志的
 总量控制在 **5 GiB**。`review/scan` 创建录制前自动清理，录制期间每 10 分钟再次检查；
 help、preview、dry-run review 和 Viewer 等读取操作不会触发清理。
 
-淘汰单位是一整个 Session：先删除超期记录，容量仍超限时继续按修改时间从旧到新删除，
-同时删除同名 `.log`。JSONL 不截断、不丢弃开头，保留下来的会话仍可供 Viewer、stats、export 和 eval 完整读取。
+淘汰单位是一整个 Review：先删除超期记录，容量仍超限时继续按修改时间从旧到新删除，
+同时删除同名 `.log`、`.timeline` 和 `.sessions/` 下所有局部 Session。JSONL 不截断、不丢弃开头，保留下来的会话仍可供 Viewer、stats、export 和 eval 完整读取。
 需要长期保留的评测样本应复制到独立数据目录，避免受本地历史保留策略影响。
 
 ```sh
@@ -103,8 +76,9 @@ ccr clean --test-sessions                   # 独立清理测试录制目录
 
 ### 时间与 token 成本归属
 
-`ccr stats <session.jsonl> --format json` 从共同 Session reader 输出整轮成本和各 Stage 的成本。
-每个模型调用按请求 Stage ID 计一次，再沿父子关系归入所属 Execution、Unit/Lane 和评审阶段。
+`ccr stats <session.jsonl> --format json` 从共同 Review reader 输出整轮成本和各 Stage 的成本。
+每个模型调用按原生 Session reference 计一次，再通过对应 Stage 的父子关系归入所属 Execution、Unit/Lane 和评审阶段。
+Timeline 尚未落盘时，request/response 仍通过原生调用身份关联；成本列为未归属，并显示录制缺口。
 成本读取实际请求及响应记录，Review 2、辅助调用和没有 debrief 的中断运行都参与统计。
 Viewer 的全局统计与阶段成本表、ATIF 的 `extra.cost` 提供同一投影，eval 的 comparison/replay 使用相同的请求身份与 usage 口径。
 
@@ -138,22 +112,16 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 
 ### 整轮时间线
 
-Session 拥有一个 `go-stdx/timeline` ID：进程安装共用的 NoopStore Manager，各层通过根包入口记录，
-单机运行省略 Actor，应用退出时在生产者结束后关闭 Manager。Context 只传播 timeline / stage ID，
-录制处显式指定 ParentID；调用 repocli 时使用同一 StageRef，使库阶段归入调用方阶段。
-从创建 Session 到 Runner 收尾，diff 加载、项目选择、CodeGraph
-构建、Unit formation、Unit 等待与 Review 1、Lane 等待与 Review 2、Trial 以及辅助模型请求都向其贡献
-阶段。Runner 拥有评审阶段；Harness 拥有 Execution 和 AgentGo 事件适配；模型客户端拥有路由、fallback
-与 HTTP 阶段。子阶段只开始和结束自己的工作，Session 唯一负责整轮 Start / Finish。
+Review 拥有一个 `go-stdx/timeline` ID，进程安装共用 Manager，各层通过根包入口记录。
+Context 只传播 timeline/stage ID，录制处显式指定 ParentID；repocli 使用同一 StageRef。
+Review 唯一负责整轮 Start/Finish；Runner、Harness 和模型客户端分别记录自己拥有的工作。
 
 ```text
-Session timeline
+Review timeline
   ├─ diff.load / project.select / codegraph.build / unit.formation
-  │                                                └─ unit.grouping.relations / unit.grouping.namespace
   ├─ unit.queue → review.unit → execution → turn
   │                              ├─ context.project / context.recover_overflow
-  │                              ├─ model.attempt → llm.request → routing / provider → HTTP phases
-  │                              ├─ retry.wait
+  │                              ├─ model.attempt → routing / provider → HTTP phases
   │                              └─ tool.queue → tool.execution → tool.invoke
   ├─ lane.queue → review.hypothesis → execution → turn …
   └─ trial.assess / trial.finalize
@@ -168,26 +136,20 @@ Session timeline
 `grouping` 提供整轮数量软上限、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法满足数量上限，
 所有目标仍进入评审。耗时读取对应 timeline stage。
 
-Session 在请求和 Execution 的开始、结束边界及每秒定时调用 `timeline.Read(ctx, id, false)`，由 CCR 的 JSONL writer 写入完整
-`timeline_snapshot`；读取与追加共用 writer 锁，避免并发导出把旧快照排在新快照之后。
-HTTP 回调和 AgentGo 事件只记录内存事实，不触发文件写入。定时导出让长时间等待可以被观察，
-突然退出可能丢失上次成功 checkpoint 之后的事实。取消请求后仍可读取内存事实；
-整轮结束时先停止定时导出，Finish 后写入最终快照和 session_end，再释放该 ID 的缓存。
-timeline 只负责缓存中的录制和查询，JSONL 的格式、时机和文件 IO 全部由 CCR 持有，无需调用 Flush。
-读取端保留最新的完整 timeline 快照和内容记录，不保留各次 checkpoint 的重复完整副本。
-快照属于整轮 Session；Unit、Lane、
-Hypothesis、CCR Execution 和请求身份保存在对应 stage attributes。AgentGo 的逻辑执行 ID 以 CCR Execution
-为命名空间，物理尝试另带 Attempt，因此并发 loop 即使发出同名 tool call 也不碰撞。Middleware 把 stage
-身份传入真实调用，Event 以源头 Timestamp 记录开始和结束；消费者处理事件的延迟不算作模型或工具耗时。
+CCR 提供 `.timeline` 的 JSONL Store，接收 Manager 的 `Merge(Update)`：只追加变化的 operation/stage，
+相同内容不重复追加。Manager 定时发布变化；业务方只调用 Start/Begin/End/Finish，不读取 Snapshot。
+Review 结束后 Flush 等待最后一批更新，再 sync/close 文件、释放缓存和 Review lease。
+进程突然退出可能丢失尚未 Flush 的更新，不能补造缺失的结束状态。
 
-属性统一写入原生 `attributes`。Schema 12 的 Go Session reader 与 Python eval 均按追加顺序
-选择最后一份完整 Snapshot，不再依赖持久化修订号。旧 schema 显式报告不兼容。
+Timeline 不保存 prompt、response 或工具结果。Stage 的原生 `attributes` 保存业务身份和 Session reference。
+框架调用 ID 以局部 Run 为命名空间，并带 Attempt；重试、收卷和连续 Lane 执行不会混淆。
+Middleware 把 stage 身份传入真实调用，Event.Timestamp 是源头时间，消费者延迟不算模型或工具耗时。
 
 JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
 原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为
 整轮 wall-clock time；HTTP 等待首字节也不能直接解释为服务端排队。
 
-请求结果由请求调用方决定：fallback 成功可使请求成功，同时保留失败的 provider attempt。Session
+请求结果由请求调用方决定：fallback 成功可使请求成功，同时保留失败的 provider attempt。Review
 终态表示 Runner 是否正常返回，不替代领域 coverage、Execution outcome 或 Trial 结论。缺失结束事实的
 stage 保留 running，Viewer 明确显示 incomplete；即使整轮已返回，也不补造子阶段成功。取消后尽力刷新
 已经收到的事实；AgentGo 取消时未投递的事件和进程异常退出造成的缺口不能推断成成功。

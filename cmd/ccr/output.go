@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
@@ -236,7 +236,7 @@ func outputJSON(comments []finding.Finding) error {
 func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
 	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
 	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int,
-	sh *session.SessionHistory) error {
+	sh *recording.Review) error {
 	out := buildJSONWithWarnings(comments, warnings, filesReviewed, inputTokens, outputTokens,
 		totalTokens, cacheReadTokens, cacheWriteTokens, duration, projectSummary, toolCalls, models, sh)
 	enc := json.NewEncoder(os.Stdout)
@@ -247,7 +247,7 @@ func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warnin
 func buildJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
 	filesReviewed, inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens int64,
 	duration time.Duration, projectSummary string, toolCalls map[string]int64, models map[string]int,
-	sh *session.SessionHistory) jsonOutput {
+	sh *recording.Review) jsonOutput {
 	out := jsonOutput{
 		Status:   "success",
 		Version:  Version,
@@ -301,14 +301,14 @@ func buildJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning
 // leave stdout empty, or downstream parsers report their own parse failure
 // instead of the actual error. Warnings ride along — on an all-units-failed
 // run they carry the per-unit error reasons.
-func outputJSONFatal(runErr error, warnings []runner.Warning, sh *session.SessionHistory) error {
+func outputJSONFatal(runErr error, warnings []runner.Warning, sh *recording.Review) error {
 	out := buildJSONFatal(runErr, warnings, sh)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func buildJSONFatal(runErr error, warnings []runner.Warning, sh *session.SessionHistory) jsonOutput {
+func buildJSONFatal(runErr error, warnings []runner.Warning, sh *recording.Review) jsonOutput {
 	out := jsonOutput{
 		Status:   "failed",
 		Version:  Version,
@@ -325,14 +325,14 @@ func buildJSONFatal(runErr error, warnings []runner.Warning, sh *session.Session
 	return out
 }
 
-func outputJSONNoFiles(sh *session.SessionHistory) error {
+func outputJSONNoFiles(sh *recording.Review) error {
 	out := buildJSONNoFiles(sh)
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(out)
 }
 
-func buildJSONNoFiles(sh *session.SessionHistory) jsonOutput {
+func buildJSONNoFiles(sh *recording.Review) jsonOutput {
 	out := jsonOutput{
 		Status:   "skipped",
 		Version:  Version,
@@ -346,7 +346,7 @@ func buildJSONNoFiles(sh *session.SessionHistory) jsonOutput {
 	return out
 }
 
-func attachSession(out *jsonOutput, sh *session.SessionHistory) {
+func attachSession(out *jsonOutput, sh *recording.Review) {
 	if out == nil || sh == nil {
 		return
 	}

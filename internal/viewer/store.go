@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 // SessionsRoot returns the root directory where session JSONL files are stored.
@@ -111,7 +111,7 @@ func readSessionStart(path string) (SessionSummary, error) {
 		return SessionSummary{}, fmt.Errorf("first record is not session_start")
 	}
 	version := intValue(record["schema_version"])
-	if version != session.SchemaVersion {
+	if version != recording.SchemaVersion {
 		return SessionSummary{}, fmt.Errorf("unsupported session schema %d", version)
 	}
 	summary := SessionSummary{
@@ -235,9 +235,9 @@ func peekSession(path string) (SessionSummary, error) {
 	return summary, scanner.Err()
 }
 
-// ViewSession holds fully parsed records for one session.
+// ViewSession holds fully parsed records for one recording.
 type ViewSession struct {
-	Cost             session.CostReport
+	Cost             recording.CostReport
 	RecordingWarning string
 	Timeline         *timeline.Snapshot
 	Summary          SessionSummary
@@ -275,7 +275,7 @@ type DisplayMessage struct {
 	Text string
 }
 
-// SystemPrompt is a distinct system prompt seen in the session. System prompts
+// SystemPrompt is a distinct system prompt seen in the recording. System prompts
 // are static per task type and repeat across every file/round, so the viewer
 // dedupes them by content and surfaces them once at the session level rather
 // than burying a copy inside every request card.
@@ -284,7 +284,7 @@ type SystemPrompt struct {
 	Text      string
 }
 
-// TokenUsageSummary aggregates token counts across the session.
+// TokenUsageSummary aggregates token counts across the recording.
 type TokenUsageSummary struct {
 	TotalPromptTokens     int
 	TotalCompletionTokens int
@@ -294,7 +294,7 @@ type TokenUsageSummary struct {
 	FileTokenBreakdown    []FileTokenUsage
 }
 
-// FileTokenUsage tracks token totals for a single file within a session.
+// FileTokenUsage tracks token totals for a single file within a recording.
 type FileTokenUsage struct {
 	FilePath         string
 	PromptTokens     int
@@ -303,7 +303,7 @@ type FileTokenUsage struct {
 	CacheWriteTokens int
 }
 
-// TaskType mirrors session.TaskType.
+// TaskType mirrors recording.TaskType.
 type TaskType string
 
 const (
@@ -316,6 +316,7 @@ const (
 
 // TaskCard links an LLM request with its response and tool calls.
 type TaskCard struct {
+	SessionRef  string
 	StageID     string
 	Timeline    *timeline.Snapshot
 	ExecutionID string
@@ -356,6 +357,7 @@ type ContextCompaction struct {
 
 // ToolCallInfo summarizes a single tool call.
 type ToolCallInfo struct {
+	SessionRef string
 	StageID    string
 	ID         string
 	Name       string
@@ -418,7 +420,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		return scope, execution
 	}
 
-	transcript, err := session.ReadTranscript(f)
+	transcript, err := recording.ReadReview(f.Name())
 	if err != nil {
 		return nil, err
 	}
@@ -438,8 +440,8 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		switch typ {
 		case "session_start":
 			version := intValue(rec["schema_version"])
-			if version != session.SchemaVersion {
-				return nil, fmt.Errorf("unsupported session schema %d; viewer requires %d", version, session.SchemaVersion)
+			if version != recording.SchemaVersion {
+				return nil, fmt.Errorf("unsupported session schema %d; viewer requires %d", version, recording.SchemaVersion)
 			}
 			hasCurrentSchema = true
 			vs.Summary.SchemaVersion = version
@@ -472,7 +474,11 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				StageID: stringValue(rec["stage_id"]), ExecutionID: stringValue(rec["execution_id"]), Request: request,
 				TaskType: taskType, RequestNo: intValue(rec["request_no"]), Sequence: sequence,
 			}
-			requests[card.StageID] = card
+			if ref := rec["session_ref"]; ref != nil {
+				raw, _ := json.Marshal(ref)
+				card.SessionRef = string(raw)
+			}
+			requests[recording.CallID(rec)] = card
 			scope.Tasks[taskType] = append(scope.Tasks[taskType], card)
 			scope.Calls = append(scope.Calls, card)
 			if execution != nil {
@@ -481,7 +487,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "llm_response":
-			card := requests[stringValue(rec["stage_id"])]
+			card := requests[recording.CallID(rec)]
 			if card == nil {
 				continue
 			}
@@ -517,7 +523,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 			}
 
 		case "llm_error":
-			card := requests[stringValue(rec["stage_id"])]
+			card := requests[recording.CallID(rec)]
 			if card == nil {
 				continue
 			}
@@ -545,6 +551,10 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 				card.ToolCalls[match].Ok = boolValue(rec["ok"], true)
 				card.ToolCalls[match].HasResult = true
 				card.ToolCalls[match].StageID = stringValue(rec["stage_id"])
+				if ref := rec["session_ref"]; ref != nil {
+					raw, _ := json.Marshal(ref)
+					card.ToolCalls[match].SessionRef = string(raw)
+				}
 				if stage, ok := stages[timeline.StageID(card.ToolCalls[match].StageID)]; ok && !stage.FinishedAt.IsZero() {
 					card.ToolCalls[match].DurationMs = stage.Duration(time.Time{}).Milliseconds()
 				}
@@ -644,7 +654,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		signals.hasSessionEnd = false
 	}
 	if !hasCurrentSchema {
-		return nil, fmt.Errorf("session_start with schema %d is required", session.SchemaVersion)
+		return nil, fmt.Errorf("session_start with schema %d is required", recording.SchemaVersion)
 	}
 
 	vs.projectRequestTimelines()

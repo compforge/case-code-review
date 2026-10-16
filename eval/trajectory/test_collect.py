@@ -10,7 +10,7 @@ class CollectSummaryTest(unittest.TestCase):
     def test_session_complete_requires_terminal_session_end(self):
         with tempfile.TemporaryDirectory() as tmp:
             session = Path(tmp) / "session.jsonl"
-            session.write_text(json.dumps({"type": "session_start"}) + "\n")
+            session.write_text(json.dumps({"type": "session_start", "schema_version": 13}) + "\n")
             self.assertFalse(session_complete(session))
 
             with session.open("a") as stream:

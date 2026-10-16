@@ -7,14 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/compforge/repocli/toolkit/go"
-	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"os"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	repocli "github.com/compforge/repocli/toolkit/go"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/compforge/go-stdx/timeline"
@@ -25,10 +26,10 @@ import (
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/board"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
@@ -47,7 +48,7 @@ import (
 // Warning is the non-fatal execution warning exposed by Runner.
 type Warning = harness.Warning
 
-// Args holds all dependencies and configuration needed to run a review session.
+// Args holds all dependencies and configuration needed to run a review recording.
 type Args struct {
 	// RepoDir is the root of the git repository.
 	RepoDir string
@@ -140,7 +141,7 @@ type Args struct {
 
 	// Session is an optional session history instance for collecting conversation records.
 	// When nil, a default one is created automatically with git branch auto-detected from repoDir.
-	Session *session.SessionHistory
+	Session *recording.Review
 
 	// Features are the resolved feature gates for this run (ablation toggles). Nil
 	// means all defaults (full feature set) — so callers that don't set it are
@@ -169,7 +170,7 @@ type Runner struct {
 	totalInsertions  int64
 	totalDeletions   int64
 	currentDate      string
-	session          *session.SessionHistory
+	session          *recording.Review
 	unitRuns         map[string]*unitRun
 	unitFailed       int64 // count of failed unit reviews, accessed atomically
 	executor         *unitreview.Executor
@@ -226,7 +227,7 @@ func New(args Args) *Runner {
 		if mode == "" {
 			mode = reviewModeString(args.From, args.To, args.Commit)
 		}
-		args.Session = session.New(args.RepoDir, gitBranch, args.Model, session.SessionOptions{
+		args.Session = recording.New(args.RepoDir, gitBranch, args.Model, recording.SessionOptions{
 			ReviewMode: mode,
 			DiffFrom:   args.From,
 			DiffTo:     args.To,
@@ -295,6 +296,7 @@ func New(args Args) *Runner {
 	a.hypothesisHook = hypothesisHook
 	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
 	a.executor = unitreview.NewExecutor(unitreview.ExecutorConfig{
+		SessionCodecOptions:     clueCodecOptions(),
 		LLMClient:               args.LLMClient,
 		Model:                   args.Model,
 		Tools:                   args.Tools,
@@ -337,7 +339,7 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	}
 
 	// Step 1: Parse diffs
-	diffCtx, finishDiff := session.Begin(ctx, "diff.load")
+	diffCtx, finishDiff := recording.Begin(ctx, "diff.load")
 	diffCtx, diffSpan := telemetry.StartSpan(diffCtx, "diff.parse")
 	if err := a.loadChanges(diffCtx); err != nil {
 		finishDiff(err)
@@ -345,7 +347,7 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 		return nil, fmt.Errorf("load diffs: %w", err)
 	}
 	finishDiff(nil)
-	selectionCtx, finishSelection := session.Begin(ctx, "project.select")
+	selectionCtx, finishSelection := recording.Begin(ctx, "project.select")
 	selectionErr := a.prepareFileSelections(selectionCtx)
 	finishSelection(selectionErr)
 	if selectionErr != nil {
@@ -395,7 +397,7 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 }
 
 // Session returns the session history associated with this Runner.
-func (a *Runner) Session() *session.SessionHistory {
+func (a *Runner) Session() *recording.Review {
 	return a.session
 }
 
@@ -549,7 +551,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	// Locate selected edits in their source versions, then form bounded Units.
 	// The fan-out machinery below is granularity-agnostic.
-	formationCtx, finishFormation := session.Begin(ctx, "unit.formation")
+	formationCtx, finishFormation := recording.Begin(ctx, "unit.formation")
 	units, err := a.splitUnits(formationCtx)
 	finishFormation(err)
 	if err != nil {
@@ -591,7 +593,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				OnFinished:    a.finishHypothesis,
 				OnHypothesis:  a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
-					trialCtx, finishTrial := session.Begin(a.unitRuns[reviewUnit.ID].budget.ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
+					trialCtx, finishTrial := recording.Begin(a.unitRuns[reviewUnit.ID].budget.ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
 					defer finishTrial(nil)
 					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
@@ -633,7 +635,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var dispatched int64
 	for i := range units {
-		_, finishQueue := session.Begin(ctx, "unit.queue", timeline.Attribute{Key: "unit_id", Value: units[i].ID})
+		_, finishQueue := recording.Begin(ctx, "unit.queue", timeline.Attribute{Key: "unit_id", Value: units[i].ID})
 		select {
 		case sem <- struct{}{}: // Unit queueing is outside its own deadline.
 		case <-ctx.Done():
@@ -648,8 +650,8 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 		if a.budget != nil && a.budget.Check() != nil {
 			<-sem
 			for _, skipped := range units[i:] {
-				a.session.CloseScope(session.Scope{ID: skipped.ID, Kind: "unit", Type: string(skipped.Scope), Paths: skipped.Paths()},
-					session.Debrief{Formed: string(skipped.Formed), Outcome: "skipped_policy", Reason: llm.ErrTokenBudget.Error()})
+				a.session.CloseScope(recording.Scope{ID: skipped.ID, Kind: "unit", Type: string(skipped.Scope), Paths: skipped.Paths()},
+					recording.Debrief{Formed: string(skipped.Formed), Outcome: "skipped_policy", Reason: llm.ErrTokenBudget.Error()})
 			}
 			break
 		}
@@ -736,9 +738,9 @@ func (a *Runner) persistBoardPosts() {
 	if len(posted) == 0 {
 		return
 	}
-	out := make([]session.BoardPost, 0, len(posted))
+	out := make([]recording.BoardPost, 0, len(posted))
 	for _, b := range posted {
-		out = append(out, session.BoardPost{
+		out = append(out, recording.BoardPost{
 			From: b.From, Turn: b.Turn, Level: int(b.Level),
 			Paths: b.Paths, Symbols: b.Symbols, Text: b.Text,
 		})
@@ -776,9 +778,9 @@ func (a *Runner) persistFindings(ctx context.Context, comments []finding.Finding
 			laneByHypothesis[assessment.HypothesisID] = assessment.LaneID
 		}
 	}
-	findings := make([]session.Finding, 0, len(comments))
+	findings := make([]recording.Finding, 0, len(comments))
 	for _, c := range comments {
-		findings = append(findings, session.Finding{
+		findings = append(findings, recording.Finding{
 			ExistingCode: c.ExistingCode,
 			Side:         c.Side,
 			OldPath:      c.OldPath,
@@ -1082,8 +1084,8 @@ func relationClueLabel(c unit.Clue) string {
 }
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
-func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time) (deb session.Debrief, reviewErr error) {
-	ctx, finish := session.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
+func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time) (deb recording.Debrief, reviewErr error) {
+	ctx, finish := recording.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {
 		if p := recover(); p != nil {
 			finish(fmt.Errorf("panic: %v", p))
@@ -1106,7 +1108,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time
 	// All of this Unit's tasks (plan / main / compression / relocation) record
 	// under one scope keyed by Unit.ID, so the viewer groups them together and
 	// a cross-file Unit stays whole.
-	sc := session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
+	sc := recording.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
 
 	input := a.prepareReviewInput(ctx, u)
 
@@ -1141,7 +1143,7 @@ func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time
 	// The debrief is this unit's terminal record: what only this moment knows
 	// (formation, source-preload fate, outcome) — post-hoc analysis can't rebuild it.
 	// Cost rollup is filled by WriteDebrief from the scope's task records.
-	deb = session.Debrief{
+	deb = recording.Debrief{
 		Formed:       string(u.Formed),
 		Fragments:    len(u.Fragments),
 		Insertions:   u.Insertions(),
@@ -1324,7 +1326,7 @@ func (a *Runner) extFromPath(path string) string {
 
 // executePlanPhase runs the plan task for a single file, sending template messages
 // with resolved placeholders and collecting the LLM response as plan guidance.
-func (a *Runner) executePlanPhase(ctx context.Context, sc session.Scope, rawDiff, changeFiles, rule string) (string, error) {
+func (a *Runner) executePlanPhase(ctx context.Context, sc recording.Scope, rawDiff, changeFiles, rule string) (string, error) {
 	newPath := sc.Path()
 	pt := a.args.Template.PlanTask
 	messages := make([]llm.Message, 0, len(pt.Messages))
@@ -1341,7 +1343,7 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc session.Scope, rawDiff
 	}
 
 	fs := a.session.GetOrCreateScope(sc)
-	rec := fs.AppendTaskRecord(session.PlanTask, messages)
+	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,

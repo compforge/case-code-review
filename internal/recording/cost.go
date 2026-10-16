@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"encoding/json"
@@ -63,7 +63,7 @@ func (t *Transcript) Costs() CostReport {
 		if kind != "llm_request" && kind != "llm_response" && kind != "llm_error" {
 			continue
 		}
-		id := stringField(r, "stage_id")
+		id := CallID(r)
 		if id == "" {
 			id = stringField(r, "uuid")
 			if id == "" {
@@ -174,12 +174,15 @@ func stringField(r map[string]any, key string) string { s, _ := r[key].(string);
 
 // IncompleteReasons describes recording evidence, not the review's verdict.
 func (t *Transcript) IncompleteReasons() []string {
-	var reasons []string
+	reasons := append([]string(nil), t.Gaps...)
 	if t.TruncatedTail {
 		reasons = append(reasons, "truncated final record")
 	}
 	closed := false
 	for _, r := range t.Records {
+		if r["type"] == "artifact" && r["artifact_kind"] == "recording_gap" {
+			reasons = append(reasons, "local Session recording failed")
+		}
 		if r["type"] == "session_end" {
 			closed = true
 		}

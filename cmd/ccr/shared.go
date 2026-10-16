@@ -13,8 +13,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
@@ -274,7 +274,7 @@ type ResultProvider interface {
 	// ModelsUsed maps each routing alias that served a response to its count
 	// (deduped). The review's model identity; empty for a single-model run.
 	ModelsUsed() map[string]int
-	Session() *session.SessionHistory
+	Session() *recording.Review
 }
 
 // emitRunResult is the post-LLM-run finalization shared by `ocr review` and

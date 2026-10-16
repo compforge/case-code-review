@@ -11,7 +11,7 @@ import (
 )
 
 func TestExportSessionATIF(t *testing.T) {
-	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z","schema_version":12}
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","cwd":"/r","gitBranch":"b","reviewMode":"range","diffFrom":"origin/main","diffTo":"HEAD","tool_version":"v1.13.2 (abc123)","features":{"hypothesis_review":true},"params":{"unit_watermark":10},"git_head":"deadbeef","eval_tag":"replay:test","biz_id":"github:org/repo#148","timestamp":"2026-07-02T10:00:00Z","schema_version":13}
 {"type":"artifact","artifact_kind":"review_hypothesis","data":{"id":"h-1","path":"a.go"},"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"context_projected","scope_id":"u1","filePath":"a.go","kind":"unit","execution_id":"exec-1","projection_no":1,"items":[{"kind":"file","identity":"a.go","representation":"source","reason":"unit","ref":"a.go::F"}],"timestamp":"2026-07-02T10:00:00Z"}
 {"type":"llm_request","scope_id":"u1","execution_id":"exec-1","filePath":"a.go","request_no":1,"messages":[{"role":"system","content":"be a reviewer"},{"role":"user","content":"diff here"}],"timestamp":"2026-07-02T10:00:01Z","stage_id":"request-1","timeline_id":"s1"}
@@ -123,7 +123,7 @@ func TestParseRawToolCallShapes(t *testing.T) {
 }
 
 func TestExportSessionPreservesLLMFailure(t *testing.T) {
-	lines := `{"type":"session_start","sessionId":"s1","model":"m1","timestamp":"2026-07-02T10:00:00Z","schema_version":12}
+	lines := `{"type":"session_start","sessionId":"s1","model":"m1","timestamp":"2026-07-02T10:00:00Z","schema_version":13}
 {"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-2","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:03:00+00:00","status":"succeeded"}]}}
 {"type":"llm_error","scope_id":"u1","error":"routing timed out","failure":{"kind":"llm","phase":"routing","error_type":"timeout","code":"routing_budget_exhausted","attributes":{"request_phase":"await_response","response_started":false}},"timestamp":"2026-07-02T10:03:00Z","stage_id":"request-2","timeline_id":"s1"}
 `
@@ -148,7 +148,7 @@ func TestExportSessionPreservesLLMFailure(t *testing.T) {
 
 func TestExportSessionKeepsUnfinishedRequestTimeline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	text := `{"type":"session_start","sessionId":"s1","schema_version":12}
+	text := `{"type":"session_start","sessionId":"s1","schema_version":13}
 {"type":"llm_request","scope_id":"u1","kind":"unit","execution_id":"e1","taskType":"main_task","request_no":2,"messages":[],"stage_id":"request-3","timeline_id":"s1"}
 {"type":"timeline_snapshot","scope_id":"u1","execution_id":"e1","taskType":"main_task","request_no":2,"timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"running","stages":[{"id":"wait-1","parent_id":"operation:s1","name":"await_response","started_at":"2026-10-01T00:00:00Z","status":"running"}],"operation":"review","started_at":"2026-10-01T00:00:00Z"}}
 `

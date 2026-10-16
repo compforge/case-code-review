@@ -112,6 +112,7 @@
                         {{if $node.Error}}<span class="badge badge-error">{{$node.Error}}</span>{{end}}
                     </div>
                 </div>
+                {{if $node.SessionRef}}<p class="section-note">Session reference: <code>{{$node.SessionRef}}</code></p>{{end}}
                 {{if $node.Timeline}}
                 <div class="conversation-section">
                     <div class="conversation-section-label">Request: {{$node.Timeline.Status}}</div>

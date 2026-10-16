@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bufio"
@@ -15,7 +15,7 @@ import (
 )
 
 func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
-	prefix := `{"type":"session_start","schema_version":12}` + "\n"
+	prefix := `{"type":"session_start","schema_version":13}` + "\n"
 	for _, tc := range []struct {
 		name, tail     string
 		truncated, bad bool
@@ -112,7 +112,7 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	var data bytes.Buffer
 	writer := &jsonlWriter{sessionID: id, startTime: time.Now(), writer: bufio.NewWriter(&data)}
 	writer.writeRecordLocked(map[string]any{"type": "llm_request"})
-	if _, err := writer.writeTimeline(id); err != nil {
+	if _, err := writer.appendLocked(map[string]any{"type": "artifact"}); err != nil {
 		t.Fatal(err)
 	}
 	writer.writeRecordLocked(map[string]any{"type": "artifact"})
@@ -122,7 +122,7 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	}
 	seen := map[any]bool{}
 	for i, record := range transcript.Records {
-		if record["seq"] != float64(2*i+1) || record["sessionId"] != id || seen[record["uuid"]] {
+		if record["seq"] != float64(i+1) || record["sessionId"] != id || seen[record["uuid"]] {
 			t.Fatalf("envelope=%v", record)
 		}
 		if _, ok := record["parentUuid"]; ok {
@@ -135,7 +135,7 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	if _, err := writer.appendLocked(map[string]any{"type": "artifact"}); !errors.Is(err, sink.err) {
 		t.Fatalf("write error=%v", err)
 	}
-	if _, err := writer.writeTimeline(id); !errors.Is(err, sink.err) {
+	if _, err := writer.appendLocked(map[string]any{"type": "artifact"}); !errors.Is(err, sink.err) {
 		t.Fatalf("timeline error=%v", err)
 	}
 	if sink.calls != 1 || writer.sequence != 3 {

@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"context"
+
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
@@ -20,11 +21,11 @@ import (
 )
 
 func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
-	session.UseTestSessions()
+	recording.UseTestSessions()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	history := session.New(filepath.Join(home, "repo"), "main", "model", session.SessionOptions{})
+	history := recording.New(filepath.Join(home, "repo"), "main", "model", recording.SessionOptions{})
 	runner := &Runner{session: history, changes: []change.Change{{NewPath: "a.go", Diff: "patch"}}}
 	runner.persistReviewInput(context.Background())
 	reviewUnit := unit.UnitOf(unit.Fragment{
@@ -132,10 +133,10 @@ func TestPipelineArtifactsCarryTimingAndJoinKeys(t *testing.T) {
 }
 
 func TestDeliverFindingPublishesPreparedFindingOnce(t *testing.T) {
-	session.UseTestSessions()
+	recording.UseTestSessions()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	history := session.New(filepath.Join(home, "repo"), "main", "model", session.SessionOptions{})
+	history := recording.New(filepath.Join(home, "repo"), "main", "model", recording.SessionOptions{})
 
 	var observed []finding.Finding
 	var transcriptAtCallback string

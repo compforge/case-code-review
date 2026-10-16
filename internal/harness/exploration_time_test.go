@@ -13,9 +13,9 @@ import (
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 type explorationClockClient struct {
@@ -183,12 +183,12 @@ func TestExplorationModelCallResumesWrapUp(t *testing.T) {
 
 func TestExplorationRecoveryPersistsOneExecution(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{textResponse("complete")}}, delays: []time.Duration{time.Minute, 0}}
 	result, err := runExecution(ctx, ExecutionSpec{
-		LLMClient: client, Session: history, Scope: session.Scope{ID: "unit-1", Kind: "unit"},
+		LLMClient: client, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"},
 		Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10,
 		WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish", NaturalCompletion: true,
 	})
@@ -205,7 +205,7 @@ func TestExplorationRecoveryPersistsOneExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	transcript, err := session.ReadTranscript(file)
+	transcript, err := recording.ReadReview(file.Name())
 	if err != nil {
 		t.Fatal(err)
 	}

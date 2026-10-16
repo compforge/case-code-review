@@ -60,7 +60,7 @@ class SessionComparisonTest(unittest.TestCase):
     def session(self, events=(), digest="same", closed=True, legacy=False, tail=""):
         self.count += 1
         path = Path(self.temp.name) / f"{self.count}.jsonl"
-        records = [{"type": "session_start", "model": "test"}]
+        records = [{"type": "session_start", "schema_version": 13, "model": "test"}]
         if not legacy:
             records.append(artifact("review_input", version=1, repository="repo", change_digest=digest))
         records.extend(events)
