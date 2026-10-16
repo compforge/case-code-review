@@ -82,7 +82,7 @@ class ReplayTest(unittest.TestCase):
     def test_comparison_pairs_every_repeat_and_preserves_failed_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.jsonl"
-            path.write_text('{"type":"session_start"}\n', encoding="utf-8")
+            path.write_text('{"type":"session_start","schema_version":13}\n', encoding="utf-8")
             results = {( "case", arm, run): {"session": str(path)}
                        for arm in ("base", "candidate") for run in range(2)}
             results[("case", "candidate", 1)]["error"] = "timeout"
@@ -96,7 +96,7 @@ class ReplayTest(unittest.TestCase):
             corpus = root / "corpus.json"
             corpus.write_text(json.dumps({"entries": [{"name": "case", "from": "a", "to": "b"}]}))
             session = root / "session.jsonl"
-            session.write_text('{"type":"session_start"}\n{"type":"finding","path":"a.go","content":"bug"}\n')
+            session.write_text('{"type":"session_start","schema_version":13}\n{"type":"finding","path":"a.go","content":"bug"}\n')
             out = root / "out"
             with patch("eval.benchmark.replay.run_ccr", return_value=(False, "timeout")), \
                  patch("eval.benchmark.replay.find_session", return_value=session), \
@@ -111,7 +111,7 @@ class ReplayTest(unittest.TestCase):
     def test_collect_retains_generation_provenance(self):
         events = [
             {
-                "type": "session_start",
+                "type": "session_start", "schema_version": 13,
                 "tool_version": "v1.2.3",
                 "git_head": "abc123",
                 "model": "model-a",

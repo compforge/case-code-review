@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 
-from eval.eval_snapshot import file_sha256
+from eval.eval_snapshot import review_sha256
 from eval.trajectory.trajectory_judge import load_trajectories, objective_analysis
 
 
@@ -23,7 +23,7 @@ def analyze(selected: Path, out: Path, ccr: str = "ccr") -> list[dict]:
         digest = row.get("session_sha256")
         if session is None or not session.is_file():
             result["error"] = "session missing"
-        elif file_sha256(session) != digest:
+        elif review_sha256(session) != digest:
             result["error"] = "session changed since benchmark run"
         else:
             if digest not in cached:

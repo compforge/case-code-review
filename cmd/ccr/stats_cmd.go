@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/viewer"
 )
 
@@ -51,7 +51,7 @@ type chainStat struct {
 }
 
 type sessionStats struct {
-	Cost                session.CostReport   `json:"cost"`
+	Cost                recording.CostReport `json:"cost"`
 	RecordingGaps       []string             `json:"recording_gaps,omitempty"`
 	RecordingIncomplete bool                 `json:"recording_incomplete,omitempty"`
 	UnmeasuredCalls     int                  `json:"unmeasured_calls,omitempty"`
@@ -85,7 +85,7 @@ func runStats(args []string) error {
 				i++
 			}
 		case "-h", "--help":
-			fmt.Println(`Usage: ccr stats [session.jsonl | dir]... [--format text|json]
+			fmt.Println(`Usage: ccr stats [recording.jsonl | dir]... [--format text|json]
 
 Analyze session transcripts: time and token cost by pipeline stage, failed and
 unfinished calls, LLM latency, tool usage and the slowest unit chains. With no path, analyzes the most recent
@@ -186,7 +186,7 @@ func analyzeSession(path string) (*sessionStats, error) {
 	chainLabel := map[string]string{}
 	rounds := map[string]int{}
 
-	transcript, err := session.ReadTranscript(f)
+	transcript, err := recording.ReadReview(f.Name())
 	if err != nil {
 		return nil, err
 	}

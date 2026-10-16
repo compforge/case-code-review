@@ -7,9 +7,9 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -19,7 +19,7 @@ import (
 // Runner-owned investigative result. Finding conversion remains deferred until Trial.
 type HypothesisHook struct {
 	WorkerPool   *harness.WorkerPool
-	Session      *session.SessionHistory
+	Session      *recording.Review
 	ChangeLookup func(path string) *change.Change
 	LLMClient    llm.LLMClient
 	Template     template.Template
@@ -87,7 +87,7 @@ func (h *HypothesisHook) HandleTool(
 
 	if h.WorkerPool != nil {
 		asyncCtx := resolutionCtx
-		var scope *session.ScopeSession
+		var scope *recording.ReviewScope
 		if h.Session != nil {
 			scope = h.Session.GetOrCreateScope(call.Scope)
 			scope.BeginAsync()
@@ -117,13 +117,13 @@ func (h *HypothesisHook) HandleTool(
 
 func (h *HypothesisHook) relocate(
 	ctx context.Context,
-	scope session.Scope,
+	scope recording.Scope,
 	draft *finding.Finding,
 	ch *change.Change,
 ) {
 	client := h.LLMClient
 	if h.Session != nil {
-		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, session.ReLocationTask)
+		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, recording.ReLocationTask)
 	}
 	_, response, _ := finding.ReLocateComment(
 		ctx, draft, ch, client, h.Template.ReLocationTask, h.Model, h.Template.CompletionTokenLimit(),

@@ -1,8 +1,8 @@
-package session
+package recording
 
 import (
 	"fmt"
-	"time"
+	"maps"
 
 	"github.com/qiankunli/case-code-review/internal/console"
 )
@@ -83,13 +83,13 @@ type InitialOutlineAttempt struct {
 // (EndAsync finalizes). The caller supplies only what it alone knows (outcome,
 // source-preload fate); cost is aggregated at finalize so it can't drift from the
 // llm_request/llm_response records it summarizes.
-func (sh *SessionHistory) CloseScope(sc Scope, d Debrief) {
+func (sh *Review) CloseScope(sc Scope, d Debrief) {
 	sh.GetOrCreateScope(sc).Close(d)
 }
 
 // Close implements CloseScope on the scope itself. Idempotent: a second Close
 // keeps the first debrief (and warns — two owners closing one scope is a bug).
-func (ss *ScopeSession) Close(d Debrief) {
+func (ss *ReviewScope) Close(d Debrief) {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	if ss.state != scopeOpen {
@@ -108,7 +108,7 @@ func (ss *ScopeSession) Close(d Debrief) {
 // may append relocation records to this scope). Called BEFORE the task is
 // submitted, from the loop that owns the scope — so a Close racing the task
 // always sees the pending count.
-func (ss *ScopeSession) BeginAsync() {
+func (ss *ReviewScope) BeginAsync() {
 	ss.mu.Lock()
 	ss.pendingAsync++
 	ss.mu.Unlock()
@@ -118,7 +118,7 @@ func (ss *ScopeSession) BeginAsync() {
 // closing scope. This is what makes the debrief's cost rollup complete AND
 // race-free: nothing mutates the scope's records once the loop has Closed and
 // the async count hits zero.
-func (ss *ScopeSession) EndAsync() {
+func (ss *ReviewScope) EndAsync() {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	if ss.pendingAsync > 0 {
@@ -133,7 +133,7 @@ func (ss *ScopeSession) EndAsync() {
 
 // finalizeLocked aggregates the scope's cost and persists the debrief.
 // Callers hold ss.mu.
-func (ss *ScopeSession) finalizeLocked(d Debrief) {
+func (ss *ReviewScope) finalizeLocked(d Debrief) {
 	ss.state = scopeClosed
 	d.Rounds, d.ToolCalls, d.Tokens, d.DurationMs = ss.aggregateLocked()
 	if p := ss.session.persist; p != nil {
@@ -144,32 +144,6 @@ func (ss *ScopeSession) finalizeLocked(d Debrief) {
 // aggregateLocked sums this scope's recorded LLM traffic: rounds and duration
 // per task type, tool-call counts, and token usage (cache split kept — real
 // cost differs by an order of magnitude). Callers hold ss.mu.
-//
-// Concurrency: individual records' fields (Response, Duration) are written by
-// SetResponse/SetError without ss.mu; safety here comes from the LIFECYCLE —
-// this only runs once the owning loop has Closed the scope and its last async
-// task has ended, so nothing is mutating the records anymore.
-func (ss *ScopeSession) aggregateLocked() (rounds map[string]int, toolCalls map[string]int, tokens TokenUsage, durationMs int64) {
-	rounds = make(map[string]int, len(ss.TaskRecords))
-	toolCalls = map[string]int{}
-	var dur time.Duration
-	for taskType, recs := range ss.TaskRecords {
-		rounds[string(taskType)] = len(recs)
-		for _, r := range recs {
-			dur += r.Duration
-			if r.Response == nil {
-				continue
-			}
-			for _, tc := range r.Response.ToolCalls {
-				toolCalls[tc.Function.Name]++
-			}
-			if u := r.Response.Usage; u != nil {
-				tokens.PromptTokens += u.PromptTokens
-				tokens.CompletionTokens += u.CompletionTokens
-				tokens.CacheReadTokens += u.CacheReadTokens
-				tokens.CacheWriteTokens += u.CacheWriteTokens
-			}
-		}
-	}
-	return rounds, toolCalls, tokens, dur.Milliseconds()
+func (ss *ReviewScope) aggregateLocked() (rounds map[string]int, toolCalls map[string]int, tokens TokenUsage, durationMs int64) {
+	return maps.Clone(ss.rounds), maps.Clone(ss.toolCalls), ss.tokens, ss.duration.Milliseconds()
 }

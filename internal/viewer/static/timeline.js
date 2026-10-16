@@ -1,7 +1,7 @@
 (function () {
     const tabs = Array.from(document.querySelectorAll('.view-tabs [role="tab"]'));
     function selectTab() {
-        const target = location.hash === '#timeline' ? 'panel-timeline' : 'panel-session';
+        const target = location.hash === '#session' ? 'panel-session' : 'panel-timeline';
         tabs.forEach(function (tab) {
             const selected = tab.getAttribute('aria-controls') === target;
             tab.setAttribute('aria-selected', String(selected));
@@ -24,6 +24,11 @@
             });
         });
     }
+
+    document.querySelectorAll('[data-timeline-scope]').forEach(function (link) {
+        const base = location.pathname.replace(/\/review$/, '');
+        link.href = base + '/review?scope=' + encodeURIComponent(link.dataset.timelineScope);
+    });
 
     document.querySelectorAll('.timeline-view').forEach(function (view) {
         const stages = Array.from(view.querySelectorAll('.timeline-stage'));

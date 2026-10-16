@@ -13,7 +13,7 @@ import (
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -205,7 +205,7 @@ func (p *lanePool) Submit(h unitreview.Hypothesis) bool {
 	if p.config.ReviewContext != nil {
 		ctx = p.config.ReviewContext(h.OriginUnit)
 	}
-	_, finishWait := session.Begin(ctx, "lane.queue", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: h.ID})
+	_, finishWait := recording.Begin(ctx, "lane.queue", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: h.ID})
 	queued := &queuedReview{input: input, ctx: ctx, finishWait: finishWait, onFinished: func(input hypothesisreview.ReviewInput, result hypothesisreview.ReviewResult) {
 		defer p.pending.Done()
 		if p.config.OnFinished != nil {
@@ -247,7 +247,7 @@ func (p *lanePool) runLane(lane *reviewLane) {
 		lane.takeContextDelta(&input)
 		input.PriorAssessments = append([]hypothesisreview.Assessment(nil), lane.priorResults...)
 		input.PriorEvidence = append(input.PriorEvidence, lane.evidence...)
-		reviewCtx, finishReview := session.Begin(queued.ctx, "review.hypothesis", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Attribute{Key: "unit_id", Value: input.Unit.ID})
+		reviewCtx, finishReview := recording.Begin(queued.ctx, "review.hypothesis", timeline.Attribute{Key: "lane_id", Value: lane.id}, timeline.Attribute{Key: "hypothesis_id", Value: input.Hypothesis.ID}, timeline.Attribute{Key: "unit_id", Value: input.Unit.ID})
 		result := hypothesisreview.ReviewResult{}
 		if p.config.Review != nil {
 			result = p.config.Review(reviewCtx, input, lane.continuation)

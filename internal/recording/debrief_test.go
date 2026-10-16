@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"os"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestGetOrCreateScopeMergesLanePaths(t *testing.T) {
-	sh := &SessionHistory{Scopes: make(map[string]*ScopeSession)}
+	sh := &Review{Scopes: make(map[string]*ReviewScope)}
 	first := sh.GetOrCreateScope(Scope{ID: "hypothesis_review:l-1", Kind: "lane", Type: "hypothesis_review", Paths: []string{"a.go"}})
 	second := sh.GetOrCreateScope(Scope{ID: "hypothesis_review:l-1", Kind: "lane", Type: "hypothesis_review", Paths: []string{"b.go", "a.go"}})
 	if first != second {
@@ -37,14 +37,12 @@ func TestWriteDebrief(t *testing.T) {
 	sc := Scope{ID: "a.go#F", Kind: "unit", Type: "func", Paths: []string{"a.go"}}
 	ss := sh.GetOrCreateScope(sc)
 	mk := func(taskType TaskType, toolName string) {
-		rec := &TaskRecord{Type: taskType, scopeSession: ss}
-		rec.Duration = 2 * time.Second
-		rr := &ResponseRecord{Usage: &TokenUsage{PromptTokens: 100, CompletionTokens: 10, CacheReadTokens: 40}}
+		rec := ss.AppendTaskRecord(taskType, nil)
+		response := &llm.ChatResponse{Choices: []llm.Choice{{}}, Usage: &llm.UsageInfo{PromptTokens: 100, CompletionTokens: 10, CacheReadTokens: 40}}
 		if toolName != "" {
-			rr.ToolCalls = []llm.ToolCall{{Function: llm.FunctionCall{Name: toolName}}}
+			response.Choices[0].Message.ToolCalls = []llm.ToolCall{{Function: llm.FunctionCall{Name: toolName}}}
 		}
-		rec.Response = rr
-		ss.TaskRecords[taskType] = append(ss.TaskRecords[taskType], rec)
+		rec.SetResponse(response, 2*time.Second)
 	}
 	mk(MainTask, "read_files")
 	mk(MainTask, "task_done")
@@ -206,9 +204,8 @@ func TestScopeLifecycle(t *testing.T) {
 
 	// The last async task out finalizes: relocation-style record added by the
 	// worker is INSIDE the rollup.
-	rec := &TaskRecord{Type: ReLocationTask, scopeSession: ss, Duration: time.Second,
-		Response: &ResponseRecord{Usage: &TokenUsage{PromptTokens: 7}}}
-	ss.TaskRecords[ReLocationTask] = append(ss.TaskRecords[ReLocationTask], rec)
+	rec := ss.AppendTaskRecord(ReLocationTask, nil)
+	rec.SetResponse(&llm.ChatResponse{Choices: []llm.Choice{{}}, Usage: &llm.UsageInfo{PromptTokens: 7}}, time.Second)
 	ss.EndAsync()
 
 	sh.Finalize()

@@ -26,7 +26,7 @@ def issue() -> dict:
 
 
 def session(*records: dict) -> list[dict]:
-    return [{"type": "session_start"}, *records, {"type": "session_end"}]
+    return [{"type": "session_start", "schema_version": 13}, *records, {"type": "session_end"}]
 
 
 def unit(outcome: str = "completed") -> dict:
@@ -105,7 +105,7 @@ class AttributeFailuresTest(unittest.TestCase):
 
     def test_attributes_interrupted_unit_to_execution(self):
         records = [
-            {"type": "session_start"},
+            {"type": "session_start", "schema_version": 13},
             execution_stage({
                 "kind": "unit",
                 "scope_id": "unit-a",

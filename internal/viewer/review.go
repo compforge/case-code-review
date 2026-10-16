@@ -115,6 +115,7 @@ type ToolUsage struct {
 // nodes carry the complete recorded model input; no message-dedup heuristic is
 // used to reconstruct context after compaction.
 type ConversationNode struct {
+	SessionRef       string
 	Timeline         *timeline.Snapshot
 	ID               string
 	Kind             string
@@ -274,7 +275,12 @@ func buildConversation(executionID string, turns []*TaskCard, compactions []Cont
 
 	for _, turn := range turns {
 		var turnNodes []ConversationNode
-		appendTurnNode := func(node ConversationNode) { turnNodes = append(turnNodes, node) }
+		appendTurnNode := func(node ConversationNode) {
+			if node.SessionRef == "" {
+				node.SessionRef = turn.SessionRef
+			}
+			turnNodes = append(turnNodes, node)
+		}
 		appendTurnNode(ConversationNode{
 			Kind: "prompt", Label: fmt.Sprintf("Prompt Snapshot · Turn %d", turn.TurnNo),
 			Preview: fmt.Sprintf("%d messages", len(turn.Request)), Messages: turn.Request,
@@ -304,7 +310,7 @@ func buildConversation(executionID string, turns []*TaskCard, compactions []Cont
 
 		for _, call := range turn.ToolCalls {
 			appendTurnNode(ConversationNode{
-				Kind: "tool", Label: call.Name, Preview: toolTarget(call.Arguments),
+				SessionRef: call.SessionRef, Kind: "tool", Label: call.Name, Preview: toolTarget(call.Arguments),
 				Arguments: call.Arguments, Result: call.Result, ToolCallID: call.ID,
 				TurnNo: turn.TurnNo, Depth: 1, DurationMs: call.DurationMs,
 				OK: call.Ok, HasResult: call.HasResult,

@@ -42,6 +42,8 @@ class CCRSessionSource:
             return refs
 
         for path in self.sessions_root.rglob("*.jsonl"):
+            if path.parent.name.endswith(".sessions"):
+                continue
             inspected = _inspect_session(path)
             if inspected is None:
                 continue

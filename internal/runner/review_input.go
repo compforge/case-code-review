@@ -7,8 +7,8 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -22,7 +22,7 @@ type reviewInput struct {
 	own, related                                                              []*msg.File
 	initial                                                                   []msg.FileContextEntry
 	outcomes                                                                  []string
-	outlineAttempts                                                           []session.InitialOutlineAttempt
+	outlineAttempts                                                           []recording.InitialOutlineAttempt
 }
 
 func (a *Runner) prepareReviewInput(ctx context.Context, u unit.Unit) reviewInput {

@@ -11,10 +11,10 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
@@ -226,7 +226,7 @@ func (a *Runner) initialFileContext(
 	u unit.Unit,
 	usagePaths []string,
 	own, related []*msg.File,
-) ([]msg.FileContextEntry, []session.InitialOutlineAttempt) {
+) ([]msg.FileContextEntry, []recording.InitialOutlineAttempt) {
 	if a.reviewSourceReader() == nil {
 		return nil, nil
 	}
@@ -263,7 +263,7 @@ func (a *Runner) initialFileContext(
 	}
 
 	entries := make([]msg.FileContextEntry, 0, min(len(candidates), maxInitialReferences))
-	attempts := make([]session.InitialOutlineAttempt, 0, min(len(candidates), maxInitialOutlines))
+	attempts := make([]recording.InitialOutlineAttempt, 0, min(len(candidates), maxInitialOutlines))
 	outlineCount, outlineBytes := 0, 0
 	for _, candidate := range candidates {
 		if len(entries) >= maxInitialReferences {
@@ -274,7 +274,7 @@ func (a *Runner) initialFileContext(
 			Reason: candidate.reason, Ref: candidate.ref,
 		}
 		if candidate.reason != string(unit.RelProject) {
-			attempt := session.InitialOutlineAttempt{
+			attempt := recording.InitialOutlineAttempt{
 				Path: candidate.path, Language: outlineLanguage(candidate.path),
 			}
 			if outlineCount >= maxInitialOutlines {

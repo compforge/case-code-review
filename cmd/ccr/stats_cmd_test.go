@@ -7,7 +7,7 @@ import (
 )
 
 func TestAnalyzeSession(t *testing.T) {
-	lines := `{"type":"session_start","cwd":"/r","gitBranch":"b","timestamp":"2026-07-02T10:00:00Z","schema_version":12}
+	lines := `{"type":"session_start","cwd":"/r","gitBranch":"b","timestamp":"2026-07-02T10:00:00Z","schema_version":13}
 {"type":"llm_request","scope_id":"u1","taskType":"main_task","timestamp":"2026-07-02T10:00:01Z","stage_id":"request-1","timeline_id":"s1"}
 {"type":"timeline_snapshot","timeline_id":"s1","snapshot":{"id":"s1","root_stage_id":"operation:s1","status":"unknown","stages":[{"id":"request-1","parent_id":"operation:s1","name":"llm.request","started_at":"2026-08-02T00:00:00+00:00","finished_at":"2026-08-02T00:00:10+00:00","status":"succeeded"}]}}
 {"type":"llm_response","scope_id":"u1","filePath":"a.go","model":"m1","timestamp":"2026-07-02T10:00:11Z","stage_id":"request-1","timeline_id":"s1"}

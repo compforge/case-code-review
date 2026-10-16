@@ -22,7 +22,7 @@ class BuildTrajectoryDatasetTest(unittest.TestCase):
             session.write_text(
                 json.dumps(
                     {
-                        "type": "session_start",
+                        "type": "session_start", "schema_version": 13,
                         "sessionId": "session-1",
                         "timestamp": "2026-08-20T10:00:00Z",
                         "cwd": str(root / "repo"),

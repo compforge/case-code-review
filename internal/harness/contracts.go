@@ -7,16 +7,16 @@ import (
 
 	"github.com/compforge/agentgo"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 // ToolRequest is the Harness-level view of one validated tool call. It keeps
 // agentgo's call type inside the adapter while giving domain extensions the
 // scope and served-model identity they need.
 type ToolRequest struct {
-	Scope session.Scope
+	Scope recording.Scope
 	Tool  tool.Tool
 	Call  llm.ToolCall
 	Args  map[string]any
@@ -33,7 +33,7 @@ type ToolHandler interface {
 // The provider owns the source semantics (for example, a Review Team board);
 // Harness only commits the returned typed messages into the conversation.
 type TurnContextProvider interface {
-	PullTurnContext(context.Context, session.Scope) []agentgo.AgentMessage
+	PullTurnContext(context.Context, recording.Scope) []agentgo.AgentMessage
 }
 
 type ExecutionEventType string
@@ -63,7 +63,7 @@ type ExecutionEvent struct {
 	Model      string
 	Duration   time.Duration
 	EndReason  string
-	Compaction *session.ContextCompaction
+	Compaction *recording.ContextCompaction
 	Err        error
 }
 

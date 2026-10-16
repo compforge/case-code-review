@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 // planBlockPattern matches the optional "Review Plan" section in a MAIN_TASK
@@ -33,12 +33,12 @@ func stripEmptyPlanBlock(content string) string {
 
 func reviewModeString(from, to, commit string) string {
 	if commit != "" {
-		return session.ReviewModeCommit
+		return recording.ReviewModeCommit
 	}
 	if from != "" && to != "" {
-		return session.ReviewModeRange
+		return recording.ReviewModeRange
 	}
-	return session.ReviewModeWorkspace
+	return recording.ReviewModeWorkspace
 }
 
 // detectGitBranch returns the current git branch name for the given repo, or empty string on failure.

@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bytes"
@@ -152,18 +152,40 @@ func collectSessions(root string) ([]retainedSession, error) {
 			}
 			path := filepath.Join(dir, file.Name())
 			entry := retainedSession{path: path, modified: info.ModTime(), size: info.Size()}
-			logPath := strings.TrimSuffix(path, ".jsonl") + ".log"
-			logInfo, err := os.Lstat(logPath)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, err
+			base := strings.TrimSuffix(path, ".jsonl")
+			children := []string{base + ".log", base + ".timeline"}
+			loopDir := base + ".sessions"
+			loopInfo, e := os.Lstat(loopDir)
+			if e != nil && !errors.Is(e, os.ErrNotExist) {
+				return nil, e
 			}
-			if err == nil && logInfo.Mode().IsRegular() {
-				entry.files = append(entry.files, retainedFile{logPath, logInfo.Size()})
-				entry.size += logInfo.Size()
-				if logInfo.ModTime().After(entry.modified) {
-					entry.modified = logInfo.ModTime()
+			if e == nil && loopInfo.IsDir() {
+				loops, e := os.ReadDir(loopDir)
+				if e != nil {
+					return nil, e
+				}
+				for _, loop := range loops {
+					children = append(children, filepath.Join(loopDir, loop.Name()))
 				}
 			}
+			for _, child := range children {
+				info, e := os.Lstat(child)
+				if errors.Is(e, os.ErrNotExist) {
+					continue
+				}
+				if e != nil {
+					return nil, e
+				}
+				if !info.Mode().IsRegular() {
+					continue
+				}
+				entry.files = append(entry.files, retainedFile{child, info.Size()})
+				entry.size += info.Size()
+				if info.ModTime().After(entry.modified) {
+					entry.modified = info.ModTime()
+				}
+			}
+
 			entry.files = append(entry.files, retainedFile{path, info.Size()})
 			entries = append(entries, entry)
 		}
@@ -220,6 +242,12 @@ func pruneSession(entry retainedSession, opts CleanupOptions) (freed int64, remo
 			return freed, false, false, err
 		}
 		freed += file.size
+	}
+	loopDir := strings.TrimSuffix(entry.path, ".jsonl") + ".sessions"
+	if info, e := os.Lstat(loopDir); e == nil && info.IsDir() {
+		if e = os.Remove(loopDir); e != nil {
+			return freed, false, false, e
+		}
 	}
 	if managed {
 		// IDs are unique; maintenance is serialized. Release before unlinking for Windows.

@@ -24,7 +24,7 @@ import time
 import uuid
 
 from eval.session_recording import find_session
-from eval.eval_snapshot import file_sha256
+from eval.eval_snapshot import review_sha256
 from eval.benchmark.stages import project
 
 from eval_harness.metric.base import BaseMetric
@@ -93,7 +93,7 @@ class ReviewSolver(Solver):
         if session is not None:
             # Failed/partial runs still carry their Session; downstream analysis
             # must distinguish missing evidence from an evaluated empty result.
-            meta.update(session=str(session.resolve()), session_sha256=file_sha256(session))
+            meta.update(session=str(session.resolve()), session_sha256=review_sha256(session))
             try:
                 stages = project(session)
                 meta["session_id"] = stages["session_id"]

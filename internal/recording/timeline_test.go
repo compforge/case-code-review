@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bytes"
@@ -32,7 +32,7 @@ func readRequestTimeline(t *testing.T, path string) (timeline.Snapshot, []map[st
 		t.Fatal(err)
 	}
 	defer f.Close()
-	transcript, err := ReadTranscript(f)
+	transcript, err := ReadReview(f.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	history := New(t.TempDir(), "test", "model", SessionOptions{})
 	defer history.Finalize()
 	scope := history.GetOrCreateScope(Scope{ID: "unit-1", Kind: "unit", Type: "file"})
-	record := scope.AppendExecutionTaskRecord("execution-1", MainTask, []llm.Message{llm.NewTextMessage("user", "test")})
+	record := scope.AppendTaskRecord(MainTask, []llm.Message{llm.NewTextMessage("user", "test")})
 	path, err := history.TranscriptPath()
 	if err != nil {
 		t.Fatal(err)
@@ -63,6 +63,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	deadline := time.Now().Add(5 * time.Second)
 	for len(doc.Stages) != 2 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
+		telemetry.ReportTimelineError(telemetry.FlushTimeline(history.SessionID))
 		doc, records = readRequestTimeline(t, path)
 	}
 	if doc.Status != timeline.Unknown || len(doc.Stages) != 2 || doc.Stages[0].Status != timeline.Running {
@@ -77,7 +78,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	executionID, _ := timeline.AttributeValue[string](request.Attributes, "execution_id")
 	scopeID, _ := timeline.AttributeValue[string](request.Attributes, "scope_id")
 	requestNo, _ := timeline.AttributeValue[int](request.Attributes, "request_no")
-	if executionID != "execution-1" || scopeID != "unit-1" || requestNo != 1 {
+	if executionID != "" || scopeID != "unit-1" || requestNo != 1 {
 		t.Fatalf("lost request identity: %+v", request)
 	}
 	for _, stage := range doc.Stages {
@@ -95,6 +96,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	case <-time.After(5 * time.Second):
 		t.Fatal("request did not stop")
 	}
+	telemetry.ReportTimelineError(telemetry.FlushTimeline(history.SessionID))
 	doc, records = readRequestTimeline(t, path)
 	if doc.Status != timeline.Unknown || doc.Stages[0].Status != timeline.Canceled {
 		t.Fatalf("terminal facts lost after cancellation: %+v", doc)
@@ -146,10 +148,10 @@ func TestFinalSnapshotSurvivesCacheReleaseAndSessionsStayIsolated(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := bytes.Split(bytes.TrimSpace(raw), []byte("\n"))
-	if !bytes.Contains(lines[len(lines)-2], []byte(`"type":"timeline_snapshot"`)) {
-		t.Fatal("final snapshot must precede session_end")
+	if bytes.Contains(raw, []byte("timeline_snapshot")) {
+		t.Fatal("review manifest contains a snapshot")
 	}
+
 	other, err := timeline.Read(context.Background(), second.SessionID, false)
 	if err != nil || len(other.Stages) != 1 || other.Stages[0].Name != "second-work" || other.Stages[0].ParentID != "" {
 		t.Fatalf("Session contexts shared parentage or cache: %+v %v", other, err)

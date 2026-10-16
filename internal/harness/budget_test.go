@@ -12,20 +12,20 @@ import (
 	agentcontext "github.com/compforge/agentgo/context"
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestExecutionBudgetRetainsAcceptedResultsAndStopsNextTurn(t *testing.T) {
 	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("submit_result", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
 	accepted := 0
-	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	defer history.Finalize()
 	result, err := runExecution(t.Context(), ExecutionSpec{
 		LLMClient: llm.NewBudgetClient(client, 100, nil), Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 5,
 		ToolDefs: []llm.ToolDef{toolDef("submit_result"), toolDef("task_done")}, Session: history,
-		Scope: session.Scope{ID: "u", Kind: "unit"},
+		Scope: recording.Scope{ID: "u", Kind: "unit"},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 			if request.Tool.Name() == "submit_result" {
 				accepted++
@@ -80,7 +80,7 @@ func TestCompressionBudgetStopsBeforeCallingSummaryModel(t *testing.T) {
 	// Force the summary stage to ensure budget exhaustion is not swallowed as a
 	// best-effort compression failure followed by another main model request.
 	execution.contextManager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{ContextWindow: 100, ReserveTokens: 20,
-		Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{Model: &chatModel{client: budget, recorder: execution.recorder, taskType: session.MemoryCompressionTask}})})
+		Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{Model: &chatModel{client: budget, recorder: execution.recorder, taskType: recording.MemoryCompressionTask}})})
 	_, err = execution.contextManager.Compact(t.Context(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}}, agentgo.CompactReasonThreshold)
 	if !errors.Is(err, llm.ErrTokenBudget) || len(client.Requests()) != 1 {
 		t.Fatalf("compression error=%v calls=%d", err, len(client.Requests()))

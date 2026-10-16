@@ -1,7 +1,6 @@
-// Package session provides a session history mechanism for collecting conversation
-// records during code review task execution. It organizes records by review scope
-// (a Unit, Review 2 Lane, or file-level scan — see ScopeSession) and request type.
-package session
+// Package recording owns Review recording metadata, business artifacts and scope
+// accounting. AgentGo owns local conversation Session files; timeline owns stages.
+package recording
 
 import (
 	"context"
@@ -11,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
@@ -37,26 +35,24 @@ const (
 	ReviewModeFullScan  = "full_scan"
 )
 
-// SessionHistory is the top-level container for an entire CR run.
+// Review is the top-level container for an entire CR run.
 // It is safe for concurrent use by multiple goroutines.
-type SessionHistory struct {
-	mu             sync.Mutex
-	SessionID      string
-	RepoDir        string
-	GitBranch      string
-	Model          string
-	ReviewMode     string
-	DiffFrom       string
-	DiffTo         string
-	DiffCommit     string
-	BizID          string
-	StartTime      time.Time
-	EndTime        time.Time
-	persist        *jsonlWriter
-	checkpointStop chan struct{}
-	checkpointDone chan struct{}
-	Scopes         map[string]*ScopeSession
-	llmFailures    int64
+type Review struct {
+	mu          sync.Mutex
+	SessionID   string
+	RepoDir     string
+	GitBranch   string
+	Model       string
+	ReviewMode  string
+	DiffFrom    string
+	DiffTo      string
+	DiffCommit  string
+	BizID       string
+	StartTime   time.Time
+	EndTime     time.Time
+	persist     *jsonlWriter
+	Scopes      map[string]*ReviewScope
+	llmFailures int64
 	// diff totals for the session_end record (cost normalization denominators);
 	// set once diffs are loaded via SetDiffStats.
 	diffFiles      int
@@ -67,7 +63,7 @@ type SessionHistory struct {
 // SetDiffStats records the reviewed diff's size once it is known (after diff
 // loading — later than session_start), for the session_end record. Metric
 // slicing by change size depends on it.
-func (sh *SessionHistory) SetDiffStats(files int, insertions, deletions int64) {
+func (sh *Review) SetDiffStats(files int, insertions, deletions int64) {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 	sh.diffFiles = files
@@ -75,19 +71,20 @@ func (sh *SessionHistory) SetDiffStats(files int, insertions, deletions int64) {
 	sh.diffDeletions = deletions
 }
 
-// ScopeSession holds the conversation records for one review scope: a Unit
-// (plan / main / memory-compression / re-location all nest here), or a
-// non-Unit pass (Hypothesis Review, or scan's per-file work). Keyed by scope ID
-// so two Units in the same file don't collide and a cross-file Unit stays whole.
-type ScopeSession struct {
-	mu          sync.Mutex
-	ID          string   // scope id: unit.ID, Lane ID, or a scan file path
-	Kind        string   // "unit" | "file" | "lane"
-	Scope       string   // func/file/callchain (units) | hypothesis_review | scan
-	Paths       []string // member file(s)
-	Path        string   // representative member path; comment anchor / log label
-	TaskRecords map[TaskType][]*TaskRecord
-	session     *SessionHistory // back-reference for JSONL persistence
+// ReviewScope holds bounded counters and completion state for one Unit, Lane
+// or scan scope. It does not retain model messages or tool results.
+type ReviewScope struct {
+	mu        sync.Mutex
+	ID        string   // scope id: unit.ID, Lane ID, or a scan file path
+	Kind      string   // "unit" | "file" | "lane"
+	Scope     string   // func/file/callchain (units) | hypothesis_review | scan
+	Paths     []string // member file(s)
+	Path      string   // representative member path; comment anchor / log label
+	rounds    map[string]int
+	toolCalls map[string]int
+	tokens    TokenUsage
+	duration  time.Duration
+	session   *Review // back-reference for JSONL persistence
 
 	// Unit lifecycle (see docs/unit-model.md): open → closing (Close
 	// called, async still in flight) → closed (debrief persisted). Scopes that
@@ -110,7 +107,7 @@ const (
 
 // Scope identifies a review sub-session for recording: a Unit, Lane, or a
 // file-level pass. Callers build it from a unit.Unit, Review 2 Lane, or scan file path;
-// SessionHistory keys ScopeSessions by ID.
+// Review keys ReviewScopes by ID.
 type Scope struct {
 	ID    string   // unit.ID, Lane ID, or scan file path
 	Kind  string   // "unit" | "file" | "lane"
@@ -126,18 +123,16 @@ func (s Scope) Path() string {
 	return s.ID
 }
 
-// TaskRecord captures a single LLM request-response cycle within a file subtask.
+// TaskRecord is transient per-call accounting, never an in-memory conversation history.
 type TaskRecord struct {
 	StageID         timeline.StageID
 	ExecutionID     string
 	Type            TaskType
 	RequestNo       int           // sequential number within this task type
 	RequestMessages []llm.Message // messages sent to LLM
-	Response        *ResponseRecord
-	ToolResults     []ToolResultRecord
 	Duration        time.Duration
 	Error           string
-	scopeSession    *ScopeSession // back-reference for JSONL persistence
+	scopeSession    *ReviewScope // back-reference for JSONL persistence
 }
 
 // ContextCompaction is one aggregate ContextManager rewrite. It deliberately
@@ -162,27 +157,6 @@ type TokenUsage struct {
 	CompletionTokens int  `json:"completion_tokens"`
 	CacheReadTokens  int  `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int  `json:"cache_write_tokens,omitempty"`
-}
-
-// ResponseRecord holds the parsed LLM response.
-type ResponseRecord struct {
-	Content    string
-	Reasoning  string
-	StopReason string
-	ToolCalls  []llm.ToolCall
-	Model      string
-	Usage      *TokenUsage
-}
-
-// ToolResultRecord records the result of a tool call executed after the LLM response.
-type ToolResultRecord struct {
-	ToolCallID string
-	ToolName   string
-	Arguments  string
-	Result     string
-	OK         bool
-	Duration   time.Duration
-	Metadata   map[string]any
 }
 
 // SessionOptions holds optional metadata for a new session. The manifest
@@ -234,11 +208,11 @@ type Finding struct {
 }
 
 // WriteFindings persists the run's delivered findings, one "finding" record each.
-func (sh *SessionHistory) WriteFindings(findings []Finding) {
+func (sh *Review) WriteFindings(findings []Finding) {
 	sh.WriteFindingsContext(context.Background(), findings)
 }
 
-func (sh *SessionHistory) WriteFindingsContext(ctx context.Context, findings []Finding) {
+func (sh *Review) WriteFindingsContext(ctx context.Context, findings []Finding) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
@@ -253,7 +227,7 @@ func (sh *SessionHistory) WriteFindingsContext(ctx context.Context, findings []F
 // Flush makes records written so far visible to live local observers. Normal
 // runs need no manual flush; streaming Finding delivery uses it so timing joins
 // never race the buffered transcript.
-func (sh *SessionHistory) Flush() {
+func (sh *Review) Flush() {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
@@ -265,11 +239,11 @@ func (sh *SessionHistory) Flush() {
 // WriteArtifact persists a domain-owned structured artifact without teaching
 // Harness session storage its schema. Runner uses this for intermediate review
 // results so eval can inspect or replay stages independently.
-func (sh *SessionHistory) WriteArtifact(kind string, data map[string]any) {
+func (sh *Review) WriteArtifact(kind string, data map[string]any) {
 	sh.WriteArtifactContext(context.Background(), kind, data)
 }
 
-func (sh *SessionHistory) WriteArtifactContext(ctx context.Context, kind string, data map[string]any) {
+func (sh *Review) WriteArtifactContext(ctx context.Context, kind string, data map[string]any) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
@@ -277,30 +251,6 @@ func (sh *SessionHistory) WriteArtifactContext(ctx context.Context, kind string,
 		return
 	}
 	p.WriteArtifact(kind, data, sh.stageRef(ctx).StageID)
-}
-
-// WriteContextProjected persists the identifiable context actually exposed to
-// one model call. Projection 1 is the Initial Context denominator; subsequent
-// projections reveal compaction and tool-result changes without interpretation.
-func (sh *SessionHistory) WriteContextProjected(scope Scope, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem, stageID timeline.StageID) {
-	sh.mu.Lock()
-	p := sh.persist
-	sh.mu.Unlock()
-	if p == nil || executionID == "" || projectionNo < 1 {
-		return
-	}
-	p.WriteContextProjected(sh.GetOrCreateScope(scope), executionID, taskType, projectionNo, items, stageID)
-}
-
-// WriteContextCompaction persists one context rewrite in execution order.
-func (sh *SessionHistory) WriteContextCompaction(scope Scope, executionID string, taskType TaskType, compaction ContextCompaction, stageID timeline.StageID) {
-	sh.mu.Lock()
-	p := sh.persist
-	sh.mu.Unlock()
-	if p == nil || executionID == "" {
-		return
-	}
-	p.WriteContextCompaction(sh.GetOrCreateScope(scope), executionID, taskType, compaction, stageID)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,
@@ -315,7 +265,7 @@ type BoardPost struct {
 }
 
 // WriteBoardPosts persists the run's board bulletins as "board_post" records.
-func (sh *SessionHistory) WriteBoardPosts(posts []BoardPost) {
+func (sh *Review) WriteBoardPosts(posts []BoardPost) {
 	sh.mu.Lock()
 	p := sh.persist
 	sh.mu.Unlock()
@@ -327,10 +277,10 @@ func (sh *SessionHistory) WriteBoardPosts(posts []BoardPost) {
 	}
 }
 
-// New creates a new SessionHistory with the given repo directory.
-func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory {
+// New creates a new Review with the given repo directory.
+func New(repoDir, gitBranch, model string, opts SessionOptions) *Review {
 	sessionID := uuid.V4()
-	sh := &SessionHistory{
+	sh := &Review{
 		SessionID:  sessionID,
 		RepoDir:    repoDir,
 		GitBranch:  gitBranch,
@@ -341,7 +291,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 		DiffCommit: opts.DiffCommit,
 		BizID:      opts.BizID,
 		StartTime:  time.Now(),
-		Scopes:     make(map[string]*ScopeSession),
+		Scopes:     make(map[string]*ReviewScope),
 	}
 
 	p, err := newJSONLWriter(sessionID, repoDir, gitBranch, model, opts)
@@ -356,23 +306,23 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *SessionHistory 
 	return sh
 }
 
-// GetOrCreateScope returns the ScopeSession for the given scope, creating one
+// GetOrCreateScope returns the ReviewScope for the given scope, creating one
 // if it doesn't exist yet. Keyed by scope ID, so every task of one Unit (or one
 // run/file-level pass) lands in the same sub-session.
-func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
+func (sh *Review) GetOrCreateScope(sc Scope) *ReviewScope {
 	sh.mu.Lock()
 	defer sh.mu.Unlock()
 
 	ss, ok := sh.Scopes[sc.ID]
 	if !ok {
-		ss = &ScopeSession{
-			ID:          sc.ID,
-			Kind:        sc.Kind,
-			Scope:       sc.Type,
-			Paths:       sc.Paths,
-			Path:        sc.Path(),
-			TaskRecords: make(map[TaskType][]*TaskRecord),
-			session:     sh,
+		ss = &ReviewScope{
+			ID:     sc.ID,
+			Kind:   sc.Kind,
+			Scope:  sc.Type,
+			Paths:  sc.Paths,
+			Path:   sc.Path(),
+			rounds: make(map[string]int), toolCalls: make(map[string]int),
+			session: sh,
 		}
 		sh.Scopes[sc.ID] = ss
 	} else {
@@ -392,7 +342,7 @@ func (sh *SessionHistory) GetOrCreateScope(sc Scope) *ScopeSession {
 
 // Finalize marks the session as complete, sets the end time, and persists
 // the final summary record.
-func (sh *SessionHistory) Finalize(operationErr ...error) {
+func (sh *Review) Finalize(operationErr ...error) {
 	sh.mu.Lock()
 	if !sh.EndTime.IsZero() {
 		sh.mu.Unlock()
@@ -415,37 +365,27 @@ func (sh *SessionHistory) Finalize(operationErr ...error) {
 	stats := diffStats{files: sh.diffFiles, insertions: sh.diffInsertions, deletions: sh.diffDeletions}
 	sh.mu.Unlock()
 
-	if sh.checkpointStop != nil {
-		close(sh.checkpointStop)
-		<-sh.checkpointDone
-	}
 	telemetry.ReportTimelineError(timeline.Finish(sh.SessionID, errors.Join(operationErr...)))
-	snapshot, err := sh.checkpointTimeline()
-	telemetry.ReportTimelineError(err)
-	if err == nil {
-		duration = snapshot.Duration()
-	}
+	telemetry.ReportTimelineError(telemetry.CloseTimeline(sh.SessionID))
 	if p != nil {
 		p.WriteSessionEnd(duration, filesReviewed, failures, stats)
 	}
-	telemetry.ReleaseTimeline(sh.SessionID)
 }
 
-// AppendTaskRecord adds a new task record to this scope session for the given
-// task type. It auto-assigns the RequestNo based on existing records and writes
-// an llm_request record to the JSONL stream.
-func (ss *ScopeSession) AppendTaskRecord(taskType TaskType, messages []llm.Message) *TaskRecord {
+// AppendTaskRecord starts transient accounting for a call and assigns its
+// request number. The scope retains counters, not requests or responses.
+func (ss *ReviewScope) AppendTaskRecord(taskType TaskType, messages []llm.Message) *TaskRecord {
 	return ss.appendTaskRecord("", taskType, messages)
 }
 
 // AppendExecutionTaskRecord records one model call inside a Harness
 // Execution. Direct auxiliary calls may still use AppendTaskRecord, while all
 // AgentGo loop calls carry the execution identity used by Viewer and eval.
-func (ss *ScopeSession) AppendExecutionTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
+func (ss *ReviewScope) AppendExecutionTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
 	return ss.appendTaskRecord(executionID, taskType, messages)
 }
 
-func (ss *ScopeSession) appendTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
+func (ss *ReviewScope) appendTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -461,21 +401,16 @@ func (ss *ScopeSession) appendTaskRecord(executionID string, taskType TaskType, 
 		ExecutionID:     executionID,
 		StageID:         timeline.StageID(uuid.V4()),
 		Type:            taskType,
-		RequestNo:       len(ss.TaskRecords[taskType]) + 1,
+		RequestNo:       ss.rounds[string(taskType)] + 1,
 		RequestMessages: copyMessages(messages),
 		scopeSession:    ss,
 	}
-	ss.TaskRecords[taskType] = append(ss.TaskRecords[taskType], rec)
-
-	if p := ss.session.persist; p != nil {
-		p.WriteLLMRequest(ss, executionID, taskType, rec.RequestNo, rec.StageID, messages)
-	}
+	ss.rounds[string(taskType)]++
 
 	return rec
 }
 
-// copyMessages returns a deep copy of a messages slice so that future mutations
-// don't corrupt stored records.
+// copyMessages retains the message fields needed for local token estimation.
 func copyMessages(msgs []llm.Message) []llm.Message {
 	cp := make([]llm.Message, len(msgs))
 	for i, m := range msgs {
@@ -490,9 +425,8 @@ func copyMessages(msgs []llm.Message) []llm.Message {
 	return cp
 }
 
-// SetResponse records the LLM response in the most recent TaskRecord of the given type.
-// It uses actual token usage from the API response when available, falling back to
-// local estimation via tiktoken, and writes an llm_response record to the JSONL stream.
+// SetResponse updates scope counters using reported usage when available and
+// local token estimation otherwise. It does not retain the response.
 func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration) {
 	if resp == nil || len(resp.Choices) == 0 {
 		tr.SetError(fmt.Errorf("empty response"), duration)
@@ -526,44 +460,31 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		CacheWriteTokens: cacheWriteTokens,
 	}
 
-	tr.Response = &ResponseRecord{
-		Content:    content,
-		Reasoning:  reasoning,
-		StopReason: choice.FinishReason,
-		ToolCalls:  choice.Message.ToolCalls,
-		Model:      resp.Model,
-		Usage:      usage,
-	}
 	tr.Duration = duration
 
 	if ss := tr.scopeSession; ss != nil {
-		if p := ss.session.persist; p != nil {
-			toolCallsJSON := make([]map[string]any, 0, len(choice.Message.ToolCalls))
-			for _, tc := range choice.Message.ToolCalls {
-				toolCallsJSON = append(toolCallsJSON, map[string]any{
-					"id":        tc.ID,
-					"name":      tc.Function.Name,
-					"arguments": tc.Function.Arguments,
-				})
-			}
-			p.WriteLLMResponse(ss, tr.ExecutionID, tr.Type, tr.StageID, content, reasoning, choice.FinishReason, toolCallsJSON, resp.Model, *usage)
+		ss.mu.Lock()
+		defer ss.mu.Unlock()
+		ss.duration += duration
+		ss.tokens.PromptTokens += usage.PromptTokens
+		ss.tokens.CompletionTokens += usage.CompletionTokens
+		ss.tokens.CacheReadTokens += usage.CacheReadTokens
+		ss.tokens.CacheWriteTokens += usage.CacheWriteTokens
+		for _, call := range choice.Message.ToolCalls {
+			ss.toolCalls[call.Function.Name]++
 		}
 	}
 }
 
-// SetError records an error for this task record, writes an llm_error entry to
-// the JSONL stream, and counts request failures except local budget rejection.
+// SetError accounts for duration and failures, except local budget rejection.
 func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 	tr.Error = err.Error()
 	tr.Duration = duration
 
 	if ss := tr.scopeSession; ss != nil {
-		if p := ss.session.persist; p != nil {
-			p.WriteLLMError(
-				ss, tr.ExecutionID, tr.Type, tr.RequestNo, tr.StageID,
-				err.Error(), llm.DescribeError(err),
-			)
-		}
+		ss.mu.Lock()
+		ss.duration += duration
+		ss.mu.Unlock()
 		if !errors.Is(err, llm.ErrTokenBudget) {
 			atomic.AddInt64(&ss.session.llmFailures, 1)
 		}
@@ -573,45 +494,19 @@ func (tr *TaskRecord) SetError(err error, duration time.Duration) {
 // LateWrites reports how many records were appended after the scope closed —
 // zero in a correct run; a positive count means some async worker escaped the
 // lifecycle (and the debrief undercounts it).
-func (ss *ScopeSession) LateWrites() int {
+func (ss *ReviewScope) LateWrites() int {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 	return ss.lateWrites
 }
 
 // LLMFailures returns the total number of LLM request failures recorded during this session.
-func (sh *SessionHistory) LLMFailures() int64 {
+func (sh *Review) LLMFailures() int64 {
 	return atomic.LoadInt64(&sh.llmFailures)
 }
 
-// AddToolResult appends a tool call result to this task record and writes a
-// tool_result record to the JSONL stream.
-func (tr *TaskRecord) AddToolResult(toolName, arguments, result string) {
-	tr.AddToolResultWithMetadata("", toolName, arguments, result, true, 0, nil, tr.StageID)
-}
-
-// AddToolResultWithMetadata records the stable call identity and execution
-// outcome so concurrent calls to the same tool remain distinguishable.
-func (tr *TaskRecord) AddToolResultWithMetadata(toolCallID, toolName, arguments, result string, ok bool, duration time.Duration, metadata map[string]any, stageID timeline.StageID) {
-	tr.ToolResults = append(tr.ToolResults, ToolResultRecord{
-		ToolCallID: toolCallID,
-		ToolName:   toolName,
-		Arguments:  arguments,
-		Result:     result,
-		OK:         ok,
-		Duration:   duration,
-		Metadata:   metadata,
-	})
-
-	if ss := tr.scopeSession; ss != nil {
-		if p := ss.session.persist; p != nil {
-			p.WriteToolResult(ss, tr.ExecutionID, tr.Type, toolCallID, toolName, arguments, result, ok, metadata, stageID, tr.StageID)
-		}
-	}
-}
-
 // A record without a narrower producer belongs to the Session operation.
-func (sh *SessionHistory) stageRef(ctx context.Context) timeline.StageRef {
+func (sh *Review) stageRef(ctx context.Context) timeline.StageRef {
 	ref, _ := timeline.StageFromContext(ctx)
 	if ref.StageID == "" {
 		ref = timeline.StageRef{TimelineID: sh.SessionID, StageID: timeline.StageID("operation:" + sh.SessionID)}

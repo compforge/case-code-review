@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/agentgo/codec"
 
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
@@ -221,4 +222,23 @@ func (m hypothesisMessage) Priority() int { return priorityHypothesis }
 func (m hypothesisMessage) FixedContext() agentgo.AgentMessage {
 	next, _ := m.Compact(0)
 	return next
+}
+
+func hypothesisCodecOptions() []codec.Option {
+	return []codec.Option{codec.WithHandler[hypothesisMessage, hypothesisRecord]("ccr.hypothesis.v1", hypothesisCodec{})}
+}
+
+type hypothesisRecord struct {
+	Full      string    `codec:"full"`
+	Condensed string    `codec:"condensed"`
+	Compacted bool      `codec:"compacted"`
+	Timestamp time.Time `codec:"timestamp"`
+}
+type hypothesisCodec struct{}
+
+func (hypothesisCodec) Encode(m hypothesisMessage) (hypothesisRecord, error) {
+	return hypothesisRecord{m.full, m.condensed, m.compacted, m.timestamp}, nil
+}
+func (hypothesisCodec) Decode(m hypothesisRecord) (hypothesisMessage, error) {
+	return hypothesisMessage{m.Full, m.Condensed, m.Compacted, m.Timestamp}, nil
 }

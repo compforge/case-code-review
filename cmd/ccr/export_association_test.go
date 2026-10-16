@@ -11,7 +11,7 @@ import (
 // the opposite order to their declarations. Neither ordering implies ownership.
 func TestExportExecutionAndToolIdentity(t *testing.T) {
 	records := []map[string]any{
-		{"type": "session_start", "schema_version": 12, "sessionId": "run"},
+		{"type": "session_start", "schema_version": 13, "sessionId": "run"},
 	}
 	for _, id := range []string{"e1", "e2"} {
 		records = append(records,

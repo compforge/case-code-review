@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"encoding/json"

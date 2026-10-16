@@ -2,13 +2,14 @@ package formation
 
 import (
 	"context"
+	"sort"
+
 	cg "github.com/compforge/codegraph"
-	"github.com/compforge/repocli/toolkit/go"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	repocli "github.com/compforge/repocli/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"sort"
 )
 
 const DefaultGroupDiffTokens = 8000
@@ -21,7 +22,7 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, finish := session.Begin(ctx, "unit.grouping")
+	ctx, finish := recording.Begin(ctx, "unit.grouping")
 	var before, after *cg.Graph
 	if config.Before != nil {
 		before = config.Before.Repository().Graph

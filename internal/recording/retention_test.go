@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"os"
@@ -260,5 +260,37 @@ func TestSessionEndLargeAndTruncatedRecords(t *testing.T) {
 				t.Fatalf("ended=%v err=%v", ended, err)
 			}
 		})
+	}
+}
+
+func TestCleanupOwnsWholeReviewCollection(t *testing.T) {
+	root := t.TempDir()
+	path := retentionFixture(t, root, "review", 8*24*time.Hour, true)
+	base := strings.TrimSuffix(path, ".jsonl")
+	if err := os.Mkdir(base+".sessions", 0700); err != nil {
+		t.Fatal(err)
+	}
+	children := []string{base + ".timeline", filepath.Join(base+".sessions", "r1.jsonl"), filepath.Join(base+".sessions", "r2.jsonl")}
+	for _, child := range children {
+		if err := os.WriteFile(child, []byte("data"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		ageFile(t, child, 8*24*time.Hour)
+	}
+	preview, err := Cleanup(root, RetentionPolicy{MaxAge: 7 * 24 * time.Hour}, CleanupOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := Cleanup(root, RetentionPolicy{MaxAge: 7 * 24 * time.Hour}, CleanupOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.FreedBytes != actual.FreedBytes || actual.Removed != 1 || actual.RemainingBytes != 0 {
+		t.Fatalf("preview=%+v actual=%+v", preview, actual)
+	}
+	assertExists(t, path, false)
+	assertExists(t, base+".sessions", false)
+	for _, child := range children {
+		assertExists(t, child, false)
 	}
 }

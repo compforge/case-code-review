@@ -16,7 +16,7 @@ class BuildLabelDatasetTest(unittest.TestCase):
             sessions.mkdir(parents=True)
             records = [
                 {
-                    "type": "session_start",
+                    "type": "session_start", "schema_version": 13,
                     "sessionId": "s1",
                     "cwd": "/tmp/repo",
                     "model": "critic-model",

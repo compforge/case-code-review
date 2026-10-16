@@ -17,9 +17,9 @@ import (
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/preview"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
@@ -32,7 +32,7 @@ import (
 // less misleading than leaving the placeholder empty.
 const changeFilesScanLiteral = "(not applicable in full-scan mode)"
 
-// Args bundles all dependencies needed for one scan session.
+// Args bundles all dependencies needed for one scan recording.
 //
 // Note: Template is the scan-specific template.ScanTemplate (loaded from
 // scan_template.json), not the diff-review template.Template. The two are
@@ -56,7 +56,7 @@ type Args struct {
 	Model                 string
 	Background            string
 	GitRunner             *gitcmd.Runner
-	Session               *session.SessionHistory
+	Session               *recording.Review
 	MaxFileSizeBytes      int64
 	// SkipPlan disables the PLAN_TASK pre-pass even when the template
 	// defines one. Set via the --no-plan CLI flag.
@@ -77,12 +77,12 @@ type Args struct {
 // scanScope records scan work under a file-kind scope. Scan reviews whole files
 // (no Unit splitting), so the scope id is the file path (or a synthetic key for
 // project-summary / dedup-batch passes).
-func scanScope(path string) session.Scope {
-	return session.Scope{ID: path, Kind: "file", Type: "scan", Paths: []string{path}}
+func scanScope(path string) recording.Scope {
+	return recording.Scope{ID: path, Kind: "file", Type: "scan", Paths: []string{path}}
 }
 
-func unitScope(u unit.Unit) session.Scope {
-	return session.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
+func unitScope(u unit.Unit) recording.Scope {
+	return recording.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}
 }
 
 // phase will actually run: template must define it AND the corresponding
@@ -107,7 +107,7 @@ type Runner struct {
 	args           Args
 	items          []Item
 	currentDate    string
-	session        *session.SessionHistory
+	session        *recording.Review
 	subtaskFailed  int64 // atomic
 	executor       *scanExecutor
 	projectSummary string // populated post-run by maybeRunProjectSummary
@@ -128,8 +128,8 @@ func New(args Args) *Runner {
 		args.Findings = finding.NewCollector()
 	}
 	if args.Session == nil {
-		args.Session = session.New(args.RepoDir, "", args.Model, session.SessionOptions{
-			ReviewMode: session.ReviewModeFullScan,
+		args.Session = recording.New(args.RepoDir, "", args.Model, recording.SessionOptions{
+			ReviewMode: recording.ReviewModeFullScan,
 		})
 	}
 	a := &Runner{
@@ -170,7 +170,7 @@ func toFindingTemplate(s template.ScanTemplate) template.Template {
 }
 
 // Session returns the session history associated with this Runner.
-func (a *Runner) Session() *session.SessionHistory { return a.session }
+func (a *Runner) Session() *recording.Review { return a.session }
 
 // FilesReviewed returns the number of items included in this scan.
 func (a *Runner) FilesReviewed() int64 { return int64(len(a.items)) }
@@ -219,7 +219,7 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 		return nil, fmt.Errorf("scan template MAIN_TASK is missing or empty")
 	}
 
-	scanCtx, finishEnumeration := session.Begin(ctx, "scan.enumerate")
+	scanCtx, finishEnumeration := recording.Begin(ctx, "scan.enumerate")
 	scanCtx, scanSpan := telemetry.StartSpan(scanCtx, "scan.enumerate")
 	provider := NewProvider(a.args.RepoDir, a.args.Paths, a.args.GitRunner, a.args.MaxFileSizeBytes)
 	items, err := provider.Enumerate(scanCtx, a.selectPath)
@@ -597,7 +597,7 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	}
 
 	fs := a.session.GetOrCreateScope(scanScope(it.Path))
-	rec := fs.AppendTaskRecord(session.PlanTask, messages)
+	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
@@ -647,7 +647,7 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 
 	const pathKey = "__scan_project_summary__"
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
-	rec := fs.AppendTaskRecord(session.MemoryCompressionTask, messages) // reuse existing task type
+	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,
@@ -719,7 +719,7 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	// keeps dedup records distinct from per-file plan/main records.
 	pathKey := fmt.Sprintf("__scan_dedup_batch_%d__", batchIdx)
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
-	rec := fs.AppendTaskRecord(session.MemoryCompressionTask, messages) // reuse existing task type; no scan-specific type to invent
+	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type; no scan-specific type to invent
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
 		Model:     a.args.Model,

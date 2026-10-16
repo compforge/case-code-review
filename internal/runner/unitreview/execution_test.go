@@ -10,9 +10,9 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/board"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
@@ -39,7 +39,9 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		unitToolResponse("call-2", "submit_hypothesis", `{"path":"a.go","content":"issue","existing_code":"x","trigger":"input","impact":"failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}`, "route-a", 3),
 		unitTextResponse("No material lead remains."),
 	}}
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
 		Model:     "review-model",
@@ -54,7 +56,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
+	}, recording.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +72,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	if got := executor.ModelsUsed(); got["route-a"] != 2 {
 		t.Fatalf("unexpected model counts: %v", got)
 	}
-	if records := history.Scopes["unit-1"].TaskRecords[session.MainTask]; len(records) != 3 {
+	if records := recordedRequests(t, history); len(records) != 3 {
 		t.Fatalf("main task records = %d, want 3", len(records))
 	}
 }
@@ -95,12 +97,12 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 		ToolDefs:  []llm.ToolDef{unitToolDef("echo")},
 		MaxTurns:  10,
 		MaxTokens: 1_000,
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 	}, hook, nil)
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
+	}, recording.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +118,9 @@ func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
 	client := &unitScriptedClient{responses: []*llm.ChatResponse{
 		unitTextResponse("The supplied diff has no material defect mechanism."),
 	}}
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
 	executor := NewExecutor(ExecutorConfig{
 		LLMClient: client,
 		MaxTurns:  10,
@@ -126,11 +130,11 @@ func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
+	}, recording.Scope{ID: "unit-1", Kind: "unit", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	records := history.Scopes["unit-1"].TaskRecords[session.MainTask]
+	records := recordedRequests(t, history)
 	if outcome.State != "completed" || len(records) != 1 {
 		t.Fatalf("outcome=%+v records=%d", outcome, len(records))
 	}
@@ -153,12 +157,12 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 		},
 		MaxTurns:  1,
 		MaxTokens: 1_000,
-		Session:   &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 	}, nil, nil)
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
+	}, recording.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,12 +194,12 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 		PostBulletin: true,
 		MaxTurns:     3,
 		MaxTokens:    1_000,
-		Session:      &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session:      &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 	}, &HypothesisHook{}, sharedBoard)
 
 	outcome, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "review"),
-	}, session.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
+	}, recording.Scope{ID: "unit-1", Paths: []string{"a.go"}}, nil, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +222,7 @@ func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 	sharedBoard := board.New()
 	run := &unitExecution{
 		executor: &Executor{board: sharedBoard},
-		scope:    session.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
+		scope:    recording.Scope{ID: "chain", Paths: []string{"a.go", "b.go"}},
 		turn:     2,
 	}
 	run.publishToolFact(SubmitHypothesis.Name(), []byte(`{}`))
@@ -284,4 +288,24 @@ func unitTextResponse(text string) *llm.ChatResponse {
 			FinishReason: "stop",
 		}},
 	}
+}
+
+func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
+	t.Helper()
+	review.Finalize()
+	path, err := review.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	for _, r := range transcript.Records {
+		if r["type"] == "llm_request" {
+			records = append(records, r)
+		}
+	}
+	return records
 }

@@ -131,7 +131,7 @@ class WeeklyReportTest(unittest.TestCase):
                     json.dumps(record)
                     for record in (
                         {
-                            "type": "session_start",
+                            "type": "session_start", "schema_version": 13,
                             "sessionId": "s1",
                             "cwd": str(repository),
                             "timestamp": "2026-08-04T02:00:00Z",
@@ -149,7 +149,7 @@ class WeeklyReportTest(unittest.TestCase):
             unclosed.write_text(
                 json.dumps(
                     {
-                        "type": "session_start",
+                        "type": "session_start", "schema_version": 13,
                         "sessionId": "s2",
                         "cwd": str(repository / ".worktrees" / "feature"),
                         "timestamp": "2026-08-05T02:00:00Z",
@@ -169,7 +169,7 @@ class WeeklyReportTest(unittest.TestCase):
                     json.dumps(record)
                     for record in (
                         {
-                            "type": "session_start",
+                            "type": "session_start", "schema_version": 13,
                             "sessionId": "s3",
                             "cwd": str(legacy_repository),
                             "timestamp": "2026-08-06T02:00:00Z",

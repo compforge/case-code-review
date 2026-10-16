@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from eval.eval_snapshot import file_sha256
+from eval.eval_snapshot import review_sha256
 from eval.trajectory.analyze_cases import analyze
 
 
@@ -16,7 +16,7 @@ class AnalyzeCasesTest(unittest.TestCase):
             session = root / "session.jsonl"
             session.write_text('{}\n')
             rows = [{"case_id": "missing"}, {"case_id": "changed", "session": str(session), "session_sha256": "old"},
-                    {"case_id": "export-error", "session": str(session), "session_sha256": file_sha256(session)}]
+                    {"case_id": "export-error", "session": str(session), "session_sha256": review_sha256(session)}]
             selected = root / "selected.jsonl"
             selected.write_text("".join(json.dumps(row) + "\n" for row in rows))
             with patch("eval.trajectory.analyze_cases.subprocess.run", side_effect=subprocess.CalledProcessError(1, "export")) as run:

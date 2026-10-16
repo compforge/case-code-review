@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 )
@@ -49,7 +49,7 @@ func TestSanitizeTerminal(t *testing.T) {
 func TestJSONLEmitterWritesOrderedEvents(t *testing.T) {
 	var output bytes.Buffer
 	emitter := newJSONLEmitter(&output)
-	emitter.start(&session.SessionHistory{SessionID: "session-1", RepoDir: "/repo"})
+	emitter.start(&recording.Review{SessionID: "session-1", RepoDir: "/repo"})
 	emitter.finding(finding.Finding{Path: "a.go", Content: "bug", Fingerprint: "abc123"})
 	emitter.finish(jsonOutput{
 		Status: "completed_with_warnings", Version: Version,
@@ -119,7 +119,7 @@ func TestOutputJSONFatal_EmitsParseableFailedJSON(t *testing.T) {
 
 func TestAttachSession(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	sh := &session.SessionHistory{SessionID: "session-1", RepoDir: "/repo"}
+	sh := &recording.Review{SessionID: "session-1", RepoDir: "/repo"}
 	out := jsonOutput{}
 
 	attachSession(&out, sh)

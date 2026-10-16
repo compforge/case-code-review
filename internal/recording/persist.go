@@ -1,4 +1,4 @@
-package session
+package recording
 
 import (
 	"bufio"
@@ -9,12 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/compforge/agentgo"
 	"github.com/gofrs/flock"
 
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 // sessionSubDir is the subdirectory under ~/.casecodereview that holds session
@@ -23,9 +21,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v12 uses complete native
-// timeline snapshots and Stage identities for associated content.
-const SchemaVersion = 12
+// protocol instead of guessing old record semantics. v13 separates Review
+// metadata, incremental timeline updates and native AgentGo Sessions.
+const SchemaVersion = 13
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -101,7 +99,7 @@ func encodeRepoPath(p string) string {
 	return result
 }
 
-func (s *SessionHistory) artifactPath(ext string) (string, error) {
+func (s *Review) artifactPath(ext string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
@@ -116,14 +114,14 @@ func (s *SessionHistory) artifactPath(ext string) (string, error) {
 // TranscriptPath returns the JSONL transcript produced by this session. It is
 // exposed so local callers can join public Findings with pipeline timing facts
 // without guessing CCR's storage layout.
-func (s *SessionHistory) TranscriptPath() (string, error) {
+func (s *Review) TranscriptPath() (string, error) {
 	return s.artifactPath(".jsonl")
 }
 
 // LogPath returns this session's stderr-log path, co-located with its JSONL
 // transcript (<sessions>/<encoded-repo>/<session-id>.log), creating the
 // directory. Lets a run mirror its warnings/errors next to the model-call trace.
-func (s *SessionHistory) LogPath() (string, error) {
+func (s *Review) LogPath() (string, error) {
 	return s.artifactPath(".log")
 }
 
@@ -228,7 +226,7 @@ func (jw *jsonlWriter) WriteSessionStart(startTime time.Time) string {
 // addScopeFields stamps the scope identity onto a per-record map: scope_id/kind/
 // scope/paths identify the review scope (a Unit, run-level Review, or scan pass); filePath
 // is the representative member path, kept for comment anchoring and file rollups.
-func addScopeFields(rec map[string]any, ss *ScopeSession) {
+func addScopeFields(rec map[string]any, ss *ReviewScope) {
 	rec["filePath"] = ss.Path
 	rec["scope_id"] = ss.ID
 	rec["kind"] = ss.Kind
@@ -236,154 +234,7 @@ func addScopeFields(rec map[string]any, ss *ScopeSession) {
 	rec["paths"] = ss.Paths
 }
 
-// WriteLLMRequest writes a request entry with the resolved messages.
-func (jw *jsonlWriter) WriteLLMRequest(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, stageID timeline.StageID, messages any) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":       "llm_request",
-		"taskType":   string(taskType),
-		"request_no": requestNo,
-		"messages":   messages,
-	}
-	addStageFields(rec, jw.sessionID, stageID)
-	addScopeFields(rec, ss)
-	addExecutionField(rec, executionID)
-	return jw.writeRecordLocked(rec)
-}
-
-// WriteLLMResponse writes a response entry with model, content, optional
-// provider reasoning, stop reason, tool calls, and usage.
-func (jw *jsonlWriter) WriteLLMResponse(ss *ScopeSession, executionID string, taskType TaskType, stageID timeline.StageID, content, reasoning, stopReason string, toolCalls []map[string]any, model string, usage TokenUsage) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":       "llm_response",
-		"taskType":   string(taskType),
-		"model":      model,
-		"content":    content,
-		"tool_calls": toolCalls,
-		"usage": map[string]int{
-			"prompt_tokens":      usage.PromptTokens,
-			"completion_tokens":  usage.CompletionTokens,
-			"cache_read_tokens":  usage.CacheReadTokens,
-			"cache_write_tokens": usage.CacheWriteTokens,
-		},
-	}
-	rec["usage_source"] = "reported"
-	if usage.Estimated {
-		rec["usage_source"] = "estimated"
-	}
-	if reasoning != "" {
-		rec["reasoning"] = reasoning
-	}
-	if stopReason != "" {
-		rec["stop_reason"] = stopReason
-	}
-	addStageFields(rec, jw.sessionID, stageID)
-	addScopeFields(rec, ss)
-	addExecutionField(rec, executionID)
-	return jw.writeRecordLocked(rec)
-}
-
-// WriteLLMError writes an llm_error entry recording a failed LLM request.
-func (jw *jsonlWriter) WriteLLMError(ss *ScopeSession, executionID string, taskType TaskType, requestNo int, stageID timeline.StageID, errorMsg string, failure *llm.ErrorDetails) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":       "llm_error",
-		"taskType":   string(taskType),
-		"request_no": requestNo,
-		"error":      errorMsg,
-	}
-	if failure != nil {
-		rec["failure"] = failure
-	}
-	addStageFields(rec, jw.sessionID, stageID)
-	addScopeFields(rec, ss)
-	addExecutionField(rec, executionID)
-	return jw.writeRecordLocked(rec)
-}
-
-// WriteToolResult writes a tool call result entry.
-func (jw *jsonlWriter) WriteToolResult(ss *ScopeSession, executionID string, taskType TaskType, toolCallID, toolName, arguments, result string, ok bool, metadata map[string]any, stageID, requestID timeline.StageID) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":       "tool_result",
-		"taskType":   string(taskType),
-		"tool_name":  toolName,
-		"request_id": requestID,
-		"arguments":  arguments,
-		"result":     result,
-		"ok":         ok,
-	}
-	if toolCallID != "" {
-		rec["tool_call_id"] = toolCallID
-	}
-	if len(metadata) > 0 {
-		rec["metadata"] = metadata
-	}
-	addStageFields(rec, jw.sessionID, stageID)
-	addScopeFields(rec, ss)
-	addExecutionField(rec, executionID)
-	return jw.writeRecordLocked(rec)
-}
-
-// WriteContextProjected records the identifiable context exposed to one model
-// call. It is runtime exposure data, not a claim that every item was used.
-func (jw *jsonlWriter) WriteContextProjected(ss *ScopeSession, executionID string, taskType TaskType, projectionNo int, items []agentgo.ContextItem, stageID timeline.StageID) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":          "context_projected",
-		"execution_id":  executionID,
-		"taskType":      string(taskType),
-		"projection_no": projectionNo,
-		"stage_id":      stageID, "timeline_id": jw.sessionID,
-		"items": items,
-	}
-	addScopeFields(rec, ss)
-	return jw.writeRecordLocked(rec)
-}
-
-// WriteContextCompaction records one completed aggregate rewrite before the
-// compacted prompt is sent to the model.
-func (jw *jsonlWriter) WriteContextCompaction(ss *ScopeSession, executionID string, taskType TaskType, compaction ContextCompaction, stageID timeline.StageID) string {
-
-	jw.mu.Lock()
-	defer jw.mu.Unlock()
-	rec := map[string]any{
-		"type":         "context_compacted",
-		"execution_id": executionID,
-		"taskType":     string(taskType),
-		"reason":       compaction.Reason,
-		"committed":    compaction.Committed,
-		"stage_id":     stageID, "timeline_id": jw.sessionID,
-		"tokens_before":   compaction.TokensBefore,
-		"tokens_after":    compaction.TokensAfter,
-		"messages_before": compaction.MessagesBefore,
-		"messages_after":  compaction.MessagesAfter,
-		"summarized":      compaction.Summarized,
-	}
-	addScopeFields(rec, ss)
-	return jw.writeRecordLocked(rec)
-}
-
-func addExecutionField(rec map[string]any, executionID string) {
-	if executionID != "" {
-		rec["execution_id"] = executionID
-	}
-}
-
-// WriteDebrief writes a unit's terminal "debrief" record (see Debrief).
-// Empty optional groups are omitted so the record stays greppable and small.
-func (jw *jsonlWriter) WriteDebrief(ss *ScopeSession, d Debrief) string {
+func (jw *jsonlWriter) WriteDebrief(ss *ReviewScope, d Debrief) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()

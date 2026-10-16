@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestHypothesisHookAnchorsOutputToUnitScope(t *testing.T) {
 	var hypotheses []Hypothesis
 	hook := &HypothesisHook{OnResolved: func(h Hypothesis) { hypotheses = append(hypotheses, h) }}
 	checkpoint, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
-		Scope: session.Scope{
+		Scope: recording.Scope{
 			ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"},
 		},
 		Tool: SubmitHypothesis,

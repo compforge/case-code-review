@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
@@ -154,7 +154,7 @@ func TestReviewSourcesRemainPinned(t *testing.T) {
 			registry := tool.NewRegistry()
 			registry.Register(tool.NewFileRead(reader))
 			registry.Register(tool.NewFileReadBase(&tool.FileReader{RepoDir: repo, Mode: tool.ModeCommit, Runner: runner}))
-			recording := session.New(repo, "main", "test", session.SessionOptions{})
+			recording := recording.New(repo, "main", "test", recording.SessionOptions{})
 			defer recording.Finalize()
 			a := New(Args{RepoDir: repo, Commit: ref, GitRunner: runner, Tools: registry, Session: recording})
 			if err := a.loadChanges(context.Background()); err != nil {

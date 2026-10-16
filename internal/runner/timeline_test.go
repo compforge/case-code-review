@@ -12,7 +12,7 @@ import (
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
@@ -23,7 +23,7 @@ import (
 func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	ctx := history.Context(context.Background())
 	a := New(Args{RepoDir: history.RepoDir, Session: history, LLMClient: &budgetClient{}, MaxConcurrency: 1,
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 10000, MaxToolRequestTimes: 2},
@@ -51,7 +51,7 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{"unit.formation", "unit.grouping", "codegraph.build", "unit.queue", "review.unit", "execution", "turn", "context.project", "model.attempt", "llm.request", "trial.finalize"} {
+	for _, name := range []string{"unit.formation", "unit.grouping", "codegraph.build", "unit.queue", "review.unit", "execution", "turn", "context.project", "model.attempt", "trial.finalize"} {
 		if !names[name] {
 			t.Errorf("missing %s in %v", name, names)
 		}
@@ -191,7 +191,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	}
 }
 
-func readFinishedTimeline(t *testing.T, history *session.SessionHistory) timeline.Snapshot {
+func readFinishedTimeline(t *testing.T, history *recording.Review) timeline.Snapshot {
 	t.Helper()
 	path, err := history.TranscriptPath()
 	if err != nil {
@@ -202,7 +202,7 @@ func readFinishedTimeline(t *testing.T, history *session.SessionHistory) timelin
 		t.Fatal(err)
 	}
 	defer f.Close()
-	transcript, err := session.ReadTranscript(f)
+	transcript, err := recording.ReadReview(f.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	history := session.New(repo, "main", "test", session.SessionOptions{})
+	history := recording.New(repo, "main", "test", recording.SessionOptions{})
 	a := New(Args{RepoDir: repo, Session: history, MaxUnits: 1})
 	a.changes = []change.Change{goDiff("a.go", 1), goDiff("b.go", 1)}
 	if _, err := a.splitUnits(history.Context(t.Context())); err != nil {

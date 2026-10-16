@@ -1,4 +1,4 @@
-package session
+package recording
 
 // UseTestSessions redirects session persistence to the "test-sessions"
 // subdirectory so test runs don't pollute the real ~/.casecodereview/sessions

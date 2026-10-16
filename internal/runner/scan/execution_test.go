@@ -10,9 +10,9 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestScanCompressionPromptsAdaptTemplateContext(t *testing.T) {
@@ -43,7 +43,9 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		scanToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
 		scanToolResponse("call-2", "task_done", `{}`, "route-a", 3),
 	}}
-	history := &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)}
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
+	defer history.Finalize()
 	executor := newScanExecutor(Args{
 		LLMClient: client,
 		Model:     "scan-model",
@@ -61,7 +63,7 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 
 	result, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "scan"),
-	}, session.Scope{ID: "a.go", Kind: "unit", Type: "file", Paths: []string{"a.go"}})
+	}, recording.Scope{ID: "a.go", Kind: "unit", Type: "file", Paths: []string{"a.go"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	if got := executor.ModelsUsed(); got["route-a"] != 2 {
 		t.Fatalf("unexpected model counts: %v", got)
 	}
-	if records := history.Scopes["a.go"].TaskRecords[session.MainTask]; len(records) != 2 {
+	if records := recordedRequests(t, history); len(records) != 2 {
 		t.Fatalf("main task records = %d, want 2", len(records))
 	}
 }
@@ -92,12 +94,12 @@ func TestScanExecutorRecordsIncompleteReview(t *testing.T) {
 			MaxToolRequestTimes: 1,
 			MaxTokens:           1_000,
 		},
-		Session: &session.SessionHistory{Scopes: make(map[string]*session.ScopeSession)},
+		Session: &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 	}, nil)
 
 	result, err := executor.Run(context.Background(), []agentgo.AgentMessage{
 		msg.Text("user", "scan"),
-	}, session.Scope{ID: "a.go", Paths: []string{"a.go"}})
+	}, recording.Scope{ID: "a.go", Paths: []string{"a.go"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,4 +169,24 @@ func scanTextResponse(text string) *llm.ChatResponse {
 			FinishReason: "stop",
 		}},
 	}
+}
+
+func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
+	t.Helper()
+	review.Finalize()
+	path, err := review.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []map[string]any
+	for _, r := range transcript.Records {
+		if r["type"] == "llm_request" {
+			records = append(records, r)
+		}
+	}
+	return records
 }

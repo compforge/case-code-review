@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiankunli/case-code-review/internal/harness/session"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestRetentionConfiguration(t *testing.T) {
@@ -100,7 +100,7 @@ func TestCleanCommandDryRunAndStoreSelection(t *testing.T) {
 func TestRecordingCleanupRepeatsAndStops(t *testing.T) {
 	root := t.TempDir()
 	old := cleanupCLIFixture(t, root, "initial")
-	stop := startCleanupLoop(root, session.RetentionPolicy{MaxAge: 7 * 24 * time.Hour}, 5*time.Millisecond)
+	stop := startCleanupLoop(root, recording.RetentionPolicy{MaxAge: 7 * 24 * time.Hour}, 5*time.Millisecond)
 	// Always stop the worker before TempDir is removed, including on failure.
 	defer func() {
 		if stop != nil {

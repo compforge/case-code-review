@@ -2,24 +2,30 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
+
+	"github.com/qiankunli/case-code-review/internal/timelinelog"
 
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
 )
 
-// The process shares one cache-only Manager. Session owns JSONL export and
-// releases its ID after the final snapshot; transport-only calls release theirs.
+// One manager routes incremental updates to each review-owned timeline file.
 var timelineManager *timeline.Manager
+var timelineStore *timelinelog.Store
 
 // InitTimeline installs the process manager before any recording starts. Call
 // the returned cleanup after producers stop. Serial tests can use the same
 // lifetime inside a synctest bubble, keeping its workers on the fake clock.
 func InitTimeline() (func(context.Context) error, error) {
-	m, err := timeline.NewManager(nil, timeline.Config{})
+	backend := timelinelog.New()
+	m, err := timeline.NewManager(backend, timeline.Config{})
 	if err != nil {
 		return nil, err
 	}
+	previousStore := timelineStore
+	timelineStore = backend
 	previous := timelineManager
 	timelineManager = m
 	previousDefault := timeline.SetDefault(m)
@@ -27,6 +33,7 @@ func InitTimeline() (func(context.Context) error, error) {
 		err := m.Shutdown(ctx)
 		timeline.SetDefault(previousDefault)
 		timelineManager = previous
+		timelineStore = previousStore
 		return err
 	}, nil
 }
@@ -61,4 +68,25 @@ func ReportTimelineError(err error) {
 	if err != nil {
 		fmt.Fprintf(console.Err(), "[ccr timeline] recording failed: %v\n", err)
 	}
+}
+
+func AttachTimeline(id, path string) error {
+	if timelineStore == nil {
+		return fmt.Errorf("timeline manager not initialized")
+	}
+	return timelineStore.Attach(id, path)
+}
+func FlushTimeline(id string) error {
+	if timelineManager == nil {
+		return nil
+	}
+	return timelineManager.Flush(context.Background(), id, true)
+}
+func CloseTimeline(id string) error {
+	err := FlushTimeline(id)
+	if timelineStore != nil {
+		err = errors.Join(err, timelineStore.Detach(id))
+	}
+	ReleaseTimeline(id)
+	return err
 }

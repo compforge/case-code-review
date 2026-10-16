@@ -19,7 +19,7 @@ from eval.benchmark.matching import Matcher, pair_id
 from eval.benchmark.run import load_experiment, export_runs
 from eval.benchmark.stages import project
 from eval.benchmark.test_session_compare import artifact, pipeline, unit
-from eval.eval_snapshot import file_sha256
+from eval.eval_snapshot import review_sha256
 
 
 def reference(label="positive", path="a.go"):
@@ -35,7 +35,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
 
     def recording(self, *, closed=True, assessed=True, support="supported", low_value=True):
         path = self.root / "session.jsonl"
-        events = [{"type": "session_start", "sessionId": "session-1", "tool_version": "test"},
+        events = [{"type": "session_start", "schema_version": 13, "sessionId": "session-1", "tool_version": "test"},
                   artifact("review_input", version=1, repository="repo", change_digest="change"),
                   *unit(), *pipeline(support=support, assessed=assessed)]
         for event in events:
@@ -49,7 +49,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
     def run_row(self, session, refs=None):
         return {"dataset": "test", "dataset_id": "snapshot", "case_id": "case-1",
                 "run_id": "run-1", "arm": "base", "solve_state": "ok", "error": None,
-                "session": str(session), "session_sha256": file_sha256(session),
+                "session": str(session), "session_sha256": review_sha256(session),
                 "case": {"references": refs if refs is not None else [reference()]}}
 
     def matcher(self, session, matched=True):
@@ -171,7 +171,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.observations["failed"], 1)
         self.assertEqual(result.meta["session_id"], "session-1")
         self.assertNotIn(reference()["text"], " ".join(run.call_args.args[0]))
-        self.assertEqual(result.meta["session_sha256"], file_sha256(session))
+        self.assertEqual(result.meta["session_sha256"], review_sha256(session))
 
     async def test_case_harness_resume_and_effect_selection_share_same_session(self):
         session = self.recording()
@@ -196,7 +196,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0]["run_id"], "repeat-1")
         selected = json.loads((self.root / "effects/selected.jsonl").read_text())
         self.assertEqual(selected["selection_reasons"], ["review3_filtered"])
-        self.assertEqual(selected["session_sha256"], file_sha256(session))
+        self.assertEqual(selected["session_sha256"], review_sha256(session))
 
     async def test_parallel_limit_bounds_review_processes(self):
         solver = ReviewSolver(max_parallel=1)

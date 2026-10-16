@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -17,8 +17,8 @@ func newRunnerForTest(t *testing.T, tpl template.ScanTemplate) *Runner {
 		Template: tpl,
 		Findings: finding.NewCollector(),
 		Tools:    tool.NewRegistry(),
-		Session: session.New(t.TempDir(), "main", "test-model", session.SessionOptions{
-			ReviewMode: session.ReviewModeFullScan,
+		Session: recording.New(t.TempDir(), "main", "test-model", recording.SessionOptions{
+			ReviewMode: recording.ReviewModeFullScan,
 		}),
 	})
 }
@@ -176,8 +176,8 @@ func TestMaybeRunPlan_SkipPathsDoNotCallLLM(t *testing.T) {
 		Template: tpl,
 		Findings: finding.NewCollector(),
 		Tools:    tool.NewRegistry(),
-		Session: session.New(t.TempDir(), "main", "test-model", session.SessionOptions{
-			ReviewMode: session.ReviewModeFullScan,
+		Session: recording.New(t.TempDir(), "main", "test-model", recording.SessionOptions{
+			ReviewMode: recording.ReviewModeFullScan,
 		}),
 		SkipPlan: true,
 	})
@@ -294,8 +294,8 @@ func TestInjectScanContentMap(t *testing.T) {
 
 func TestNewRunner_SetsSessionMode(t *testing.T) {
 	a := New(Args{Template: makeTemplateWithFullScan()})
-	if a.session.ReviewMode != session.ReviewModeFullScan {
-		t.Errorf("ReviewMode = %q, want %q", a.session.ReviewMode, session.ReviewModeFullScan)
+	if a.session.ReviewMode != recording.ReviewModeFullScan {
+		t.Errorf("ReviewMode = %q, want %q", a.session.ReviewMode, recording.ReviewModeFullScan)
 	}
 }
 

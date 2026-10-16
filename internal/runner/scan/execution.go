@@ -13,9 +13,9 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
@@ -28,7 +28,7 @@ type scanExecutor struct {
 	model                   string
 	tools                   *tool.Registry
 	toolDefs                []llm.ToolDef
-	session                 *session.SessionHistory
+	session                 *recording.Review
 	handler                 harness.ToolHandler
 	maxTurns                int
 	maxTokens               int
@@ -71,7 +71,7 @@ func newScanExecutor(args Args, handler harness.ToolHandler) *scanExecutor {
 func (e *scanExecutor) Run(
 	ctx context.Context,
 	messages []agentgo.AgentMessage,
-	scope session.Scope,
+	scope recording.Scope,
 ) (harness.ExecutionResult, error) {
 	run := &scanExecution{executor: e, ctx: ctx}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
@@ -83,7 +83,7 @@ func (e *scanExecutor) Run(
 		ToolHandler:             e.handler,
 		Session:                 e.session,
 		Scope:                   scope,
-		TaskType:                session.MainTask,
+		TaskType:                recording.MainTask,
 		Events:                  run,
 		MaxTurns:                e.maxTurns,
 		MaxTokens:               e.maxCompletionTokens,

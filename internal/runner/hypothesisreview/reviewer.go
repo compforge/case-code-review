@@ -13,9 +13,9 @@ import (
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -28,7 +28,7 @@ type Config struct {
 	Model                   string
 	ToolDefs                []llm.ToolDef
 	Tools                   *tool.Registry
-	Session                 *session.SessionHistory
+	Session                 *recording.Review
 	Background              string
 	MaxTurns                int
 	MaxTokens               int
@@ -98,11 +98,12 @@ func Review(
 		OnAccepted: config.OnAssessment,
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
-		LLMClient: config.LLMClient,
-		Model:     config.Model,
-		Messages:  messages,
-		ToolDefs:  ToolDefs(config.ToolDefs),
-		Tools:     config.Tools,
+		SessionCodecOptions: hypothesisCodecOptions(),
+		LLMClient:           config.LLMClient,
+		Model:               config.Model,
+		Messages:            messages,
+		ToolDefs:            ToolDefs(config.ToolDefs),
+		Tools:               config.Tools,
 		ToolHandler: &ReviewHandler{
 			Assessments: assessmentHook,
 			Evidence:    evidence,
@@ -111,11 +112,11 @@ func Review(
 			Hypothesis:  input.Hypothesis,
 		},
 		Session: config.Session,
-		Scope: session.Scope{
+		Scope: recording.Scope{
 			ID: "hypothesis_review:" + input.LaneID, Kind: "lane",
 			Type: "hypothesis_review", Paths: input.Paths(),
 		},
-		TaskType:         session.HypothesisReviewTask,
+		TaskType:         recording.HypothesisReviewTask,
 		Events:           config.Events,
 		MaxTurns:         config.MaxTurns,
 		MaxTokens:        outputLimit(config.MaxTokens, config.MaxCompletionTokens),

@@ -1,0 +1,2 @@
+{"type":"session_start","schema_version":13,"sessionId":"review","timestamp":"2026-10-16T00:00:00Z","model":"test"}
+{"type":"session_end","sessionId":"review","timestamp":"2026-10-16T00:00:10Z","duration_seconds":10}

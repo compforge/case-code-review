@@ -10,8 +10,8 @@ import (
 	agentcontext "github.com/compforge/agentgo/context"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 const wrapUpTimeReserve = 90 * time.Second
@@ -35,10 +35,10 @@ type turnController struct {
 	wrapUpDeadline func() time.Time
 	currentTurn    int
 	wrapUpPrompt   string
-	scope          session.Scope
+	scope          recording.Scope
 	provider       TurnContextProvider
 	budget         tokenAllowance
-	history        *session.SessionHistory
+	history        *recording.Review
 	maxOutput      int
 	toolTokens     int
 	outputs        [3]int64
