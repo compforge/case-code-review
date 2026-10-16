@@ -19,6 +19,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
+var errExplorationExpired = errors.New("exploration request deadline reached")
+
 const defaultCompletionPrompt = "The review is not complete until you call task_done. Finish any required result tool calls, then call task_done."
 
 const (
@@ -222,6 +224,8 @@ func rawMessages(messages []agentgo.AgentMessage) []agentgo.AgentMessage {
 
 // Run drives the Execution to one terminal result. An Execution is single-use:
 // reusing it would mix recorder, context, and completion state across loops.
+// +spec=`Only an expired exploration child request may resume once for wrap-up; caller cancellation, hard deadlines and provider errors remain terminal`
+// +why=`The committed AgentGo state preserves accepted results and spent turns while a fresh run namespace keeps failed and recovery requests distinct`
 func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	if !e.started.CompareAndSwap(false, true) {
 		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
@@ -259,33 +263,69 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		agentgo.AgentContext{Messages: history, Tools: e.tools},
 		config,
 	)
-	var artifacts []agentgo.Artifact
-	for event := range events {
-		timing.observe(event)
-		emitExecutionEvent(e.spec.Events, e.recorder, event)
-		switch event.Type {
-		case agentgo.EventError:
-			if event.Err != nil {
-				e.runErr = event.Err
-			}
-		case agentgo.EventToolExecEnd:
-			if event.Tool != tool.TaskDone.Name() {
-				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError, timing.eventStage(event))
-			}
-		case agentgo.EventAgentEnd:
-			e.summary = event.Summary
-			if event.State != nil {
-				artifacts = event.State.Artifacts
-			}
+	end := e.consumeLoop(events, timing, e.id)
+	if errors.Is(e.runErr, errExplorationExpired) && ctx.Err() == nil && end.State != nil {
+		e.turns.finishExploration(ctx)
+		if e.spec.Session != nil {
+			e.spec.Session.WriteArtifactContext(ctx, "execution_wrap_up_resumed", map[string]any{
+				"execution_id": e.id, "scope_id": e.spec.Scope.ID,
+				"completed_turns": end.State.Progress.CompletedTurns, "reason": e.runErr.Error(),
+			})
 		}
+		state := *end.State
+		state.Progress.NextTurn = true
+		config.InitialState = state
+		e.runErr = nil
+		runID := e.id + "/wrap-up"
+		if timing != nil {
+			timing.runID = runID
+		}
+		events = agentgo.AgentLoopContinue(ctx, agentgo.AgentContext{Messages: state.Messages, Tools: e.tools}, config)
+		end = e.consumeLoop(events, timing, runID)
 	}
+	if errors.Is(e.runErr, errExplorationExpired) {
+		emitExecutionEvent(e.spec.Events, e.recorder, agentgo.Event{Type: agentgo.EventError, Err: e.runErr}, e.id)
+	}
+	emitExecutionEvent(e.spec.Events, e.recorder, end, e.id)
 	result, err := e.finish(ctx)
-	result.artifacts = artifacts
+	if end.State != nil {
+		result.artifacts = end.State.Artifacts
+	}
 	result.ID = e.id
 	result.Duration = time.Since(startedAt)
 	timing.finish(result, err)
 	e.spec.Session.CheckpointTimeline()
 	return result, err
+}
+
+// consumeLoop keeps the Harness lifecycle open across the optional wrap-up
+// continuation. Failed physical calls remain in the Session and timeline.
+func (e *Execution) consumeLoop(events <-chan agentgo.Event, timing *executionTimeline, runID string) agentgo.Event {
+	var end agentgo.Event
+	for event := range events {
+		timing.observe(event)
+		switch event.Type {
+		case agentgo.EventError:
+			if event.Err != nil {
+				e.runErr = event.Err
+			}
+			if errors.Is(event.Err, errExplorationExpired) {
+				continue
+			}
+		case agentgo.EventToolExecEnd:
+			emitExecutionEvent(e.spec.Events, e.recorder, event, runID)
+			if event.Tool != tool.TaskDone.Name() {
+				e.recorder.finishTool(event.ToolID, event.Tool, event.Result, event.IsError, timing.eventStage(event))
+			}
+			continue
+		case agentgo.EventAgentEnd:
+			e.summary = event.Summary
+			end = event
+			continue
+		}
+		emitExecutionEvent(e.spec.Events, e.recorder, event, runID)
+	}
+	return end
 }
 
 func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
@@ -294,18 +334,20 @@ func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
 		execution agentgo.ModelExecution,
 		next agentgo.ModelExecuteFunc,
 	) (agentgo.ModelResult, error) {
-		// Bound each exploration request, including context summarization. The
-		// child deadline cannot cancel the loop or extend its caller's deadline.
-		// Once wrap-up starts, requests retain only the caller's hard deadline.
+		callCtx := ctx
 		if deadline := e.turns.modelDeadline(); !deadline.IsZero() {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(ctx, deadline)
+			callCtx, cancel = context.WithDeadlineCause(ctx, deadline, errExplorationExpired)
 			defer cancel()
 		}
 		if execution.Kind == agentgo.ExecutionKindModel {
 			e.prepareWrapUpRequest(execution)
 		}
-		return next(ctx, execution)
+		result, err := next(callCtx, execution)
+		if errors.Is(err, context.DeadlineExceeded) && context.Cause(callCtx) == errExplorationExpired && ctx.Err() == nil {
+			return result, fmt.Errorf("%w: %w", errExplorationExpired, err)
+		}
+		return result, err
 	}
 }
 
@@ -317,7 +359,7 @@ func (e *Execution) beforeTurn(ctx context.Context, turn agentgo.BeforeTurnConte
 		return nil, err
 	}
 	if len(e.wrapUpAllowed) > 0 && e.wrapUpRequestCount.Load() > 0 && !e.wrapUpFinalTurnGranted.Load() {
-		messages = append(messages, msg.Text("user", e.finalWrapUpPrompt()))
+		messages = append(messages, msg.FixedText("user", e.finalWrapUpPrompt()))
 	}
 	if err := msg.RegisterArtifacts(turn.Artifacts, messages); err != nil {
 		return nil, err

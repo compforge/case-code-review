@@ -124,7 +124,7 @@ func TestExecutionTimelineUsesSourceTimeAndLeavesMissingEndIncomplete(t *testing
 		t.Fatal(err)
 	}
 	ctx, root := telemetry.BeginTimelineStage(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}), "execution", timeline.WithStageID("exec"))
-	r := &executionTimeline{ctx: ctx, timelineID: id, id: "exec", root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	r := &executionTimeline{ctx: ctx, timelineID: id, id: "exec", runID: "exec", root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 	start := time.Now().Add(-time.Second)
 	r.observe(agentgo.Event{Type: agentgo.EventTurnStart, TurnIndex: 1, Timestamp: start})
 	execution := agentgo.Execution{ID: "model-1", Kind: agentgo.ExecutionKindModel, TurnIndex: 1, Attempt: 1}

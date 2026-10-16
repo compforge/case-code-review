@@ -197,11 +197,14 @@ ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图�
 Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo `BeforeTurn` 在模型调用前处理
 增量上下文与 wrap-up。调用方可指定独立的探索截止时间，到点关闭新调查调用而不取消执行 context；
 探索中的每次模型请求（含上下文摘要）通过子 context 继承请求开始时的探索 deadline；
-更短的调用方硬期限优先。动态期限更新影响后续请求，不追溯修改在途请求。请求超时仍沿用
-AgentGo 的错误处理，不自动切换到收卷。已进入收卷的请求沿用调用方的取消信号与硬期限。
+更短的调用方硬期限优先。动态期限更新影响后续请求，不追溯修改在途请求。仅当探索子请求到期、
+调用方 context 仍有效时，Harness 使用 AgentGo 已提交的状态续跑一次收卷；保留已消耗的轮数、
+上下文和已接受的结果，不重新获得预算。两次 Loop 使用不同的 timeline 请求命名空间，
+同一个 Harness Execution 只发布一次终态。普通 provider 超时、用户取消和硬截止不触发该恢复。
+已进入收卷的请求沿用调用方的取消信号与硬期限。
 调用方可以提供固定或动态的探索截止时间；显式探索边界拥有
 收卷余量分配，未指定时才使用通用 deadline 预留。调查轮次到达、探索时间到达、外层 deadline
-余量不足、或剩余累计 token 不够“再调查一轮 + 收卷”时进入收卷。模式提示追加到消息末尾，工具定义和 tool choice 保持稳定，
+余量不足、或剩余累计 token 不够“再调查一轮 + 收卷”时进入收卷。模式提示作为不可压缩消息追加到末尾，工具定义和 tool choice 保持稳定，
 避免模式切换破坏可复用的请求前缀。首次收卷允许调用方声明的结果提交工具及 completion tool；
 唯一一次纠正只允许 completion tool，natural completion 则要求自然结束。Tool middleware 拦截
 越界调用，StopGuard 检查完成契约；仍未完成则以 truncated 结束。调用方定义终态动作和收敛语义，

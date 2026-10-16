@@ -3,23 +3,32 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/compforge/agentgo"
+	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
+	"github.com/qiankunli/case-code-review/internal/harness/session"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 type explorationClockClient struct {
 	*scriptedClient
-	delays []time.Duration
+	delays    []time.Duration
+	attempts  []llm.ChatRequest
+	deadlines []time.Time
 }
 
 func (c *explorationClockClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
+	c.attempts = append(c.attempts, request)
+	deadline, _ := ctx.Deadline()
+	c.deadlines = append(c.deadlines, deadline)
 	delay := c.delays[0]
 	c.delays = c.delays[1:]
 	select {
@@ -130,23 +139,237 @@ func TestDynamicWrapUpBoundaryControlsTurnsAndInFlightTools(t *testing.T) {
 	})
 }
 
-// +case:id=exploration_model_deadline,desc=`an exploration call starts one second before its deadline`,expect=`the request stops at that deadline while its parent remains live; no automatic wrap-up recovery is claimed`
-func TestExplorationModelCallUsesRemainingDeadline(t *testing.T) {
+// +case:id=exploration_model_deadline,desc=`a model call starts at second 9 with exploration ending at second 10`,expect=`the failed request is retained and one wrap-up continuation completes under the original hard deadline`
+func TestExplorationModelCallResumesWrapUp(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		began := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		client := &explorationClockClient{scriptedClient: &scriptedClient{}, delays: []time.Duration{time.Minute}}
-		time.Sleep(5*time.Minute - time.Second)
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{textResponse("review complete")}}, delays: []time.Duration{time.Minute, time.Second}}
+		time.Sleep(9 * time.Second)
+		var events []ExecutionEvent
 		result, err := runExecution(ctx, ExecutionSpec{
-			LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
-			MaxTurns: 10, WrapUpAt: began.Add(5 * time.Minute), WrapUpPrompt: "finish", NaturalCompletion: true,
+			LLMClient: client,
+			Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
+			MaxTurns:  10, WrapUpAt: began.Add(10 * time.Second), WrapUpPrompt: "finish review now", NaturalCompletion: true,
+			Events: EventSinkFunc(func(e ExecutionEvent) { events = append(events, e) }),
 		})
-		if !errors.Is(err, context.DeadlineExceeded) || result.State != OutcomeLLMError {
-			t.Fatalf("request timeout was not propagated: result=%+v err=%v", result, err)
+		if err != nil || result.State != OutcomeCompleted || result.Turns != 1 {
+			t.Fatalf("result=%+v err=%v", result, err)
 		}
-		if ctx.Err() != nil || time.Since(began) != 5*time.Minute {
-			t.Fatalf("wrong cancellation boundary: elapsed=%s parent=%v", time.Since(began), ctx.Err())
+		if ctx.Err() != nil || time.Since(began) != 11*time.Second {
+			t.Fatalf("wrong recovery timing: elapsed=%s parent=%v", time.Since(began), ctx.Err())
+		}
+		if len(client.attempts) != 2 || !client.deadlines[0].Equal(began.Add(10*time.Second)) || !client.deadlines[1].Equal(began.Add(12*time.Second)) {
+			t.Fatalf("requests/deadlines=%d/%v", len(client.attempts), client.deadlines)
+		}
+		if strings.Contains(requestText(client.attempts[0]), "finish review now") || strings.Count(requestText(client.attempts[1]), "finish review now") != 1 {
+			t.Fatal("wrap-up prompt was not committed exactly once after the failed call")
+		}
+		ends := 0
+		for _, event := range events {
+			if event.Type == EventExecutionError {
+				t.Errorf("recoverable error escaped as terminal: %v", event.Err)
+			}
+			if event.Type == EventExecutionEnd {
+				ends++
+			}
+		}
+		if ends != 1 {
+			t.Fatalf("terminal events=%d", ends)
+		}
+	})
+}
+
+func TestExplorationRecoveryPersistsOneExecution(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	history := session.New(t.TempDir(), "main", "test", session.SessionOptions{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{textResponse("complete")}}, delays: []time.Duration{time.Minute, 0}}
+	result, err := runExecution(ctx, ExecutionSpec{
+		LLMClient: client, Session: history, Scope: session.Scope{ID: "unit-1", Kind: "unit"},
+		Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10,
+		WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish", NaturalCompletion: true,
+	})
+	if err != nil || result.State != OutcomeCompleted {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	history.Finalize()
+	path, err := history.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	transcript, err := session.ReadTranscript(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := transcript.ExecutionFacts()
+	if len(facts) != 1 || facts[0]["outcome"] != OutcomeCompleted {
+		t.Fatalf("execution facts=%v", facts)
+	}
+	counts := map[string]int{}
+	for _, record := range transcript.Records {
+		counts[record["type"].(string)]++
+		if record["artifact_kind"] == "execution_wrap_up_resumed" {
+			counts["resumed"]++
+		}
+	}
+	if counts["llm_request"] != 2 || counts["llm_error"] != 1 || counts["llm_response"] != 1 || counts["resumed"] != 1 {
+		t.Fatalf("records=%v", counts)
+	}
+	stageCounts := map[string]int{}
+	for _, stage := range transcript.Timeline.Stages {
+		stageCounts[stage.Name]++
+		if stage.Status == timeline.Running {
+			t.Errorf("unfinished stage: %+v", stage)
+		}
+	}
+	if stageCounts["turn"] != 2 || stageCounts["model.attempt"] != 2 {
+		t.Fatalf("colliding recovery stages: %v", stageCounts)
+	}
+	stages := transcript.StageIndex()
+	for _, record := range transcript.Records {
+		if record["type"] != "context_projected" {
+			continue
+		}
+		id, _ := record["stage_id"].(string)
+		if stage, ok := stages[timeline.StageID(id)]; !ok || stage.Name != "model.attempt" {
+			t.Fatalf("projection lost attempt identity: %v", record)
+		}
+	}
+}
+
+// +case:id=wrapup_recovery_preserves_results,desc=`one accepted result precedes an exploration request timeout`,expect=`continuation retains messages artifacts usage and spent turns without repeating the result tool`
+func TestExplorationRecoveryPreservesCommittedState(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		first := toolCallResponseID("accepted", "submit_result", `{}`, &llm.UsageInfo{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5})
+		last := textResponse("review complete")
+		last.Usage = &llm.UsageInfo{PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7}
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{first, last}}, delays: []time.Duration{time.Second, time.Minute, time.Second}}
+		submitted := 0
+		initial := msg.NewFile("a.go", 1, 1, 1, "1|evidence")
+		result, err := runExecution(ctx, ExecutionSpec{
+			LLMClient: client, Messages: []agentgo.AgentMessage{initial},
+			ToolDefs: []llm.ToolDef{toolDef("submit_result")},
+			ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
+				submitted++
+				return tool.Of("accepted hypothesis h-1"), true
+			}),
+			MaxTurns: 4, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish review now", WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true,
+		})
+		if err != nil || result.State != OutcomeCompleted || result.Turns != 2 || result.ToolCalls != 1 || result.Usage.TotalTokens != 12 || submitted != 1 || len(result.artifacts) != 1 {
+			t.Fatalf("result=%+v submitted=%d artifacts=%d err=%v", result, submitted, len(result.artifacts), err)
+		}
+		if len(client.attempts) != 3 || !strings.Contains(requestText(client.attempts[2]), "accepted hypothesis h-1") || !strings.Contains(requestText(client.attempts[2]), "1|evidence") {
+			t.Fatal("accepted context was not retained")
+		}
+		assertStableToolRequests(t, client.attempts)
+	})
+}
+
+func TestExplorationRecoveryRetainsCallerLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		hard, abort time.Duration
+		want        string
+		calls       int
+	}{
+		{name: "shorter hard deadline", hard: 5 * time.Second, want: OutcomeTimeout, calls: 1},
+		{name: "equal hard deadline", hard: 10 * time.Second, want: OutcomeTimeout, calls: 1},
+		{name: "cancel exploration", hard: 12 * time.Second, abort: 5 * time.Second, want: OutcomeAborted, calls: 1},
+		{name: "wrap-up hard deadline", hard: 12 * time.Second, want: OutcomeTimeout, calls: 2},
+		{name: "cancel wrap-up", hard: 12 * time.Second, abort: 11 * time.Second, want: OutcomeAborted, calls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), tc.hard)
+				defer cancel()
+				if tc.abort > 0 {
+					time.AfterFunc(tc.abort, cancel)
+				}
+				client := &explorationClockClient{scriptedClient: &scriptedClient{}, delays: []time.Duration{time.Minute, time.Minute}}
+				result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", NaturalCompletion: true})
+				if err == nil || result.State != tc.want || len(client.attempts) != tc.calls {
+					t.Fatalf("result=%+v calls=%d err=%v", result, len(client.attempts), err)
+				}
+			})
+		})
+	}
+}
+
+func TestExplorationMiddlewareDistinguishesRequestFailures(t *testing.T) {
+	for _, kind := range []agentgo.ExecutionKind{agentgo.ExecutionKindModel, agentgo.ExecutionKindCompact} {
+		for _, expired := range []bool{false, true} {
+			t.Run(string(kind)+fmt.Sprint(expired), func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+					defer cancel()
+					e := &Execution{turns: newTurnController(ExecutionSpec{WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish"})}
+					_, err := e.modelMiddleware()(ctx, agentgo.ModelExecution{Execution: agentgo.Execution{Kind: kind}}, func(callCtx context.Context, _ agentgo.ModelExecution) (agentgo.ModelResult, error) {
+						if expired {
+							<-callCtx.Done()
+						}
+						return agentgo.ModelResult{}, context.DeadlineExceeded
+					})
+					if errors.Is(err, errExplorationExpired) != expired || !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+						t.Fatalf("err=%v parent=%v", err, ctx.Err())
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestExplorationRecoveryFromSummaryTimeout(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		var messages []agentgo.AgentMessage
+		for range 8 {
+			messages = append(messages, msg.Text("user", strings.Repeat("review evidence and reasoning ", 30)))
+		}
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
+			textResponse("<summary>preserve the confirmed review facts</summary>"), textResponse("review complete"),
+		}}, delays: []time.Duration{time.Minute, time.Second, 0}}
+		result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: messages, MaxTurns: 10, MaxTokens: 400, ContextWindow: 400,
+			WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", NaturalCompletion: true})
+		if err != nil || result.State != OutcomeCompleted || len(client.attempts) != 3 {
+			t.Fatalf("result=%+v calls=%d err=%v", result, len(client.attempts), err)
+		}
+		if !strings.Contains(requestText(client.attempts[2]), "preserve the confirmed review facts") || !strings.Contains(requestText(client.attempts[2]), "finish") {
+			t.Fatalf("recovered summary or wrap-up reminder missing: %s", requestText(client.attempts[2]))
+		}
+	})
+}
+
+func TestExplorationRecoveryClosesInvestigationTools(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
+			toolCallResponse("read_files", `{}`, nil), textResponse("review complete"),
+		}}, delays: []time.Duration{time.Minute, 0, 0}}
+		reads := 0
+		result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
+			ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")},
+			ToolHandler: toolHandlerFunc(func(context.Context, ToolRequest) (tool.TaskCheckpoint, bool) {
+				reads++
+				return tool.Of("evidence"), true
+			}),
+			MaxTurns: 10, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true})
+		if err != nil || result.State != OutcomeCompleted || reads != 0 || len(client.attempts) != 3 {
+			t.Fatalf("result=%+v reads=%d calls=%d err=%v", result, reads, len(client.attempts), err)
+		}
+		if !strings.Contains(requestText(client.attempts[2]), "Final completion turn") {
+			t.Fatal("missing final corrective turn")
 		}
 	})
 }
