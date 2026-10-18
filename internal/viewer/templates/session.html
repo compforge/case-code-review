@@ -21,9 +21,9 @@
 <section id="timeline">
     <div class="meta"><span>{{if .Session.Summary.BizID}}{{.Session.Summary.BizID}}{{else}}{{.RepoName}}{{end}}</span><span>{{.Session.Summary.GitBranch}}</span><span>{{formatTime .Session.Summary.Timestamp}}</span></div>
     <div class="timeline-heading"><h2>Review Timeline</h2><code>{{.Session.Summary.SessionID}}</code></div>
-    <div class="timeline-summary"><span>{{.Session.Diagnostics.StatusLabel}}</span><span>{{formatDuration .Session.Summary.DurationSec}} elapsed</span><span>{{formatInt .Session.TokenUsage.TotalPromptTokens}} prompt tokens</span><span>{{formatInt .Session.TokenUsage.TotalCompletionTokens}} output tokens</span><span>{{.Session.Diagnostics.Findings}} findings</span></div>
+    <div class="timeline-summary"><span>{{.Session.CompletionLabel}}</span><span>{{formatDuration .Session.Summary.DurationSec}} elapsed</span>{{if .Session.Summary.Tokens}}<span>{{formatInt .Session.Summary.Tokens.PromptTokens}} prompt tokens</span><span>{{formatInt .Session.Summary.Tokens.CompletionTokens}} output tokens</span>{{else}}<span>Token totals unavailable · inspect an Agent view for recorded usage</span>{{end}}<span>{{.Session.Findings}} findings</span></div>
     {{if .Session.Timeline}}
-    {{if .Session.Timeline.FinishedAt.IsZero}}<p class="timeline-notice">Run terminal state is not recorded (incomplete).</p>{{else}}<p class="section-note">Run result: {{.Session.Timeline.Status}}</p>{{end}}
+    {{if .Session.Timeline.FinishedAt.IsZero}}<p class="timeline-notice">Run terminal state is not recorded (incomplete).</p>{{end}}
     {{if .Session.Timeline.Error}}<p class="timeline-notice">{{.Session.Timeline.Error}}</p>{{end}}
     {{template "timeline" .Session.Timeline}}
     {{else}}<p class="empty-state">No timeline was recorded for this review.</p>{{end}}

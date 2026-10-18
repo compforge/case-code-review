@@ -4,30 +4,12 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestTimelineTemplatesRender(t *testing.T) {
 	vs := &ViewSession{
-		Cost: recording.CostReport{Total: recording.Cost{UnknownUsage: 1}, Stages: []recording.StageCost{{Stage: timeline.Stage{ID: "request", Name: "llm.request", Status: timeline.Running}, DurationMS: 1000, SelfMS: 1000, Cost: recording.Cost{Pending: 1, UnknownUsage: 1}}}},
-		Summary: SessionSummary{
-			SessionID: "session-1", CWD: "/repo", BizID: "github:org/repo#148",
-			HasDiffStats: true, DiffFileCount: 4, FileCount: 2,
-		},
-		Diagnostics: SessionDiagnostics{
-			Status: "warning", StatusLabel: "Partial", Summary: "one hypothesis is unassessed",
-			DiffFiles: 4, ReviewFiles: 2, Review1Units: 1, Review1Executions: 1, Review1Done: 1,
-			Hypotheses: 2, Assessments: 1, Unassessed: 1,
-			Alerts: []DiagnosticAlert{{Level: "warning", Title: "1 Hypothesis lacks Assessment", Detail: "inspect Review 2"}},
-		},
-		Compaction: CompactionSummary{
-			Count: 1, Summarized: 1,
-		},
-		SystemPrompts: []SystemPrompt{
-			{TaskTypes: []TaskType{MainTask}, Text: "investigate"},
-		},
+		Summary:         SessionSummary{SessionID: "session-1", CWD: "/repo", BizID: "github:org/repo#148", HasDiffStats: true, DiffFileCount: 4, FileCount: 2},
+		CompletionLabel: "Partial — not a clean verdict",
 	}
 
 	tests := []struct {

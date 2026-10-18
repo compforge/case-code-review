@@ -297,6 +297,16 @@ class Recording:
     def end(self) -> dict | None:
         return next((r for r in reversed(self.records) if r.get("type") == "session_end"), None)
 
+    @property
+    def completion(self) -> dict:
+        """Business coverage as sealed by CCR, independent of recording closure."""
+        if self.end is None:
+            return {"status": "running"}
+        completion = self.end.get("completion")
+        if isinstance(completion, dict) and completion.get("status"):
+            return completion
+        return {"status": "unknown"}
+
     def costs(self) -> dict:
         # Request identity is the stage ID, shared by its request and terminal
         # content. A scope/debrief is neither necessary nor sufficient for cost.

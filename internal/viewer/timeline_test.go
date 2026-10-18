@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
@@ -37,27 +38,13 @@ func TestViewerKeepsInterruptedRequestTimelineAndRequestIdentity(t *testing.T) {
 	if view.Timeline == nil || view.Timeline.ID != "session-1" {
 		t.Fatal("missing run timeline")
 	}
-	execution := view.Reviews[0].Executions[0]
-	if execution.Status != "incomplete" {
-		t.Fatalf("execution status=%s", execution.Status)
+	if view.Summary.Completion.Status != "running" {
+		t.Fatalf("completion = %s", view.Summary.Completion.Status)
 	}
-	cards := execution.Tasks[MainTask]
-	if cards[0].Timeline == nil || cards[1].Timeline != nil {
-		t.Fatal("timeline associated with wrong concurrent request")
+	if len(view.Timeline.Stages) != 3 {
+		t.Fatalf("lost interrupted stages: %+v", view.Timeline)
 	}
-	if cards[0].Timeline.Status != timeline.Running {
-		t.Fatalf("timeline=%+v", cards[0].Timeline)
-	}
-	nodes := buildConversation("exec-1", cards, nil)
-	found := false
-	for _, node := range nodes {
-		if node.Kind == "timeline" && strings.Contains(node.Label, "Request Timeline") {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("timeline is not visible in conversation")
-	}
+
 }
 
 func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
@@ -171,12 +158,12 @@ func TestReviewLoopLanesPreserveConcurrencyAndGaps(t *testing.T) {
 		return s
 	}
 	doc := &timeline.Snapshot{RootStageID: "root", StartedAt: start, FinishedAt: start.Add(10 * time.Second), Stages: []timeline.Stage{
-		stage("unit-a", string(MainTask), "a", 0, 6),
-		stage("unit-b", string(MainTask), "b", 1, 7),
-		stage("lane-c-first", string(HypothesisReviewTask), "c", 3, 5),
-		stage("lane-d", string(HypothesisReviewTask), "d", 4, 8),
-		stage("lane-c-second", string(HypothesisReviewTask), "c", 7, 9),
-		stage("unit-open", string(MainTask), "open", 9, -1),
+		stage("unit-a", string(recording.MainTask), "a", 0, 6),
+		stage("unit-b", string(recording.MainTask), "b", 1, 7),
+		stage("lane-c-first", string(recording.HypothesisReviewTask), "c", 3, 5),
+		stage("lane-d", string(recording.HypothesisReviewTask), "d", 4, 8),
+		stage("lane-c-second", string(recording.HypothesisReviewTask), "c", 7, 9),
+		stage("unit-open", string(recording.MainTask), "open", 9, -1),
 	}}
 	view := layoutTimeline(doc)
 	if len(view.Lanes) != 5 {

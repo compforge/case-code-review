@@ -86,6 +86,7 @@ class SessionEvidence:
     decisions: dict[str, dict] = field(default_factory=dict)
     executions: dict[str, dict] = field(default_factory=dict)
     debriefs: dict[str, dict] = field(default_factory=dict)
+    unit_results: dict[str, dict] = field(default_factory=dict)
     recording: Recording = field(default_factory=lambda: Recording([], []))
     end: dict | None = None
     gaps: list[str] = field(default_factory=list)
@@ -113,15 +114,12 @@ class SessionEvidence:
     def unit_state(self, unit: str) -> str:
         if self.gaps or self.input.get("version") != 1:
             return "unknown"
-        outcome = self.debriefs.get(unit, {}).get("outcome")
-        if outcome != "completed":
+        result = self.unit_results.get(unit)
+        if result is None or self.recording.completion["status"] in ("running", "unknown"):
             return "incomplete"
-        if any(self.stage(hid)["state"] == "incomplete"
-               for hid, issue in self.hypotheses.items() if issue.origin_unit == unit):
+        if result.get("outcome") != "completed" or result.get("unassessed_hypotheses"):
             return "incomplete"
-        # A terminal session seals the proposal/Trial stream. Before then an
-        # absent record cannot be treated as evidence of absence.
-        return "completed" if self.end is not None else "incomplete"
+        return "completed"
 
     def summary(self) -> dict:
         costs = self.recording.costs()
@@ -137,7 +135,7 @@ class SessionEvidence:
             "cache_read": costs["cache_read_tokens"], "cache_write": costs["cache_write_tokens"],
             "rounds": costs["rounds"], "duration_s": (self.end or {}).get("duration_seconds"),
             "llm_failures": (self.end or {}).get("llm_failures"),
-            "closed": self.end is not None, "gaps": self.gaps,
+            "closed": self.end is not None, "completion": self.recording.completion, "gaps": self.gaps,
             "unknown_usage": costs["unknown_usage"], "estimated_usage": costs["estimated_usage"],
             "pending_calls": costs["pending_calls"], "error_calls": costs["error_calls"],
             "generation": {key: self.start[key] for key in
@@ -151,6 +149,7 @@ def read_session(path: Path) -> SessionEvidence:
     raw_hypotheses: dict[str, dict] = {}
     seen: set[str] = set()
     session.recording = Recording.read(path)
+    session.unit_results = {unit["id"]: unit for unit in session.recording.completion.get("units", [])}
     records = session.recording.records
     session.gaps.extend(session.recording.gaps)
     for number, event in enumerate(records, 1):

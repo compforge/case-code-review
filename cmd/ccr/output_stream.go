@@ -98,7 +98,7 @@ func emitJSONLRunResult(
 		telemetry.RecordCommentsGenerated(ctx, int64(len(comments)))
 	}
 
-	if len(comments) == 0 && ag.FilesReviewed() == 0 {
+	if len(comments) == 0 && ag.FilesReviewed() == 0 && ag.Session().Completion().Complete() {
 		emitter.finish(buildJSONNoFiles(ag.Session()))
 		return emitter.Error()
 	}

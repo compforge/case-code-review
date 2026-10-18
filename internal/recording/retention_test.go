@@ -158,7 +158,7 @@ func TestWriterLeaseLifecycle(t *testing.T) {
 			t.Fatalf("live %+v: %v", result, err)
 		}
 		if finish {
-			writer.WriteSessionEnd(time.Second, nil, 0, diffStats{})
+			writer.WriteSessionEnd(time.Second, nil, 0, diffStats{}, Completion{}, TokenUsage{})
 		} else {
 			writer.flushAndClose()
 		}

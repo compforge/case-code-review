@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner"
@@ -129,5 +130,55 @@ func TestAttachSession(t *testing.T) {
 	}
 	if !strings.HasSuffix(out.SessionPath, "session-1.jsonl") {
 		t.Fatalf("session_path = %q", out.SessionPath)
+	}
+}
+
+// +case=`Warnings cannot turn partial coverage into clean or make a completed review incomplete`
+func TestOutputUsesBusinessCompletion(t *testing.T) {
+	for _, tt := range []struct {
+		name, outcome, want string
+		findings            bool
+		warnings            []runner.Warning
+	}{
+		{name: "partial without warning", outcome: "timeout", want: "completed_with_errors"},
+		{name: "partial with finding", outcome: "timeout", findings: true, want: "completed_with_errors"},
+		{name: "clean", outcome: "completed", want: "success"},
+		{name: "diagnostic only", outcome: "completed", warnings: []runner.Warning{{Type: "subtask_error", Message: "diagnostic"}}, want: "completed_with_warnings"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			review := &recording.Review{Scopes: map[string]*recording.ReviewScope{}, EndTime: time.Now()}
+			review.CloseScope(recording.Scope{ID: "unit", Kind: "unit"}, recording.Debrief{Outcome: tt.outcome})
+			var comments []finding.Finding
+			if tt.findings {
+				comments = []finding.Finding{{Path: "a.go", Content: "accepted finding"}}
+			}
+			got := buildJSONWithWarnings(comments, tt.warnings, 1, 0, 0, 0, 0, 0, 0, "", nil, nil, review)
+			if got.Status != tt.want || len(got.Comments) != len(comments) {
+				t.Fatalf("result = %+v", got)
+			}
+			if tt.outcome != "completed" && (strings.Contains(got.Message, "Looks good") || got.Completion.Status != "partial") {
+				t.Fatalf("false clean: %+v", got)
+			}
+			if tt.outcome == "completed" && !tt.findings && !strings.Contains(got.Message, "Looks good") {
+				t.Fatalf("complete result lost: %+v", got)
+			}
+			old := os.Stdout
+			reader, writer, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			os.Stdout = writer
+			outputTextWithWarnings(comments, tt.warnings, review.Completion())
+			os.Stdout = old
+			writer.Close()
+			raw, err := io.ReadAll(reader)
+			reader.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.outcome != "completed" && (!strings.Contains(string(raw), "incomplete") || strings.Contains(string(raw), "Looks good")) {
+				t.Fatalf("false-clean text: %s", raw)
+			}
+		})
 	}
 }

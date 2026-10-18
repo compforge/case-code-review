@@ -239,15 +239,16 @@ func (jw *jsonlWriter) WriteDebrief(ss *ReviewScope, d Debrief) string {
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
-		"type":        "debrief",
-		"outcome":     d.Outcome,
-		"formed":      d.Formed,
-		"fragments":   d.Fragments,
-		"insertions":  d.Insertions,
-		"deletions":   d.Deletions,
-		"usage_sites": d.UsageSites,
-		"rounds":      d.Rounds,
-		"duration_ms": d.DurationMs,
+		"type":                  "debrief",
+		"outcome":               d.Outcome,
+		"unassessed_hypotheses": d.Unassessed,
+		"formed":                d.Formed,
+		"fragments":             d.Fragments,
+		"insertions":            d.Insertions,
+		"deletions":             d.Deletions,
+		"usage_sites":           d.UsageSites,
+		"rounds":                d.Rounds,
+		"duration_ms":           d.DurationMs,
 		"tokens": map[string]int{
 			"prompt_tokens":      d.Tokens.PromptTokens,
 			"completion_tokens":  d.Tokens.CompletionTokens,
@@ -382,7 +383,7 @@ type diffStats struct {
 }
 
 // WriteSessionEnd writes the final session_end summary record and closes the file.
-func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []string, llmFailures int64, stats diffStats) {
+func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []string, llmFailures int64, stats diffStats, completion Completion, tokens TokenUsage) {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
@@ -391,6 +392,8 @@ func (jw *jsonlWriter) WriteSessionEnd(duration time.Duration, filesReviewed []s
 		"files_reviewed":   filesReviewed,
 		"duration_seconds": duration.Seconds(),
 		"llm_failures":     llmFailures,
+		"completion":       completion,
+		"tokens":           tokens,
 	}
 	if stats.files > 0 {
 		rec["diff_files"] = stats.files

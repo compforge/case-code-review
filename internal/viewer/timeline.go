@@ -7,45 +7,8 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
-
-// Request cards are views of the Session timeline, never independent recordings.
-func (vs *ViewSession) projectRequestTimelines() {
-	if vs.Timeline == nil {
-		return
-	}
-	children := map[timeline.StageID][]timeline.Stage{}
-	for _, stage := range vs.Timeline.Stages {
-		children[stage.ParentID] = append(children[stage.ParentID], stage)
-	}
-	for _, stage := range vs.Timeline.Stages {
-		if stage.Name != "llm.request" && stage.Name != "model.attempt" {
-			continue
-		}
-
-		doc := timeline.Snapshot{ID: string(stage.ID), RootStageID: stage.ID, Operation: stage.Name, StartedAt: stage.StartedAt, FinishedAt: stage.FinishedAt, Status: stage.Status, Error: stage.Error}
-		var appendChildren func(timeline.StageID)
-		seen := map[timeline.StageID]bool{}
-		appendChildren = func(id timeline.StageID) {
-			if seen[id] {
-				return
-			}
-			seen[id] = true
-			for _, child := range children[id] {
-				doc.Stages = append(doc.Stages, child)
-				appendChildren(child.ID)
-			}
-		}
-		appendChildren(stage.ID)
-		for _, scope := range vs.Reviews {
-			for _, card := range scope.Calls {
-				if card.StageID == string(stage.ID) {
-					card.Timeline = &doc
-				}
-			}
-		}
-	}
-}
 
 type timelineRow struct {
 	ScopeID     string
@@ -256,10 +219,10 @@ func stageLanes(rows []timelineRow) []timelineLane {
 			if ancestor.Name == "execution" {
 				task, _ := timeline.AttributeValue[string](ancestor.Attributes, "task_type")
 				phase := ""
-				switch TaskType(task) {
-				case MainTask:
+				switch recording.TaskType(task) {
+				case recording.MainTask:
 					phase = "R1"
-				case HypothesisReviewTask:
+				case recording.HypothesisReviewTask:
 					phase = "R2"
 				}
 				if phase != "" {

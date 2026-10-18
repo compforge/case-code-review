@@ -300,7 +300,7 @@ func emitRunResult(
 		telemetry.RecordCommentsGenerated(ctx, int64(len(comments)))
 	}
 
-	if outputFormat == "json" && len(comments) == 0 && ag.FilesReviewed() == 0 {
+	if outputFormat == "json" && len(comments) == 0 && ag.FilesReviewed() == 0 && ag.Session().Completion().Complete() {
 		return outputJSONNoFiles(ag.Session())
 	}
 
@@ -322,7 +322,7 @@ func emitRunResult(
 			ag.TotalCacheReadTokens(), ag.TotalCacheWriteTokens(), duration,
 			ag.ProjectSummary(), ag.ToolCalls(), ag.ModelsUsed(), ag.Session())
 	}
-	outputTextWithWarnings(comments, ag.Warnings())
+	outputTextWithWarnings(comments, ag.Warnings(), ag.Session().Completion())
 	if summary := ag.ProjectSummary(); summary != "" {
 		fmt.Printf("\n\n──────── Project Summary ────────\n\n%s\n", summary)
 	}

@@ -164,9 +164,7 @@ func Review(
 	// Assessment here would turn missing judgment into an apparent rejection.
 
 	assessments := collector.Assessments()
-	if len(assessments) == 0 {
-		warn(config, "hypothesis_unassessed", fmt.Sprintf("hypothesis %s in lane %s was not assessed and will not pass Trial", input.Hypothesis.ID, input.LaneID))
-	}
+
 	return ReviewResult{
 		Assessments: assessments, EvidenceReceipts: evidence.Receipts(), Execution: result,
 	}

@@ -94,9 +94,20 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 			"review2_wrap_up": run.budget.wrapUpDeadline(),
 		})
 		run.pending.Wait()
-		if gate != nil {
+		if a.features.Enabled(feature.HypothesisReview) {
 			snapshot := u.Review()
-			if a.features.Enabled(feature.HypothesisReview) && len(snapshot.Assessments) < len(snapshot.Hypotheses) && deb.Outcome == harness.OutcomeCompleted {
+			assessed := make(map[string]bool, len(snapshot.Assessments))
+			for _, assessment := range snapshot.Assessments {
+				assessed[assessment.HypothesisID] = true
+			}
+			for _, hypothesis := range snapshot.Hypotheses {
+				if !assessed[hypothesis.ID] {
+					deb.Unassessed = append(deb.Unassessed, hypothesis.ID)
+				}
+			}
+		}
+		if gate != nil {
+			if len(deb.Unassessed) > 0 && deb.Outcome == harness.OutcomeCompleted {
 				deb.Outcome, deb.Reason = harness.OutcomeTruncated, "Review 2 has unassessed hypotheses"
 			}
 			trialCtx, finishTrial := recording.Begin(run.budget.ctx, "trial.finalize", timeline.Attribute{Key: "unit_id", Value: u.ID})
@@ -128,6 +139,7 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 			a.recordWarning("unit_incomplete", u.Path(), fmt.Sprintf("unit %s: %s (%s)", u.ID, deb.Outcome, deb.Reason))
 			reviewErr = errors.Join(reviewErr, fmt.Errorf("%s: %s", deb.Outcome, deb.Reason))
 		}
+
 		a.session.CloseScope(recording.Scope{ID: u.ID, Kind: "unit", Type: string(u.Scope), Paths: u.Paths()}, deb)
 		a.session.Flush()
 		finish(reviewErr)

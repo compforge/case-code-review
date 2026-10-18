@@ -58,7 +58,13 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 				t.Fatal(err)
 			}
 			transcript := string(data)
-			if got := strings.Count(transcript, `"outcome":"skipped_policy"`); got != 2 {
+			skipped := 0
+			for _, unit := range history.Completion().Units {
+				if unit.Outcome == "skipped_policy" {
+					skipped++
+				}
+			}
+			if got := skipped; got != 2 {
 				t.Fatalf("skipped units = %d; transcript=%s", got, transcript)
 			}
 			if plan && !strings.Contains(transcript, `"outcome":"truncated"`) {

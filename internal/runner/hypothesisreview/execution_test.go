@@ -229,8 +229,8 @@ func TestReviewTimeoutRemainsUnassessed(t *testing.T) {
 	if len(result.Assessments) != 0 || len(submissions) != 0 {
 		t.Fatalf("timeout fabricated judgment: %+v %+v", result.Assessments, submissions)
 	}
-	if !slices.Contains(warnings, "hypothesis_unassessed") {
-		t.Fatalf("missing unassessed warning: %v", warnings)
+	if slices.Contains(warnings, "hypothesis_unassessed") {
+		t.Fatalf("reviewer duplicated pipeline-owned unassessed warning: %v", warnings)
 	}
 
 }
