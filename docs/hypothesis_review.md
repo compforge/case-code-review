@@ -172,6 +172,22 @@ Hypothesis 真伪，也不把目录接近直接升级为业务相关。这样调
 Unit 才拥有领域事实和阶段结果；Lane 不复制或接管这些状态。相同 claim 出现在不同 Unit 时保留不同
 Hypothesis ID，Lane / Trial 使用 Fingerprint 识别底层同一问题，从而兼顾来源可追踪与交付去重。
 
+#### R1 / R2 衔接：调度效率与上下文复用
+
+R1 持续产生 Hypothesis，R2 增量接续复核。最初考虑的“一个 Lane 一个 queue + Worker”
+侧重上下文复用：相关 Hypothesis 交给同一个执行者，沿用 message list、已读取的证据和前案判断。
+但上下文需要长期保留，并不意味着 Worker 也要长期绑定该 Lane；各 Lane 的候选数量、到达时间和
+复核耗时不同，执行容量应能在它们之间流动。
+
+当前采用全局就绪队列和共享 Worker 池，侧重缩短跨 Lane 的排队等待、提高有界并发容量的利用率，
+同时保留上下文复用。Lane 持有自己的 Hypothesis 队列和 LoopSession，Worker 每次只处理一个
+Hypothesis，完成后释放执行容量；仍有候选的 Lane 回到全局就绪队列尾部，让其它就绪 Lane 获得
+执行机会。下一次接手的 Worker 继续使用该 Lane 的 Session，追加当前 Hypothesis 的消息即可。
+
+这里的全局队列以就绪 Lane 为调度单位，同一 Lane 仍串行访问同一份上下文。因此，Hypothesis 2
+若在同 Lane 的 Hypothesis 1 完成后到达，可以直接复用已有上下文；若在其运行期间到达，仍需等待。
+这个取舍改善跨 Lane 的调度效率，保留同 Lane 的复用收益，也保留了同 Lane 排队消耗 Unit 期限的代价。
+
 ### 3.2 Review 2 只收敛
 
 如果 Review 2 可以不断新造问题，它会重新变成第二个 Unit Review，完成契约和预算都会失控。发现材料
