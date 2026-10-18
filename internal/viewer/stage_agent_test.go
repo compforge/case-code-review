@@ -92,6 +92,9 @@ func TestStageAgentProjection(t *testing.T) {
 	if len(view.Turns) != 1 || len(view.Turns[0].Items) != 4 || len(view.Operations) != 0 {
 		t.Fatalf("wrong grouping: %+v", view)
 	}
+	if turn := view.Turns[0]; turn.OffsetMS != 0 || turn.DurationMS == nil || *turn.DurationMS != 10000 {
+		t.Fatalf("wrong turn timing: %+v", turn)
+	}
 	calls := map[timeline.StageID]*agentItemView{}
 	for _, item := range view.Turns[0].Items {
 		calls[item.StageID] = item

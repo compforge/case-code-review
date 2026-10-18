@@ -25,10 +25,12 @@ type agentView struct {
 }
 
 type agentTurnView struct {
-	StageID timeline.StageID `json:"stage_id"`
-	Label   string           `json:"label"`
-	Status  string           `json:"status"`
-	Items   []*agentItemView `json:"items"`
+	OffsetMS   int64            `json:"offset_ms"`
+	DurationMS *int64           `json:"duration_ms,omitempty"`
+	StageID    timeline.StageID `json:"stage_id"`
+	Label      string           `json:"label"`
+	Status     string           `json:"status"`
+	Items      []*agentItemView `json:"items"`
 }
 
 type agentItemView struct {
@@ -85,6 +87,11 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 			continue
 		}
 		turn := &agentTurnView{StageID: stage.ID, Label: (timelineRow{Stage: stage}).Label(), Status: stageStatus(stage), Items: []*agentItemView{}}
+		turn.OffsetMS = stage.StartedAt.Sub(root.StartedAt).Milliseconds()
+		if !stage.FinishedAt.IsZero() {
+			duration := stage.Duration(time.Time{}).Milliseconds()
+			turn.DurationMS = &duration
+		}
 		turns[stage.ID] = turn
 		view.Turns = append(view.Turns, turn)
 	}

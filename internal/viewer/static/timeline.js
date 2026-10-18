@@ -8,23 +8,32 @@
         let request = null;
         let current = null;
         const history = [];
+        const agents = new WeakMap();
+        async function fetchStage(endpoint, stageID, signal) {
+            const base = location.pathname.split('/').slice(0, 4).join('/');
+            const response = await fetch(base + '/' + endpoint + '?stage=' + encodeURIComponent(stageID), {signal});
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        }
+        function cancelLoads() {
+            if (request) request.abort();
+            body.querySelectorAll('[data-stage-agent]').forEach(container => agents.get(container)?.deactivate());
+        }
 
         async function loadPanel(panel) {
             const container = panel.querySelector('[data-stage-call], [data-stage-agent]');
-            if (!container || container.dataset.loaded) return;
+            if (!container) return;
+            if (container.dataset.loaded) { agents.get(container)?.activate(); return; }
             const controller = new AbortController();
             request = controller;
             const isAgent = container.hasAttribute('data-stage-agent');
             const stageID = isAgent ? container.dataset.stageAgent : container.dataset.stageCall;
             container.textContent = 'Loading ' + (isAgent ? 'Agent view' : 'call details') + '…';
             try {
-                const base = location.pathname.split('/').slice(0, 4).join('/');
-                const response = await fetch(base + (isAgent ? '/agent' : '/call') + '?stage=' + encodeURIComponent(stageID), {signal: controller.signal});
-                if (!response.ok) throw new Error(await response.text());
-                const data = await response.json();
+                const data = await fetchStage(isAgent ? 'agent' : 'call', stageID, controller.signal);
                 if (controller.signal.aborted) return;
                 container.replaceChildren();
-                if (isAgent) window.CCRStageViews.renderAgent(container, data);
+                if (isAgent) agents.set(container, window.CCRStageViews.renderAgent(container, data, (id, signal) => fetchStage('call', id, signal)));
                 else window.CCRStageViews.renderCall(container, data);
                 container.dataset.loaded = 'true';
             } catch (error) {
@@ -32,7 +41,7 @@
             }
         }
         function selectView(name) {
-            if (request) request.abort();
+            cancelLoads();
             const panels = Array.from(body.querySelectorAll('[data-stage-panel]'));
             const selected = panels.find(panel => panel.dataset.stagePanel === name) || panels[0];
             if (!selected) return;
@@ -48,7 +57,7 @@
         function showStage(id, button) {
             const template = stages.get(id);
             if (!template) return;
-            if (request) request.abort();
+            cancelLoads();
             if (dialog.open && current) history.push({state: current, nodes: Array.from(body.childNodes), scroll: dialog.scrollTop});
             body.replaceChildren(template.content.cloneNode(true));
             current = {id, view: button.dataset.openView || 'default'};
@@ -61,7 +70,7 @@
         function goBack() {
             const previous = history.pop();
             if (!previous) return;
-            if (request) request.abort();
+            cancelLoads();
             body.replaceChildren(...previous.nodes);
             current = previous.state;
             selectView(current.view);
@@ -94,7 +103,7 @@
             if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
         });
         dialog.addEventListener('close', function () {
-            if (request) request.abort();
+            cancelLoads();
             history.length = 0; current = null;
             body.replaceChildren();
             if (opener && opener.isConnected) opener.focus({preventScroll: true});

@@ -281,9 +281,9 @@ eval 的标签协议、数据边界、数据集构建、Trajectory 诊断、固�
 Stage 详情共享同一 Stage 身份、状态和时间，使用明确的视图投影：所有 Stage 提供 Default，
 模型调用额外提供 Model，Loop execution 额外提供 Agent。Default 展示阶段事实和子阶段；Model
 按完整 Session/run/execution/attempt 身份读取 Request、Response 和 usage；Agent 按真实 Turn
-父子关系组织调用摘要，沿用 Default 的树遍历与逐级缩进，逐次展示输入、输出和缓存 token，重试独立显示，缺失 usage 不记为零。
-多个 run 重启 Turn 编号时仍按不同的 Turn Stage 区分。输入/输出条使用同一 Loop 内的共同刻度；
-缓存分量单列，避免与 provider 可能已包含缓存的 input 重复累加。
+父子关系组织调用摘要，沿用 Default 的树遍历与逐级缩进。左侧为可折叠执行树，右侧展示选中节点详情，模型 Request/Response 与工具 Input/Output 按需加载，不离开 Agent 视图。重试独立显示，缺失 usage 不记为零。
+多个 run 重启 Turn 编号时仍按不同的 Turn Stage 区分。模型节点高度使用同一 Loop 内记录的 total_tokens 线性刻度（48px 最小高度 + 最多 96px 增量），宽度随树深度缩进；未知 usage 明确标注。Turn/Tool 保持紧凑高度，不重复计入父子 token。
+详情保留输入、输出、缓存和 total 数值，缓存不再次累加。
 
 视图只在读取时投影，不写入 Timeline 或 Session。Agent 接口只返回摘要，调用正文在点击后按需读取。
 在弹框内下钻后返回会恢复原视图与滚动位置；切换视图不改变观测范围，也不重新执行 review。

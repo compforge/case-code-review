@@ -76,68 +76,127 @@
         if (className) node.className = className;
         return node;
     }
-    function renderAgent(container, agent) {
-        container.append(element('p', 'Calls are grouped by recorded turns. Start times share the loop clock; overlapping intervals can run concurrently.', 'section-note'));
-        const allItems = (agent.turns || []).flatMap(turn => turn.items).concat(agent.operations || []);
-        const maxTokens = Math.max(1, ...allItems.flatMap(item => item.usage ? [item.usage.input, item.usage.output] : []));
-        function renderItem(item) {
-            const card = element('article', undefined, 'agent-call agent-call-' + item.kind);
-            card.style.paddingLeft = (1 + item.depth) + 'rem';
-            const button = element('button', item.label + (item.attempt ? ' · attempt ' + item.attempt : ''), 'agent-call-title');
-            button.type = 'button';
-            button.dataset.timelineStage = item.stage_id;
-            if (item.kind === 'model') button.dataset.openView = 'model';
-            card.append(button);
-            const seconds = ms => (ms / 1000).toFixed(1) + 's';
-            card.append(element('p', item.status + ' · Start ' + seconds(item.offset_ms) + ' · ' + (item.duration_ms === undefined ? 'end not recorded' : seconds(item.duration_ms)), 'agent-call-meta'));
-            if (item.error) card.append(element('p', item.error, 'timeline-notice error'));
-            if (item.kind === 'model') {
-                if (!item.usage) card.append(element('p', 'Token usage not recorded', 'section-note'));
-                else {
-                    // Independent input/output bars avoid adding provider-dependent
-                    // cache components to an input total that may already contain them.
-                    [['Input', item.usage.input], ['Output', item.usage.output]].forEach(([label, value]) => {
-                        const row = element('div', undefined, 'agent-token-row');
-                        row.append(element('span', label));
-                        const track = element('div', undefined, 'agent-token-track');
-                        const bar = element('div', undefined, 'agent-token-bar ' + label.toLowerCase());
-                        bar.style.width = (100 * value / maxTokens) + '%';
-                        track.append(bar);
-                        row.append(track, element('strong', value.toLocaleString()));
-                        card.append(row);
-                    });
-                    card.append(element('p', 'Cache read ' + item.usage.cache_read.toLocaleString() + ' · Cache write ' + item.usage.cache_write.toLocaleString() + ' · Total tokens ' + item.usage.total_tokens.toLocaleString(), 'agent-call-meta'));
+    function renderAgent(container, agent, loadCall) {
+        container.append(element('p', 'Model node height shows relative total tokens within this loop (minimum height retained). Width follows tree depth. Unknown usage stays unknown; Turn and Tool nodes have compact height.', 'section-note'));
+        const browser = element('div', undefined, 'agent-browser');
+        const tree = element('nav', undefined, 'agent-tree');
+        tree.setAttribute('aria-label', 'Agent execution tree');
+        const detail = element('section', undefined, 'agent-node-detail');
+        detail.setAttribute('aria-label', 'Selected node details');
+        browser.append(tree, detail);
+        container.append(browser);
+        const items = (agent.turns || []).flatMap(turn => turn.items).concat(agent.operations || []);
+        const maxTokens = items.reduce((max, item) => Math.max(max, item.usage?.total_tokens || 0), 1);
+        let selected = null;
+        let selectedButton = null;
+        let pending = null;
+        let loaded = false;
+        let callContainer = null;
+        function deactivate() {
+            if (pending) pending.abort();
+            pending = null;
+        }
+        async function activate() {
+            if (!selected || loaded || pending || !callContainer) return;
+            const controller = new AbortController();
+            pending = controller;
+            const target = callContainer;
+            target.textContent = 'Loading call details…';
+            try {
+                const call = await loadCall(selected.stage_id, controller.signal);
+                if (controller.signal.aborted) return;
+                target.replaceChildren();
+                renderCall(target, call);
+                loaded = true;
+            } catch (error) {
+                if (!controller.signal.aborted) {
+                    target.replaceChildren(element('p', 'Unable to load call: ' + error.message, 'timeline-notice error'));
+                    const retry = element('button', 'Retry');
+                    retry.type = 'button';
+                    retry.addEventListener('click', activate);
+                    target.append(retry);
                 }
+            } finally {
+                if (pending === controller) pending = null;
             }
-            if (item.kind === 'operation') {
-                const details = element('details', undefined, 'agent-operation');
-                const summary = element('summary', item.label);
-                summary.style.paddingLeft = (1 + item.depth) + 'rem';
-                details.append(summary, card);
-                return details;
-            }
-            return card;
         }
-        if (!agent.turns.length) container.append(element('p', 'No turn boundaries recorded.', 'section-note'));
+        function select(item, button) {
+            deactivate();
+            selected = item;
+            loaded = false;
+            callContainer = null;
+            if (selectedButton) selectedButton.removeAttribute('aria-current');
+            selectedButton = button;
+            button.setAttribute('aria-current', 'true');
+            detail.replaceChildren(element('h4', item.label));
+            const seconds = ms => (ms / 1000).toFixed(1) + 's';
+            const timing = item.offset_ms === undefined ? '' : ' · Start ' + seconds(item.offset_ms) + ' · ' + (item.duration_ms === undefined ? 'end not recorded' : seconds(item.duration_ms));
+            detail.append(element('p', item.status + timing, 'agent-call-meta'));
+            if (item.error) detail.append(element('p', item.error, 'timeline-notice error'));
+            const open = element('button', 'Open Default view', 'agent-default-link');
+            open.type = 'button';
+            open.dataset.timelineStage = item.stage_id;
+            detail.append(open);
+            if (item.kind === 'model' || item.kind === 'tool') {
+                callContainer = element('div', undefined, 'stage-call');
+                detail.append(callContainer);
+                activate();
+            } else {
+                detail.append(element('p', 'Select a child node to inspect its call. Full stage attributes are available in Default view.', 'section-note'));
+            }
+            detail.scrollTop = 0;
+        }
+        function node(item, parent, depth) {
+            const branch = element('details', undefined, 'agent-branch');
+            branch.open = true;
+            const summary = element('summary');
+            summary.style.paddingLeft = (.4 + depth * .85) + 'rem';
+            const button = element('button', undefined, 'agent-node agent-node-' + item.kind);
+            button.type = 'button';
+            button.append(element('strong', item.label + (item.attempt ? ' · attempt ' + item.attempt : '')));
+            button.append(element('span', item.status, 'agent-node-status'));
+            if (item.kind === 'model') {
+                const tokens = item.usage?.total_tokens;
+                // +spec: Only a model call's recorded usage controls height; parent
+                // summaries and cache components never add a second token charge.
+                button.style.minHeight = (48 + 96 * (tokens === undefined ? 0 : tokens / maxTokens)) + 'px';
+                button.append(element('span', tokens === undefined ? 'Tokens not recorded' : tokens.toLocaleString() + ' tokens', 'agent-node-tokens'));
+            }
+            button.addEventListener('click', event => { event.preventDefault(); select(item, button); });
+            summary.append(button);
+            branch.append(summary);
+            parent.append(branch);
+            if (!selected) select(item, button);
+            return branch;
+        }
+        function children(list, parent, baseDepth) {
+            const stack = [];
+            list.forEach(item => {
+                while (stack.length && stack[stack.length - 1].depth >= item.depth) stack.pop();
+                const owner = stack.length ? stack[stack.length - 1].branch : parent;
+                const branch = node(item, owner, baseDepth + item.depth);
+                stack.push({depth: item.depth, branch});
+            });
+        }
         (agent.turns || []).forEach(turn => {
-            const group = element('section', undefined, 'agent-turn');
-            const title = element('button', turn.label + ' · ' + turn.status, 'agent-turn-title');
-            title.type = 'button'; title.dataset.timelineStage = turn.stage_id;
-            group.append(title);
-            turn.items.forEach(item => group.append(renderItem(item)));
-            if (!turn.items.length) group.append(element('p', 'No calls or operations recorded for this turn.', 'section-note'));
-            container.append(group);
+            const parent = node({...turn, kind: 'turn'}, tree, 0);
+            children(turn.items, parent, 0);
         });
-        if (agent.operations && agent.operations.length) {
-            container.append(element('h4', 'Outside recorded turns'));
-            agent.operations.forEach(item => container.append(renderItem(item)));
+        if (agent.operations?.length) {
+            tree.append(element('h4', 'Outside recorded turns'));
+            children(agent.operations, tree, -1);
         }
-        if (agent.warnings && agent.warnings.length) {
-            const details = element('details', undefined, 'recording-warning');
-            details.append(element('summary', agent.warnings.length + ' recording diagnostics'));
-            agent.warnings.forEach(warning => details.append(element('p', warning)));
-            container.append(details);
+        tree.querySelectorAll('.agent-branch').forEach(branch => {
+            if (!branch.querySelector('.agent-branch')) branch.classList.add('agent-leaf');
+        });
+        if (!selected) detail.append(element('p', 'No turns or operations recorded.', 'section-note'));
+        if (agent.warnings?.length) {
+            const diagnostics = element('details', undefined, 'recording-warning');
+            diagnostics.append(element('summary', agent.warnings.length + ' recording diagnostics'));
+            agent.warnings.forEach(warning => diagnostics.append(element('p', warning)));
+            container.append(diagnostics);
         }
+        return {activate, deactivate};
     }
     window.CCRStageViews = {renderCall, renderAgent};
 }());
