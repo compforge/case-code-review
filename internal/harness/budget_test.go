@@ -18,6 +18,7 @@ import (
 )
 
 func TestExecutionBudgetRetainsAcceptedResultsAndStopsNextTurn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("submit_result", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
 	accepted := 0
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})

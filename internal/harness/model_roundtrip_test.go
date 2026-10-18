@@ -1,15 +1,19 @@
 package harness
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/compforge/agentgo"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
@@ -76,5 +80,67 @@ func TestExecutionKeepsContextLargerThanOutputBudget(t *testing.T) {
 	requests := client.Requests()
 	if len(requests) != 1 || requests[0].MaxTokens != 512 || requests[0].Messages[0].ExtractText() != source {
 		t.Fatal("output cap changed the input context budget")
+	}
+}
+
+// +case:id=sdk_exploration_timeout_recovers,desc=`OpenAI SDK wraps an HTTP request deadline while awaiting a response`,expect=`the failed call remains recorded and wrap-up succeeds in a new Run before the caller deadline`
+func TestSDKExplorationTimeoutResumesWrapUp(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
+	defer history.Finalize()
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body llm.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		if calls.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+		text := ""
+		for _, message := range body.Messages {
+			text += message.ExtractText()
+		}
+		if !strings.Contains(text, "finish review now") {
+			t.Error("wrap-up request missing completion prompt")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"review complete"}}]}`))
+	}))
+	defer server.Close()
+	client := llm.NewOpenAIClient(llm.ClientConfig{URL: server.URL, Model: "review-model", MaxRetries: -1, Timeout: 5 * time.Second})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, MaxTurns: 10, WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish review now", NaturalCompletion: true})
+	if err != nil || result.State != OutcomeCompleted || calls.Load() != 2 {
+		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
+	}
+	history.Finalize()
+	path, _ := history.TranscriptPath()
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var failures, responses int
+	runs := map[string]bool{}
+	for _, record := range transcript.Records {
+		switch record["type"] {
+		case "llm_error":
+			failures++
+			failure, _ := record["failure"].(map[string]any)
+			if failure["code"] != "caller_deadline_exceeded" {
+				t.Fatalf("failure=%v", record)
+			}
+		case "llm_response":
+			responses++
+		case "llm_request":
+			ref := record["session_ref"].(map[string]any)
+			runs[ref["run_id"].(string)] = true
+		}
+	}
+	if failures != 1 || responses != 1 || len(runs) != 2 {
+		t.Fatalf("failures=%d responses=%d runs=%v", failures, responses, runs)
 	}
 }

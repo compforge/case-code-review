@@ -359,9 +359,13 @@ func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
 	) (agentgo.ModelResult, error) {
 		callCtx := ctx
 		if deadline := e.turns.modelDeadline(); !deadline.IsZero() {
-			var cancel context.CancelFunc
-			callCtx, cancel = context.WithDeadlineCause(ctx, deadline, errExplorationExpired)
-			defer cancel()
+			// Equal deadlines belong to the caller; separate timers can fire
+			// in either order and must not admit a wrap-up after its hard limit.
+			if hard, ok := ctx.Deadline(); !ok || deadline.Before(hard) {
+				var cancel context.CancelFunc
+				callCtx, cancel = context.WithDeadlineCause(ctx, deadline, errExplorationExpired)
+				defer cancel()
+			}
 		}
 		if execution.Kind == agentgo.ExecutionKindModel {
 			e.prepareWrapUpRequest(execution)

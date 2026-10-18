@@ -183,13 +183,7 @@ func (e *Executor) Run(
 	if result.State == harness.OutcomeTimeout {
 		reason = "deadline exceeded"
 	}
-	if result.State != harness.OutcomeCompleted {
-		e.RecordWarning(
-			"unit_incomplete",
-			scope.Path(),
-			fmt.Sprintf("unit review ended incomplete (%s); accepted hypotheses were retained — do not read as clean", reason),
-		)
-	}
+	// The pipeline owns the Unit terminal warning after R2 and Trial finish.
 	return Outcome{
 		State:               result.State,
 		Reason:              reason,

@@ -57,14 +57,8 @@ func StartServer(addr string) error {
 		}
 		handleSession(w, r, root, repo, sid)
 	})
-	mux.HandleFunc("/r/{repo}/{sessionID}/review", func(w http.ResponseWriter, r *http.Request) {
-		repo := r.PathValue("repo")
-		sid := r.PathValue("sessionID")
-		if strings.Contains(repo, "..") || strings.Contains(sid, "..") {
-			http.Error(w, "invalid path", http.StatusBadRequest)
-			return
-		}
-		handleReview(w, r, root, repo, sid)
+	mux.HandleFunc("GET /r/{repo}/{sessionID}/call", func(w http.ResponseWriter, r *http.Request) {
+		handleStageCall(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
 	})
 
 	// Wrap the mux with a Host-header allowlist. Without this, any web page

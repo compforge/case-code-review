@@ -29,7 +29,7 @@ Timeline 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），�
 Execution stage 保存 scope、业务 outcome 和局部 Session 文件名。不能只用 provider tool call ID 关联，
 因为不同 loop 和不同 Run 可以重复使用同一个 ID。
 
-Viewer 默认先展示 timeline，可从 stage 进入 scope 的 loop 详情；详情显示所读取的 Session reference。
+Viewer 默认展示 timeline，Stage 弹框按 Session reference 读取对应调用正文。
 Go 的 `ReadReview(path)` 与 Python eval 在查询时重放 `.timeline` 更新，再按关联 ID 读取局部 Session。
 供 Viewer、stats、export、eval 使用的 `llm_request`/`llm_response`/`tool_result` 等对象是查询投影，
 不会再落盘成一份全局会话历史。业务 artifact、finding、debrief 仍保存在 Review 元数据文件。
@@ -168,20 +168,15 @@ Session JSONL 是本地执行事实源，不是对外发布协议。需要在长
 
 ## 2. Viewer：单次运行的人工诊断
 
-Viewer 读取 Session JSONL，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
+Viewer 读取业务 timeline 与关联的 AgentGo Session，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
 看到了什么、loop 如何推进、最终决策如何形成，以及哪里发生中断或空转。
 
-Session 页面通过 Session / Timeline 两个 tab 分开呈现概览与计时，避免大型阶段树挤占审查入口。
-Timeline 使用可折叠阶段树和共享时间轴；attributes、错误与阶段身份按需展开，不参与主行列宽。
+首页按开始时间倒序列出 Review timeline，Repository 作为筛选条件。打开一次 timeline 后查看 Stage 的时间、属性与错误；Stage 详情展示关联的 Session ID，并直接展示对应模型与工具调用记录。页面仅保留运行摘要、Timeline 与 Stage 详情，不再显示旧的 Review results and statistics 汇总区。
+Timeline 用准备、R1 / R2 loop、R3 裁决与 Unit pipeline 泳道展示共享时间轴上的执行区间。同一 loop 的多次执行保留空隙，并发区间保持重叠；子阶段依据记录的 ParentID 在所属泳道内逐层展开，turn 下的模型、工具与上下文操作保留真实层级；Unit pipeline 标注 unit_id，其时间包含下属评审阶段，不应与 R1/R2 耗时相加。点击 Stage 弹框展示时间、attributes、错误、子阶段与关联 Session，详情不参与泳道列宽。模型 Stage 弹框展示 Session 记录的 Request / Response（包含 reasoning、tool calls 与 usage），工具 Stage 展示实际参数与最终结果；两者均按需读取关联 Session，按 session/run/execution/attempt 完整身份匹配；正文不写回 Timeline，缺失输入或输出明确标注。
 未记录结束时间的阶段只显示起点标记和 incomplete，不向当前时间延长，也不补造耗时或成功状态。
 请求卡片复用同一展示方式，时间轴相对该请求起点。
 
-Viewer 保留两个互补层级：
-
-1. **Session Overview**：token、时间、模型、工具调用、完成状态，以及
-   `Diff Files → Review Files → Unit → Hypothesis → Assessment → Finding` 漏斗；
-2. **Scope / Execution**：Scope 页面先展示 Unit 或 Lane 的聚合数据和本地 Decision Trail，再把每个
-   Execution 独立展开为 prompt、response/reasoning 与 tool 参数/结果时间线。
+Viewer 不再提供独立的 Scope / Execution 详情页；分析从 Timeline 进入具体 Stage，Session ID 保留为记录关联身份。
 
 每次 `llm_request` 直接投影为一个 **Prompt Snapshot**，展示那一轮实际发送给 provider 的完整消息，
 而不是由上一轮 response 和 tool result 反推 conversation。`context_compacted` 则按发生顺序插入同一条

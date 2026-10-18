@@ -58,6 +58,7 @@ func (a *Runner) finishHypothesis(input hypothesisreview.ReviewInput, result hyp
 	})
 }
 
+// +spec=`The Unit pipeline emits one terminal unit_incomplete warning after discovery, verification and Trial; phase executors return their outcome without duplicating it`
 func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitRun, gate *trial.Gate, releaseDiscovery func()) {
 	ctx, finish := recording.Begin(parent, "review.pipeline", timeline.Attribute{Key: "unit_id", Value: u.ID})
 	run.budget = newUnitBudget(ctx, time.Duration(a.args.ConcurrentTaskTimeout)*time.Minute, a.args.Template.ReviewTimeBudget, a.features.Enabled(feature.HypothesisReview))

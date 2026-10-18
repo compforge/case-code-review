@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timelines - CCR Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="breadcrumb"><a href="/">CCR Viewer</a></nav>
+<main>
+<div class="timeline-list-heading">
+    <div><h2>Timelines <span class="heading-count">{{len .Timelines}}</span></h2><p class="section-note">Open a review timeline, inspect a stage, then follow its linked Session.</p></div>
+    <form action="/" method="get" class="timeline-filter">
+        <label for="repo-filter">Repository</label>
+        <select name="repo" id="repo-filter">
+            <option value="">All repositories</option>
+            {{range .Repos}}<option value="{{.EncodedPath}}" {{if eq .EncodedPath $.SelectedRepo}}selected{{end}}>{{.DisplayName}} ({{.SessionCount}})</option>{{end}}
+        </select>
+        <button type="submit">Filter</button>
+    </form>
+</div>
+{{if .Timelines}}
+<div class="timeline-list-scroll">
+<table class="table timeline-list">
+    <thead><tr><th>Review timeline</th><th>Repository / Branch</th><th>Started at</th><th>Duration</th><th></th></tr></thead>
+    <tbody>
+    {{range .Timelines}}
+        <tr>
+            <td><a class="timeline-title" href="/r/{{.EncodedRepo}}/{{.SessionID}}#timeline">{{if .BizID}}{{.BizID}}{{else}}{{.SessionID | truncate 12}}{{end}}</a><div class="timeline-list-meta">{{if .ReviewMode}}{{.ReviewMode}} · {{end}}<span title="{{.SessionID}}">{{.SessionID | truncate 12}}</span></div></td>
+            <td><a href="/r/{{.EncodedRepo}}" title="{{.CWD}}">{{.RepoName}}</a><div class="timeline-list-meta">{{.GitBranch}}</div></td>
+            <td class="timeline-list-time">{{formatTime .Timestamp}}</td>
+            <td>{{if gt .DurationSec 0.0}}{{formatDuration .DurationSec}}{{else}}—{{end}}</td>
+            <td><a class="timeline-open" href="/r/{{.EncodedRepo}}/{{.SessionID}}#timeline">Open timeline →</a></td>
+        </tr>
+    {{end}}
+    </tbody>
+</table>
+</div>
+{{else}}
+<p class="empty-state">No reviews found. Run a code review to record its timeline.</p>
+{{end}}
+</main>
+</body>
+</html>
