@@ -32,7 +32,7 @@ func TestLanePoolUsesStrongRelationsAndOnlyWeightsLocality(t *testing.T) {
 	var mu sync.Mutex
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Selections: selections,
-		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.LoopSession) hypothesisreview.ReviewResult {
 			mu.Lock()
 			lanes[input.Hypothesis.ID] = input.LaneID
 			mu.Unlock()
@@ -73,7 +73,7 @@ func TestLanePoolUsesUnitReviewReadOverlap(t *testing.T) {
 	var mu sync.Mutex
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units,
-		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.LoopSession) hypothesisreview.ReviewResult {
 			mu.Lock()
 			inputs = append(inputs, input)
 			mu.Unlock()
@@ -108,12 +108,14 @@ func TestLaneSerializesRelatedHypothesesAndContinuesContext(t *testing.T) {
 	secondStarted := make(chan hypothesisreview.ReviewInput, 1)
 	releaseFirst := make(chan struct{})
 	var calls atomic.Int64
+	var laneSession *harness.LoopSession
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Concurrency: 2,
-		Review: func(_ context.Context, input hypothesisreview.ReviewInput, continuation *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, continuation *harness.LoopSession) hypothesisreview.ReviewResult {
 			if calls.Add(1) == 1 {
-				if continuation != nil {
-					t.Error("first Hypothesis unexpectedly received continuation")
+				laneSession = continuation
+				if laneSession == nil {
+					t.Error("Lane did not provide a session")
 				}
 				firstStarted <- input
 				<-releaseFirst
@@ -123,7 +125,7 @@ func TestLaneSerializesRelatedHypothesesAndContinuesContext(t *testing.T) {
 					Execution:        harness.ExecutionResult{State: harness.OutcomeCompleted},
 				}
 			}
-			if continuation == nil {
+			if continuation != laneSession {
 				t.Error("second related Hypothesis did not continue the Lane context")
 			}
 			secondStarted <- input
@@ -169,7 +171,7 @@ func TestLaneReinjectsContextWhenNoContinuationWasCreated(t *testing.T) {
 	var snapshotsPerCall []int
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: []unit.Unit{reviewUnit},
-		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.LoopSession) hypothesisreview.ReviewResult {
 			snapshotsPerCall = append(snapshotsPerCall, len(input.FileSnapshots))
 			return hypothesisreview.ReviewResult{} // setup failed: no retained Execution
 		},
@@ -194,7 +196,7 @@ func TestLanePoolRunsIndependentLanesConcurrently(t *testing.T) {
 	var active, maximum atomic.Int64
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: units, Concurrency: 2,
-		Review: func(context.Context, hypothesisreview.ReviewInput, *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(context.Context, hypothesisreview.ReviewInput, *harness.LoopSession) hypothesisreview.ReviewResult {
 			now := active.Add(1)
 			for {
 				old := maximum.Load()
@@ -232,7 +234,7 @@ func TestLanePoolPublishesAssessmentBeforeFinish(t *testing.T) {
 	assessed := make(chan hypothesisreview.Assessment, 1)
 	pool := newLanePool(lanePoolConfig{
 		Context: context.Background(), Units: []unit.Unit{reviewUnit},
-		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(_ context.Context, input hypothesisreview.ReviewInput, _ *harness.LoopSession) hypothesisreview.ReviewResult {
 			return hypothesisreview.ReviewResult{
 				Assessments: []hypothesisreview.Assessment{{
 					HypothesisID: input.Hypothesis.ID, LaneID: input.LaneID,
@@ -284,7 +286,7 @@ func TestLaneQueuedUnitExpiresWithoutCancelingSharedLane(t *testing.T) {
 				}
 				return context.Background()
 			},
-			Review: func(ctx context.Context, input hypothesisreview.ReviewInput, prior *harness.ExecutionResult) hypothesisreview.ReviewResult {
+			Review: func(ctx context.Context, input hypothesisreview.ReviewInput, prior *harness.LoopSession) hypothesisreview.ReviewResult {
 				calls.Add(1)
 				started <- input.Hypothesis.ID
 				if input.Unit.ID == "a" {
@@ -322,6 +324,53 @@ func TestLaneQueuedUnitExpiresWithoutCancelingSharedLane(t *testing.T) {
 		pool.Finish()
 		if calls.Load() != 2 || len(finished) != 2 {
 			t.Fatalf("calls=%d remaining completions=%d", calls.Load(), len(finished))
+		}
+	})
+}
+
+// +case:id=lane_worker_fairness,desc=`a busy Lane queues a second hypothesis while another Lane is ready`,expect=`the worker runs the other Lane before returning to the busy Lane, retaining each Lane's session`
+func TestLaneWorkerYieldsAfterEachHypothesis(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		units := []unit.Unit{testReviewUnit("a", "a.go", "A"), testReviewUnit("b", "b.go", "B")}
+		started := make(chan string, 4)
+		release := make(chan struct{})
+		sessions := map[string]*harness.LoopSession{}
+		pool := newLanePool(lanePoolConfig{
+			Units: units, Concurrency: 1,
+			Review: func(_ context.Context, input hypothesisreview.ReviewInput, session *harness.LoopSession) hypothesisreview.ReviewResult {
+				if prior := sessions[input.LaneID]; prior != nil && prior != session {
+					t.Error("Lane changed session")
+				}
+				sessions[input.LaneID] = session
+				started <- input.Hypothesis.ID
+				if input.Hypothesis.ID == "a1" {
+					<-release
+				}
+				return hypothesisreview.ReviewResult{}
+			},
+		})
+		pool.Submit(testHypothesis("a1", "a", "a.go", "a.go:1"))
+		if id := <-started; id != "a1" {
+			t.Fatal(id)
+		}
+		pool.Submit(testHypothesis("a2", "a", "a.go", "a.go:2"))
+		pool.Submit(testHypothesis("b1", "b", "b.go", "b.go:1"))
+		close(release)
+		synctest.Wait()
+		if id := <-started; id != "b1" {
+			t.Fatalf("next=%s, want independent ready Lane", id)
+		}
+		if id := <-started; id != "a2" {
+			t.Fatal(id)
+		}
+		// A fully idle Lane retains its Session when new work arrives later.
+		pool.Submit(testHypothesis("a3", "a", "a.go", "a.go:3"))
+		pool.Finish()
+		if id := <-started; id != "a3" {
+			t.Fatal(id)
+		}
+		if len(sessions) != 2 || sessions[laneID("a1")] == sessions[laneID("b1")] {
+			t.Fatal("independent Lanes shared a session")
 		}
 	})
 }

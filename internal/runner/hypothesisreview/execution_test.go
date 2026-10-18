@@ -327,3 +327,36 @@ func hasReceipt(receipts []EvidenceReceipt, kind, ref string) bool {
 	}
 	return false
 }
+
+// +case:id=lane_hypothesis_isolation,desc=`two hypotheses append to one LoopSession`,expect=`the second sees the first conversation but gets a fresh Assessment collector, completion state and turn budget`
+func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
+	session := &harness.LoopSession{}
+	defer session.Close()
+	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+		reviewAssessmentResponse("call-1"), reviewAssessmentResponse("call-1"),
+	}}
+	config := Config{
+		Task: template.LlmConversation{Messages: []template.ChatMessage{
+			{Role: "system", Content: "stable verification rules"},
+			{Role: "user", Content: "{{hypothesis}} {{prior_assessments}}"},
+		}},
+		LLMClient: client, MaxTurns: 1, MaxTokens: 10000,
+	}
+	for _, id := range []string{"hyp-first", "hyp-second"} {
+		result := Review(t.Context(), config, ReviewInput{LaneID: "lane", Hypothesis: completeHypothesis(id, "a.go")}, session)
+		if result.Execution.State != harness.OutcomeCompleted || result.Execution.Turns != 1 || len(result.Assessments) != 1 || result.Assessments[0].HypothesisID != id {
+			t.Fatalf("%s result=%+v assessments=%+v", id, result.Execution, result.Assessments)
+		}
+	}
+	if len(client.requests) != 2 {
+		t.Fatalf("requests=%d", len(client.requests))
+	}
+	var content strings.Builder
+	for _, message := range client.requests[1].Messages {
+		content.WriteString(message.ExtractText())
+	}
+	text := content.String()
+	if strings.Count(text, "stable verification rules") != 1 || !strings.Contains(text, "hyp-first") || !strings.Contains(text, "hyp-second") || !strings.Contains(text, `"accepted":"hyp-first"`) {
+		t.Fatalf("second request did not append to the first conversation: %s", text)
+	}
+}

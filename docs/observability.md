@@ -21,7 +21,8 @@ Hypothesis 等业务概念变化；业务身份和父子阶段由 timeline 表�
 AgentGo Session 使用原生 JSONL 协议，记录 `model_request`、`model_exec_end`、`tool_exec_end`、
 消息提交、context projection/compaction 和 run 边界。模型、工具正文只在这里存储。
 CCR 的领域消息通过 AgentGo codec 注册内容类型，保留原始证据和当前压缩视图，不修改 Session envelope。
-不自动写 checkpoint，也不复制 AgentState 或全局 Snapshot。辅助规划、定位等单次模型调用同样使用
+Harness 在 Execution 终态边界保存一次局部 AgentGo checkpoint，供加载对话状态；运行期间按事件记录，
+不按 turn 或定时保存完整状态，也不复制全局 Snapshot。辅助规划、定位等单次模型调用同样使用
 AgentGo Session 记录请求和结果。
 
 Timeline 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），并容纳构图、等待、HTTP 等非 loop 工作。

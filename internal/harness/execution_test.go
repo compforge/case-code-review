@@ -149,30 +149,32 @@ func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 }
 
 func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
+	session := &LoopSession{}
+	defer session.Close()
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponseID("done-1", "task_done", `{}`, nil),
 		toolCallResponseID("done-2", "task_done", `{}`, nil),
 	}}
 	first, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
-		Messages:  []agentgo.AgentMessage{msg.Text("user", "first hypothesis")},
-		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
-		MaxTurns:  1,
+		LLMClient: client, LoopSession: session,
+		Messages: []agentgo.AgentMessage{msg.Text("user", "first hypothesis")},
+		ToolDefs: []llm.ToolDef{toolDef("task_done")},
+		MaxTurns: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:    client,
-		Messages:     []agentgo.AgentMessage{msg.Text("user", "second hypothesis")},
-		ToolDefs:     []llm.ToolDef{toolDef("task_done")},
-		MaxTurns:     1,
-		ContinueFrom: &first,
+		LLMClient:   client,
+		Messages:    []agentgo.AgentMessage{msg.Text("user", "second hypothesis")},
+		ToolDefs:    []llm.ToolDef{toolDef("task_done")},
+		MaxTurns:    1,
+		LoopSession: session,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.State != OutcomeCompleted {
+	if first.State != OutcomeCompleted || second.State != OutcomeCompleted || first.Turns != 1 || second.Turns != 1 {
 		t.Fatalf("second execution = %+v", second)
 	}
 	requests := client.Requests()

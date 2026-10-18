@@ -12,13 +12,15 @@ import (
 )
 
 func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
+	session := &LoopSession{}
+	defer session.Close()
 	initial := msg.NewFile("a.go", 1, 1, 2, "File: a.go (Total lines: 2)\nIS_TRUNCATED: true\nLINE_RANGE: 1-1\n1|first\n")
 	source := "File: a.go (Total lines: 2)\nIS_TRUNCATED: false\nLINE_RANGE: 1-2\n1|first\n2|second\n"
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponseID("read", "read_files", `{"reads":[{"file_path":"a.go","start_line":1,"end_line":2}]}`, nil),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
-	result, err := runExecution(t.Context(), ExecutionSpec{
+	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session,
 		LLMClient: client, Messages: []agentgo.AgentMessage{initial},
 		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -31,8 +33,8 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 	if err != nil || result.State != OutcomeCompleted {
 		t.Fatalf("run=%+v err=%v", result, err)
 	}
-	if len(result.artifacts) != 2 {
-		t.Fatalf("initial and tool sources not registered: %v", result.artifacts)
+	if len(session.state.Artifacts) != 2 {
+		t.Fatalf("initial and tool sources not registered: %v", session.state.Artifacts)
 	}
 	requests := client.Requests()
 	if len(requests) != 2 {
@@ -52,7 +54,7 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 		t.Fatal("tool pairing lost")
 	}
 	rawFound := false
-	for _, m := range result.context {
+	for _, m := range session.state.Messages {
 		if strings.Contains(m.Raw().TextContent(), "1|first\n2|second") {
 			rawFound = true
 		}
@@ -63,27 +65,31 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 
 	// Continuation may retain only a summary. Materials survive independently,
 	// but cannot by themselves make any source line count as visible evidence.
-	result.context = []agentgo.AgentMessage{msg.Text("user", "summary")}
+	session.state.Messages = []agentgo.AgentMessage{msg.Text("user", "summary")}
 	continuationClient := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}
-	continued, err := runExecution(t.Context(), ExecutionSpec{LLMClient: continuationClient, ContinueFrom: &result, Messages: []agentgo.AgentMessage{initial}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
-	if err != nil || continued.State != OutcomeCompleted || len(continued.artifacts) != 2 {
+	continued, err := runExecution(t.Context(), ExecutionSpec{LLMClient: continuationClient, LoopSession: session, Messages: []agentgo.AgentMessage{initial}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
+	if err != nil || continued.State != OutcomeCompleted || len(session.state.Artifacts) != 2 {
 		t.Fatalf("continue=%+v err=%v", continued, err)
 	}
 	if strings.Count(requestText(continuationClient.Requests()[0]), "1|first") != 1 {
 		t.Fatal("retained material hid fresh source")
 	}
-	independent, err := runExecution(t.Context(), ExecutionSpec{LLMClient: &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}, Messages: []agentgo.AgentMessage{msg.Text("user", "unrelated")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1})
-	if err != nil || len(independent.artifacts) != 0 {
+	independentSession := &LoopSession{}
+	defer independentSession.Close()
+	_, err = runExecution(t.Context(), ExecutionSpec{LoopSession: independentSession, LLMClient: &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}, Messages: []agentgo.AgentMessage{msg.Text("user", "unrelated")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1})
+	if err != nil || len(independentSession.state.Artifacts) != 0 {
 		t.Fatal("independent execution inherited materials")
 	}
 }
 
 func TestExecutionProjectsCallerMaterialsOnEveryRequest(t *testing.T) {
+	session := &LoopSession{}
+	defer session.Close()
 	body := strings.Repeat("Preserve cancellation and report the original error. ", 30)
 	client := &scriptedClient{responses: []*llm.ChatResponse{
 		toolCallResponse("inspect", `{}`, nil), toolCallResponse("task_done", `{}`, nil),
 	}}
-	result, err := runExecution(t.Context(), ExecutionSpec{
+	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session,
 		LLMClient: client,
 		Messages: []agentgo.AgentMessage{
 			msg.FixedText("user", "Review the change using the supplied evidence."),
@@ -102,7 +108,7 @@ func TestExecutionProjectsCallerMaterialsOnEveryRequest(t *testing.T) {
 	if err != nil || result.State != OutcomeCompleted {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
-	if len(result.artifacts) != 1 || result.artifacts[0].Kind() != "document" {
+	if len(session.state.Artifacts) != 1 || session.state.Artifacts[0].Kind() != "document" {
 		t.Fatal("document body was not registered once")
 	}
 	for _, request := range client.Requests() {
@@ -116,7 +122,7 @@ func TestExecutionProjectsCallerMaterialsOnEveryRequest(t *testing.T) {
 	}
 	// Request projection does not rewrite the committed evidence.
 	rawCount := 0
-	for _, message := range result.context {
+	for _, message := range session.state.Messages {
 		if strings.Contains(message.Raw().TextContent(), body) {
 			rawCount++
 		}
