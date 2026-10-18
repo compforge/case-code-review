@@ -169,3 +169,24 @@ func TestStageModelCall(t *testing.T) {
 		t.Fatalf("direct model call: %+v %v", direct, err)
 	}
 }
+
+// Failed responses are inspection evidence even though AgentGo excludes them from replay.
+func TestStageModelCallKeepsFailedResponseUsage(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(root, os.DirFS("../../testdata/recording")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "review.sessions", "loop.jsonl")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.ReplaceAll(string(data), `"stop_reason":"tool_use"`, `"stop_reason":"error"`))
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	call, err := loadStageCall(filepath.Join(root, "review.jsonl"), "run-1/model/model-1/2")
+	if err != nil || call.Response == nil || call.Response.StopReason != agentgo.StopReasonError || call.Response.Usage == nil || call.Response.Usage.Input != 100 {
+		t.Fatalf("failed response evidence lost: %+v %v", call, err)
+	}
+}

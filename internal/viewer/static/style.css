@@ -1037,3 +1037,7 @@ p { color: #586069; padding: 1rem 0; }
 .stage-call { margin: 1rem 0; }
 .stage-call h4 { margin: .8rem 0 .4rem; }
 .stage-call-content { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 22rem; overflow: auto; padding: .8rem; border: 1px solid #d8dee4; border-radius: 6px; background: #f6f8fa; font-size: .8rem; }
+
+.model-call-usage { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .8rem; border-radius: 6px; background: #f6f8fa; font-size: .85rem; }
+.stage-recording { margin-top: 1rem; }
+.stage-recording > summary, .stage-call details > summary { cursor: pointer; color: #57606a; padding: .4rem 0; }

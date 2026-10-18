@@ -118,7 +118,12 @@ func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
 				if err := codec.Unmarshal(data.Message, &message); err != nil {
 					return err
 				}
-				response, ok := message.ToMessage()
+				// Failed model messages are evidence too; ToMessage filters them
+				// out for replay, so keep the native response for inspection.
+				response, ok := message.(agentgo.Message)
+				if !ok {
+					response, ok = message.ToMessage()
+				}
 				if !ok {
 					return fmt.Errorf("model response cannot be projected as a message")
 				}

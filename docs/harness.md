@@ -289,24 +289,12 @@ Manager 的增量更新写入 `.timeline`，整轮结束时 Flush 并关闭文�
 
 ### 4.2 HTML Viewer 是诊断投影
 
-Viewer 读取 Review timeline 和关联的原生 Session JSONL，不读取 AgentGo 内部对象，也不持有执行状态。它提供两个互补层级：
-
-1. **Session Overview**：总 token、时间、模型、工具调用和完成状态，定位成本与吞吐瓶颈；其中
-   `Diff Files → Review Files → Unit → Hypothesis → Assessment → Finding` 把两阶段 review 与 Trial
-   放回同一条漏斗，并显式标出不完整 Execution、未评估 Hypothesis 和被 Trial 拦截的判断。这样
-   “0 Finding” 只有在各阶段完整时才可理解，partial run 不会伪装成 clean；
-2. **Scope / Execution**：Scope 页面展示 Unit/Lane 聚合数据与本地 Decision Trail；每个 Execution
-   独立展示实际 `llm_request` 形成的 Prompt Snapshot、assistant response/reasoning、tool 参数/结果和
-   显式 compaction 节点。Snapshot 不从相邻事件重建；compaction 次数与比例也不再由 prompt delta 猜测。
-   Provider
-   实际返回 reasoning 时单独展示，不把普通 assistant 文本冒充为隐藏思维过程。
-
-Review 1 页面还分别展示“调用时已被 context 覆盖”的读取与“同路径多次读取”。前者是确定的复用
-机会，后者只是可能的探索回环；同时展示预载源码、Unit 静态已知路径和 caller/callee
-路径与实际读取文件的重合率，用于判断下一步应预载什么，而不是把所有相关文件都塞进 prompt。
-
-这两个层级分别回答“整次 review 怎么样”和“某个 Scope 中的某次 Execution 为什么这样推进”。
-Overview 不能替代逐轮证据，Execution timeline 也不能替代全局统计。
+Viewer 从 Timeline 列表进入一次 Review，以共享时钟的泳道展示 Unit、R1/R2 loop 与 Trial。
+模型调用以一个 Stage 表达，点击弹框查看 Session 中的真实 Prompt、Response、token/cache 用量、
+已记录的金额 cost，以及 Stage 状态与耗时。工具调用在弹框中展示实际 input/output。
+调用正文按完整 Session reference 关联；原始 JSON 与记录身份默认折叠，不再另设 Scope/Execution 页面。
+网络阶段仅用于失败诊断，不成为业务 Timeline 的子阶段。缺少记录或 usage 必须明确显示未知，
+不能把缺失视为零成本，也不能把 0 Finding 当作完整评审的证明。
 
 ### 4.3 展示层不反向定义协议
 

@@ -62,6 +62,9 @@ type timelineRow struct {
 }
 
 func (row timelineRow) Label() string {
+	if row.Name == "model.attempt" || row.Name == "llm.request" {
+		return "Model call"
+	}
 	if row.Name == "turn" {
 		if turn, ok := timeline.AttributeValue[int](row.Attributes, "turn"); ok {
 			return fmt.Sprintf("turn %d", turn)
