@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/compforge/go-stdx/timeline"
+	"time"
 )
 
 func TestRequestTraceDistinguishesPoolAndConnect(t *testing.T) {
@@ -30,7 +30,7 @@ func TestRequestTraceDistinguishesPoolAndConnect(t *testing.T) {
 
 func TestAnnotateRequestTimeoutBeforeResponse(t *testing.T) {
 	progress := testRequestTrace(t)
-	progress.current.transition(requestPhaseWriteRequest, timeline.Attribute{Key: "connection_reused", Value: false})
+	progress.current.connected(false)
 	progress.current.transition(requestPhaseAwaitResponse)
 
 	err := annotateRequestError(context.Background(), context.DeadlineExceeded, progress)
@@ -55,7 +55,7 @@ func TestAnnotateRequestTimeoutBeforeResponse(t *testing.T) {
 
 func TestAnnotateRequestTimeoutWhileReadingResponse(t *testing.T) {
 	progress := testRequestTrace(t)
-	progress.current.transition(requestPhaseWriteRequest, timeline.Attribute{Key: "connection_reused", Value: true})
+	progress.current.connected(true)
 	progress.current.transition(requestPhaseAwaitResponse)
 	progress.current.transition(requestPhaseResponseRead)
 
@@ -74,10 +74,7 @@ func TestAnnotateRequestTimeoutWhileReadingResponse(t *testing.T) {
 
 func testRequestTrace(t *testing.T) *requestTrace {
 	t.Helper()
-	ctx, finish := beginRequest(context.Background())
-	t.Cleanup(func() { finish(nil) })
-	ctx, stage := beginStage(ctx, "http.request")
-	return &requestTrace{ctx: ctx, attempts: 1, current: &httpAttempt{ctx: ctx, stage: stage}}
+	return &requestTrace{attempts: 1, current: &httpAttempt{started: time.Now(), facts: map[string]any{}}}
 }
 
 func TestResponseObservationSurvivesLateWriteCallback(t *testing.T) {

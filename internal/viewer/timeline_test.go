@@ -78,7 +78,7 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	if err := tmpl.Execute(&out, map[string]any{"Session": &ViewSession{Timeline: doc}, "EncodedRepo": "repo", "RepoName": "repo"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Review Timeline", "model.attempt", "incomplete", "attempt:</strong> <code>3</code>", `<dialog class="stage-dialog"`, `data-stage-detail="child"`} {
+	for _, text := range []string{"Review Timeline", "Model call", "incomplete", "attempt:</strong> <code>3</code>", `<dialog class="stage-dialog"`, `data-stage-detail="child"`} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("missing rendered %s", text)
 		}

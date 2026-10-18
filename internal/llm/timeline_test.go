@@ -33,7 +33,7 @@ func recordedRequest(t *testing.T, run func(context.Context) error) timeline.Sna
 	return snapshot
 }
 
-func TestRequestTimelinePreservesFailedFallbackAndSuccessfulResult(t *testing.T) {
+func TestModelCallFallbackDoesNotRecordTransportStages(t *testing.T) {
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
 	defer failing.Close()
 	success := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -58,31 +58,12 @@ func TestRequestTimelinePreservesFailedFallbackAndSuccessfulResult(t *testing.T)
 	if snapshot.Status != timeline.Succeeded {
 		t.Fatalf("root status=%s", snapshot.Status)
 	}
-	counts := map[string]int{}
-	var attempts []timeline.Stage
-	for _, s := range snapshot.Stages {
-		counts[s.Name]++
-		if s.Status == timeline.Running || s.FinishedAt.IsZero() {
-			t.Fatalf("unfinished stage: %+v", s)
-		}
-		if s.Name == "llm.attempt" {
-			attempts = append(attempts, s)
-		}
-	}
-	if len(attempts) != 2 || attempts[0].Status != timeline.Failed || attempts[1].Status != timeline.Succeeded {
-		t.Fatalf("attempts=%+v", attempts)
-	}
-	if counts["http.request"] != 2 || counts[requestPhaseResponseRead] != 2 {
-		t.Fatalf("stages=%v", counts)
-	}
-	for _, attempt := range attempts {
-		if _, ok := timeline.AttributeValue[int64](attempt.Attributes, "remaining_budget_ms"); !ok {
-			t.Fatalf("missing budget: %+v", attempt)
-		}
+	if len(snapshot.Stages) != 0 {
+		t.Fatalf("transport stages leaked into business timeline: %+v", snapshot.Stages)
 	}
 }
 
-func TestRequestTimelineTimeoutRecordsAwaitResponseAfterCancellation(t *testing.T) {
+func TestModelCallTimeoutPreservesNetworkErrorPhase(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
@@ -105,24 +86,12 @@ func TestRequestTimelineTimeoutRecordsAwaitResponseAfterCancellation(t *testing.
 	if snapshot.Status != timeline.Canceled {
 		t.Fatalf("status=%s", snapshot.Status)
 	}
-	found := false
-	for _, s := range snapshot.Stages {
-		if s.Status == timeline.Running {
-			t.Fatalf("unfinished: %+v", s)
-		}
-		if s.Name == requestPhaseAwaitResponse {
-			found = true
-			if s.Status != timeline.Canceled {
-				t.Fatalf("wait=%+v", s)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("missing await_response")
+	if len(snapshot.Stages) != 0 {
+		t.Fatalf("transport stages leaked: %+v", snapshot.Stages)
 	}
 }
 
-func TestRequestTimelineHTTPRetriesHaveSeparateStages(t *testing.T) {
+func TestModelCallSDKRetriesDoNotRecordTransportStages(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
@@ -142,18 +111,12 @@ func TestRequestTimelineHTTPRetriesHaveSeparateStages(t *testing.T) {
 	if snapshot.Status != timeline.Succeeded {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	var attempts []timeline.Stage
-	for _, s := range snapshot.Stages {
-		if s.Name == "http.request" {
-			attempts = append(attempts, s)
-		}
-	}
-	if len(attempts) != 2 || attempts[0].Status != timeline.Failed || attempts[1].Status != timeline.Succeeded {
-		t.Fatalf("HTTP attempts=%+v", attempts)
+	if calls.Load() != 2 || len(snapshot.Stages) != 0 {
+		t.Fatalf("calls=%d stages=%+v", calls.Load(), snapshot.Stages)
 	}
 }
 
-func TestRequestTimelineSeparatesResponseBodyWait(t *testing.T) {
+func TestModelCallTimeoutPreservesResponseReadError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
@@ -173,10 +136,7 @@ func TestRequestTimelineSeparatesResponseBodyWait(t *testing.T) {
 		}
 		return err
 	})
-	for _, s := range snapshot.Stages {
-		if s.Name == requestPhaseResponseRead && s.Status == timeline.Canceled {
-			return
-		}
+	if snapshot.Status != timeline.Canceled || len(snapshot.Stages) != 0 {
+		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	t.Fatal("missing failed response_read stage")
 }

@@ -36,9 +36,48 @@
                     pre.textContent = pretty(value);
                     container.append(pre);
                 }
+                function recordedJSON(title, value) {
+                    if (value === undefined) return;
+                    const details = document.createElement('details');
+                    const summary = document.createElement('summary');
+                    summary.textContent = title;
+                    const pre = document.createElement('pre');
+                    pre.className = 'stage-call-content';
+                    pre.textContent = pretty(value);
+                    details.append(summary, pre);
+                    container.append(details);
+                }
+                function modelMessage(label, value) {
+                    if (!value.content || value.content.length === 0) { section(label, ''); return; }
+                    value.content.forEach(function (block) {
+                        if (block.type === 'text') section(label, block.text);
+                        else if (block.type === 'thinking') section(label + ' · Reasoning', block.thinking);
+                        else section(label + ' · ' + block.type, block);
+                    });
+                }
                 if (call.kind === 'model') {
-                    section('Request', call.request, 'Request not recorded in Session.');
-                    section('Response', call.response, 'Response not recorded in Session.');
+                    const usage = call.response && call.response.usage;
+                    if (usage) {
+                        const summary = document.createElement('div');
+                        summary.className = 'model-call-usage';
+                        [['Model', usage.model], ['Input tokens', usage.input], ['Output tokens', usage.output],
+                         ['Cache read', usage.cache_read], ['Cache write', usage.cache_write], ['Total tokens', usage.total_tokens],
+                         ['Cost (USD)', usage.cost ? usage.cost.total : undefined]].forEach(function (entry) {
+                            const item = document.createElement('span');
+                            item.textContent = entry[0] + ': ' + (entry[1] === undefined || entry[1] === '' ? 'not recorded' : entry[1]);
+                            summary.append(item);
+                        });
+                        container.append(summary);
+                    } else { message('Token usage and cost not recorded in Session.'); }
+                    if (call.error) section('Call error', call.error);
+                    if (call.request) {
+                        (call.request.messages || []).forEach(function (item) { modelMessage('Prompt · ' + item.role, item); });
+                        recordedJSON('Request tools', call.request.tools);
+                    } else { message('Prompt not recorded in Session.'); }
+                    if (call.response) modelMessage('Response', call.response);
+                    else message('Response not recorded in Session.');
+                    recordedJSON('Full Request', call.request);
+                    recordedJSON('Full Response', call.response);
                 } else {
                     if (call.tool) message('Tool: ' + call.tool);
                     section('Input', call.input_recorded ? call.input : undefined, 'Input not recorded in Session.');
@@ -47,7 +86,7 @@
                     if (call.output && call.output.details != null) section('Result details', call.output.details);
                     if (call.is_error || (call.output && call.output.is_error)) message('Tool reported an error.');
                 }
-                if (call.error) section('Call error', call.error);
+                if (call.kind !== 'model' && call.error) section('Call error', call.error);
                 (call.warnings || []).forEach(message);
             } catch (error) {
                 if (!request.signal.aborted) container.textContent = 'Unable to load call: ' + error.message;

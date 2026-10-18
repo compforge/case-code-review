@@ -114,14 +114,14 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 
 Review 拥有一个 `go-stdx/timeline` ID，进程安装共用 Manager，各层通过根包入口记录。
 Context 只传播 timeline/stage ID，录制处显式指定 ParentID；repocli 使用同一 StageRef。
-Review 唯一负责整轮 Start/Finish；Runner、Harness 和模型客户端分别记录自己拥有的工作。
+Review 唯一负责整轮 Start/Finish；Runner 与 Harness 记录业务阶段和模型／工具调用边界。
 
 ```text
 Review timeline
   ├─ diff.load / project.select / codegraph.build / unit.formation
   ├─ unit.queue → review.unit → execution → turn
   │                              ├─ context.project / context.recover_overflow
-  │                              ├─ model.attempt → routing / provider → HTTP phases
+  │                              ├─ model.attempt（一次模型调用，关联 Session Request / Response）
   │                              └─ tool.queue → tool.execution → tool.invoke
   ├─ lane.queue → review.hypothesis → execution → turn …
   └─ trial.assess / trial.finalize
@@ -140,6 +140,8 @@ CCR 提供 `.timeline` 的 JSONL Store，接收 Manager 的 `Merge(Update)`：�
 相同内容不重复追加。Manager 定时发布变化；业务方只调用 Start/Begin/End/Finish，不读取 Snapshot。
 Review 结束后 Flush 等待最后一批更新，再 sync/close 文件、释放缓存和 Review lease。
 进程突然退出可能丢失尚未 Flush 的更新，不能补造缺失的结束状态。
+
+模型调用是业务 Timeline 的观测边界，不录制 routing/provider/HTTP/连接池等传输子阶段。网络阶段仅在调用失败时进入错误诊断。Viewer 默认展示实际 Prompt、Response、状态、耗时与 Session 记录的 token/cache 用量；金额 Cost 仅在 Session 有计费数据时展示，缺失不解释为零。原始协议字段折叠在详情中。
 
 Timeline 不保存 prompt、response 或工具结果。Stage 的原生 `attributes` 保存业务身份和 Session reference。
 框架调用 ID 以局部 Run 为命名空间，并带 Attempt；重试、收卷和连续 Lane 执行不会混淆。

@@ -1,5 +1,5 @@
 {{define "stage-bar"}}
-<button type="button" class="timeline-bar swimlane-bar status-{{.Status}} {{if .FinishedAt.IsZero}}timeline-unfinished{{end}}" data-timeline-stage="{{.ID}}" style="left: {{printf "%.5f" .StartPercent}}%; width: {{printf "%.5f" .WidthPercent}}%" title="{{.Name}} · start {{formatMillis .OffsetMS}} · {{if .FinishedAt.IsZero}}incomplete{{else}}{{formatMillis .DurationMS}} · {{.Status}}{{end}}" aria-label="Inspect stage {{.Name}} {{.ID}}"><span>{{.Label}}</span></button>
+<button type="button" class="timeline-bar swimlane-bar status-{{.Status}} {{if .FinishedAt.IsZero}}timeline-unfinished{{end}}" data-timeline-stage="{{.ID}}" style="left: {{printf "%.5f" .StartPercent}}%; width: {{printf "%.5f" .WidthPercent}}%" title="{{.Label}} · start {{formatMillis .OffsetMS}} · {{if .FinishedAt.IsZero}}incomplete{{else}}{{formatMillis .DurationMS}} · {{.Status}}{{end}}" aria-label="Inspect stage {{.Label}} {{.ID}}"><span>{{.Label}}</span></button>
 {{end}}
 {{define "stage-branch-row"}}
     <span class="swimlane-node-label" style="padding-left: {{.Depth}}rem"><span class="stage-chevron" aria-hidden="true"></span><button type="button" class="swimlane-stage-name" data-timeline-stage="{{.ID}}" title="{{.Label}}">{{.Label}}</button></span>
@@ -44,18 +44,20 @@
     </dialog>
     {{range $view.Rows}}
     <template data-stage-detail="{{.ID}}">
-        <h3>{{.Name}}</h3>
+        <h3>{{.Label}}</h3>
         <div class="stage-metrics"><span class="timeline-status status-{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}">{{if .FinishedAt.IsZero}}incomplete{{else}}{{.Status}}{{end}}</span><span>Start: {{formatMillis .OffsetMS}}</span><span>Duration: {{if .FinishedAt.IsZero}}—{{else}}{{formatMillis .DurationMS}}{{end}}</span></div>
         {{if .Error}}<p class="timeline-notice error">{{.Error}}</p>{{end}}
         {{if or (eq .Name "tool.invoke") (eq .Name "tool.execution") (eq .Name "model.attempt") (eq .Name "llm.request")}}
         <section class="stage-call" data-stage-call="{{.ID}}" aria-live="polite"><p>Loading call details…</p></section>
         {{end}}
+        <details class="stage-recording"><summary>Recording details</summary>
         <dl class="stage-identities"><dt>Stage ID</dt><dd><code>{{.ID}}</code></dd><dt>Parent ID</dt><dd><code>{{.ParentID}}</code></dd>
         {{if .MissingParent}}<dt>Recording</dt><dd>parent not recorded</dd>{{end}}
         {{if .Code}}<dt>Code</dt><dd>{{.Code}}</dd>{{end}}
         {{if .SessionID}}<dt>Session ID:</dt><dd><code>{{.SessionID}}</code></dd>{{end}}</dl>
-        {{if .Attributes}}<details class="stage-attributes" open><summary>Attributes</summary><div class="timeline-attributes">{{range $key,$value := .Attributes}}<div><strong>{{$key}}:</strong> <code>{{printf "%s" $value}}</code></div>{{end}}</div></details>{{end}}
-        {{with index $view.Children .ID}}<h4>Child stages</h4><div class="stage-child-links">{{range .}}<button type="button" data-timeline-stage="{{.ID}}">{{.Name}} <span>{{if .FinishedAt.IsZero}}incomplete{{else}}{{formatMillis .DurationMS}}{{end}}</span></button>{{end}}</div>{{end}}
+        {{if .Attributes}}<details class="stage-attributes"><summary>Attributes</summary><div class="timeline-attributes">{{range $key,$value := .Attributes}}<div><strong>{{$key}}:</strong> <code>{{printf "%s" $value}}</code></div>{{end}}</div></details>{{end}}
+        </details>
+        {{with index $view.Children .ID}}<h4>Child stages</h4><div class="stage-child-links">{{range .}}<button type="button" data-timeline-stage="{{.ID}}">{{.Label}} <span>{{if .FinishedAt.IsZero}}incomplete{{else}}{{formatMillis .DurationMS}}{{end}}</span></button>{{end}}</div>{{end}}
     </template>
     {{end}}
 </div>

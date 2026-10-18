@@ -8,7 +8,6 @@ import (
 	"time"
 
 	anthropic "github.com/anthropics/anthropic-sdk-go"
-	"github.com/compforge/go-stdx/timeline"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/qiankunli/case-code-review/internal/console"
 )
@@ -80,9 +79,7 @@ func NewLLMRouter(eps []ResolvedEndpoint, routing RoutingOptions) LLMClient {
 	return &LLMRouter{members: members, policy: policy, callTimeout: callTimeout, cooldown: make(map[int]time.Time)}
 }
 
-func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (response *ChatResponse, resultErr error) {
-	ctx, finish := beginRequest(ctx)
-	defer func() { finish(resultErr) }()
+func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	parentCtx := ctx
 	if r.callTimeout > 0 {
 		var cancel context.CancelFunc
@@ -90,16 +87,10 @@ func (r *LLMRouter) CompletionsWithCtx(ctx context.Context, req ChatRequest) (re
 		defer cancel()
 	}
 
-	ctx, routingStage := beginStage(ctx, "llm.routing", append(remainingBudget(ctx), timeline.Attribute{Key: "budget_ms", Value: r.callTimeout.Milliseconds()})...)
-	defer func() { endStage(ctx, routingStage, resultErr) }()
-
 	var lastErr error
 	order := r.order()
 	for attemptIndex, i := range order {
-		attributes := append(remainingBudget(ctx), timeline.Attribute{Key: "endpoint", Value: r.members[i].alias}, timeline.Attribute{Key: "attempt", Value: attemptIndex + 1})
-		attemptCtx, stage := beginStage(ctx, "llm.attempt", attributes...)
-		resp, err := r.members[i].client.CompletionsWithCtx(attemptCtx, req)
-		endStage(attemptCtx, stage, err)
+		resp, err := r.members[i].client.CompletionsWithCtx(ctx, req)
 		if err == nil {
 			if resp != nil {
 				resp.Alias = r.members[i].alias // attribute downstream comments to this model

@@ -16,8 +16,6 @@ import (
 	openaiopt "github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
 	tiktoken "github.com/pkoukk/tiktoken-go"
-
-	"github.com/compforge/go-stdx/timeline"
 )
 
 var AppVersion = "dev"
@@ -346,9 +344,7 @@ type ChatRequest struct {
 }
 
 // CompletionsWithCtx sends a chat completion request with context support for cancellation and timeout.
-func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) (response *ChatResponse, resultErr error) {
-	ctx, finish := beginRequest(ctx)
-	defer func() { finish(resultErr) }()
+func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	model := req.Model
 	if model == "" {
 		model = c.cfg.Model
@@ -356,9 +352,8 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 
 	params := c.buildOpenAIParams(model, req)
 
-	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Attribute{Key: "model", Value: model}, timeline.Attribute{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
-	progress := newRequestTrace(ctx)
-	defer func() { progress.finish(resultErr); endStage(ctx, stage, resultErr) }()
+	progress := newRequestTrace()
+	defer progress.finish()
 	opts := []openaiopt.RequestOption{openaiopt.WithMiddleware(progress.middleware)}
 	for k, v := range c.cfg.ExtraBody {
 		opts = append(opts, openaiopt.WithJSONSet(k, v))
@@ -569,9 +564,7 @@ func NewAnthropicClient(cfg ClientConfig) *AnthropicClient {
 }
 
 // CompletionsWithCtx sends a chat completion request with context support.
-func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) (response *ChatResponse, resultErr error) {
-	ctx, finish := beginRequest(ctx)
-	defer func() { finish(resultErr) }()
+func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	model := req.Model
 	if model == "" {
 		model = c.cfg.Model
@@ -582,9 +575,8 @@ func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatReques
 		return nil, err
 	}
 
-	ctx, stage := beginStage(ctx, "llm.provider", append(remainingBudget(ctx), timeline.Attribute{Key: "model", Value: model}, timeline.Attribute{Key: "endpoint_timeout_ms", Value: c.cfg.Timeout.Milliseconds()})...)
-	progress := newRequestTrace(ctx)
-	defer func() { progress.finish(resultErr); endStage(ctx, stage, resultErr) }()
+	progress := newRequestTrace()
+	defer progress.finish()
 	opts := []option.RequestOption{option.WithMiddleware(progress.middleware)}
 	for k, v := range c.cfg.ExtraBody {
 		opts = append(opts, option.WithJSONSet(k, v))

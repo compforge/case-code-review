@@ -17,17 +17,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
-type tracedTestClient struct{ llm.LLMClient }
-
-func (c tracedTestClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
-	ctx, end := recording.Begin(ctx, "llm.provider")
-	_, endHTTP := recording.Begin(ctx, "http.request")
-	response, err := c.LLMClient.CompletionsWithCtx(ctx, request)
-	endHTTP(err)
-	end(err)
-	return response, err
-}
-
 func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
@@ -39,10 +28,10 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			reviewCtx, finish := recording.Begin(ctx, "review.unit", timeline.Attribute{Key: "unit_id", Value: fmt.Sprint(i)})
-			client := tracedTestClient{&scriptedClient{responses: []*llm.ChatResponse{
+			client := &scriptedClient{responses: []*llm.ChatResponse{
 				toolCallResponseID("same-call", "inspect", `{}`, nil),
 				toolCallResponseID("same-done", "task_done", `{}`, nil),
-			}}}
+			}}
 			result, err := runExecution(reviewCtx, ExecutionSpec{
 				LLMClient: client, Session: history, Scope: recording.Scope{ID: fmt.Sprint(i), Kind: "unit"},
 				Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
@@ -95,7 +84,7 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 	if snapshot.ID != history.SessionID || snapshot.Status != timeline.Succeeded {
 		t.Fatalf("run = %+v", snapshot)
 	}
-	if counts["execution"] != 2 || counts["model.attempt"] != 4 || counts["llm.request"] != 0 || counts["http.request"] != 4 {
+	if counts["execution"] != 2 || counts["model.attempt"] != 4 || counts["llm.request"] != 0 || counts["http.request"] != 0 {
 		t.Fatalf("stage counts = %v", counts)
 	}
 	for _, stage := range snapshot.Stages {
