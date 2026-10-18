@@ -3,6 +3,7 @@ package viewer
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -299,5 +300,29 @@ func TestStageAgentSourceErrorDoesNotExposePath(t *testing.T) {
 	handleStageAgent(response, httptest.NewRequest("GET", "/agent?stage=execution-1", nil), root, "repo", "missing")
 	if response.Code != 404 || strings.Contains(response.Body.String(), root) {
 		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}
+
+// A large review can contain many stages unrelated to the selected loop.
+func BenchmarkAgentHierarchyManyTurns(b *testing.B) {
+	source := &stageSource{byID: map[timeline.StageID]timeline.Stage{}}
+	for i := 0; i < 20000; i++ {
+		stage := timeline.Stage{ID: timeline.StageID(fmt.Sprintf("stage-%d", i))}
+		source.rows = append(source.rows, stage)
+		source.byID[stage.ID] = stage
+	}
+	stageOrder := map[timeline.StageID]int{}
+	turns := make([][]*agentItemView, 100)
+	for i := range turns {
+		stageOrder[source.rows[i*2].ID] = i * 2
+		stageOrder[source.rows[i*2+1].ID] = i*2 + 1
+		turns[i] = []*agentItemView{{StageID: source.rows[i*2].ID}, {StageID: source.rows[i*2+1].ID}}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		for _, items := range turns {
+			agentHierarchy(items, source, "loop", stageOrder)
+		}
 	}
 }

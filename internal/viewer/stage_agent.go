@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -96,10 +97,12 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		view.Turns = append(view.Turns, turn)
 	}
 	byFile := map[string]map[agentsession.Ref][]*agentItemView{}
-	for _, stage := range source.rows {
+	stageOrder := map[timeline.StageID]int{}
+	for index, stage := range source.rows {
 		if stage.Name == "turn" || !belongs(stage) {
 			continue
 		}
+		stageOrder[stage.ID] = index
 		if stage.Name == "tool.queue" || (stage.Name == "tool.invoke" && source.byID[stage.ParentID].Name == "tool.execution") {
 			continue
 		}
@@ -156,29 +159,27 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		view.Warnings = append(view.Warnings, readAgentUsage(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", name), items)...)
 	}
 	for _, turn := range view.Turns {
-		turn.Items = agentHierarchy(turn.Items, source, turn.StageID)
+		turn.Items = agentHierarchy(turn.Items, source, turn.StageID, stageOrder)
 	}
-	view.Operations = agentHierarchy(view.Operations, source, root.ID)
+	view.Operations = agentHierarchy(view.Operations, source, root.ID, stageOrder)
 	return view, nil
 }
 
 // Use the same tree traversal as Default. Hidden intermediates still contribute
 // their recorded ancestry; neither timestamp order nor call kind defines depth.
-func agentHierarchy(items []*agentItemView, source *stageSource, root timeline.StageID) []*agentItemView {
+// +spec=`Each turn collects only its own items and ancestors; the shared source order is indexed once rather than rescanning the review timeline for every turn`
+func agentHierarchy(items []*agentItemView, source *stageSource, root timeline.StageID, stageOrder map[timeline.StageID]int) []*agentItemView {
 	selected := map[timeline.StageID]*agentItemView{}
 	included := map[timeline.StageID]bool{}
+	var rows []timelineRow
 	for _, item := range items {
 		selected[item.StageID] = item
 		for stage := source.byID[item.StageID]; stage.ID != "" && stage.ID != root && !included[stage.ID]; stage = source.byID[stage.ParentID] {
 			included[stage.ID] = true
-		}
-	}
-	var rows []timelineRow
-	for _, stage := range source.rows {
-		if included[stage.ID] {
 			rows = append(rows, timelineRow{Stage: stage})
 		}
 	}
+	sort.Slice(rows, func(i, j int) bool { return stageOrder[rows[i].ID] < stageOrder[rows[j].ID] })
 	ordered := make([]*agentItemView, 0, len(items))
 	var visit func(*timelineBranch)
 	visit = func(branch *timelineBranch) {
