@@ -12,8 +12,6 @@ import (
 	agentsession "github.com/compforge/agentgo/session"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
-	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/timelinelog"
 )
 
 type stageCall struct {
@@ -32,23 +30,12 @@ type stageCall struct {
 
 // +spec=`Stage details load only the referenced local Session and match all four reference fields; missing call data remains missing, never borrowed from another run or attempt`
 func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
-	if _, err := readSessionStart(path); err != nil {
+	source, err := readStageSource(path)
+	if err != nil {
 		return nil, err
 	}
 	base := strings.TrimSuffix(path, ".jsonl")
-	file, err := os.Open(base + ".timeline")
-	if err != nil {
-		return nil, err
-	}
-	doc, at, _, err := timelinelog.Read(file)
-	file.Close()
-	if err != nil {
-		return nil, err
-	}
-	stages := map[timeline.StageID]timeline.Stage{}
-	for _, stage := range doc.Snapshot(at).Stages {
-		stages[stage.ID] = stage
-	}
+	stages := source.byID
 	stage, ok := stages[id]
 	if !ok {
 		return nil, fmt.Errorf("call stage not found: %s", id)
@@ -67,23 +54,15 @@ func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
 		call.Warnings = append(call.Warnings, "No Session reference recorded for this call.")
 		return call, nil
 	}
-	name := ""
-	seen := map[timeline.StageID]bool{}
-	for parent := stage; parent.ID != "" && !seen[parent.ID]; parent = stages[parent.ParentID] {
-		seen[parent.ID] = true
-		name, _ = timeline.AttributeValue[string](parent.Attributes, "session_file")
-		if name != "" {
-			break
-		}
+	name, err := source.sessionFile(stage)
+	if err != nil {
+		return nil, err
 	}
 	if name == "" {
 		call.Warnings = append(call.Warnings, "No Session file recorded for this call.")
 		return call, nil
 	}
-	if filepath.Base(name) != name || !strings.HasSuffix(name, ".jsonl") {
-		return nil, fmt.Errorf("invalid Session filename")
-	}
-	file, err = os.Open(filepath.Join(base+".sessions", name))
+	file, err := os.Open(filepath.Join(base+".sessions", name))
 	if err != nil {
 		if os.IsNotExist(err) {
 			call.Warnings = append(call.Warnings, "Referenced Session file is missing.")
@@ -110,24 +89,11 @@ func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
 		case agentgo.EventModelExecEnd:
 			call.Error = data.Error
 			if len(data.Message) > 0 {
-				codec, err := msg.Codec()
+				response, err := recordedModelMessage(data.Message)
 				if err != nil {
 					return err
 				}
-				var message agentgo.AgentMessage
-				if err := codec.Unmarshal(data.Message, &message); err != nil {
-					return err
-				}
-				// Failed model messages are evidence too; ToMessage filters them
-				// out for replay, so keep the native response for inspection.
-				response, ok := message.(agentgo.Message)
-				if !ok {
-					response, ok = message.ToMessage()
-				}
-				if !ok {
-					return fmt.Errorf("model response cannot be projected as a message")
-				}
-				call.Response = &response
+				call.Response = response
 			}
 		case agentgo.EventToolExecStart:
 			if stage.Name == "tool.execution" {

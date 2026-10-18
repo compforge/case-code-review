@@ -61,6 +61,10 @@ func StartServer(addr string) error {
 		handleStageCall(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
 	})
 
+	mux.HandleFunc("GET /r/{repo}/{sessionID}/agent", func(w http.ResponseWriter, r *http.Request) {
+		handleStageAgent(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
+	})
+
 	// Wrap the mux with a Host-header allowlist. Without this, any web page
 	// the user visits can DNS-rebind its origin to 127.0.0.1 and read the
 	// session JSONL exposed by this viewer (which contains LLM request bodies

@@ -257,7 +257,7 @@ func TestSwimlanesKeepPreparationNestedWorkAndTrial(t *testing.T) {
 			t.Fatalf("missing dialog content for %s", stage.ID)
 		}
 	}
-	if strings.Contains(body, `role="tablist"`) || strings.Contains(body, "Stage tree") {
+	if strings.Contains(body, "Review details</") || strings.Contains(body, "Stage tree") {
 		t.Fatal("legacy navigation remains")
 	}
 	// This fixture has no scope_id; show the Session ID without inventing a link.
