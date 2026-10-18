@@ -566,6 +566,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 	}
 	for i := range units {
 		units[i].InitReviewState()
+		a.session.GetOrCreateScope(recording.Scope{ID: units[i].ID, Kind: "unit", Type: string(units[i].Scope), Paths: units[i].Paths()})
 		for j := range units[i].Fragments {
 			units[i].Fragments[j].Status = changeStatus[units[i].Fragments[j].Path]
 		}

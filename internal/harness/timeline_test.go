@@ -57,6 +57,9 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for i := range 2 {
+		history.CloseScope(recording.Scope{ID: fmt.Sprint(i), Kind: "unit"}, recording.Debrief{Outcome: OutcomeCompleted})
+	}
 	history.Finalize()
 	path, err := history.TranscriptPath()
 	if err != nil {

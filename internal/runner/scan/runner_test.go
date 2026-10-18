@@ -249,6 +249,12 @@ func TestFilterLargeScans(t *testing.T) {
 			t.Errorf("huge.go should have been filtered")
 		}
 	}
+	a.session.Finalize()
+	completion := a.session.Completion()
+	if completion.Status != "partial" || len(completion.Units) != 1 || completion.Units[0].Outcome != "skipped_policy" {
+		t.Fatalf("budget-filtered file disappeared from completion: %+v", completion)
+	}
+
 }
 
 func TestFilterLargeScans_NoLimit(t *testing.T) {

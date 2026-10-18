@@ -38,21 +38,22 @@ const (
 // Review is the top-level container for an entire CR run.
 // It is safe for concurrent use by multiple goroutines.
 type Review struct {
-	mu          sync.Mutex
-	SessionID   string
-	RepoDir     string
-	GitBranch   string
-	Model       string
-	ReviewMode  string
-	DiffFrom    string
-	DiffTo      string
-	DiffCommit  string
-	BizID       string
-	StartTime   time.Time
-	EndTime     time.Time
-	persist     *jsonlWriter
-	Scopes      map[string]*ReviewScope
-	llmFailures int64
+	mu             sync.Mutex
+	SessionID      string
+	RepoDir        string
+	GitBranch      string
+	Model          string
+	ReviewMode     string
+	DiffFrom       string
+	DiffTo         string
+	DiffCommit     string
+	BizID          string
+	StartTime      time.Time
+	EndTime        time.Time
+	persist        *jsonlWriter
+	Scopes         map[string]*ReviewScope
+	llmFailures    int64
+	operationError string
 	// diff totals for the session_end record (cost normalization denominators);
 	// set once diffs are loaded via SetDiffStats.
 	diffFiles      int
@@ -88,8 +89,11 @@ type ReviewScope struct {
 
 	// Unit lifecycle (see docs/unit-model.md): open → closing (Close
 	// called, async still in flight) → closed (debrief persisted). Scopes that
-	// never Close (scan / Lane passes) just stay open — the lifecycle is
+	// never Close (Lane / auxiliary passes) just stay open — the lifecycle is
 	// opt-in for scopes that produce a debrief.
+	outcome       string
+	reason        string
+	unassessed    []string
 	state         scopeState
 	pendingAsync  int      // async tasks registered via BeginAsync, not yet ended
 	parkedDebrief *Debrief // held while closing until the last async task ends
@@ -349,6 +353,9 @@ func (sh *Review) Finalize(operationErr ...error) {
 		return
 	}
 	sh.EndTime = time.Now()
+	if err := errors.Join(operationErr...); err != nil {
+		sh.operationError = err.Error()
+	}
 	p := sh.persist
 	duration := sh.EndTime.Sub(sh.StartTime)
 	seen := make(map[string]bool)
@@ -365,10 +372,15 @@ func (sh *Review) Finalize(operationErr ...error) {
 	stats := diffStats{files: sh.diffFiles, insertions: sh.diffInsertions, deletions: sh.diffDeletions}
 	sh.mu.Unlock()
 
-	telemetry.ReportTimelineError(timeline.Finish(sh.SessionID, errors.Join(operationErr...)))
+	completion := sh.Completion()
+	finishErr := errors.Join(operationErr...)
+	if finishErr == nil && !completion.Complete() {
+		finishErr = fmt.Errorf("review %s: admitted work did not complete", completion.Status)
+	}
+	telemetry.ReportTimelineError(timeline.Finish(sh.SessionID, finishErr))
 	telemetry.ReportTimelineError(telemetry.CloseTimeline(sh.SessionID))
 	if p != nil {
-		p.WriteSessionEnd(duration, filesReviewed, failures, stats)
+		p.WriteSessionEnd(duration, filesReviewed, failures, stats, completion, sh.totalUsage())
 	}
 }
 
@@ -466,6 +478,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		ss.mu.Lock()
 		defer ss.mu.Unlock()
 		ss.duration += duration
+		ss.tokens.Estimated = ss.tokens.Estimated || usage.Estimated
 		ss.tokens.PromptTokens += usage.PromptTokens
 		ss.tokens.CompletionTokens += usage.CompletionTokens
 		ss.tokens.CacheReadTokens += usage.CacheReadTokens
@@ -512,4 +525,25 @@ func (sh *Review) stageRef(ctx context.Context) timeline.StageRef {
 		ref = timeline.StageRef{TimelineID: sh.SessionID, StageID: timeline.StageID("operation:" + sh.SessionID)}
 	}
 	return ref
+}
+
+// totalUsage reads bounded accounting counters, never native Session bodies.
+func (sh *Review) totalUsage() TokenUsage {
+	sh.mu.Lock()
+	scopes := make([]*ReviewScope, 0, len(sh.Scopes))
+	for _, scope := range sh.Scopes {
+		scopes = append(scopes, scope)
+	}
+	sh.mu.Unlock()
+	var usage TokenUsage
+	for _, scope := range scopes {
+		scope.mu.Lock()
+		usage.PromptTokens += scope.tokens.PromptTokens
+		usage.CompletionTokens += scope.tokens.CompletionTokens
+		usage.CacheReadTokens += scope.tokens.CacheReadTokens
+		usage.CacheWriteTokens += scope.tokens.CacheWriteTokens
+		usage.Estimated = usage.Estimated || scope.tokens.Estimated
+		scope.mu.Unlock()
+	}
+	return usage
 }

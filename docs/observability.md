@@ -288,3 +288,18 @@ Stage 详情共享同一 Stage 身份、状态和时间，使用明确的视图�
 
 视图只在读取时投影，不写入 Timeline 或 Session。Agent 接口只返回摘要，调用正文在点击后按需读取。关联 Session 读取失败时保留阶段树和已读取的 usage，并显示文件/记录级诊断；事件内容解码失败只跳过对应记录，无法继续解析的 JSONL 保留已读部分，其余 usage 保持未知。
 在弹框内下钻后返回会恢复原视图与滚动位置；切换视图不改变观测范围，也不重新执行 review。
+
+## Review completion and on-demand views
+
+The Unit pipeline owns the terminal result of each admitted Unit, including
+unassessed Hypothesis IDs. The Review manifest seals these results in
+`session_end.completion`, separately from delivered Findings and recording gaps.
+CLI, Viewer and eval consume this same result. Warnings explain individual
+failures; their names and counts do not determine completion. Budget-skipped or
+unfinished Units make coverage partial, even when useful Findings were delivered.
+
+The Timeline page reads business records and stages. Final token totals come from
+bounded call accounting in the manifest; before finalization, the page leaves
+those totals pending. Model and Tool views load the referenced local Session,
+and Agent view loads the Sessions referenced by the selected loop. Corrupt call
+bodies are diagnosed in those views without preventing Timeline navigation.

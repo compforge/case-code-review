@@ -16,9 +16,9 @@ import (
 	"github.com/qiankunli/case-code-review/internal/timelinelog"
 )
 
-// ReadReview joins the review manifest, incremental timeline and local Session
-// records. Request/response maps are a query projection, never a second archive.
-func ReadReview(path string) (*Transcript, error) {
+// ReadTimeline loads business records and stages without opening local Sessions.
+// +spec=`Timeline navigation never reads model or tool bodies; full evidence requires an explicit ReadReview or referenced call query`
+func ReadTimeline(path string) (*Transcript, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -42,6 +42,19 @@ func ReadReview(path string) (*Transcript, error) {
 		t.Timeline = doc.Snapshot(at)
 		t.TruncatedTail = t.TruncatedTail || torn
 	}
+	if t.Timeline.ID == "" {
+		t.Gaps = append(t.Gaps, "missing review timeline")
+	}
+	return t, nil
+}
+
+// ReadReview joins native call bodies only for consumers requesting full evidence.
+func ReadReview(path string) (*Transcript, error) {
+	t, err := ReadTimeline(path)
+	if err != nil {
+		return nil, err
+	}
+	base := strings.TrimSuffix(path, ".jsonl")
 	paths, err := filepath.Glob(filepath.Join(base+".sessions", "*.jsonl"))
 	if err != nil {
 		return nil, err
@@ -64,9 +77,6 @@ func ReadReview(path string) (*Transcript, error) {
 		if !found[name] {
 			t.Gaps = append(t.Gaps, "missing local Session: "+name)
 		}
-	}
-	if t.Timeline.ID == "" {
-		t.Gaps = append(t.Gaps, "missing review timeline")
 	}
 	sort.Strings(t.Gaps)
 	sort.SliceStable(t.Records, func(i, j int) bool {

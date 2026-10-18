@@ -15,41 +15,17 @@ import (
 	"github.com/qiankunli/case-code-review/internal/suggestdiff"
 )
 
-func outputText(comments []finding.Finding) {
-	if len(comments) == 0 {
+func outputTextWithWarnings(comments []finding.Finding, warnings []runner.Warning, completion recording.Completion) {
+	if !completion.Complete() {
+		fmt.Println("Review is incomplete; findings are partial and must not be interpreted as a clean verdict.")
+	} else if len(comments) == 0 {
 		fmt.Println("No comments generated. Looks good to me.")
-		return
 	}
-	for _, c := range comments {
-		renderComment(c)
+	for _, comment := range comments {
+		renderComment(comment)
 	}
-}
 
-func hasSubtaskErrors(warnings []runner.Warning) bool {
 	for _, w := range warnings {
-		if w.Type == "subtask_error" {
-			return true
-		}
-	}
-	return false
-}
-
-func outputTextWithWarnings(comments []finding.Finding, warnings []runner.Warning) {
-	if len(comments) == 0 {
-		if hasSubtaskErrors(warnings) {
-			fmt.Println("Some files could not be reviewed due to errors (see warnings below).")
-		} else {
-			fmt.Println("No comments generated. Looks good to me.")
-		}
-	} else {
-		for _, c := range comments {
-			renderComment(c)
-		}
-	}
-	for _, w := range warnings {
-		if w.Type == "subtask_error" {
-			continue
-		}
 		fmt.Fprintf(os.Stderr, "[ccr] WARNING [%s] %s: %s\n", w.Type, sanitizeTerminal(w.File), sanitizeTerminal(w.Message))
 	}
 }
@@ -205,7 +181,8 @@ type jsonToolCalls struct {
 }
 
 type jsonOutput struct {
-	Status string `json:"status"`
+	Status     string               `json:"status"`
+	Completion recording.Completion `json:"completion"`
 	// Version is the reviewing ccr's own version (main.Version) — the review's
 	// tool identity, present on every JSON shape including skipped/no-files.
 	Version        string            `json:"version,omitempty"`
@@ -217,20 +194,6 @@ type jsonOutput struct {
 	Comments       []finding.Finding `json:"comments"`
 	Warnings       []runner.Warning  `json:"warnings,omitempty"`
 	ProjectSummary string            `json:"project_summary,omitempty"`
-}
-
-func outputJSON(comments []finding.Finding) error {
-	out := jsonOutput{
-		Status:   "success",
-		Version:  Version,
-		Comments: comments,
-	}
-	if len(comments) == 0 {
-		out.Message = "No comments generated. Looks good to me."
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(out)
 }
 
 func outputJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning,
@@ -278,21 +241,18 @@ func buildJSONWithWarnings(comments []finding.Finding, warnings []runner.Warning
 		Total:  total,
 		ByTool: byTool,
 	}
-	if len(comments) == 0 {
-		if hasSubtaskErrors(warnings) {
-			out.Message = "Some files could not be reviewed due to errors."
-		} else {
-			out.Message = "No comments generated. Looks good to me."
-		}
-	}
+	out.Completion = sh.Completion()
 	if len(warnings) > 0 {
 		out.Warnings = warnings
-		if hasSubtaskErrors(warnings) {
-			out.Status = "completed_with_errors"
-		} else {
-			out.Status = "completed_with_warnings"
-		}
+		out.Status = "completed_with_warnings"
 	}
+	if !out.Completion.Complete() {
+		out.Status = "completed_with_errors"
+		out.Message = "Review is incomplete; findings are partial and must not be interpreted as a clean verdict."
+	} else if len(comments) == 0 {
+		out.Message = "No comments generated. Looks good to me."
+	}
+
 	return out
 }
 
@@ -350,6 +310,7 @@ func attachSession(out *jsonOutput, sh *recording.Review) {
 	if out == nil || sh == nil {
 		return
 	}
+	out.Completion = sh.Completion()
 	out.SessionID = sh.SessionID
 	if path, err := sh.TranscriptPath(); err == nil {
 		out.SessionPath = path

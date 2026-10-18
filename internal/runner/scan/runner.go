@@ -232,7 +232,11 @@ func (a *Runner) Run(ctx context.Context) (findings []finding.Finding, runErr er
 	scanSpan.End()
 
 	totalDiscovered := len(items)
-	a.items = a.filterLargeScans(a.filterScanItems(items))
+	admitted := a.filterScanItems(items)
+	for _, item := range admitted {
+		a.session.GetOrCreateScope(unitScope(item.AsUnit()))
+	}
+	a.items = a.filterLargeScans(admitted)
 	// Only admitted scan bodies belong in the tool snapshot. Building it
 	// earlier keeps excluded and over-budget contents alive for the run.
 	a.injectScanContentMap()
@@ -343,6 +347,7 @@ func (a *Runner) filterLargeScans(items []Item) []Item {
 	for _, it := range items {
 		tokens := llm.CountTokens(it.Content)
 		if tokens > limit {
+			a.session.CloseScope(unitScope(it.AsUnit()), recording.Debrief{Outcome: "skipped_policy", Reason: "file token threshold exceeded"})
 			fmt.Fprintf(console.Out(), "[ccr] Skipping %s (~%d tokens exceeds 80%% of max_tokens(%d))\n",
 				it.Path, tokens, a.args.Template.MaxTokens)
 			skipped++
@@ -533,7 +538,20 @@ func (a *Runner) dispatchBatch(ctx context.Context, batchIdx int, batch []Item) 
 // is small enough that planning overhead outweighs gain, or the plan call
 // itself fails. Plan failure never blocks the main review — it falls back
 // to v1 (plan-less) behavior.
-func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
+func (a *Runner) executeSubtask(ctx context.Context, it Item) (runErr error) {
+	deb := recording.Debrief{Outcome: "incomplete"}
+	defer func() {
+		if runErr != nil && (deb.Outcome == "incomplete" || deb.Outcome == "") {
+			deb.Outcome, deb.Reason = "llm_error", runErr.Error()
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				deb.Outcome = "timeout"
+			}
+			if errors.Is(runErr, context.Canceled) {
+				deb.Outcome = "aborted"
+			}
+		}
+		a.session.CloseScope(unitScope(it.AsUnit()), deb)
+	}()
 	ctx, span := telemetry.StartSpan(ctx, "scan.subtask."+it.Path)
 	defer span.End()
 	telemetry.SetAttr(span, "file.path", it.Path)
@@ -555,6 +573,7 @@ func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
 	maxAllowed := a.args.Template.MaxTokens
 	tokenLimit := maxAllowed * 4 / 5
 	if tokenCount > tokenLimit {
+		deb.Outcome, deb.Reason = "skipped_policy", "prompt token threshold exceeded"
 		msg := fmt.Sprintf("prompt tokens (%d) exceed %d%% of max_tokens(%d)", tokenCount, 80, maxAllowed)
 		fmt.Fprintf(console.Out(), "[ccr] WARNING: %s for %s\n", msg, it.Path)
 		a.recordWarning("token_threshold_exceeded", it.Path, msg)
@@ -567,7 +586,8 @@ func (a *Runner) executeSubtask(ctx context.Context, it Item) error {
 
 	// Full-file scan forms one Unit per item, so Harness lifecycle and
 	// incomplete-result semantics are identical to diff-derived Units.
-	_, err := a.executor.Run(ctx, msg.Wrap(messages), unitScope(it.AsUnit()))
+	result, err := a.executor.Run(ctx, msg.Wrap(messages), unitScope(it.AsUnit()))
+	deb.Outcome, deb.Reason = result.State, result.Reason
 	return err
 }
 

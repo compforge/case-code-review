@@ -23,7 +23,7 @@
 {{if .Timelines}}
 <div class="timeline-list-scroll">
 <table class="table timeline-list">
-    <thead><tr><th>Review timeline</th><th>Repository / Branch</th><th>Started at</th><th>Duration</th><th></th></tr></thead>
+    <thead><tr><th>Review timeline</th><th>Repository / Branch</th><th>Started at</th><th>Duration</th><th>Completion</th><th></th></tr></thead>
     <tbody>
     {{range .Timelines}}
         <tr>
@@ -31,6 +31,7 @@
             <td><a href="/r/{{.EncodedRepo}}" title="{{.CWD}}">{{.RepoName}}</a><div class="timeline-list-meta">{{.GitBranch}}</div></td>
             <td class="timeline-list-time">{{formatTime .Timestamp}}</td>
             <td>{{if gt .DurationSec 0.0}}{{formatDuration .DurationSec}}{{else}}—{{end}}</td>
+            <td>{{if .Completion.Status}}{{.Completion.Status}}{{else}}unknown{{end}}</td>
             <td><a class="timeline-open" href="/r/{{.EncodedRepo}}/{{.SessionID}}#timeline">Open timeline →</a></td>
         </tr>
     {{end}}

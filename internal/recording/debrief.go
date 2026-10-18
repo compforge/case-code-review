@@ -22,7 +22,8 @@ type Debrief struct {
 	// decided not to run the loop at all — a deliberate skip, not a failure.
 	Outcome string
 	// Reason qualifies non-completed outcomes (truncation cause, error, policy).
-	Reason string
+	Reason     string
+	Unassessed []string
 
 	// Formed is unit.Formation: why the unit has its shape (func/file/coalesce/
 	// chain). Distinguishes the cost governor's coalesced file units from
@@ -135,6 +136,8 @@ func (ss *ReviewScope) EndAsync() {
 // Callers hold ss.mu.
 func (ss *ReviewScope) finalizeLocked(d Debrief) {
 	ss.state = scopeClosed
+	ss.outcome, ss.reason = d.Outcome, d.Reason
+	ss.unassessed = append([]string(nil), d.Unassessed...)
 	d.Rounds, d.ToolCalls, d.Tokens, d.DurationMs = ss.aggregateLocked()
 	if p := ss.session.persist; p != nil {
 		p.WriteDebrief(ss, d)

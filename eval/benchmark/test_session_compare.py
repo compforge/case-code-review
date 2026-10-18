@@ -51,6 +51,22 @@ def pipeline(support="contradicted", assessed=True, passed=False, delivered=Fals
     return events
 
 
+def completion(events):
+    results = {event["data"]["unit_id"]: {"id": event["data"]["unit_id"], "outcome": "incomplete"}
+               for event in events if event.get("artifact_kind") == "review_unit"}
+    assessed = {event["data"]["hypothesis_id"] for event in events
+                if event.get("artifact_kind") == "review_assessment" and event["data"].get("reviewer_alias") != "system"}
+    for event in events:
+        if event.get("type") == "debrief":
+            results[event["scope_id"]]["outcome"] = event["outcome"]
+        if event.get("artifact_kind") == "review_hypothesis" and event["data"]["id"] not in assessed:
+            owner = results.get(event["data"].get("origin_unit"))
+            if owner is not None:
+                owner.setdefault("unassessed_hypotheses", []).append(event["data"]["id"])
+    complete = all(unit["outcome"] == "completed" and not unit.get("unassessed_hypotheses") for unit in results.values())
+    return {"status": "completed" if complete else "partial", "units": list(results.values())}
+
+
 class SessionComparisonTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -65,9 +81,17 @@ class SessionComparisonTest(unittest.TestCase):
             records.append(artifact("review_input", version=1, repository="repo", change_digest=digest))
         records.extend(events)
         if closed:
-            records.append({"type": "session_end", "duration_seconds": 1.5})
+            records.append({"type": "session_end", "duration_seconds": 1.5, "completion": completion(events)})
         path.write_text("".join(json.dumps(r) + "\n" for r in records) + tail, encoding="utf-8")
         return read_session(path)
+
+    def test_coverage_uses_sealed_unit_result(self):
+        session = self.session(unit())
+        # The final business result owns coverage even if an earlier debrief
+        # or execution appeared complete.
+        session.unit_results["u"]["unassessed_hypotheses"] = ["h"]
+        self.assertEqual(session.unit_state("u"), "incomplete")
+        self.assertEqual(session.summary()["completion"], session.recording.completion)
 
     def test_wording_and_line_drift_match_snippet_but_not_same_symbol(self):
         before = self.session([finding(symbol_id="F")])

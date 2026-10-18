@@ -203,6 +203,21 @@ func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t
 		if !incomplete || assessments != 1 || resumed != 1 || r2Calls.Load() != 3 {
 			t.Fatalf("incomplete=%v assessments=%d resumed=%d calls=%d", incomplete, assessments, resumed, r2Calls.Load())
 		}
+		unassessedWarnings := 0
+		for _, warning := range a.Warnings() {
+			if warning.Type == "hypothesis_unassessed" {
+				unassessedWarnings++
+			}
+		}
+		if unassessedWarnings != 1 {
+			t.Fatalf("unassessed warnings = %d, want one per hypothesis", unassessedWarnings)
+		}
+		history.Finalize()
+		completion := history.Completion()
+		if completion.Status != "partial" || len(completion.Units) != 1 || len(completion.Units[0].Unassessed) != 1 {
+			t.Fatalf("partial Finding lost completion evidence: %+v", completion)
+		}
+
 	})
 }
 

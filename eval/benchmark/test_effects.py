@@ -18,7 +18,7 @@ from eval.benchmark.evaluate import evaluate, run_analysis
 from eval.benchmark.matching import Matcher, pair_id
 from eval.benchmark.run import load_experiment, export_runs
 from eval.benchmark.stages import project
-from eval.benchmark.test_session_compare import artifact, pipeline, unit
+from eval.benchmark.test_session_compare import artifact, completion, pipeline, unit
 from eval.eval_snapshot import review_sha256
 
 
@@ -42,7 +42,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
             if event.get("artifact_kind") == "review_assessment" and low_value:
                 event["data"]["value"] = "low_value"
         if closed:
-            events.append({"type": "session_end"})
+            events.append({"type": "session_end", "completion": completion(events)})
         path.write_text("".join(json.dumps(event) + "\n" for event in events))
         return path
 

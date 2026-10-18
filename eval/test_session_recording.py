@@ -76,6 +76,13 @@ class SessionRecordingTests(unittest.TestCase):
 
 
 class NativeSessionTests(unittest.TestCase):
+    def test_business_completion_is_not_inferred_from_closure(self):
+        self.assertEqual(Recording([], []).completion, {"status": "running"})
+        self.assertEqual(Recording([{"type": "session_end"}], []).completion, {"status": "unknown"})
+        completion = {"status": "partial", "units": [{"id": "u", "outcome": "timeout", "unassessed_hypotheses": ["h"]}]}
+        recording = Recording([{"type": "session_end", "completion": completion}], [])
+        self.assertEqual(recording.completion, completion)
+
     def test_native_session_join_matches_go_reader(self):
         path = Path(__file__).parents[1] / "testdata/recording/review.jsonl"
         recording = Recording.read(path)

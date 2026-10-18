@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -127,6 +126,8 @@ func readSessionStart(path string) (SessionSummary, error) {
 
 // SessionSummary is built from session_start and session_end records.
 type SessionSummary struct {
+	Completion     recording.Completion
+	Tokens         *recording.TokenUsage
 	SchemaVersion  int
 	SessionID      string
 	Timestamp      time.Time
@@ -202,6 +203,11 @@ func peekSession(path string) (SessionSummary, error) {
 		var rec map[string]any
 		if err := json.Unmarshal(lastLine, &rec); err == nil {
 			if typ, _ := rec["type"].(string); typ == "session_end" {
+				transcript := recording.Transcript{Records: []map[string]any{rec}}
+				summary.Completion = transcript.Completion()
+				if raw, err := json.Marshal(rec["tokens"]); err == nil {
+					_ = json.Unmarshal(raw, &summary.Tokens)
+				}
 				if dur, ok := rec["duration_seconds"].(float64); ok {
 					summary.DurationSec = dur
 				}
@@ -229,508 +235,72 @@ func peekSession(path string) (SessionSummary, error) {
 			}
 		}
 	}
+	if summary.Completion.Status == "" {
+		summary.Completion.Status = "running"
+	}
 	summary.FileCount = len(summary.FilesReviewed)
 	return summary, scanner.Err()
 }
 
-// ViewSession holds fully parsed records for one recording.
+// ViewSession is the lightweight business Timeline page projection.
+// Model and tool bodies belong to the selected Stage view.
 type ViewSession struct {
-	Cost              recording.CostReport
 	RecordingWarnings []string
 	Timeline          *timeline.Snapshot
 	Summary           SessionSummary
-	Diagnostics       SessionDiagnostics
-	TokenUsage        TokenUsageSummary
-	Compaction        CompactionSummary
-	ToolUsage         []ToolUsage
-	SystemPrompts     []SystemPrompt // distinct system prompts, deduped by content
-	Artifacts         []ReviewArtifact
-	Reviews           []*ReviewScope
+	CompletionLabel   string
+	Findings          int
 }
 
-// CompactionSummary aggregates explicit ContextManager rewrites. Counting
-// events avoids inferring compaction from prompt-size deltas.
-type CompactionSummary struct {
-	Count      int
-	Summarized int
-}
-
-// ReviewArtifact is a domain-owned intermediate decision rendered without
-// teaching the viewer the evolving Hypothesis or Assessment schemas.
-type ReviewArtifact struct {
-	Kind         string
-	Data         string
-	Status       string // assessment only: current | superseded
-	OriginUnit   string
-	LaneID       string
-	HypothesisID string
-}
-
-// DisplayMessage is one message of an LLM request with its text content
-// extracted for display (handles both plain-string and content-block formats).
-type DisplayMessage struct {
-	Role string
-	Text string
-}
-
-// SystemPrompt is a distinct system prompt seen in the recording. System prompts
-// are static per task type and repeat across every file/round, so the viewer
-// dedupes them by content and surfaces them once at the session level rather
-// than burying a copy inside every request card.
-type SystemPrompt struct {
-	TaskTypes []TaskType // task types this exact prompt was used for
-	Text      string
-}
-
-// TokenUsageSummary aggregates token counts across the recording.
-type TokenUsageSummary struct {
-	TotalPromptTokens     int
-	TotalCompletionTokens int
-	TotalCacheReadTokens  int
-	TotalCacheWriteTokens int
-	RequestCount          int
-	FileTokenBreakdown    []FileTokenUsage
-}
-
-// FileTokenUsage tracks token totals for a single file within a recording.
-type FileTokenUsage struct {
-	FilePath         string
-	PromptTokens     int
-	CompletionTokens int
-	CacheReadTokens  int
-	CacheWriteTokens int
-}
-
-// TaskType mirrors recording.TaskType.
-type TaskType string
-
-const (
-	PlanTask              TaskType = "plan_task"
-	MainTask              TaskType = "main_task"
-	MemoryCompressionTask TaskType = "memory_compression_task"
-	ReLocationTask        TaskType = "re_location_task"
-	HypothesisReviewTask  TaskType = "hypothesis_review_task"
-)
-
-// TaskCard links an LLM request with its response and tool calls.
-type TaskCard struct {
-	SessionRef  string
-	StageID     string
-	Timeline    *timeline.Snapshot
-	ExecutionID string
-	Sequence    int
-	// Request holds the complete recorded message list sent in this call.
-	Request          []DisplayMessage
-	TaskType         TaskType
-	RequestNo        int
-	TurnNo           int
-	PromptDelta      int
-	MessageDelta     int
-	ResponseContent  string
-	Reasoning        string
-	StopReason       string
-	ToolCalls        []ToolCallInfo
-	DurationMs       int64
-	Error            string
-	Model            string
-	HasResponse      bool
-	PromptTokens     int
-	CompletionTokens int
-	CacheReadTokens  int
-	CacheWriteTokens int
-}
-
-// ContextCompaction is one persisted rewrite positioned in the execution
-// conversation by its JSONL sequence.
-type ContextCompaction struct {
-	Sequence       int
-	Reason         string
-	Committed      bool
-	TokensBefore   int
-	TokensAfter    int
-	MessagesBefore int
-	MessagesAfter  int
-	Summarized     bool
-}
-
-// ToolCallInfo summarizes a single tool call.
-type ToolCallInfo struct {
-	SessionRef string
-	StageID    string
-	ID         string
-	Name       string
-	Arguments  string
-	Result     string
-	Ok         bool
-	HasResult  bool
-	DurationMs int64
-}
-
-// LoadSession fully parses one current-schema JSONL file into the Viewer read model.
+// LoadSession projects business records and the timeline. Call contents are
+// loaded by the selected Stage view, never by page navigation.
 func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	path := filepath.Join(root, encodedRepo, sessionID+".jsonl")
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open session file: %w", err)
-	}
-	defer f.Close()
-
-	vs := &ViewSession{Reviews: make([]*ReviewScope, 0)}
-	scopeIndex := make(map[string]*ReviewScope)
-	executionIndex := make(map[string]*ReviewExecution)
-	sysIndex := make(map[string]int)
-
-	scopeFor := func(rec map[string]any) *ReviewScope {
-		key, _ := rec["scope_id"].(string)
-		if key == "" {
-			return nil
-		}
-		scope := scopeIndex[key]
-		if scope == nil {
-			kind, _ := rec["kind"].(string)
-			scopeType, _ := rec["scope"].(string)
-			filePath, _ := rec["filePath"].(string)
-			scope = &ReviewScope{
-				ID: key, Kind: kind, Scope: scopeType, Paths: stringList(rec["paths"]),
-				FilePath: filePath, Tasks: make(map[TaskType][]*TaskCard),
-			}
-			scopeIndex[key] = scope
-			vs.Reviews = append(vs.Reviews, scope)
-		} else {
-			scope.Paths = mergeStrings(scope.Paths, stringList(rec["paths"]))
-		}
-		return scope
-	}
-
-	executionFor := func(rec map[string]any) (*ReviewScope, *ReviewExecution) {
-		scope := scopeFor(rec)
-		executionID, _ := rec["execution_id"].(string)
-		if scope == nil || executionID == "" {
-			return scope, nil
-		}
-		key := scope.ID + "\x00" + executionID
-		execution := executionIndex[key]
-		if execution == nil {
-			execution = &ReviewExecution{ID: executionID, Tasks: make(map[TaskType][]*TaskCard)}
-			executionIndex[key] = execution
-			scope.Executions = append(scope.Executions, execution)
-		}
-		return scope, execution
-	}
-
-	transcript, err := recording.ReadReview(f.Name())
+	summary, err := peekSession(path)
 	if err != nil {
 		return nil, err
 	}
+	transcript, err := recording.ReadTimeline(path)
+	if err != nil {
+		return nil, err
+	}
+	summary.SessionID = sessionID
+	summary.Completion = transcript.Completion()
+	vs := &ViewSession{Summary: summary, RecordingWarnings: transcript.Gaps}
 	if transcript.Timeline.ID != "" {
 		vs.Timeline = &transcript.Timeline
 	}
-	stages := transcript.StageIndex()
-	requests := map[string]*TaskCard{}
-	latestAssessment := make(map[string]int)
-	signals := newSessionSignals()
-	hasCurrentSchema := false
-	sequence := 0
-	for _, rec := range transcript.Records {
-		sequence++
-		typ, _ := rec["type"].(string)
-
-		switch typ {
-		case "session_start":
-			version := intValue(rec["schema_version"])
-			if version != recording.SchemaVersion {
-				return nil, fmt.Errorf("unsupported session schema %d; viewer requires %d", version, recording.SchemaVersion)
-			}
-			hasCurrentSchema = true
-			vs.Summary.SchemaVersion = version
-			if ts, ok := rec["timestamp"].(string); ok {
-				vs.Summary.Timestamp, _ = time.Parse(time.RFC3339, ts)
-			}
-			vs.Summary.CWD, _ = rec["cwd"].(string)
-			vs.Summary.GitBranch, _ = rec["gitBranch"].(string)
-			vs.Summary.Model, _ = rec["model"].(string)
-			vs.Summary.ReviewMode, _ = rec["reviewMode"].(string)
-			vs.Summary.DiffFrom, _ = rec["diffFrom"].(string)
-			vs.Summary.DiffTo, _ = rec["diffTo"].(string)
-			vs.Summary.DiffCommit, _ = rec["diffCommit"].(string)
-			vs.Summary.BizID, _ = rec["biz_id"].(string)
-
-		case "llm_request":
-			taskType := TaskType(stringValue(rec["taskType"]))
-			var request []DisplayMessage
-			for _, message := range extractMessages(rec["messages"]) {
-				if message.Role == "system" {
-					registerSystemPrompt(vs, sysIndex, taskType, message.Text)
-				}
-				request = append(request, message)
-			}
-			scope, execution := executionFor(rec)
-			if scope == nil {
-				continue
-			}
-			card := &TaskCard{
-				StageID: stringValue(rec["stage_id"]), ExecutionID: stringValue(rec["execution_id"]), Request: request,
-				TaskType: taskType, RequestNo: intValue(rec["request_no"]), Sequence: sequence,
-			}
-			if ref := rec["session_ref"]; ref != nil {
-				raw, _ := json.Marshal(ref)
-				card.SessionRef = string(raw)
-			}
-			requests[recording.CallID(rec)] = card
-			scope.Tasks[taskType] = append(scope.Tasks[taskType], card)
-			scope.Calls = append(scope.Calls, card)
-			if execution != nil {
-				execution.Tasks[taskType] = append(execution.Tasks[taskType], card)
-				execution.Calls = append(execution.Calls, card)
-			}
-
-		case "llm_response":
-			card := requests[recording.CallID(rec)]
-			if card == nil {
-				continue
-			}
-			if card.HasResponse {
-				continue
-			}
-			card.ResponseContent = stringValue(rec["content"])
-			card.Reasoning = stringValue(rec["reasoning"])
-			card.StopReason = stringValue(rec["stop_reason"])
-			if stage, ok := stages[timeline.StageID(card.StageID)]; ok && !stage.FinishedAt.IsZero() {
-				card.DurationMs = stage.Duration(time.Time{}).Milliseconds()
-			}
-			card.Model = stringValue(rec["model"])
-			card.Error = stringValue(rec["error"])
-			card.HasResponse = true
-			if usage, ok := rec["usage"].(map[string]any); ok {
-				card.PromptTokens = intValue(usage["prompt_tokens"])
-				card.CompletionTokens = intValue(usage["completion_tokens"])
-				card.CacheReadTokens = intValue(usage["cache_read_tokens"])
-				card.CacheWriteTokens = intValue(usage["cache_write_tokens"])
-			}
-			if calls, ok := rec["tool_calls"].([]any); ok {
-				for _, raw := range calls {
-					call, ok := raw.(map[string]any)
-					if !ok {
-						continue
-					}
-					card.ToolCalls = append(card.ToolCalls, ToolCallInfo{
-						ID: stringValue(call["id"]), Name: stringValue(call["name"]),
-						Arguments: stringValue(call["arguments"]),
-					})
-				}
-			}
-
-		case "llm_error":
-			card := requests[recording.CallID(rec)]
-			if card == nil {
-				continue
-			}
-			card.Error = stringValue(rec["error"])
-			if stage, ok := stages[timeline.StageID(card.StageID)]; ok && !stage.FinishedAt.IsZero() {
-				card.DurationMs = stage.Duration(time.Time{}).Milliseconds()
-			}
-
-		case "tool_result":
-			card := requests[stringValue(rec["request_id"])]
-			if card == nil {
-				continue
-			}
-			toolCallID := stringValue(rec["tool_call_id"])
-			match := -1
-			for i := range card.ToolCalls {
-				call := &card.ToolCalls[i]
-				if toolCallID != "" && call.ID == toolCallID {
-					match = i
-					break
-				}
-			}
-			if match >= 0 {
-				card.ToolCalls[match].Result = stringValue(rec["result"])
-				card.ToolCalls[match].Ok = boolValue(rec["ok"], true)
-				card.ToolCalls[match].HasResult = true
-				card.ToolCalls[match].StageID = stringValue(rec["stage_id"])
-				if ref := rec["session_ref"]; ref != nil {
-					raw, _ := json.Marshal(ref)
-					card.ToolCalls[match].SessionRef = string(raw)
-				}
-				if stage, ok := stages[timeline.StageID(card.ToolCalls[match].StageID)]; ok && !stage.FinishedAt.IsZero() {
-					card.ToolCalls[match].DurationMs = stage.Duration(time.Time{}).Milliseconds()
-				}
-			}
-
-		case "context_compacted":
-			_, execution := executionFor(rec)
-			if execution == nil {
-				return nil, fmt.Errorf("context_compacted missing scope or execution_id")
-			}
-			compaction := ContextCompaction{
-				Sequence: sequence, Reason: stringValue(rec["reason"]),
-				Committed:    boolValue(rec["committed"], false),
-				TokensBefore: intValue(rec["tokens_before"]), TokensAfter: intValue(rec["tokens_after"]),
-				MessagesBefore: intValue(rec["messages_before"]), MessagesAfter: intValue(rec["messages_after"]),
-				Summarized: boolValue(rec["summarized"], false),
-			}
-			execution.Compactions = append(execution.Compactions, compaction)
-			vs.Compaction.Count++
-			if compaction.Summarized {
-				vs.Compaction.Summarized++
-			}
-
-		case "artifact":
-			kind := stringValue(rec["artifact_kind"])
-			payload, _ := rec["data"].(map[string]any)
-			if kind == "" || payload == nil {
-				continue
-			}
-			signals.observeArtifact(kind, payload)
-			data, err := json.MarshalIndent(payload, "", "  ")
-			if err != nil {
-				continue
-			}
-			artifact := ReviewArtifact{
-				Kind: kind, Data: string(data), OriginUnit: stringValue(payload["origin_unit"]),
-				LaneID: stringValue(payload["lane_id"]), HypothesisID: stringValue(payload["hypothesis_id"]),
-			}
-			if kind == "review_hypothesis" && artifact.HypothesisID == "" {
-				artifact.HypothesisID = stringValue(payload["id"])
-			}
-			if kind == "review_assessment" && artifact.HypothesisID != "" {
-				if previous, exists := latestAssessment[artifact.HypothesisID]; exists {
-					vs.Artifacts[previous].Status = "superseded"
-				}
-				artifact.Status = "current"
-				latestAssessment[artifact.HypothesisID] = len(vs.Artifacts)
-			}
-			vs.Artifacts = append(vs.Artifacts, artifact)
-
-		case "debrief":
-			scope := scopeFor(rec)
-			if scope == nil {
-				continue
-			}
-			if raw, ok := rec["source_preloads"]; ok {
-				scope.SourcePreloads = stringList(raw)
-				scope.HasSourcePreloads = true
-			}
-			if raw, ok := rec["context_paths"]; ok {
-				scope.ContextPaths = stringMapLists(raw)
-				scope.HasContextPaths = true
-			}
-
-		case "session_end":
-			signals.hasSessionEnd = true
-			if duration, ok := rec["duration_seconds"].(float64); ok {
-				vs.Summary.DurationSec = duration
-			}
-			vs.Summary.FilesReviewed = stringList(rec["files_reviewed"])
-			vs.Summary.DiffFileCount = intValue(rec["diff_files"])
-			vs.Summary.HasDiffStats = rec["diff_files"] != nil
-			vs.Summary.DiffInsertions = intValue(rec["diff_insertions"])
-			vs.Summary.DiffDeletions = intValue(rec["diff_deletions"])
-			vs.Summary.FileCount = len(vs.Summary.FilesReviewed)
-			vs.Summary.LLMFailures = intValue(rec["llm_failures"])
-
-		case "finding":
-			signals.findings++
-		}
-	}
-
-	for _, fact := range transcript.ExecutionFacts() {
-		_, execution := executionFor(fact)
-		if execution == nil {
-			continue
-		}
-		execution.TaskType = TaskType(stringValue(fact["taskType"]))
-		execution.Outcome, execution.Reason = stringValue(fact["outcome"]), stringValue(fact["reason"])
-		execution.DurationMs = int64(intValue(fact["duration_ms"]))
-		execution.ToolCalls, execution.ToolErrors = intValue(fact["tool_calls"]), intValue(fact["tool_errors"])
-	}
-	vs.RecordingWarnings = transcript.IncompleteReasons()
 	if transcript.TruncatedTail {
-		signals.hasSessionEnd = false
+		vs.RecordingWarnings = append(vs.RecordingWarnings, "Recording has an incomplete final line.")
 	}
-	if !hasCurrentSchema {
-		return nil, fmt.Errorf("session_start with schema %d is required", recording.SchemaVersion)
-	}
-
-	vs.projectRequestTimelines()
-	laneScopes := make(map[string]*ReviewScope)
-	for _, scope := range vs.Reviews {
-		if scope.Kind == "lane" {
-			laneScopes[strings.TrimPrefix(scope.ID, "hypothesis_review:")] = scope
+	vs.CompletionLabel = completionLabel(summary.Completion)
+	for _, record := range transcript.Records {
+		if record["type"] == "finding" {
+			vs.Findings++
 		}
-	}
-	for _, artifact := range vs.Artifacts {
-		if artifact.OriginUnit != "" {
-			if scope := scopeIndex[artifact.OriginUnit]; scope != nil {
-				scope.Artifacts = append(scope.Artifacts, artifact)
-			}
-		}
-		if artifact.LaneID != "" {
-			if scope := laneScopes[artifact.LaneID]; scope != nil {
-				scope.Artifacts = append(scope.Artifacts, artifact)
+		if record["type"] == "artifact" && record["artifact_kind"] == "recording_gap" {
+			if data, ok := record["data"].(map[string]any); ok {
+				vs.RecordingWarnings = append(vs.RecordingWarnings, stringValue(data["error"]))
 			}
 		}
 	}
 
-	fileIdx := make(map[string]*FileTokenUsage)
-	fileOrder := make([]string, 0)
-	sessionTools := map[string]*ToolUsage{}
-	supportedReviews := make([]*ReviewScope, 0, len(vs.Reviews))
-	for _, scope := range vs.Reviews {
-		scope.EncodedRepo = encodedRepo
-		scope.SessionID = sessionID
-		finalizeReview(scope)
-		if scope.Stage == OtherStage {
-			continue
-		}
-		supportedReviews = append(supportedReviews, scope)
-
-		rollupKey := scope.FilePath
-		if scope.Kind == "lane" {
-			rollupKey = "(review-2 lanes)"
-		}
-		usage := fileIdx[rollupKey]
-		if usage == nil {
-			usage = &FileTokenUsage{FilePath: rollupKey}
-			fileIdx[rollupKey] = usage
-			fileOrder = append(fileOrder, rollupKey)
-		}
-		usage.PromptTokens += scope.Metrics.PromptTokens
-		usage.CompletionTokens += scope.Metrics.CompletionTokens
-		usage.CacheReadTokens += scope.Metrics.CacheReadTokens
-		usage.CacheWriteTokens += scope.Metrics.CacheWriteTokens
-		for _, tool := range scope.Tools {
-			mergeTool(sessionTools, tool)
-		}
-	}
-	vs.Cost = transcript.Costs()
-	vs.TokenUsage.TotalPromptTokens = vs.Cost.Total.Tokens.PromptTokens
-	vs.TokenUsage.TotalCompletionTokens = vs.Cost.Total.Tokens.CompletionTokens
-	vs.TokenUsage.TotalCacheReadTokens = vs.Cost.Total.Tokens.CacheReadTokens
-	vs.TokenUsage.TotalCacheWriteTokens = vs.Cost.Total.Tokens.CacheWriteTokens
-	vs.TokenUsage.RequestCount = vs.Cost.Total.Calls
-	vs.Reviews = supportedReviews
-	for _, path := range fileOrder {
-		vs.TokenUsage.FileTokenBreakdown = append(vs.TokenUsage.FileTokenBreakdown, *fileIdx[path])
-	}
-	sort.Slice(vs.TokenUsage.FileTokenBreakdown, func(i, j int) bool {
-		a := vs.TokenUsage.FileTokenBreakdown[i]
-		b := vs.TokenUsage.FileTokenBreakdown[j]
-		return a.PromptTokens+a.CompletionTokens > b.PromptTokens+b.CompletionTokens
-	})
-	vs.ToolUsage = sortedTools(sessionTools)
-	vs.Diagnostics = buildSessionDiagnostics(vs, signals)
-
-	sort.SliceStable(vs.Reviews, func(i, j int) bool {
-		a, b := vs.Reviews[i], vs.Reviews[j]
-		if a.Stage != b.Stage {
-			return reviewStageRank(a.Stage) < reviewStageRank(b.Stage)
-		}
-		return a.ID < b.ID
-	})
-	vs.Summary.SessionID = sessionID
 	return vs, nil
+}
+
+func completionLabel(result recording.Completion) string {
+	switch result.Status {
+	case "completed":
+		return "Complete"
+	case "partial":
+		return "Partial — not a clean verdict"
+	case "failed":
+		return "Failed — not a clean verdict"
+	case "running":
+		return "Not finalized"
+	default:
+		return "Completion unknown"
+	}
 }
 
 // stringList coerces a JSON value (expected []any of strings) into []string.
@@ -743,16 +313,6 @@ func stringList(v any) []string {
 	for _, e := range arr {
 		if s, ok := e.(string); ok {
 			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func mergeStrings(left, right []string) []string {
-	out := append([]string(nil), left...)
-	for _, value := range right {
-		if value != "" && !slices.Contains(out, value) {
-			out = append(out, value)
 		}
 	}
 	return out
@@ -774,97 +334,4 @@ func intValue(value any) int {
 	default:
 		return 0
 	}
-}
-
-func boolValue(value any, fallback bool) bool {
-	result, ok := value.(bool)
-	if !ok {
-		return fallback
-	}
-	return result
-}
-
-func stringMapLists(v any) map[string][]string {
-	raw, ok := v.(map[string]any)
-	if !ok {
-		return nil
-	}
-	out := make(map[string][]string, len(raw))
-	for key, value := range raw {
-		out[key] = stringList(value)
-	}
-	return out
-}
-
-// registerSystemPrompt dedupes a system prompt by exact text, recording which
-// task types reused it. System prompts are static and repeat across every
-// file/round, so the session keeps one entry per distinct text.
-func registerSystemPrompt(vs *ViewSession, idx map[string]int, tt TaskType, text string) {
-	if strings.TrimSpace(text) == "" {
-		return
-	}
-	if i, ok := idx[text]; ok {
-		if !slices.Contains(vs.SystemPrompts[i].TaskTypes, tt) {
-			vs.SystemPrompts[i].TaskTypes = append(vs.SystemPrompts[i].TaskTypes, tt)
-		}
-		return
-	}
-	idx[text] = len(vs.SystemPrompts)
-	vs.SystemPrompts = append(vs.SystemPrompts, SystemPrompt{TaskTypes: []TaskType{tt}, Text: text})
-}
-
-// extractMessages turns the raw JSON `messages` array into display rows, pulling
-// readable text out of each message's content (string or content blocks).
-func extractMessages(raw any) []DisplayMessage {
-	arr, ok := raw.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]DisplayMessage, 0, len(arr))
-	for _, m := range arr {
-		mm, ok := m.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, _ := mm["role"].(string)
-		out = append(out, DisplayMessage{Role: role, Text: extractContentText(mm["content"])})
-	}
-	return out
-}
-
-// extractContentText mirrors llm.Message.ExtractText for the map-shaped JSON the
-// viewer reads back: content is either a plain string or an array of blocks.
-func extractContentText(c any) string {
-	switch v := c.(type) {
-	case string:
-		return v
-	case []any:
-		var b strings.Builder
-		for _, blk := range v {
-			b.WriteString(extractBlockText(blk))
-		}
-		return b.String()
-	default:
-		return ""
-	}
-}
-
-// extractBlockText pulls text from a single content block, recursing into nested
-// blocks (e.g. a tool_result wrapping text blocks).
-func extractBlockText(blk any) string {
-	bm, ok := blk.(map[string]any)
-	if !ok {
-		return ""
-	}
-	if t, ok := bm["text"].(string); ok && t != "" {
-		return t
-	}
-	if nested, ok := bm["content"].([]any); ok {
-		var b strings.Builder
-		for _, n := range nested {
-			b.WriteString(extractBlockText(n))
-		}
-		return b.String()
-	}
-	return ""
 }
