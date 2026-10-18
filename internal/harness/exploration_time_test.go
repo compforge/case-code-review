@@ -255,9 +255,11 @@ func TestExplorationRecoveryPreservesCommittedState(t *testing.T) {
 		last.Usage = &llm.UsageInfo{PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7}
 		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{first, last}}, delays: []time.Duration{time.Second, time.Minute, time.Second}}
 		submitted := 0
+		session := &LoopSession{}
+		defer session.Close()
 		initial := msg.NewFile("a.go", 1, 1, 1, "1|evidence")
 		result, err := runExecution(ctx, ExecutionSpec{
-			LLMClient: client, Messages: []agentgo.AgentMessage{initial},
+			LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{initial},
 			ToolDefs: []llm.ToolDef{toolDef("submit_result")},
 			ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 				submitted++
@@ -265,8 +267,8 @@ func TestExplorationRecoveryPreservesCommittedState(t *testing.T) {
 			}),
 			MaxTurns: 4, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish review now", WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true,
 		})
-		if err != nil || result.State != OutcomeCompleted || result.Turns != 2 || result.ToolCalls != 1 || result.Usage.TotalTokens != 12 || submitted != 1 || len(result.artifacts) != 1 {
-			t.Fatalf("result=%+v submitted=%d artifacts=%d err=%v", result, submitted, len(result.artifacts), err)
+		if err != nil || result.State != OutcomeCompleted || result.Turns != 2 || result.ToolCalls != 1 || result.Usage.TotalTokens != 12 || submitted != 1 || len(session.state.Artifacts) != 1 {
+			t.Fatalf("result=%+v submitted=%d artifacts=%d err=%v", result, submitted, len(session.state.Artifacts), err)
 		}
 		if len(client.attempts) != 3 || !strings.Contains(requestText(client.attempts[2]), "accepted hypothesis h-1") || !strings.Contains(requestText(client.attempts[2]), "1|evidence") {
 			t.Fatal("accepted context was not retained")

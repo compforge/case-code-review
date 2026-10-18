@@ -21,19 +21,23 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
 	defer review.Finalize()
 	client := &scriptedClient{responses: []*llm.ChatResponse{textResponse("first answer"), textResponse("second answer")}}
-	spec := ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "private prompt body")}, Session: review, Scope: recording.Scope{ID: "lane-1", Kind: "lane"}, NaturalCompletion: true, MaxTurns: 1}
+	session := &LoopSession{}
+	defer session.Close()
+	spec := ExecutionSpec{LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "private prompt body")}, Session: review, Scope: recording.Scope{ID: "lane-1", Kind: "lane"}, NaturalCompletion: true, MaxTurns: 1}
 	first, err := runExecution(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec.ContinueFrom = &first
 	spec.Messages = []agentgo.AgentMessage{msg.Text("user", "next hypothesis")}
 	second, err := runExecution(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.sessionPath == "" || first.sessionPath != second.sessionPath {
+	if session.path == "" || first.ID == second.ID || first.State != OutcomeCompleted || second.State != OutcomeCompleted {
 		t.Fatal("continuation changed Session")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
 	}
 	review.Finalize()
 	path, _ := review.TranscriptPath()
@@ -59,7 +63,7 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	if len(sessions) != 1 || len(runs) != 2 || len(calls) != 2 {
 		t.Fatalf("sessions=%v runs=%v calls=%v", sessions, runs, calls)
 	}
-	f, err := os.Open(first.sessionPath)
+	f, err := os.Open(session.path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +87,7 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("local files=%v", files)
 	}
-	if err := os.Remove(first.sessionPath); err != nil {
+	if err := os.Remove(session.path); err != nil {
 		t.Fatal(err)
 	}
 	missing, err := recording.ReadReview(path)
@@ -143,5 +147,86 @@ func TestSessionCodecFailureDoesNotAbortExecution(t *testing.T) {
 	}
 	if !found || len(transcript.IncompleteReasons()) == 0 {
 		t.Fatal("codec failure appeared complete")
+	}
+}
+
+// +case:id=lane_checkpoint_reload,desc=`a Lane finishes a run and its session is reopened from disk`,expect=`a new execution appends input to the loaded messages and artifacts with fresh limits and per-run usage`
+func TestLoopSessionCheckpointRunsWithoutResidentAgent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
+	defer review.Finalize()
+	session := &LoopSession{}
+	client := &scriptedClient{responses: []*llm.ChatResponse{
+		toolCallResponseID("done", "task_done", `{}`, &llm.UsageInfo{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12}),
+		toolCallResponseID("done", "task_done", `{}`, &llm.UsageInfo{PromptTokens: 20, CompletionTokens: 3, TotalTokens: 23}),
+	}}
+	spec := ExecutionSpec{LoopSession: session, Session: review, LLMClient: client,
+		Scope: recording.Scope{ID: "lane", Kind: "lane"}, MaxTurns: 1,
+		Messages: []agentgo.AgentMessage{msg.Text("user", "hyp-first"), msg.NewFile("a.go", 1, 1, 1, "1|retained source")},
+		ToolDefs: []llm.ToolDef{toolDef("task_done")},
+	}
+	first, err := runExecution(t.Context(), spec)
+	if err != nil || first.State != OutcomeCompleted || first.Turns != 1 || first.Usage.TotalTokens != 12 {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	id := session.local.ID()
+	if len(session.state.Tools) != 0 {
+		t.Fatal("retained execution-bound tool closures")
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := msg.Codec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := agentsession.Open(session.path, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, ok, err := local.LoadCheckpoint()
+	if err != nil || !ok {
+		local.Close()
+		t.Fatalf("checkpoint exists=%v err=%v", ok, err)
+	}
+	if snapshot.State.Progress.Active || snapshot.State.Progress.CompletedTurns != 1 || len(snapshot.State.Artifacts) != 1 {
+		local.Close()
+		t.Fatalf("checkpoint lost committed state: %+v", snapshot.State)
+	}
+	restored := &LoopSession{state: snapshot.State, local: local, path: session.path}
+	defer restored.Close()
+	spec.LoopSession = restored
+	spec.Messages = []agentgo.AgentMessage{msg.Text("user", "hyp-second")}
+	second, err := runExecution(t.Context(), spec)
+	if err != nil || second.State != OutcomeCompleted || second.Turns != 1 || second.Usage.TotalTokens != 23 {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	if restored.local.ID() != id || len(restored.state.Artifacts) != 1 {
+		t.Fatal("reload changed session identity or lost material")
+	}
+	text := requestText(client.Requests()[1])
+	if !strings.Contains(text, "hyp-first") || !strings.Contains(text, "hyp-second") || !strings.Contains(text, "retained source") {
+		t.Fatal("reloaded request lost prior messages")
+	}
+	if err := restored.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(session.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	runs, checkpoints := 0, 0
+	_, err = agentsession.Read(f, func(r agentsession.Record) error {
+		if r.Type == agentsession.RunStart {
+			runs++
+		}
+		if r.Type == agentsession.Checkpoint {
+			checkpoints++
+		}
+		return nil
+	})
+	if err != nil || runs != 2 || checkpoints != 2 {
+		t.Fatalf("runs=%d checkpoints=%d err=%v", runs, checkpoints, err)
 	}
 }

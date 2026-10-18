@@ -24,7 +24,7 @@ import (
 func (a *Runner) reviewHypothesis(
 	ctx context.Context,
 	input hypothesisreview.ReviewInput,
-	continueFrom *harness.ExecutionResult,
+	session *harness.LoopSession,
 ) (result hypothesisreview.ReviewResult) {
 	task := a.args.Template.HypothesisReviewTask
 	if task == nil || len(task.Messages) == 0 || input.Hypothesis.ID == "" {
@@ -66,7 +66,7 @@ func (a *Runner) reviewHypothesis(
 			a.persistAssessmentSubmission(ctx, input, submission)
 		},
 		Events: a.hypothesisReviewEvents(ctx),
-	}, input, continueFrom)
+	}, input, session)
 	a.persistHypothesisReviewExecution(input, result.Execution)
 	return result
 }

@@ -137,7 +137,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	assigned := make(chan struct{}, 2)
 	pool := newLanePool(lanePoolConfig{Context: ctx, Units: units, Concurrency: 1,
 		OnAssigned: func(hypothesisreview.ReviewInput, string) { assigned <- struct{}{} },
-		Review: func(ctx context.Context, _ hypothesisreview.ReviewInput, _ *harness.ExecutionResult) hypothesisreview.ReviewResult {
+		Review: func(ctx context.Context, _ hypothesisreview.ReviewInput, _ *harness.LoopSession) hypothesisreview.ReviewResult {
 			started <- struct{}{}
 			<-ctx.Done()
 			return hypothesisreview.ReviewResult{Execution: harness.ExecutionResult{State: harness.OutcomeAborted}}

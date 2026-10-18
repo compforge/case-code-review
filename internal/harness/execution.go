@@ -84,9 +84,9 @@ type ExecutionSpec struct {
 	// work; once wrap-up closes investigation, a successfully accepted allowed
 	// result also ends the run without spending another model turn.
 	NaturalCompletion bool
-	// ContinueFrom resumes with the exact committed context of an earlier
-	// ExecutionResult. The context remains opaque outside Harness.
-	ContinueFrom *ExecutionResult
+	// LoopSession retains conversation state across sequential executions.
+	// Nil creates a session scoped to this execution.
+	LoopSession *LoopSession
 	// CompletionCheck lets a domain reject its completion tool until required
 	// outputs exist. Harness owns the stop mechanics but does not interpret
 	// what "complete" means for the caller's execution.
@@ -108,15 +108,11 @@ type ExecutionResult struct {
 	Turns      int
 	ToolCalls  int
 	ToolErrors int
-
-	context     []agentgo.AgentMessage
-	artifacts   []agentgo.Artifact
-	sessionPath string
 }
 
 // Execution owns one Harness run from immutable input through terminal result.
-// AgentGo, context projection, recording, tools, and completion state remain
-// private children of this lifecycle; callers only construct and Run it.
+// Each execution binds fresh tools, context projection and completion state.
+// A caller-owned LoopSession retains conversation state between executions.
 type Execution struct {
 	id           string
 	spec         ExecutionSpec
@@ -241,9 +237,18 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		return ExecutionResult{}, fmt.Errorf("harness: execution has already run")
 	}
 
-	e.openSession()
-	defer e.closeSession()
+	session := e.spec.LoopSession
+	if session == nil {
+		session = &LoopSession{}
+		defer func() { e.recordingError(session.Close()) }()
+	}
+	if err := session.acquire(); err != nil {
+		return ExecutionResult{}, err
+	}
+	defer session.release()
+	e.openSession(session)
 	e.beginRun()
+	defer e.closeRun()
 	startedAt := time.Now()
 	ctx, timing := e.beginTimeline(ctx, startedAt)
 	e.bindRun(timing)
@@ -261,13 +266,10 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.artifactMiddleware(), e.toolMiddleware()},
 	}
 
-	history := e.continuationContext()
+	config.InitialState = session.state
+	history := session.state.Messages
 	initial, _ := normalizeContextMessages(append(append([]agentgo.AgentMessage(nil), history...), e.spec.Messages...))
-	var retained []agentgo.Artifact
-	if e.spec.ContinueFrom != nil {
-		retained = e.spec.ContinueFrom.artifacts
-	}
-	config.InitialState.Artifacts = mergeArtifacts(retained, msg.Artifacts(initial))
+	config.InitialState.Artifacts = mergeArtifacts(session.state.Artifacts, msg.Artifacts(initial))
 	e.replaceContext(agentgo.ContextCommitResult{Messages: history})
 	e.contextManager.Sync(history)
 	events := agentgo.AgentLoop(
@@ -277,8 +279,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		config,
 	)
 	end := e.consumeLoop(events, timing, e.runID())
-	e.closeRun()
 	if errors.Is(e.runErr, errExplorationExpired) && ctx.Err() == nil && end.State != nil {
+		e.closeRun()
 		e.turns.finishExploration(ctx)
 		if e.spec.Session != nil {
 			e.spec.Session.WriteArtifactContext(ctx, "execution_wrap_up_resumed", map[string]any{
@@ -301,18 +303,20 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		}
 		events = agentgo.AgentLoopContinue(ctx, agentgo.AgentContext{Messages: state.Messages, Tools: e.tools}, config)
 		end = e.consumeLoop(events, timing, runID)
-		e.closeRun()
 	}
+	if end.State != nil {
+		session.retain(*end.State)
+		if e.localRun != nil && e.recordingErr == nil {
+			e.recordingError(e.localRun.SaveCheckpoint(agentgo.AgentSnapshot{State: session.state}))
+		}
+	}
+	e.closeRun()
 	if errors.Is(e.runErr, errExplorationExpired) {
 		emitExecutionEvent(e.spec.Events, e.recorder, agentgo.Event{Type: agentgo.EventError, Err: e.runErr}, e.id)
 	}
 	emitExecutionEvent(e.spec.Events, e.recorder, end, e.id)
 	result, err := e.finish(ctx)
-	if end.State != nil {
-		result.artifacts = end.State.Artifacts
-	}
 	result.ID = e.id
-	result.sessionPath = e.sessionPath
 	result.Duration = time.Since(startedAt)
 	timing.finish(result, err)
 	return result, err
@@ -477,13 +481,6 @@ func decodeToolMessage(call agentgo.ToolCall, result agentgo.ToolResult) agentgo
 	return decoded
 }
 
-func (e *Execution) continuationContext() []agentgo.AgentMessage {
-	if e.spec.ContinueFrom == nil {
-		return nil
-	}
-	return append([]agentgo.AgentMessage(nil), e.spec.ContinueFrom.context...)
-}
-
 func (e *Execution) appendContext(message agentgo.AgentMessage) error {
 	e.contextMu.Lock()
 	defer e.contextMu.Unlock()
@@ -632,7 +629,6 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		result.ToolCalls = e.summary.ToolCalls
 		result.ToolErrors = e.summary.ToolErrors
 	}
-	result.context = e.contextSnapshot()
 	if e.completed.Load() && e.summary != nil && e.summary.EndReason == agentgo.EndReasonStop {
 		result.State = OutcomeCompleted
 		return result, nil
@@ -802,19 +798,13 @@ func (e *Execution) recordingError(err error) {
 		e.spec.Session.WriteArtifact("recording_gap", map[string]any{"execution_id": e.id, "error": err.Error()})
 	}
 }
-func (e *Execution) openSession() {
-	previous := ""
-	if e.spec.ContinueFrom != nil {
-		previous = e.spec.ContinueFrom.sessionPath
+func (e *Execution) openSession(session *LoopSession) {
+	if session.local == nil {
+		var err error
+		session.local, session.path, err = e.spec.Session.OpenLoop("", e.spec.SessionCodecOptions...)
+		e.recordingError(err)
 	}
-	var err error
-	e.localSession, e.sessionPath, err = e.spec.Session.OpenLoop(previous, e.spec.SessionCodecOptions...)
-	e.recordingError(err)
-}
-func (e *Execution) closeSession() {
-	if e.localSession != nil {
-		e.recordingError(e.localSession.Close())
-	}
+	e.localSession, e.sessionPath = session.local, session.path
 }
 func (e *Execution) beginRun() {
 	if e.localSession == nil || e.recordingErr != nil {

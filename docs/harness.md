@@ -23,7 +23,8 @@ ExecutionSpec ──▶ Execution.Run ──▶ ExecutionResult
 | `ContextManager` | 注入、去重、淘汰、压缩和投影上下文 |
 | `Tool Registry` | 把工具定义、provider 与执行身份绑定 |
 | `Hook / Event` | 提供领域扩展点和稳定观测事件 |
-| `ExecutionResult` | 返回完成状态、usage、工具统计和错误；内部可携带后续 Execution 的不透明 continuation |
+| `ExecutionResult` | 返回本次运行的完成状态、usage、工具统计和错误 |
+| `LoopSession` | 持有跨 Execution 的 AgentGo 状态和原生 Session，由调用方控制生命周期 |
 | `Session` | 以稳定 JSONL 持久化实际发生的执行事实 |
 
 调用方可以用 `biz_id` 给整次 CCR 执行附加不透明业务身份。Harness 只在 `session_start` 持久化，
@@ -46,8 +47,13 @@ result, err := execution.Run(ctx)
 
 `Execution` 在构造时接管输入快照并组装 AgentGo model、tool 和 context 契约。它是单次使用的
 运行实体；一次 Execution 的 Recorder、ContextManager、完成状态和其它运行事实不能被另一个 scope
-复用。需要延续 conversation 时，调用方只把前一个 `ExecutionResult` 作为 `ContinueFrom` 交给新
-`ExecutionSpec`；AgentGo message context 仍封装在 Harness 内。Review 2 Lane 用这一入口串行复核相关 Hypothesis。
+复用。需要延续 conversation 时，调用方将同一个 `LoopSession` 交给每次 `ExecutionSpec`，每次仅追加
+新任务的消息。LoopSession 持有 AgentGo 的 messages、artifacts 和运行状态；模型、工具和业务完成条件
+由本次 Execution 重新绑定。状态保持在 Harness 边界内，调用方独占使用，并在最后一次执行结束后关闭。
+
+Review 2 Lane 持有 LoopSession，Worker 每次执行一个 Hypothesis 后释放调度容量。LoopSession 无需常驻
+Agent 或执行协程。每个新 Hypothesis 使用 `AgentLoop` 开始新运行，重置轮次与错误计数；同一任务的收卷
+接续才使用 `AgentLoopContinue` 保留已消耗的运行进度。
 
 ### 2.2 每轮模型与工具循环
 
@@ -140,7 +146,7 @@ Harness 从初始消息生成
 
 `TransformContext` 向投影提供本次 Loop 的材料能力。登记表示拥有材料，可见覆盖仍需在每次请求中
 从实际正文重新计算；压缩后的引用不能仅凭库存宣称源码已展示。投影保留 Raw、错误结果和工具配对。
-ExecutionResult 内部携带材料值用于续跑，新 Loop 创建独立 Manager，不向 Runner 暴露 Manager。
+LoopSession 保存终态中的材料值；每次 Loop 创建独立 Manager，不向 Runner 暴露 Manager。
 
 Review 1 的 ClueDoc 由 Runner 拆为独立 `ClueMessage` 消息，不再把正文嵌入固定 Instruction。
 `ClueMessage` 持有原始 Clue（包括 `ClueKind`、来源与关系），由 Runner 决定各类型的保留策略。
@@ -275,7 +281,9 @@ AgentGo 的运行时消息协议可以出现在 Runner 的 execution assembly，
 一个独立 loop 使用一个原生 AgentGo Session；同一 Lane 的连续 Execution 复用 Session，每次 loop
 调用使用新的 Run。Session 记录模型请求/响应、工具请求/结果、消息提交和上下文变化，其 envelope
 不包含 CCR 的业务 scope。CCR 领域消息只通过 codec 扩展内容表示，原始证据和压缩视图都保留。
-不自动保存 checkpoint，不支持恢复中断的整个 Review。
+Harness 在每次 Execution 的终态边界保存一次 AgentGo checkpoint；内存状态直接用于后续任务，文件中的
+checkpoint 可由 AgentGo 加载。checkpoint 不包含模型、工具闭包或业务完成条件，也不按 turn 或定时追加。
+局部状态持久化不提供恢复中断的整个 Review 的能力。
 
 Review 持有一个业务 timeline，覆盖构图、Unit/Lane 排队、Review 1/2、Trial 和非 loop 动作。
 Execution stage 保存业务 outcome；模型与工具 stage 通过 AgentGo `Session.Ref` 的四元组关联正文。

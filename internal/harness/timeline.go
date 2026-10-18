@@ -37,7 +37,7 @@ func (e *Execution) beginTimeline(ctx context.Context, started time.Time) (conte
 		return ctx, nil
 	}
 	ctx, root := telemetry.BeginTimelineStage(ctx, "execution", timeline.WithParent(ref.StageID), timeline.WithStageID(timeline.StageID(e.id)), timeline.WithStartTime(started), timeline.WithAttributes(
-		timeline.Attribute{Key: "session_file", Value: filepath.Base(e.sessionPath)}, timeline.Attribute{Key: "session_id", Value: e.sessionID()}, timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
+		timeline.Attribute{Key: "context_reused", Value: e.spec.LoopSession.HasContext()}, timeline.Attribute{Key: "session_file", Value: filepath.Base(e.sessionPath)}, timeline.Attribute{Key: "session_id", Value: e.sessionID()}, timeline.Attribute{Key: "execution_id", Value: e.id}, timeline.Attribute{Key: "scope_id", Value: e.spec.Scope.ID}, timeline.Attribute{Key: "task_type", Value: e.recorder.taskType}, timeline.Attribute{Key: "kind", Value: e.spec.Scope.Kind}, timeline.Attribute{Key: "scope", Value: e.spec.Scope.Type}, timeline.Attribute{Key: "paths", Value: e.spec.Scope.Paths}, timeline.Attribute{Key: "filePath", Value: e.spec.Scope.Path()}))
 	return ctx, &executionTimeline{ctx: ctx, timelineID: ref.TimelineID, id: e.id, runID: e.id, started: started, root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
 }
 

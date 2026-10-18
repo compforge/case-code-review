@@ -30,7 +30,7 @@ Unit 是一次 run 的聚合根：Hypothesis、后续读到的文件/diff/搜索
 
 找不到相关 Lane 时创建新 Lane。相同 Lane 串行判断 Hypothesis，并保留：
 
-- AgentGo conversation continuation；
+- 一个 LoopSession 中的 AgentGo 对话状态和原生 Session；
 - 已签发的 evidence receipt；
 - 前面 Hypothesis 的 Assessment。
 
@@ -41,7 +41,12 @@ Unit 是一次 run 的聚合根：Hypothesis、后续读到的文件/diff/搜索
 到期即记录未评估，不必等待前一个候选结束；运行中的复核通过自身 context 取消，并保留已接受结果。
 Review 1 提前交卷后，Review 2 使用实际剩余时间，所有候选共享复核与收卷边界。
 
-Lane 拥有上下文、顺序和生命周期，Hypothesis 本身不承载这些运行状态。
+Lane 持有待处理队列、对话状态和 Session。固定 Worker 池从就绪 Lane 中取得独占执行权，每次消费一个
+Hypothesis；执行结束更新 Lane 状态，再将仍有任务的 Lane 放回就绪队列尾部。空闲 Lane 保留状态，
+不占用 Worker；同 Lane 的 Hypothesis 等待前一次执行结束，不同 Lane 可以并行。
+
+每次执行重新绑定当前 Hypothesis 的完成条件、Assessment 收集器和预算，完成状态不会随对话继承。
+Worker 不绑定 Lane 或 Session，Review 结束后统一关闭各 Lane 的 Session。
 
 ### 2.2 独立复核
 
@@ -105,7 +110,7 @@ receipt 是完整性机制，不是主流程中的领域对象。它随 Assessme
 
 ### 2.5 Prompt 上下文形状
 
-首次进入 Lane 时建立稳定 system 前缀；后续相关 Hypothesis 通过 continuation 追加到同一 conversation：
+首次进入 Lane 时建立稳定 system 前缀；后续相关 Hypothesis 追加 message list 到同一 conversation：
 
 ```text
 system: <Review 2 convergence rules / closed-set contract>
@@ -127,7 +132,7 @@ user: Hypothesis B(...)  # 同一 Lane，只追加新快照/结果，复用前�
 ...
 ```
 
-continuation 保留先前的 assistant、file/tool result 和 Assessment；Lane 按各快照/结果的稳定 ID 记录已注入事实，
+LoopSession 保留先前的 assistant、file/tool result 和 Assessment；Lane 按各快照/结果的稳定 ID 记录已注入事实，
 新一轮只追加当前 Hypothesis 与来源 Unit 的增量上下文，不重复挂载已经可见的旧 file message、
 Assessment 或 receipt。文件快照仍投影为独立 typed message，而不是把整个 Unit 打包成一条巨型消息，
 从而可以分别做范围覆盖、压缩和淘汰。receipt 账本由 Runner 在模型上下文之外累计，继续供 Trial
@@ -161,7 +166,7 @@ Trial 的当前规则虽然只读取 Hypothesis、Assessment 和 receipt，但�
 
 ### 3.1 Lane 只拥有运行连续性
 
-Lane 的存在依据是独立生命周期：它有稳定 ID、串行队列、continuation、证据账本和前案判断。它不拥有
+Lane 的存在依据是独立生命周期：它有稳定 ID、串行队列、LoopSession、证据账本和前案判断。它不拥有
 Hypothesis 真伪，也不把目录接近直接升级为业务相关。这样调度和判断保持分离。
 
 Unit 才拥有领域事实和阶段结果；Lane 不复制或接管这些状态。相同 claim 出现在不同 Unit 时保留不同
@@ -187,7 +192,8 @@ Session 在 Hypothesis 解析、Lane 分配、每次 Assessment 提交和随后�
 Hypothesis 可独立重放 Review 2，不必每次重跑昂贵的 Unit Review。评测至少观察：
 
 - Hypothesis 数、Unit 完成率、未评估数，以及首个 Hypothesis / Assessment / Trial decision 的耗时；
-- Lane 数、每个 Lane 的 Hypothesis 数、Review 2 轮次和耗时；
+- Lane 数、每个 Lane 的 Hypothesis 数、排队时间、Review 2 轮次和耗时；
+- 每次 R2 Execution 的 Session/Run 关联和上下文复用情况；
 - 四轴拦截分布及 receipt 缺失数；
 - 被拦截样本中的 missed，以及穿过 Trial 的 wrong / repeat。
 

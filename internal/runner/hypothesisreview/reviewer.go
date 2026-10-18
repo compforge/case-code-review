@@ -56,23 +56,24 @@ func Review(
 	ctx context.Context,
 	config Config,
 	input ReviewInput,
-	continueFrom *harness.ExecutionResult,
+	session *harness.LoopSession,
 ) ReviewResult {
 	if len(config.Task.Messages) == 0 || input.Hypothesis.ID == "" {
 		return ReviewResult{}
 	}
 
+	retainedContext := session.HasContext()
 	messages := make([]agentgo.AgentMessage, 0, len(config.Task.Messages))
 	for _, message := range config.Task.Messages {
-		if continueFrom != nil && message.Role != "user" {
+		if retainedContext && message.Role != "user" {
 			continue
 		}
-		full := renderReviewPrompt(message.Content, config, input, false, continueFrom != nil)
+		full := renderReviewPrompt(message.Content, config, input, false, retainedContext)
 		if message.Role != "user" {
 			messages = append(messages, msg.Text(message.Role, full))
 			continue
 		}
-		condensed := renderReviewPrompt(message.Content, config, input, true, continueFrom != nil)
+		condensed := renderReviewPrompt(message.Content, config, input, true, retainedContext)
 		messages = append(messages, newHypothesisMessage(full, condensed))
 	}
 	messages = append(messages, reviewContextMessages(input)...)
@@ -141,7 +142,7 @@ func Review(
 		CompressionPrompt:       config.CompressionPrompt,
 		CompressionUpdatePrompt: config.CompressionPrompt,
 		CompressionPrefixPrompt: config.CompressionPrompt,
-		ContinueFrom:            continueFrom,
+		LoopSession:             session,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Hypothesis review setup failed: %v\n", err)
