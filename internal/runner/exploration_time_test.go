@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"sync"
@@ -384,5 +385,73 @@ func TestUnitTimeoutDoesNotWaitForAnotherUnitsResolutionWorker(t *testing.T) {
 		}
 		unblock()
 		<-finished
+	})
+}
+
+// +case:id=unit_failure_reported_once,desc=`R1 returns a provider error`,expect=`the pipeline emits exactly one unit_incomplete with the original reason and retains failure status`
+func TestUnitFailureReportedOnce(t *testing.T) {
+	client := timedReviewClient(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+		return nil, errors.New("provider unavailable")
+	})
+	a, history := timeoutRunner(t, client)
+	defer history.Finalize()
+	_, err := a.dispatchUnits(history.Context(context.Background()))
+	if err == nil {
+		t.Fatal("failed review reported success")
+	}
+	var incomplete []Warning
+	for _, warning := range a.Warnings() {
+		if warning.Type == "unit_incomplete" {
+			incomplete = append(incomplete, warning)
+		}
+	}
+	if len(incomplete) != 1 || incomplete[0].File != "a.go" || !strings.Contains(incomplete[0].Message, "provider unavailable") {
+		t.Fatalf("warnings=%+v", incomplete)
+	}
+}
+
+// +case:id=review1_exploration_timeout_recovers,desc=`a model request reaches the R1 exploration boundary with time left for delivery`,expect=`one wrap-up completes the Unit without an incomplete warning`
+func TestReview1ExplorationTimeoutCompletesWithoutWarning(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var calls atomic.Int32
+		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+			if calls.Add(1) == 1 {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			return reviewText("No remaining supported defect."), nil
+		})
+		a, history := timeoutRunner(t, client)
+		defer history.Finalize()
+		_, err := a.dispatchUnits(history.Context(context.Background()))
+		if err != nil || calls.Load() != 2 {
+			t.Fatalf("calls=%d err=%v", calls.Load(), err)
+		}
+		for _, warning := range a.Warnings() {
+			if warning.Type == "unit_incomplete" {
+				t.Fatalf("recovered review reported incomplete: %+v", warning)
+			}
+		}
+		found := false
+		for _, record := range timeoutTranscript(t, history) {
+			if record["type"] == "debrief" {
+				found = true
+				if record["outcome"] != "completed" {
+					t.Fatalf("debrief=%v", record)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("missing debrief")
+		}
+		history.Finalize()
+		path, _ := history.TranscriptPath()
+		transcript, readErr := recording.ReadReview(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if gaps := transcript.IncompleteReasons(); len(gaps) != 0 {
+			t.Fatalf("recovered Unit lost recording: %v", gaps)
+		}
 	})
 }

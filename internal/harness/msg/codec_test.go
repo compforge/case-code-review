@@ -22,6 +22,17 @@ func TestSessionCodecPreservesDomainMessages(t *testing.T) {
 		ToolReceipt{messageMeta: newMessageMeta(), Tool: "task_done", Content: "accepted", ToolCallID: "done"},
 		&ToolView{AgentMessage: file, content: "bounded"},
 	}
+	// Raw and Compact are the concrete values committed by the loop, not
+	// necessarily the pointer type returned by the message constructor.
+	for _, message := range append([]agentgo.AgentMessage(nil), messages...) {
+		messages = append(messages, message.Raw())
+		if compactable, ok := message.(interface {
+			Compact(float64) (agentgo.AgentMessage, float64)
+		}); ok {
+			compacted, _ := compactable.Compact(0.1)
+			messages = append(messages, compacted)
+		}
+	}
 	codec, err := Codec()
 	if err != nil {
 		t.Fatal(err)

@@ -78,7 +78,7 @@ func TestTimelineRendersHierarchyAndSourceIntervals(t *testing.T) {
 	if err := tmpl.Execute(&out, map[string]any{"Session": &ViewSession{Timeline: doc}, "EncodedRepo": "repo", "RepoName": "repo"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{"Run Timeline", "model.attempt", "incomplete", "attempt:</strong> <code>3</code>", `role="tabpanel"`, `aria-controls="panel-timeline"`} {
+	for _, text := range []string{"Review Timeline", "model.attempt", "incomplete", "attempt:</strong> <code>3</code>", `<dialog class="stage-dialog"`, `data-stage-detail="child"`} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("missing rendered %s", text)
 		}
@@ -124,5 +124,208 @@ func TestTimelineWaterfallPreservesParallelIntervalsAndUnknownEnds(t *testing.T)
 	doc.FinishedAt = time.Time{}
 	if got := layoutTimeline(doc).WindowMS; got != 9000 {
 		t.Fatalf("unclosed timeline should end at last evidence, got %d", got)
+	}
+}
+
+// +case:id=timeline_stage_session_link,desc=`a child model or tool stage inherits the enclosing loop reference`,expect=`Stage details show the local Session ID and link to the matching execution, without inventing associations for preparation stages`
+func TestTimelineStageInheritsSessionLink(t *testing.T) {
+	doc := &timeline.Snapshot{RootStageID: "root", Stages: []timeline.Stage{
+		{ID: "prepare", ParentID: "root", Name: "diff.load"},
+		{ID: "loop", ParentID: "root", Name: "execution", Attributes: map[string]json.RawMessage{
+			"scope_id": json.RawMessage(`"unit-a"`), "session_id": json.RawMessage(`"local-session"`), "execution_id": json.RawMessage(`"exec-a"`),
+		}},
+		{ID: "model", ParentID: "loop", Name: "model.attempt"},
+	}}
+	for _, row := range timelineRows(doc) {
+		if row.ID == "prepare" && row.SessionID != "" {
+			t.Fatal("preparation stage acquired a Session")
+		}
+		if row.ID == "model" && (row.SessionID != "local-session" || row.ScopeID != "unit-a" || row.ExecutionID != "exec-a") {
+			t.Fatalf("association=%+v", row)
+		}
+	}
+	tmpl, err := parseTemplate("session.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, sessionPageData{Session: &ViewSession{Timeline: doc}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), `Open full Session`) || !strings.Contains(out.String(), `<dt>Session ID:</dt><dd><code>local-session</code>`) {
+		t.Fatal("Stage details lost the Session reference")
+	}
+}
+
+// +case:id=review_loop_parallel_lanes,desc=`R1 Units and R2 Lanes overlap, a lane executes again after a gap, and one loop has no end`,expect=`shared positions preserve overlap and gaps; the unfinished loop has no fabricated width`
+func TestReviewLoopLanesPreserveConcurrencyAndGaps(t *testing.T) {
+	start := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	stage := func(id, task, session string, from, to int) timeline.Stage {
+		s := timeline.Stage{ID: timeline.StageID(id), ParentID: "root", Name: "execution", StartedAt: start.Add(time.Duration(from) * time.Second), Status: timeline.Succeeded,
+			Attributes: map[string]json.RawMessage{"task_type": json.RawMessage(`"` + task + `"`), "session_id": json.RawMessage(`"` + session + `"`), "scope_id": json.RawMessage(`"` + session + `"`)}}
+		if to >= 0 {
+			s.FinishedAt = start.Add(time.Duration(to) * time.Second)
+		} else {
+			s.Status = timeline.Running
+		}
+		return s
+	}
+	doc := &timeline.Snapshot{RootStageID: "root", StartedAt: start, FinishedAt: start.Add(10 * time.Second), Stages: []timeline.Stage{
+		stage("unit-a", string(MainTask), "a", 0, 6),
+		stage("unit-b", string(MainTask), "b", 1, 7),
+		stage("lane-c-first", string(HypothesisReviewTask), "c", 3, 5),
+		stage("lane-d", string(HypothesisReviewTask), "d", 4, 8),
+		stage("lane-c-second", string(HypothesisReviewTask), "c", 7, 9),
+		stage("unit-open", string(MainTask), "open", 9, -1),
+	}}
+	view := layoutTimeline(doc)
+	if len(view.Lanes) != 5 {
+		t.Fatalf("lanes=%+v", view.Lanes)
+	}
+	lanes := map[string]timelineLane{}
+	for _, lane := range view.Lanes {
+		lanes[lane.Label] = lane
+	}
+	a, b, c, d := lanes["a"].Bars[0], lanes["b"].Bars[0], lanes["c"].Bars, lanes["d"].Bars[0]
+	if a.StartPercent != 0 || a.WidthPercent != 60 || b.StartPercent != 10 || b.WidthPercent != 60 {
+		t.Fatal("R1 overlap lost")
+	}
+	if len(c) != 2 || c[0].StartPercent != 30 || c[0].WidthPercent != 20 || c[1].StartPercent != 70 || c[1].WidthPercent != 20 || d.StartPercent != 40 || d.WidthPercent != 40 {
+		t.Fatal("R2 overlap or idle gap lost")
+	}
+	if open := lanes["open"].Bars[0]; open.WidthPercent != 0 || open.StartPercent != 90 {
+		t.Fatalf("unknown end painted as duration: %+v", open)
+	}
+	tmpl, err := parseTemplate("session.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, sessionPageData{Session: &ViewSession{Timeline: doc}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `data-timeline-stage="lane-c-second"`) || strings.Contains(out.String(), "ZgotmplZ") {
+		t.Fatal("concurrency bar lost its safe Stage target")
+	}
+}
+
+func TestSwimlanesKeepPreparationNestedWorkAndTrial(t *testing.T) {
+	start := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	stage := func(id, parent, name string, from, to int) timeline.Stage {
+		return timeline.Stage{ID: timeline.StageID(id), ParentID: timeline.StageID(parent), Name: name, StartedAt: start.Add(time.Duration(from) * time.Second), FinishedAt: start.Add(time.Duration(to) * time.Second)}
+	}
+	loop := stage("loop", "root", "execution", 2, 8)
+	loop.Attributes = map[string]json.RawMessage{"task_type": json.RawMessage(`"main_task"`), "session_id": json.RawMessage(`"session-a"`)}
+	doc := &timeline.Snapshot{RootStageID: "root", StartedAt: start, FinishedAt: start.Add(10 * time.Second), Stages: []timeline.Stage{
+		stage("diff", "root", "diff.load", 0, 2), stage("graph", "root", "codegraph.build", 1, 3),
+		loop, stage("model", "loop", "model.attempt", 3, 6), stage("tool", "loop", "tool.invoke", 6, 7),
+		stage("trial", "root", "trial.assess", 7, 9), stage("unknown", "absent", "custom.stage", 9, 10),
+	}}
+	view := layoutTimeline(doc)
+	seen := map[timeline.StageID]int{}
+	phases := map[string]timelineLane{}
+	for _, lane := range view.Lanes {
+		phases[lane.Phase] = lane
+		for _, row := range lane.Children {
+			seen[row.ID]++
+		}
+		for _, track := range lane.Tracks {
+			for _, row := range track {
+				seen[row.ID]++
+			}
+		}
+	}
+	for _, stage := range doc.Stages {
+		if seen[stage.ID] != 1 {
+			t.Fatalf("stage %s rendered %d times", stage.ID, seen[stage.ID])
+		}
+	}
+	if len(phases["Prepare"].Tracks) != 2 || len(phases["R1"].Children) != 2 || len(phases["R3"].Bars) != 1 {
+		t.Fatalf("lane ownership or overlap lost: %+v", view.Lanes)
+	}
+	tmpl, err := parseTemplate("session.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, sessionPageData{Session: &ViewSession{Timeline: doc}}); err != nil {
+		t.Fatal(err)
+	}
+	body := out.String()
+	for _, stage := range doc.Stages {
+		if !strings.Contains(body, `data-stage-detail="`+string(stage.ID)+`"`) {
+			t.Fatalf("missing dialog content for %s", stage.ID)
+		}
+	}
+	if strings.Contains(body, `role="tablist"`) || strings.Contains(body, "Stage tree") {
+		t.Fatal("legacy navigation remains")
+	}
+	// This fixture has no scope_id; show the Session ID without inventing a link.
+	if !strings.Contains(body, `data-stage-close`) || strings.Contains(body, `data-timeline-execution="loop"`) {
+		t.Fatal("invalid modal controls or fabricated Session association")
+	}
+}
+
+// +case=`Nested stages follow ParentID, sibling turns remain separate, and Unit pipelines are not presented as an extra review phase`
+func TestSwimlaneTurnHierarchy(t *testing.T) {
+	start := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	stage := func(id, parent, name string) timeline.Stage {
+		return timeline.Stage{ID: timeline.StageID(id), ParentID: timeline.StageID(parent), Name: name, StartedAt: start, FinishedAt: start.Add(time.Second)}
+	}
+	pipeline := stage("pipeline", "root", "review.pipeline")
+	pipeline.Attributes = map[string]json.RawMessage{"unit_id": json.RawMessage(`"unit-a"`)}
+	loop := stage("loop", "pipeline", "execution")
+	loop.Attributes = map[string]json.RawMessage{"task_type": json.RawMessage(`"main_task"`)}
+	turn := stage("turn-1", "loop", "turn")
+	turn.Attributes = map[string]json.RawMessage{"turn": json.RawMessage(`1`)}
+	doc := &timeline.Snapshot{RootStageID: "root", StartedAt: start, FinishedAt: start.Add(time.Second), Stages: []timeline.Stage{
+		stage("http", "provider", "http.request"), stage("turn-2", "loop", "turn"),
+		pipeline, loop, turn, stage("model", "turn-1", "model.attempt"),
+		stage("provider", "model", "llm.provider"), stage("context", "turn-1", "context.project"),
+		stage("tool", "turn-1", "tool.execution"), stage("invoke", "tool", "tool.invoke"),
+	}}
+	view := layoutTimeline(doc)
+	var r1, unitLane timelineLane
+	for _, lane := range view.Lanes {
+		switch lane.Phase {
+		case "R1":
+			r1 = lane
+		case "Unit":
+			unitLane = lane
+		}
+	}
+	if len(r1.Tree) != 2 || r1.Tree[0].ID != "turn-1" || r1.Tree[1].ID != "turn-2" {
+		t.Fatalf("turns must be sibling roots: %+v", r1.Tree)
+	}
+	first := r1.Tree[0]
+	if first.Label() != "turn 1" || first.Depth != 0 || len(first.Children) != 3 {
+		t.Fatalf("turn children lost: %+v", first)
+	}
+	model := first.Children[1]
+	if model.ID != "model" || model.Depth != 1 || len(model.Children) != 1 || model.Children[0].ID != "provider" || model.Children[0].Children[0].ID != "http" {
+		t.Fatalf("model/provider/HTTP hierarchy lost: %+v", model)
+	}
+	tool := first.Children[2]
+	if tool.ID != "tool" || len(tool.Children) != 1 || tool.Children[0].ID != "invoke" {
+		t.Fatalf("tool invocation parent lost: %+v", tool)
+	}
+	if len(unitLane.Bars) != 1 || unitLane.Bars[0].Label() != "Pipeline · unit-a" {
+		t.Fatalf("Unit pipeline identity lost: %+v", unitLane)
+	}
+	tmpl, err := parseTemplate("session.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, sessionPageData{Session: &ViewSession{Timeline: doc}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"turn-1", "model", "provider", "tool"} {
+		if !strings.Contains(out.String(), `<details class="stage-branch" data-stage-branch="`+id+`">`) {
+			t.Fatalf("stage %s must start collapsed", id)
+		}
+	}
+	if strings.Contains(out.String(), "Coordination") || strings.Contains(out.String(), "Review results and statistics") {
+		t.Fatal("obsolete review presentation remains")
 	}
 }

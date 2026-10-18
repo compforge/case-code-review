@@ -47,7 +47,7 @@ func TestViewerReportsTruncatedTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.RecordingWarning == "" || len(view.Reviews) != 1 {
+	if len(view.RecordingWarnings) == 0 || len(view.Reviews) != 1 {
 		t.Fatalf("lost intact prefix or warning: %+v", view)
 	}
 }

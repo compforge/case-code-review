@@ -140,7 +140,7 @@ func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
 	}
 }
 
-func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
+func TestUnitExecutorReturnsIncompleteOutcome(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.NewBuiltin(tool.Named("echo"), func(context.Context, map[string]any) (string, error) {
 		return "ok", nil
@@ -169,9 +169,8 @@ func TestUnitExecutorRecordsIncompleteReview(t *testing.T) {
 	if outcome.State != "truncated" || outcome.Reason != "tool-round budget exhausted" {
 		t.Fatalf("unexpected outcome: %+v", outcome)
 	}
-	warnings := executor.Warnings()
-	if len(warnings) != 1 || warnings[0].Type != "unit_incomplete" {
-		t.Fatalf("unexpected warnings: %+v", warnings)
+	if warnings := executor.Warnings(); len(warnings) != 0 {
+		t.Fatalf("R1 duplicated the pipeline terminal warning: %+v", warnings)
 	}
 }
 

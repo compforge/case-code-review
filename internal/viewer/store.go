@@ -30,6 +30,7 @@ func SessionsRoot() (string, error) {
 // RepoInfo represents a discovered repository from the sessions directory.
 type RepoInfo struct {
 	EncodedPath  string // encoded directory name on disk
+	DisplayName  string
 	SessionCount int
 	LastModified time.Time
 	LatestBizID  string
@@ -73,7 +74,12 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 			}
 		}
 		if info.SessionCount > 0 {
-			info.LatestBizID = readSessionBizID(latestSessionPath)
+			summary, _ := readSessionStart(latestSessionPath)
+			info.LatestBizID = summary.BizID
+			info.DisplayName = filepath.Base(summary.CWD)
+			if info.DisplayName == "." || info.DisplayName == "" {
+				info.DisplayName = info.EncodedPath
+			}
 			repos = append(repos, info)
 		}
 	}
@@ -82,14 +88,6 @@ func DiscoverRepos(root string) ([]RepoInfo, error) {
 		return repos[i].LastModified.After(repos[j].LastModified)
 	})
 	return repos, nil
-}
-
-func readSessionBizID(path string) string {
-	summary, err := readSessionStart(path)
-	if err != nil {
-		return ""
-	}
-	return summary.BizID
 }
 
 func readSessionStart(path string) (SessionSummary, error) {
@@ -237,17 +235,17 @@ func peekSession(path string) (SessionSummary, error) {
 
 // ViewSession holds fully parsed records for one recording.
 type ViewSession struct {
-	Cost             recording.CostReport
-	RecordingWarning string
-	Timeline         *timeline.Snapshot
-	Summary          SessionSummary
-	Diagnostics      SessionDiagnostics
-	TokenUsage       TokenUsageSummary
-	Compaction       CompactionSummary
-	ToolUsage        []ToolUsage
-	SystemPrompts    []SystemPrompt // distinct system prompts, deduped by content
-	Artifacts        []ReviewArtifact
-	Reviews          []*ReviewScope
+	Cost              recording.CostReport
+	RecordingWarnings []string
+	Timeline          *timeline.Snapshot
+	Summary           SessionSummary
+	Diagnostics       SessionDiagnostics
+	TokenUsage        TokenUsageSummary
+	Compaction        CompactionSummary
+	ToolUsage         []ToolUsage
+	SystemPrompts     []SystemPrompt // distinct system prompts, deduped by content
+	Artifacts         []ReviewArtifact
+	Reviews           []*ReviewScope
 }
 
 // CompactionSummary aggregates explicit ContextManager rewrites. Counting
@@ -647,9 +645,7 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 		execution.DurationMs = int64(intValue(fact["duration_ms"]))
 		execution.ToolCalls, execution.ToolErrors = intValue(fact["tool_calls"]), intValue(fact["tool_errors"])
 	}
-	if gaps := transcript.IncompleteReasons(); len(gaps) > 0 {
-		vs.RecordingWarning = strings.Join(gaps, "; ")
-	}
+	vs.RecordingWarnings = transcript.IncompleteReasons()
 	if transcript.TruncatedTail {
 		signals.hasSessionEnd = false
 	}

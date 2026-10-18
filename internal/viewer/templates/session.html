@@ -3,247 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Review Overview - CCR Viewer</title>
+    <title>Review Timeline - CCR Viewer</title>
     <link rel="stylesheet" href="/static/style.css">
     <script src="/static/timeline.js" defer></script>
 </head>
 <body>
-<nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Session {{.Session.Summary.SessionID | truncate 12}}</nav>
+<nav class="breadcrumb"><a href="/">CCR Viewer</a> &rsaquo; <a href="/r/{{.EncodedRepo}}">{{.RepoName}}</a> &rsaquo; Timeline {{.Session.Summary.SessionID | truncate 12}}</nav>
 <main>
-{{if .Session.RecordingWarning}}<p class="error">{{.Session.RecordingWarning}}</p>{{end}}
-<nav class="view-tabs" role="tablist" aria-label="Session views">
-    <a href="#session" id="tab-session" role="tab" aria-controls="panel-session" aria-selected="false" tabindex="-1">Review details</a>
-    <a href="#timeline" id="tab-timeline" role="tab" aria-controls="panel-timeline" aria-selected="true">Timeline</a>
-</nav>
-<section id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline">
-    <div class="timeline-heading"><h2>Run Timeline</h2><code>{{.Session.Summary.SessionID}}</code></div>
+{{if .Session.RecordingWarnings}}
+<details class="recording-warning">
+    <summary>Recording incomplete · {{len .Session.RecordingWarnings}} diagnostics <span>Show details</span></summary>
+    <p>Some execution evidence is missing. These diagnostics describe recording gaps, not the review verdict.</p>
+    <ul>{{range .Session.RecordingWarnings}}<li>{{.}}</li>{{end}}</ul>
+</details>
+{{end}}
+<section id="timeline">
+    <div class="meta"><span>{{if .Session.Summary.BizID}}{{.Session.Summary.BizID}}{{else}}{{.RepoName}}{{end}}</span><span>{{.Session.Summary.GitBranch}}</span><span>{{formatTime .Session.Summary.Timestamp}}</span></div>
+    <div class="timeline-heading"><h2>Review Timeline</h2><code>{{.Session.Summary.SessionID}}</code></div>
+    <div class="timeline-summary"><span>{{.Session.Diagnostics.StatusLabel}}</span><span>{{formatDuration .Session.Summary.DurationSec}} elapsed</span><span>{{formatInt .Session.TokenUsage.TotalPromptTokens}} prompt tokens</span><span>{{formatInt .Session.TokenUsage.TotalCompletionTokens}} output tokens</span><span>{{.Session.Diagnostics.Findings}} findings</span></div>
     {{if .Session.Timeline}}
     {{if .Session.Timeline.FinishedAt.IsZero}}<p class="timeline-notice">Run terminal state is not recorded (incomplete).</p>{{else}}<p class="section-note">Run result: {{.Session.Timeline.Status}}</p>{{end}}
     {{if .Session.Timeline.Error}}<p class="timeline-notice">{{.Session.Timeline.Error}}</p>{{end}}
     {{template "timeline" .Session.Timeline}}
-    {{else}}<p class="empty-state">No timeline was recorded for this session.</p>{{end}}
+    {{else}}<p class="empty-state">No timeline was recorded for this review.</p>{{end}}
 </section>
-<section id="panel-session" role="tabpanel" aria-labelledby="tab-session" hidden>
-{{$review1 := reviewsOfStage .Session.Reviews "review1"}}
-{{$review2 := reviewsOfStage .Session.Reviews "review2"}}
-{{$scans := reviewsOfStage .Session.Reviews "scan"}}
-
-<div class="session-header">
-    <h2>Review Overview</h2>
-    <div class="session-id">{{.Session.Summary.SessionID}}</div>
-    <div class="meta">
-        <span><strong>CWD:</strong> {{.Session.Summary.CWD}}</span>
-        <span><strong>Branch:</strong> {{.Session.Summary.GitBranch}}</span>
-        {{if .Session.Summary.BizID}}<span><strong>Biz ID:</strong> <code>{{.Session.Summary.BizID}}</code></span>{{end}}
-        <span><strong>Mode:</strong> {{if .Session.Summary.ReviewMode}}{{.Session.Summary.ReviewMode}}{{else}}-{{end}}</span>
-        {{if eq .Session.Summary.ReviewMode "range"}}
-        <span><strong>From:</strong> <code>{{.Session.Summary.DiffFrom}}</code></span>
-        <span><strong>To:</strong> <code>{{.Session.Summary.DiffTo}}</code></span>
-        {{end}}
-        {{if eq .Session.Summary.ReviewMode "commit"}}
-        <span><strong>Commit:</strong> <code>{{.Session.Summary.DiffCommit}}</code></span>
-        {{end}}
-        <span><strong>Model:</strong> <code>{{.Session.Summary.Model}}</code></span>
-    </div>
-</div>
-
-<section class="review-health health-{{.Session.Diagnostics.Status}}">
-    <div>
-        <div class="review-health-kicker">Review health</div>
-        <div class="review-health-title">{{.Session.Diagnostics.StatusLabel}}</div>
-    </div>
-    <p>{{.Session.Diagnostics.Summary}}</p>
-</section>
-
-{{if .Session.Diagnostics.Alerts}}
-<div class="diagnostic-alerts">
-{{range .Session.Diagnostics.Alerts}}
-    <div class="diagnostic-alert alert-{{.Level}}">
-        <strong>{{.Title}}</strong>
-        <span>{{.Detail}}</span>
-    </div>
-{{end}}
-</div>
-{{end}}
-
-<h3>Review Pipeline</h3>
-<div class="pipeline-funnel">
-    <div class="pipeline-step">
-        <div class="pipeline-value">{{if .Session.Summary.HasDiffStats}}{{formatInt .Session.Diagnostics.DiffFiles}}{{else}}-{{end}}</div>
-        <div class="pipeline-label">Diff Files</div>
-    </div>
-    <div class="pipeline-arrow">→</div>
-    <div class="pipeline-step">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.ReviewFiles}}</div>
-        <div class="pipeline-label">Review Files</div>
-    </div>
-    <div class="pipeline-arrow">→</div>
-    <div class="pipeline-step pipeline-review1">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Review1Units}}</div>
-        <div class="pipeline-label">Review 1 · Units</div>
-        <div class="pipeline-detail">{{.Session.Diagnostics.Review1Executions}} Execution(s) · {{.Session.Diagnostics.Review1Done}} completed{{if .Session.Diagnostics.Review1Missed}} · <b>{{.Session.Diagnostics.Review1Missed}} incomplete</b>{{end}}</div>
-    </div>
-    <div class="pipeline-arrow">→</div>
-    <div class="pipeline-step">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Hypotheses}}</div>
-        <div class="pipeline-label">Hypotheses</div>
-    </div>
-    <div class="pipeline-arrow">→</div>
-    <div class="pipeline-step pipeline-review2">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Assessments}}</div>
-        <div class="pipeline-label">Review 2 · Assessments</div>
-        <div class="pipeline-detail">{{.Session.Diagnostics.Review2Lanes}} Lane(s) · {{.Session.Diagnostics.Review2Executions}} Execution(s){{if .Session.Diagnostics.Unassessed}} · <b>{{.Session.Diagnostics.Unassessed}} unassessed</b>{{end}}</div>
-    </div>
-    <div class="pipeline-arrow pipeline-trial"><span>Trial</span>→</div>
-    <div class="pipeline-step pipeline-finding">
-        <div class="pipeline-value">{{formatInt .Session.Diagnostics.Findings}}</div>
-        <div class="pipeline-label">Findings</div>
-        <div class="pipeline-detail">{{.Session.Diagnostics.TrialPassed}} passed · {{.Session.Diagnostics.TrialBlocked}} blocked</div>
-    </div>
-</div>
-
-<div class="overview-grid">
-    <div class="overview-card">
-        <div class="overview-value">{{formatDuration .Session.Summary.DurationSec}}</div>
-        <div class="overview-label">Wall Time</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Session.TokenUsage.TotalPromptTokens}}</div>
-        <div class="overview-label">Prompt Tokens</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Session.TokenUsage.TotalCompletionTokens}}</div>
-        <div class="overview-label">Completion Tokens</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Session.TokenUsage.RequestCount}}</div>
-        <div class="overview-label">LLM Calls</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{toolCallCount .Session.ToolUsage}}</div>
-        <div class="overview-label">Tool Calls</div>
-    </div>
-    <div class="overview-card">
-        <div class="overview-value">{{formatInt .Session.Compaction.Count}}</div>
-        <div class="overview-label">Context Compactions{{if .Session.Compaction.Summarized}} · {{.Session.Compaction.Summarized}} summarized{{end}}</div>
-    </div>
-    {{if .Session.Summary.LLMFailures}}
-    <div class="overview-card error-card">
-        <div class="overview-value">{{.Session.Summary.LLMFailures}}</div>
-        <div class="overview-label">LLM Failures</div>
-    </div>
-    {{end}}
-</div>
-
-{{if or .Session.TokenUsage.TotalCacheReadTokens .Session.TokenUsage.TotalCacheWriteTokens}}
-<div class="cache-summary">
-    Cache read <strong>{{formatInt .Session.TokenUsage.TotalCacheReadTokens}}</strong>
-    &middot; Cache write <strong>{{formatInt .Session.TokenUsage.TotalCacheWriteTokens}}</strong>
-</div>
-{{end}}
-
-<p class="section-note">Usage: {{.Session.Cost.Total.EstimatedUsage}} estimated · {{.Session.Cost.Total.UnknownUsage}} unknown · {{.Session.Cost.Total.Pending}} calls still awaiting a result. Unknown usage is not zero cost.</p>
-{{if .Session.Cost.Stages}}
-<details>
-    <summary>Time and token cost by stage</summary>
-    <p class="section-note">Elapsed includes child work; self time excludes overlapping child intervals. Tokens include descendant requests, so parent and child rows must not be added together. Running durations are lower bounds at the last recorded observation.</p>
-    <table>
-        <thead><tr><th>Stage</th><th>Status</th><th>Elapsed (ms)</th><th>Self (ms)</th><th>Input</th><th>Output</th><th>Cache read/write</th><th>Unknown usage</th></tr></thead>
-        <tbody>
-        {{range .Session.Cost.Stages}}
-        <tr title="{{.Stage.ID}}; parent={{.Stage.ParentID}}; {{.Stage.Error}}"><td>{{.Stage.Name}}</td><td>{{.Stage.Status}}</td><td>{{printf "%.1f" .DurationMS}}</td><td>{{printf "%.1f" .SelfMS}}</td><td>{{.Cost.Tokens.PromptTokens}}</td><td>{{.Cost.Tokens.CompletionTokens}}</td><td>{{.Cost.Tokens.CacheReadTokens}} / {{.Cost.Tokens.CacheWriteTokens}}</td><td>{{.Cost.UnknownUsage}}</td></tr>
-        {{end}}
-        </tbody>
-    </table>
-</details>
-{{end}}
-
-<h3>Review 1 <span class="heading-count">{{len $review1}}</span></h3>
-<p class="section-note">以 Unit 为 Scope 发散 Hypothesis；点进 Unit 查看其中的 Execution 与每轮真实 Prompt Snapshot。</p>
-{{if $review1}}
-<table class="review-table">
-    <thead><tr><th>Unit</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
-    <tbody>{{range $review1}}{{template "reviewRow" .}}{{end}}</tbody>
-</table>
-{{else}}<p class="empty-state">No Review 1 runs.</p>{{end}}
-
-<h3>Review 2 Lanes <span class="heading-count">{{len $review2}}</span></h3>
-<p class="section-note">相关 Hypothesis 进入同一 Lane；每个 Hypothesis 触发一次 Execution，并串行复用 Lane context。</p>
-{{if $review2}}
-<table class="review-table">
-    <thead><tr><th>Lane</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
-    <tbody>{{range $review2}}{{template "reviewRow" .}}{{end}}</tbody>
-</table>
-{{else}}<p class="empty-state">No Review 2 runs.</p>{{end}}
-
-{{if $scans}}
-<h3>Scan <span class="heading-count">{{len $scans}}</span></h3>
-<table class="review-table">
-    <thead><tr><th>File</th><th>Status</th><th>Scope</th><th>Elapsed</th><th>LLM time</th><th>Turns</th><th>Prompt total</th><th>Completion</th><th>Tools</th></tr></thead>
-    <tbody>{{range $scans}}{{template "reviewRow" .}}{{end}}</tbody>
-</table>
-{{end}}
-
-{{if .Session.ToolUsage}}
-<h3>Tool Usage</h3>
-<table class="review-table tool-summary-table">
-    <thead><tr><th>Tool</th><th>Calls</th><th>Failures</th><th>Time</th></tr></thead>
-    <tbody>
-    {{range .Session.ToolUsage}}
-        <tr><td><code>{{.Name}}</code></td><td>{{formatInt .Calls}}</td><td>{{formatInt .Failures}}</td><td>{{formatMillis .DurationMs}}</td></tr>
-    {{end}}
-    </tbody>
-</table>
-{{end}}
-
-{{if .Session.Summary.FilesReviewed}}
-<h3>Files Reviewed</h3>
-<ul class="file-list">
-{{range .Session.Summary.FilesReviewed}}<li>{{.}}</li>{{end}}
-</ul>
-{{end}}
-
-{{if .Session.Artifacts}}
-<h3>Review Decision Trail <span class="heading-count">{{len .Session.Artifacts}}</span></h3>
-<p class="section-note">Review 1 产生 Hypothesis，Review 2 形成 Assessment，Trial 决定最终 Finding。</p>
-<div class="system-prompts">
-{{range .Session.Artifacts}}
-<details class="system-prompt">
-    <summary class="system-prompt-header">
-        <span class="chevron"></span>
-        <span class="system-prompt-label">{{.Kind}}</span>
-        {{if .Status}}<span class="badge badge-scope">{{.Status}}</span>{{end}}
-    </summary>
-    <pre class="msg-text">{{.Data}}</pre>
-</details>
-{{end}}
-</div>
-{{end}}
-
-</section>
-
-{{define "reviewRow"}}
-<tr class="review-row {{if eq .Status "incomplete"}}review-row-incomplete{{end}}">
-    <td>
-        <a class="review-link" href="/r/{{.EncodedRepo}}/{{.SessionID}}/review?scope={{urlquery .ID}}">{{if .ID}}{{.ID | truncate 54}}{{else}}{{.FilePath | truncate 54}}{{end}}</a>
-        {{if gt (len .Paths) 1}}<div class="review-paths">{{range $i, $p := .Paths}}{{if $i}} &middot; {{end}}{{$p}}{{end}}</div>{{end}}
-    </td>
-    <td>
-        <span class="status-badge status-{{.Status}}">{{.Status}}</span>
-        <div class="status-reason">{{len .Executions}} Execution(s) · {{.ExecutionDone}} completed{{if .ExecutionMissed}} · {{.ExecutionMissed}} incomplete{{end}}</div>
-    </td>
-    <td><span class="badge badge-scope">{{if .Scope}}{{.Scope}}{{else}}{{.Stage.Label}}{{end}}</span></td>
-    <td>{{formatDuration .Metrics.ElapsedSec}}</td>
-    <td>{{formatMillis .Metrics.LLMDurationMs}}</td>
-    <td>{{.Metrics.TurnCount}}</td>
-    <td>{{formatInt .Metrics.PromptTokens}}</td>
-    <td>{{formatInt .Metrics.CompletionTokens}}</td>
-    <td>
-        <strong>{{.Metrics.ToolCalls}}</strong>
-        {{if .Tools}}<div class="tool-chips">{{range .Tools}}<span><code>{{.Name}}</code> ×{{.Calls}}{{if .Failures}} / <b>{{.Failures}} failed</b>{{end}}</span>{{end}}</div>{{end}}
-    </td>
-</tr>
-{{end}}
 </main>
 </body>
 </html>

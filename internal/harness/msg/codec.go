@@ -14,6 +14,8 @@ func Codec(extra ...codec.Option) (codec.Codec, error) {
 	options := append(agentcontext.CodecOptions(), CodecOptions()...)
 	return agentgo.NewCodec(append(options, extra...)...)
 }
+
+// +spec=`Session codecs accept both pointer constructors and the value views returned by Raw/Compact without losing message type or evidence`
 func CodecOptions() []codec.Option {
 	return []codec.Option{
 		codec.WithHandler[Instruction, instructionRecord]("ccr.instruction.v1", instructionCodec{}),
@@ -21,10 +23,10 @@ func CodecOptions() []codec.Option {
 		codec.WithHandler[*File, fileRecord]("ccr.file.v1", fileCodec{}),
 		codec.WithHandler[*FileBatch, fileBatchRecord]("ccr.file_batch.v1", fileBatchCodec{}),
 		codec.WithHandler[fileBatchItem, fileBatchItemRecord]("ccr.file_batch_item.v1", fileBatchItemCodec{}),
-		codec.WithHandler[*SearchResult, searchResultRecord]("ccr.search_result.v1", searchResultCodec{}),
+		codec.WithHandler[SearchResult, searchResultRecord]("ccr.search_result.v1", searchResultCodec{}),
 		codec.WithHandler[*SearchBatch, searchBatchRecord]("ccr.search_batch.v1", searchBatchCodec{}),
 		codec.WithHandler[searchBatchItem, searchBatchItemRecord]("ccr.search_batch_item.v1", searchBatchItemCodec{}),
-		codec.WithHandler[*Diff, diffRecord]("ccr.diff.v1", diffCodec{}),
+		codec.WithHandler[Diff, diffRecord]("ccr.diff.v1", diffCodec{}),
 		codec.WithHandler[*FileContext, fileContextRecord]("ccr.file_context.v1", fileContextCodec{}),
 		codec.WithHandler[FileContextEntry, fileContextEntryRecord]("ccr.file_context_entry.v1", fileContextEntryCodec{}),
 		codec.WithHandler[*Board, boardRecord]("ccr.board.v1", boardCodec{}),
@@ -131,11 +133,11 @@ type searchResultRecord struct {
 }
 type searchResultCodec struct{}
 
-func (searchResultCodec) Encode(v *SearchResult) (searchResultRecord, error) {
+func (searchResultCodec) Encode(v SearchResult) (searchResultRecord, error) {
 	return searchResultRecord{MessageMeta: v.messageMeta, Tool: v.Tool, Query: v.Query, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, NoMatches: v.NoMatches, SearchStatus: v.SearchStatus, SearchedFiles: v.SearchedFiles, Label: v.Label, Representation: v.representation, Priority: v.priority}, nil
 }
-func (searchResultCodec) Decode(v searchResultRecord) (*SearchResult, error) {
-	return &SearchResult{messageMeta: v.MessageMeta, Tool: v.Tool, Query: v.Query, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, NoMatches: v.NoMatches, SearchStatus: v.SearchStatus, SearchedFiles: v.SearchedFiles, Label: v.Label, representation: v.Representation, priority: v.Priority}, nil
+func (searchResultCodec) Decode(v searchResultRecord) (SearchResult, error) {
+	return SearchResult{messageMeta: v.MessageMeta, Tool: v.Tool, Query: v.Query, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, NoMatches: v.NoMatches, SearchStatus: v.SearchStatus, SearchedFiles: v.SearchedFiles, Label: v.Label, representation: v.Representation, priority: v.Priority}, nil
 }
 
 type searchBatchRecord struct {
@@ -155,16 +157,32 @@ func (searchBatchCodec) Decode(v searchBatchRecord) (*SearchBatch, error) {
 }
 
 type searchBatchItemRecord struct {
-	Result *SearchResult `codec:"result"`
-	Raw    string        `codec:"raw"`
+	Result *searchResultRecord `codec:"result"`
+	Raw    string              `codec:"raw"`
 }
 type searchBatchItemCodec struct{}
 
 func (searchBatchItemCodec) Encode(v searchBatchItem) (searchBatchItemRecord, error) {
-	return searchBatchItemRecord{Result: v.result, Raw: v.raw}, nil
+	record := searchBatchItemRecord{Raw: v.raw}
+	if v.result != nil {
+		result, err := (searchResultCodec{}).Encode(*v.result)
+		if err != nil {
+			return record, err
+		}
+		record.Result = &result
+	}
+	return record, nil
 }
 func (searchBatchItemCodec) Decode(v searchBatchItemRecord) (searchBatchItem, error) {
-	return searchBatchItem{result: v.Result, raw: v.Raw}, nil
+	item := searchBatchItem{raw: v.Raw}
+	if v.Result != nil {
+		result, err := (searchResultCodec{}).Decode(*v.Result)
+		if err != nil {
+			return item, err
+		}
+		item.result = &result
+	}
+	return item, nil
 }
 
 type diffRecord struct {
@@ -180,11 +198,11 @@ type diffRecord struct {
 }
 type diffCodec struct{}
 
-func (diffCodec) Encode(v *Diff) (diffRecord, error) {
+func (diffCodec) Encode(v Diff) (diffRecord, error) {
 	return diffRecord{MessageMeta: v.messageMeta, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, Label: v.Label, Sources: v.sources, Required: v.required, Representation: v.representation, Priority: v.priority}, nil
 }
-func (diffCodec) Decode(v diffRecord) (*Diff, error) {
-	return &Diff{messageMeta: v.MessageMeta, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, Label: v.Label, sources: v.Sources, required: v.Required, representation: v.Representation, priority: v.Priority}, nil
+func (diffCodec) Decode(v diffRecord) (Diff, error) {
+	return Diff{messageMeta: v.MessageMeta, Paths: v.Paths, Content: v.Content, ToolCallID: v.ToolCallID, Label: v.Label, sources: v.Sources, required: v.Required, representation: v.Representation, priority: v.Priority}, nil
 }
 
 type fileContextRecord struct {
