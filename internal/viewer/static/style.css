@@ -1056,7 +1056,8 @@ p { color: #586069; padding: 1rem 0; }
 .agent-branch > summary::before { content: "▸"; width: .7rem; flex: 0 0 .7rem; color: #6e7781; }
 .agent-branch[open] > summary::before { content: "▾"; }
 .agent-leaf > summary::before { visibility: hidden; }
-.agent-node { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: .25rem; width: 100%; min-width: 0; margin: .2rem 0; padding: .5rem .65rem; text-align: left; border: 1px solid #d8dee4; border-left: 3px solid #8c959f; border-radius: 5px; background: #fff; font: inherit; font-size: .8rem; cursor: pointer; overflow-wrap: anywhere; }
+.agent-node { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: .25rem; width: 100%; min-width: 0; margin: .2rem 0; padding: .5rem .65rem; text-align: left; border: 1px solid #d8dee4; border-left: 3px solid #8c959f; border-radius: 5px; background: #fff; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.agent-tree .agent-node { font-size: .8rem; }
 .agent-node-model { border-left-color: #0969da; background: #eef6ff; }
 .agent-node-tool { border-left-color: #8250df; }
 .agent-node[aria-current="true"] { outline: 2px solid #0969da; outline-offset: -1px; background: #ddf4ff; }

@@ -227,3 +227,77 @@ func TestStageAgentEndpointAndAvailableViews(t *testing.T) {
 		}
 	}
 }
+
+// +case=`A damaged linked Session keeps the Agent endpoint available, preserves valid usage, and never fabricates unread usage`
+func TestStageAgentSessionFailuresPreserveTree(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		change       func([]byte) []byte
+		unreadable   bool
+		wantUsage    bool
+		wantToolRead bool
+	}{
+		{name: "malformed envelope after valid records", change: func(data []byte) []byte { return append(data, []byte("{broken\n")...) }, wantUsage: true, wantToolRead: true},
+		{name: "malformed envelope before calls", change: func(data []byte) []byte { return append([]byte("{broken\n"), data...) }},
+		{name: "invalid event before successful retry", change: func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`{"error":"temporary provider failure"}`), []byte(`"invalid event"`), 1)
+		}, wantUsage: true, wantToolRead: true},
+		{name: "invalid model response before tool", change: func(data []byte) []byte {
+			return bytes.Replace(data, []byte(`"$type":"agentgo.message.v1"`), []byte(`"$type":"unknown.message"`), 1)
+		}, wantToolRead: true},
+		{name: "linked file read failure", unreadable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path, _ := stageAgentFixture(t)
+			file := filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", "loop.jsonl")
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.unreadable {
+				if err := os.Remove(file); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(file, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(file, tc.change(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			response := httptest.NewRecorder()
+			handleStageAgent(response, httptest.NewRequest("GET", "/agent?stage=execution-1", nil), filepath.Dir(filepath.Dir(path)), filepath.Base(filepath.Dir(path)), "review")
+			if response.Code != 200 {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			var view agentView
+			if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+				t.Fatal(err)
+			}
+			if len(view.Turns) != 1 || len(view.Turns[0].Items) != 3 || len(view.Warnings) == 0 {
+				t.Fatalf("lost tree or diagnostics: %+v", view)
+			}
+			if strings.Contains(response.Body.String(), filepath.Dir(path)) || !strings.Contains(strings.Join(view.Warnings, " "), "loop.jsonl") {
+				t.Fatalf("diagnostics must identify the Session without exposing local paths: %v", view.Warnings)
+			}
+			for _, item := range view.Turns[0].Items {
+				if item.StageID == "run-1/model/model-1/2" {
+					if (item.Usage != nil) != tc.wantUsage || (item.Usage != nil && item.Usage.Input != 100) {
+						t.Fatalf("wrong retained usage: %+v", item)
+					}
+				}
+				if item.Kind == "tool" && tc.wantToolRead && item.Label != "read_files" {
+					t.Fatalf("did not read valid record after damaged event: %+v", item)
+				}
+			}
+		})
+	}
+}
+
+func TestStageAgentSourceErrorDoesNotExposePath(t *testing.T) {
+	root := t.TempDir()
+	response := httptest.NewRecorder()
+	handleStageAgent(response, httptest.NewRequest("GET", "/agent?stage=execution-1", nil), root, "repo", "missing")
+	if response.Code != 404 || strings.Contains(response.Body.String(), root) {
+		t.Fatalf("unexpected response: %d %s", response.Code, response.Body.String())
+	}
+}

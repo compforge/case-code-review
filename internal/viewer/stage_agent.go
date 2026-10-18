@@ -153,13 +153,7 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		byFile[name][item.Ref] = append(byFile[name][item.Ref], item)
 	}
 	for name, items := range byFile {
-		warning, err := readAgentUsage(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", name), items)
-		if err != nil {
-			return nil, err
-		}
-		if warning != "" {
-			view.Warnings = append(view.Warnings, warning)
-		}
+		view.Warnings = append(view.Warnings, readAgentUsage(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", name), items)...)
 	}
 	for _, turn := range view.Turns {
 		turn.Items = agentHierarchy(turn.Items, source, turn.StageID)
@@ -203,13 +197,23 @@ func agentHierarchy(items []*agentItemView, source *stageSource, root timeline.S
 }
 
 // Read each linked Session once; unrelated runs and attempts never supply usage.
-func readAgentUsage(path string, items map[agentsession.Ref][]*agentItemView) (string, error) {
+// +spec=`Session read failures preserve the Agent tree and valid usage; unavailable usage remains unknown and diagnostics identify the affected file or record`
+func readAgentUsage(path string, items map[agentsession.Ref][]*agentItemView) []string {
+	var warnings []string
+	warn := func(reason string, err error) {
+		warnings = append(warnings, fmt.Sprintf("Session %s: %s", filepath.Base(path), reason))
+		if err != nil {
+			fmt.Fprintf(console.Err(), "[viewer] Agent Session %s: %s: %v\n", path, reason, err)
+		}
+	}
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return "Referenced Session file is missing; call usage is unavailable.", nil
+		warn("file is missing; call usage is unavailable.", nil)
+		return warnings
 	}
 	if err != nil {
-		return "", err
+		warn("cannot open file; call usage is unavailable.", err)
+		return warnings
 	}
 	defer file.Close()
 	result, err := agentsession.Read(file, func(record agentsession.Record) error {
@@ -226,15 +230,21 @@ func readAgentUsage(path string, items map[agentsession.Ref][]*agentItemView) (s
 		}
 		var data agentsession.EventData
 		if err := json.Unmarshal(record.Data, &data); err != nil {
-			return err
+			warn(fmt.Sprintf("record %d has invalid event data; skipped.", record.Seq), err)
+			return nil
+		}
+		var usage *agentgo.Usage
+		if record.Type == string(agentgo.EventModelExecEnd) && len(data.Message) > 0 {
+			response, err := recordedModelMessage(data.Message)
+			if err != nil {
+				warn(fmt.Sprintf("record %d has an invalid model response; usage is unavailable.", record.Seq), err)
+			} else {
+				usage = response.Usage
+			}
 		}
 		for _, item := range selected {
-			if item.Kind == "model" && record.Type == string(agentgo.EventModelExecEnd) && len(data.Message) > 0 {
-				response, err := recordedModelMessage(data.Message)
-				if err != nil {
-					return err
-				}
-				item.Usage = response.Usage
+			if item.Kind == "model" && usage != nil {
+				item.Usage = usage
 			}
 			if item.Kind == "tool" && data.Tool != "" {
 				item.Label = data.Tool
@@ -246,12 +256,12 @@ func readAgentUsage(path string, items map[agentsession.Ref][]*agentItemView) (s
 		return nil
 	})
 	if err != nil {
-		return "", err
+		warn("read incomplete; unread call usage remains unknown.", err)
 	}
 	if result.TruncatedTail {
-		return "Session has an incomplete final record; unavailable usage remains unknown.", nil
+		warn("incomplete final record; unavailable usage remains unknown.", nil)
 	}
-	return "", nil
+	return warnings
 }
 
 func handleStageAgent(w http.ResponseWriter, r *http.Request, root, repo, sessionID string) {
@@ -261,7 +271,8 @@ func handleStageAgent(w http.ResponseWriter, r *http.Request, root, repo, sessio
 	}
 	view, err := loadStageAgent(filepath.Join(root, repo, sessionID+".jsonl"), timeline.StageID(r.URL.Query().Get("stage")))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+		fmt.Fprintf(console.Err(), "[viewer] Agent view repo=%s review=%s stage=%s: %v\n", repo, sessionID, r.URL.Query().Get("stage"), err)
+		http.Error(w, "Agent view unavailable: review timeline or loop stage could not be loaded.", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
