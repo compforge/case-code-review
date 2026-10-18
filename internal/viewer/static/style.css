@@ -1041,3 +1041,24 @@ p { color: #586069; padding: 1rem 0; }
 .model-call-usage { display: flex; flex-wrap: wrap; gap: .5rem 1rem; padding: .8rem; border-radius: 6px; background: #f6f8fa; font-size: .85rem; }
 .stage-recording { margin-top: 1rem; }
 .stage-recording > summary, .stage-call details > summary { cursor: pointer; color: #57606a; padding: .4rem 0; }
+
+.stage-view-tabs { display: flex; gap: 1rem; border-bottom: 1px solid #d8dee4; margin: 1rem 0; }
+.stage-view-tabs button { border: 0; border-bottom: 3px solid transparent; background: none; padding: .6rem .2rem; font: inherit; cursor: pointer; color: #57606a; }
+.stage-view-tabs button[aria-selected="true"] { color: #0969da; border-bottom-color: #0969da; font-weight: 600; }
+.stage-view-panel[hidden] { display: none; }
+.agent-turn { border: 1px solid #d8dee4; border-radius: 8px; margin: 1rem 0; overflow: hidden; }
+.agent-turn-title { width: 100%; text-align: left; border: 0; background: #f6f8fa; padding: .7rem 1rem; font-weight: 600; color: #0969da; cursor: pointer; }
+.agent-call { padding: .8rem 1rem; border-top: 1px solid #d8dee4; }
+.agent-call-title { border: 0; background: none; padding: 0; color: #0969da; font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
+.agent-call-meta { color: #57606a; font-size: .8rem; margin: .4rem 0; }
+.agent-token-row { display: grid; grid-template-columns: 3.5rem 1fr 5rem; gap: .7rem; align-items: center; font-size: .8rem; margin: .4rem 0; }
+.agent-token-row strong { text-align: right; font-variant-numeric: tabular-nums; }
+.agent-token-track { background: #f0f3f6; border-radius: 3px; height: .7rem; overflow: hidden; }
+.agent-token-bar { background: #218bff; height: 100%; }
+.agent-token-bar.output { background: #8250df; }
+
+.agent-call .agent-call-meta { margin: .4rem 0; padding: 0; }
+.agent-call .section-note { margin: .4rem 0; padding: 0; }
+.agent-call .timeline-notice { margin: .5rem 0; padding: .4rem .7rem; }
+.agent-operation { border-top: 1px solid #d8dee4; }
+.agent-operation > summary { cursor: pointer; padding: .4rem 1rem; color: #57606a; font-size: .85rem; }
