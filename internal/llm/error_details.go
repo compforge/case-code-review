@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"time"
+
+	models "github.com/compforge/agentgo/llm"
 )
 
 // ErrorDetails is the stable failure projection persisted with an LLM error.
@@ -43,6 +44,29 @@ func (e *detailedError) errorDetails() ErrorDetails {
 // package. Unknown provider failures retain their original text until a stable
 // cross-provider classification exists.
 func DescribeError(err error) *ErrorDetails {
+	var route *models.RoutingError
+	if errors.As(err, &route) {
+		fact := route.Attempt
+		attrs := map[string]any{"timeout_scope": fact.TimeoutScope, "endpoint": fact.Endpoint, "attempt": fact.Index, "duration_ms": fact.Duration.Milliseconds()}
+		var source errorDetailer
+		if errors.As(err, &source) {
+			for k, v := range source.errorDetails().Attributes {
+				if _, exists := attrs[k]; !exists {
+					attrs[k] = v
+				}
+			}
+		}
+		code := "routing_failed"
+		kind := fact.ErrorKind
+		if fact.TimeoutScope == "routing" {
+			code = "routing_budget_exhausted"
+			kind = "timeout"
+		}
+		if fact.TimeoutScope == "caller" {
+			code = "caller_deadline_exceeded"
+		}
+		return &ErrorDetails{Kind: "llm", Phase: "routing", ErrorType: kind, Code: code, Message: err.Error(), Attributes: attrs}
+	}
 	var source errorDetailer
 	if !errors.As(err, &source) {
 		return nil
@@ -65,7 +89,7 @@ func failurePhaseForRequest(attributes map[string]any) string {
 	case requestPhaseConnectionPool, requestPhaseConnect, requestPhaseWriteRequest:
 		return phase
 	default:
-		// Both providers use non-streaming SDK calls, so await/read progress cannot
+		// CCR uses non-streaming model calls, so await/read progress cannot
 		// truthfully be classified as first_chunk or inter_chunk.
 		return "request"
 	}
@@ -92,43 +116,6 @@ func annotateRequestError(ctx context.Context, err error, progress *requestTrace
 		text: fmt.Sprintf(
 			"llm request timeout (request_phase=%s, response_started=%t): %v",
 			phase, attributes["response_started"], err,
-		),
-	}
-}
-
-func routingTimeoutError(
-	cause error,
-	budget time.Duration,
-	member routerMember,
-	attempt int,
-	poolSize int,
-) error {
-	attributes := map[string]any{}
-	if details := DescribeError(cause); details != nil {
-		for key, value := range details.Attributes {
-			attributes[key] = value
-		}
-	}
-	endpoint := member.alias
-	if endpoint == "" {
-		endpoint = member.label
-	}
-	attributes["timeout_scope"] = "routing"
-	attributes["endpoint"] = endpoint
-	attributes["attempt"] = attempt
-	attributes["pool_size"] = poolSize
-	attributes["budget_ms"] = budget.Milliseconds()
-	phase := requestPhase(attributes)
-	responseStarted, _ := attributes["response_started"].(bool)
-	return &detailedError{
-		details: ErrorDetails{
-			Kind: "llm", Phase: "routing", ErrorType: "timeout",
-			Code: "routing_budget_exhausted", Attributes: attributes,
-		},
-		cause: cause,
-		text: fmt.Sprintf(
-			"llm routing call timeout exceeded after %s (endpoint=%s, attempt=%d/%d, request_phase=%s, response_started=%t): %v",
-			budget, endpoint, attempt, poolSize, phase, responseStarted, cause,
 		),
 	}
 }

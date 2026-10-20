@@ -357,3 +357,24 @@ Harness 使用 AgentGo 的 `EndReasonLength`：当 length 恢复禁用或耗尽�
 `UsageInfo.ReasoningTokens` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
 不另计总 token 或费用；0 也可能表示供应商未报告。AgentGo Session 保留调用意图、截断恢复决定、
 stop reason 和 reasoning 用量，CCR 的成本投影继续保留这个分项。调用意图不等于服务端实际生效档位。
+
+
+## Model routing ownership
+
+CCR keeps stage model selection, effort, review budgets and recording. AgentGo's
+ChatModel and Router own model calls and endpoint failover; litellm owns vendor
+protocols. Native Harness messages carry opaque provider replay state through
+CCR without rebuilding SDK requests.
+
+A routed pool has one `routing.call_timeout_sec` budget (default 180 seconds).
+`routing.attempt_timeout_sec` optionally bounds each endpoint; when omitted the
+call budget is divided by the pool size so a stalled primary leaves fallback time.
+Provider retries are disabled inside the pool. Authentication/validation/context
+overflow and non-retryable failures stop failover. `finish_reason=length` remains
+an explicit truncated response, and CCR's existing continuation/wrap-up policy
+handles it. Endpoint attempts report safe labels, timing, timeout scope and
+failover decisions; these facts do not prove production latency improvements.
+
+CCR retains non-streaming completion calls. The final system message gets a cache
+breakpoint unless explicitly configured; the provider decides whether caching is
+supported. No cache-hit claim is inferred from prompt layout alone.

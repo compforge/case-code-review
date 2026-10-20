@@ -21,7 +21,7 @@ type ResolvedEndpoint struct {
 	AuthHeader string         // Anthropic auth header: "x-api-key" or "authorization"
 	Source     string         // human-readable config source label
 	ExtraBody  map[string]any // vendor-specific request body fields
-	MaxRetries int            // internal SDK retry budget (0 = SDK default, negative = disabled); not read from config — routed pools disable it so Router owns recovery
+	MaxRetries int            // internal SDK retry budget (non-positive = disabled); not read from config — routed pools disable it so Router owns recovery
 	Alias      string         // routing alias (routing.models[].alias); stamped onto comments this endpoint produces
 	Timeout    time.Duration  // per-request HTTP timeout; 0 means client default (5 min). A stalled call fails here instead of hanging the whole review.
 }
@@ -199,17 +199,19 @@ type modelRef struct {
 // and future per-pool knobs a stable home, and avoids colliding with
 // providers.<name>.models (which is a provider's model catalog, not a routing pool).
 type routingConfig struct {
-	Models         []modelRef `json:"models,omitempty"`           // ordered pool; index 0 is primary
-	Policy         string     `json:"policy,omitempty"`           // selection policy: priority or round-robin
-	CallTimeoutSec int        `json:"call_timeout_sec,omitempty"` // one logical completion across all fallovers; 0 = 180s default
+	Models            []modelRef `json:"models,omitempty"` // ordered pool; index 0 is primary
+	Policy            string     `json:"policy,omitempty"` // selection policy: priority or round-robin
+	AttemptTimeoutSec int        `json:"attempt_timeout_sec,omitempty"`
+	CallTimeoutSec    int        `json:"call_timeout_sec,omitempty"` // one logical completion across all fallovers; 0 = 180s default
 }
 
 // RoutingOptions is the resolved runtime policy for one model pool. CallTimeout is
 // shared by every fallover attempt in a logical completion; provider request
 // timeouts remain independent per endpoint.
 type RoutingOptions struct {
-	Policy      string
-	CallTimeout time.Duration
+	AttemptTimeout time.Duration
+	Policy         string
+	CallTimeout    time.Duration
 }
 
 type configFile struct {
@@ -328,7 +330,11 @@ func ResolveModelsWithModelOverride(configPath, modelOverride string) ([]Resolve
 				}
 				eps = append(eps, ep)
 			}
-			return eps, RoutingOptions{Policy: policy, CallTimeout: routingTimeout}, nil
+			attemptTimeout, err := validateTimeoutSec(cfg.Routing.AttemptTimeoutSec)
+			if err != nil {
+				return nil, RoutingOptions{}, fmt.Errorf("routing attempt: %w", err)
+			}
+			return eps, RoutingOptions{Policy: policy, CallTimeout: routingTimeout, AttemptTimeout: attemptTimeout}, nil
 		}
 	}
 

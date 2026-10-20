@@ -28,15 +28,18 @@ func TestPerCallEffortReachesOpenAIWire(t *testing.T) {
 			t.Fatal(err)
 		}
 		body := <-bodies
-		want, mode := effort, "enabled"
+		want := effort
 		switch effort {
 		case "off", "none":
-			want, mode = "none", "disabled"
+			want = "none"
 		case "auto", "":
 			want = "high"
 		}
-		if body["reasoning_effort"] != want || body["thinking"].(map[string]any)["type"] != mode || body["custom_flag"] != true {
+		if body["reasoning_effort"] != want || body["custom_flag"] != true {
 			t.Fatalf("effort=%q body=%v", effort, body)
+		}
+		if effort != "" && effort != "auto" && body["thinking"] != nil {
+			t.Fatal("raw thinking default overrode typed intent")
 		}
 		if response.Usage.ReasoningTokens != 32 || response.Usage.TotalTokens != 36 || response.Choices[0].FinishReason != "length" {
 			t.Fatalf("response=%+v", response)
