@@ -70,7 +70,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
-   所有模型调用统一使用 AgentGo 的 ChatModel、Message 与 CallConfig；领域消息通过 ToMessage 投影，CCR 不维护另一套模型消息 DTO。Session JSONL 必须记录实际 prompt、response、工具与完成状态。
+   所有模型调用统一通过 AgentGo ModelExecutor 消费 stream，使用 ChatModel、Message 与 CallConfig；领域消息通过 ToMessage 投影，CCR 不维护另一套模型消息 DTO。Session JSONL 必须记录实际 prompt、response、工具与完成状态；失败的 PartialMessage 与 usage 是诊断事实，不视为已提交消息。
    Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；一次 Review 只有一个业务 timeline，Stage 通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制到 timeline。
    Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
 5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。

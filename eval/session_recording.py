@@ -162,18 +162,20 @@ def _loop_records(path: Path, stages: dict, gaps: list[str]) -> list[dict]:
             facts.update(type="llm_request", request_no=rounds[execution_id], messages=[_wire(m) for m in request.get("messages", [])], tools=request.get("tools", []))
         elif kind == "model_exec_end":
             ended.add(_reference(ref))
-            if data.get("error"):
-                facts.update(type="llm_error", error=data["error"])
-            else:
-                message = data.get("message", {}).get("value", {})
-                wire = _wire(message)
-                facts.update(type="llm_response", content=wire.get("content", ""), reasoning=wire.get("reasoning_content", ""), stop_reason=message.get("stop_reason"), usage_source="missing")
-                usage = message.get("usage")
-                if usage:
-                    facts.update(model=usage.get("model"), usage_source="reported", usage={"prompt_tokens": usage.get("input", 0) + usage.get("cache_write", 0), "completion_tokens": usage.get("output", 0), "cache_read_tokens": usage.get("cache_read", 0), "cache_write_tokens": usage.get("cache_write", 0)})
-                facts["tool_calls"] = []
-                for call in wire.get("tool_calls", []):
-                    facts["tool_calls"].append({"id": call["id"], **call["function"]})
+            failed = bool(data.get("error"))
+            facts.update(type="llm_error" if failed else "llm_response", usage_source="missing")
+            if failed:
+                facts.update(error=data["error"], partial=True)
+            message = (data.get("partial_message") or data.get("message") or {}).get("value", {})
+            wire = _wire(message)
+            facts.update(content=wire.get("content", ""), reasoning=wire.get("reasoning_content", ""), stop_reason=message.get("stop_reason"))
+            usage = message.get("usage")
+            if usage:
+                facts.update(model=usage.get("model"), usage_source="reported", usage={"prompt_tokens": usage.get("input", 0) + usage.get("cache_write", 0), "completion_tokens": usage.get("output", 0), "reasoning_tokens": usage.get("reasoning", 0), "cache_read_tokens": usage.get("cache_read", 0), "cache_write_tokens": usage.get("cache_write", 0)})
+            facts["tool_calls"] = []
+            for call in wire.get("tool_calls", []):
+                facts["tool_calls"].append({"id": call["id"], **call["function"]})
+                if not failed:
                     key = (record.get("run_id"), call["id"])
                     calls[key], arguments[key] = facts["call_id"], call["function"]["arguments"]
         elif kind == "tool_exec_end":
@@ -325,14 +327,14 @@ class Recording:
             totals["pending_calls"] += kind == "llm_request"
             totals["error_calls"] += kind == "llm_error"
             usage = record.get("usage")
-            if kind == "llm_response" and isinstance(usage, dict):
-                for key in ("prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens"):
+            if isinstance(usage, dict):
+                for key in ("prompt_tokens", "completion_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens"):
                     totals[key] += usage.get(key, 0)
                 totals["estimated_usage"] += record.get("usage_source") == "estimated"
             else:
                 totals["unknown_usage"] += 1
         return {key: totals[key] for key in (
-            "rounds", "prompt_tokens", "completion_tokens", "cache_read_tokens", "cache_write_tokens",
+            "rounds", "prompt_tokens", "completion_tokens", "reasoning_tokens", "cache_read_tokens", "cache_write_tokens",
             "pending_calls", "error_calls", "estimated_usage", "unknown_usage")}
 
 

@@ -108,3 +108,14 @@ func TestHistorySummaryRejectsEmptyResponse(t *testing.T) {
 		t.Fatalf("empty response was accepted: %v", err)
 	}
 }
+
+func (m *captureSummaryModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	response, err := m.Generate(ctx, messages, tools, opts...)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan agentgo.StreamEvent, 1)
+	ch <- agentgo.StreamEvent{Type: agentgo.StreamEventDone, Message: response.Message}
+	close(ch)
+	return ch, nil
+}

@@ -125,7 +125,7 @@ type Execution struct {
 
 	recorder             *executionRecorder
 	contextManager       *contextManager
-	model                *chatModel
+	model                agentgo.ChatModel
 	tools                []agentgo.Tool
 	turns                *turnController
 	completionTool       string
@@ -187,28 +187,9 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		return nil, fmt.Errorf("harness: completion tool %q is not defined", e.completionTool)
 	}
 	e.recorder = newExecutionRecorder(spec, e.id)
-	taskType := spec.TaskType
-	if taskType == "" {
-		taskType = recording.MainTask
-	}
-	e.model = &chatModel{
-		client:    spec.ChatModel,
-		model:     spec.Model,
-		maxTokens: spec.MaxTokens,
-		recorder:  e.recorder,
-		taskType:  taskType,
-		events:    true,
-	}
-	contextModel := &chatModel{
-		client:    spec.ChatModel,
-		model:     spec.Model,
-		maxTokens: spec.MaxTokens,
-		recorder:  e.recorder,
-		taskType:  recording.MemoryCompressionTask,
-	}
-	e.contextManager = newContextManager(spec, contextModel)
+	e.model = spec.ChatModel
+	e.contextManager = newContextManager(spec, spec.ChatModel)
 	e.turns = newTurnController(spec)
-	e.model.observeUsage = e.turns.observeUsage
 	e.tools = adaptTools(spec.ToolDefs, spec.Tools, &e.completed, e.completionTool)
 	if len(spec.WrapUpAllowedTools) > 0 {
 		e.wrapUpAllowed = make(map[string]bool, len(spec.WrapUpAllowedTools))
@@ -266,7 +247,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 		BeforeTurn:               e.beforeTurn,
 		StopAfterTool:            e.shouldStopAfterTool,
 		StopGuard:                e.stopGuard,
-		ModelMiddlewares:         []agentgo.ModelMiddleware{timing.model, e.modelMiddleware()},
+		ModelExecutor:            agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{timing.model, e.modelMiddleware(), e.recordModel(), llm.ModelRequestMiddleware}}),
 		ToolMiddlewares:          []agentgo.ToolMiddleware{timing.tool, e.artifactMiddleware(), e.toolMiddleware()},
 	}
 
@@ -375,7 +356,7 @@ func (e *Execution) modelMiddleware() agentgo.ModelMiddleware {
 				defer cancel()
 			}
 		}
-		if execution.Kind == agentgo.ExecutionKindModel {
+		if execution.Kind == agentgo.ExecutionKindModel && execution.ParentID == "" {
 			e.prepareWrapUpRequest(execution)
 		}
 		result, err := next(callCtx, execution)

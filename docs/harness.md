@@ -375,8 +375,13 @@ an explicit truncated response, and CCR's existing continuation/wrap-up policy
 handles it. Endpoint attempts report safe labels, timing, timeout scope and
 failover decisions; these facts do not prove production latency improvements.
 
-CCR retains non-streaming completion calls. The final system message gets a cache
-breakpoint unless explicitly configured; the provider decides whether caching is
+CCR uses `ModelExecutor.Call` for Loop, summary and auxiliary calls. The provider
+request uses streaming; the executor returns the final result and publishes
+incremental facts. Harness recording, output budgets and lossless tool argument
+repair run as model middleware. `TransformContext.ModelExecutor` and staged
+artifacts pass through ContextManager and zone compaction explicitly. Summary
+progress never becomes a conversation message. The final system message gets a
+cache breakpoint unless explicitly configured; the provider decides whether caching is
 supported. No cache-hit claim is inferred from prompt layout alone.
 
 All CCR model callers use AgentGo `ChatModel`, `LLMRequest`, `LLMResponse` and
@@ -386,8 +391,10 @@ there is no CCR message DTO, native escape hatch, or reverse response conversion
 The Harness only repairs lossless tool argument drift, retaining native reasoning,
 stop reason, usage, metadata and opaque provider state.
 
-Auxiliary calls record the same native request and response in a local AgentGo
-Session. Router attempt facts are recorded there as well; loop executions use
+Auxiliary calls record the executor's native events in a local AgentGo Session,
+including the redacted request snapshot. Failed responses remain diagnostic
+`PartialMessage` evidence with reported usage; query, cost and Viewer surfaces
+retain it as an error, without executing or committing its tool calls. Router attempt facts are recorded there as well; loop executions use
 AgentGo's own event recording. The review budget charges each reported attempt
 once, including usage on failed attempts, with the final response as a fallback
 for models without attempt facts. Cache reads and reasoning are already included

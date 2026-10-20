@@ -188,20 +188,27 @@ func (t *Transcript) readLoop(path string) error {
 			if data.ModelCall != nil {
 				facts["model_call"] = data.ModelCall
 			}
+			facts["type"] = "llm_response"
+			body := data.Message
 			if data.Error != "" {
 				facts["type"] = "llm_error"
 				facts["error"] = data.Error
-				break
+				facts["partial"] = true
+				if len(data.PartialMessage) > 0 {
+					body = data.PartialMessage
+				}
 			}
-			if len(data.Message) == 0 {
+			if len(body) == 0 {
+				if data.Error != "" {
+					break
+				}
 				return nil
 			}
 			var message agentgo.AgentMessage
-			if err := codec.Unmarshal(data.Message, &message); err != nil {
+			if err := codec.Unmarshal(body, &message); err != nil {
 				return err
 			}
 			m, _ := message.ToMessage()
-			facts["type"] = "llm_response"
 			facts["content"] = m.TextContent()
 			facts["reasoning"] = m.ThinkingContent()
 			facts["stop_reason"] = m.StopReason
@@ -219,8 +226,10 @@ func (t *Transcript) readLoop(path string) error {
 					argument = call.ArgsRawText
 				}
 				toolCalls = append(toolCalls, map[string]any{"id": call.ID, "name": call.Name, "arguments": argument})
-				calls[record.RunID+"/"+call.ID] = CallID(facts)
-				args[record.RunID+"/"+call.ID] = argument
+				if data.Error == "" {
+					calls[record.RunID+"/"+call.ID] = CallID(facts)
+					args[record.RunID+"/"+call.ID] = argument
+				}
 			}
 			facts["tool_calls"] = toolCalls
 		case agentgo.EventModelResponse:

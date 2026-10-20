@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/timeline/store"
+	"github.com/qiankunli/case-code-review/internal/harness/msg"
 )
 
 // Stage boundaries are added to the shared Session fixture without inventing
@@ -324,5 +326,75 @@ func BenchmarkAgentHierarchyManyTurns(b *testing.B) {
 		for _, items := range turns {
 			agentHierarchy(items, source, "loop", stageOrder)
 		}
+	}
+}
+
+func TestFailedModelPartialEvidenceInCallAndAgentViews(t *testing.T) {
+	path, _ := stageAgentFixture(t)
+	sessionPath := filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", "loop.jsonl")
+	files, err := filepath.Glob(strings.TrimSuffix(path, ".jsonl") + ".sessions/*.jsonl")
+	if err != nil || len(files) != 1 {
+		t.Fatalf("files=%v err=%v", files, err)
+	}
+	sessionPath = files[0]
+	data, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	changed := false
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		payload, _ := record["data"].(map[string]any)
+		if record["type"] == "model_exec_end" && payload["error"] == "temporary provider failure" {
+			codec, err := msg.Codec()
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := codec.Marshal(agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock("unfinished diagnostic")}, Usage: &agentgo.Usage{Input: 4, Output: 9, Reasoning: 7}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload["partial_message"] = json.RawMessage(encoded)
+			delete(payload, "message")
+			changed = true
+		}
+		if err := json.NewEncoder(&output).Encode(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !changed {
+		t.Fatal("failed fixture call missing")
+	}
+	if err := os.WriteFile(sessionPath, output.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	call, err := loadStageCall(path, "run-1/model/model-1/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if call.Error == "" || call.Response == nil || call.Response.TextContent() != "unfinished diagnostic" || call.Response.Usage.Reasoning != 7 {
+		t.Fatalf("call=%+v", call)
+	}
+	view, err := loadStageAgent(path, "execution-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, turn := range view.Turns {
+		for _, item := range turn.Items {
+			if item.StageID == "run-1/model/model-1/1" {
+				found = true
+				if item.Error == "" || item.Usage == nil || item.Usage.Output != 9 {
+					t.Fatalf("item=%+v", item)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("failed attempt missing")
 	}
 }

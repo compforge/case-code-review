@@ -758,7 +758,7 @@ func TestContextCompactsOldestHistoryAndCommitsProjection(t *testing.T) {
 	manager := newContextManager(ExecutionSpec{
 		ContextWindow:    limit * 5 / 4,
 		FileEvictEnabled: true,
-	}, &chatModel{client: &scriptedClient{}})
+	}, &scriptedClient{})
 
 	projection, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {
@@ -828,7 +828,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 	roomy := newContextManager(ExecutionSpec{
 		ContextWindow:    full * 2,
 		FileEvictEnabled: true,
-	}, &chatModel{client: &scriptedClient{}})
+	}, &scriptedClient{})
 	fullProjection, err := roomy.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
@@ -846,7 +846,7 @@ func TestContextFirstProjectionLetsFileChooseOutline(t *testing.T) {
 	manager := newContextManager(ExecutionSpec{
 		ContextWindow:    limit * 5 / 4,
 		FileEvictEnabled: true,
-	}, &chatModel{client: &scriptedClient{}})
+	}, &scriptedClient{})
 
 	projection, err := manager.Compact(context.Background(), agentgo.TransformContext{Messages: messages}, agentgo.CompactReasonThreshold)
 	if err != nil {

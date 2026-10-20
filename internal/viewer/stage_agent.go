@@ -234,6 +234,9 @@ func readAgentUsage(path string, items map[agentsession.Ref][]*agentItemView) []
 			warn(fmt.Sprintf("record %d has invalid event data; skipped.", record.Seq), err)
 			return nil
 		}
+		if len(data.PartialMessage) > 0 {
+			data.Message = data.PartialMessage
+		}
 		var usage *agentgo.Usage
 		if record.Type == string(agentgo.EventModelExecEnd) && len(data.Message) > 0 {
 			response, err := recordedModelMessage(data.Message)

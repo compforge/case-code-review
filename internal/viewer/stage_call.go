@@ -88,6 +88,9 @@ func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
 			call.Request = data.ModelRequest
 		case agentgo.EventModelExecEnd:
 			call.Error = data.Error
+			if len(data.PartialMessage) > 0 {
+				data.Message = data.PartialMessage
+			}
 			if len(data.Message) > 0 {
 				response, err := recordedModelMessage(data.Message)
 				if err != nil {

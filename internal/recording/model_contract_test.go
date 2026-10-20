@@ -91,7 +91,7 @@ func TestAuxiliarySessionPreservesNativeContract(t *testing.T) {
 				model.err = errors.New("partial provider failure")
 			}
 			got, err := llm.Call(t.Context(), scope.RecordingModel(model, PlanTask), request)
-			if got != response || err != model.err {
+			if !reflect.DeepEqual(got.Message.Content, response.Message.Content) || !reflect.DeepEqual(got.Message.Usage, response.Message.Usage) || err != model.err {
 				t.Fatalf("response=%+v err=%v", got, err)
 			}
 			events := readAuxiliaryEvents(t, review)
@@ -109,12 +109,17 @@ func TestAuxiliarySessionPreservesNativeContract(t *testing.T) {
 						t.Fatalf("request changed in Session: %+v", event.ModelRequest)
 					}
 				}
-				if len(event.Message) > 0 {
+				body := event.Message
+				if failed {
+					body = event.PartialMessage
+				}
+				if len(body) > 0 {
 					responses++
 					var message agentgo.Message
-					if err := codec.Unmarshal(event.Message, &message); err != nil {
+					if err := codec.Unmarshal(body, &message); err != nil {
 						t.Fatal(err)
 					}
+					message.Timestamp = response.Message.Timestamp
 					if !reflect.DeepEqual(message, response.Message) {
 						t.Fatalf("response changed in Session: %+v", message)
 					}
@@ -126,6 +131,24 @@ func TestAuxiliarySessionPreservesNativeContract(t *testing.T) {
 			if requests != 1 || responses != 1 {
 				t.Fatalf("requests=%d responses=%d", requests, responses)
 			}
+			review.Finalize()
+			path, err := review.TranscriptPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			transcript, err := ReadReview(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cost := transcript.Costs().Total
+			wantErrors := 0
+			if failed {
+				wantErrors = 1
+			}
+			if cost.Calls != 1 || cost.Errors != wantErrors || cost.UnknownUsage != 0 || cost.Tokens.CompletionTokens != 7 || cost.Tokens.ReasoningTokens != 5 {
+				t.Fatalf("cost=%+v", cost)
+			}
+
 		})
 	}
 }
@@ -137,7 +160,8 @@ func TestAuxiliarySessionRecordsRouterAttempts(t *testing.T) {
 	}))
 	defer first.Close()
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"model":"test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"model\":\"test\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\ndata: [DONE]\n\n")
 	}))
 	defer second.Close()
 	model := llm.NewRouter([]llm.ResolvedEndpoint{{URL: first.URL, Model: "test", Alias: "primary"}, {URL: second.URL, Model: "test", Alias: "fallback"}}, llm.RoutingOptions{})

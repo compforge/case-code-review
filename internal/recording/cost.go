@@ -93,7 +93,7 @@ func (t *Transcript) Costs() CostReport {
 		case "llm_error":
 			cost.Errors = 1
 		}
-		if usage, ok := r["usage"].(map[string]any); ok && r["type"] == "llm_response" {
+		if usage, ok := r["usage"].(map[string]any); ok {
 			raw, _ := json.Marshal(usage)
 			_ = json.Unmarshal(raw, &cost.Tokens)
 			if r["usage_source"] == "estimated" {

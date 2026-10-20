@@ -69,11 +69,7 @@ func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, reques
 	if tr.ExecutionID != "" {
 		started := time.Now()
 		response, err := llm.Call(ctx, client, request)
-		if err != nil {
-			tr.SetError(err, time.Since(started))
-		} else {
-			tr.SetResponse(response, time.Since(started))
-		}
+		tr.SetResult(response, err, time.Since(started))
 		return response, err
 	}
 	var captureErr error
@@ -106,34 +102,16 @@ func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, reques
 	started := time.Now()
 	ref, _ := timeline.StageFromContext(ctx)
 	ctx, stage := telemetry.BeginTimelineStage(ctx, "llm.request", timeline.WithParent(ref.StageID), timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
-	if run != nil {
-		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelExecStart, Execution: &execution, Timestamp: started}))
-		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelRequest, Execution: &execution, ModelRequest: &request}))
-	}
-	if run != nil {
-		ctx = agentgo.ContextWithExecution(ctx, execution)
-		ctx = llm.ObserveAttempts(ctx, func(_ context.Context, fact agentgo.ModelAttempt, err error) {
-			reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelAttempt, Execution: &execution, ModelAttempt: &fact, Err: err}))
-		})
-	}
-	response, err := llm.Call(ctx, client, request)
+	executor := agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{llm.ModelRequestMiddleware}, OnEvent: func(event agentgo.Event) {
+		if run != nil {
+			reportCapture(run.Record(event))
+		}
+	}})
+	result, err := executor.Call(ctx, client, agentgo.ModelExecution{Execution: execution, Request: request})
+	response := &agentgo.LLMResponse{Message: result.Message}
 	finished := time.Now()
 	duration := finished.Sub(started)
-	if err == nil && response == nil {
-		err = fmt.Errorf("empty response")
-	}
-	if err != nil {
-		tr.SetError(err, duration)
-	} else {
-		tr.SetResponse(response, duration)
-	}
-	if run != nil {
-		var message agentgo.AgentMessage
-		if response != nil {
-			message = response.Message
-		}
-		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelExecEnd, Execution: &execution, Timestamp: finished, Message: message, Err: err}))
-	}
+	tr.SetResult(response, err, duration)
 	// Export the terminal stage after its response/error, even on cancellation.
 	telemetry.EndTimelineStage(ctx, stage, err, timeline.WithEndTime(finished), timeline.WithEndAttributes(timeline.Attribute{Key: "failure", Value: llm.DescribeError(err)}))
 	return response, err

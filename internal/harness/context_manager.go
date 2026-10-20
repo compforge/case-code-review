@@ -93,7 +93,7 @@ func (m *contextManager) Compact(
 	view = msg.LimitToolMessages(view)
 	changed := false
 	if m.engine != nil {
-		result, err := m.engine.Compact(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts}, reason)
+		result, err := m.engine.Compact(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts, ModelExecutor: input.ModelExecutor}, reason)
 		if err != nil {
 			// Failure must reach the Loop so it discards staged artifact CRUD.
 			// Returning a no-op here would accept a partially prepared collection.
@@ -122,7 +122,7 @@ func (m *contextManager) RecoverOverflow(
 	view = msg.LimitToolMessages(view)
 	usage, changed := m.estimateUsage(view), false
 	if m.engine != nil {
-		result, err := m.engine.RecoverOverflow(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts}, cause)
+		result, err := m.engine.RecoverOverflow(ctx, agentgo.TransformContext{Messages: view, Artifacts: input.Artifacts, ModelExecutor: input.ModelExecutor}, cause)
 		if err != nil {
 			return agentgo.ContextRecoveryResult{}, err
 		}
