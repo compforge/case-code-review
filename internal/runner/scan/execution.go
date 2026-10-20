@@ -26,6 +26,7 @@ import (
 type scanExecutor struct {
 	llmClient               llm.LLMClient
 	model                   string
+	reasoningEffort         string
 	tools                   *tool.Registry
 	toolDefs                []llm.ToolDef
 	session                 *recording.Review
@@ -55,6 +56,7 @@ func newScanExecutor(args Args, handler harness.ToolHandler) *scanExecutor {
 	return &scanExecutor{
 		llmClient:               args.LLMClient,
 		model:                   args.Model,
+		reasoningEffort:         args.Template.MainTask.ReasoningEffort,
 		tools:                   args.Tools,
 		toolDefs:                slices.Clone(args.MainToolDefs),
 		session:                 args.Session,
@@ -77,6 +79,7 @@ func (e *scanExecutor) Run(
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		LLMClient:               e.llmClient,
 		Model:                   e.model,
+		ReasoningEffort:         e.reasoningEffort,
 		Messages:                messages,
 		ToolDefs:                e.toolDefs,
 		Tools:                   e.tools,

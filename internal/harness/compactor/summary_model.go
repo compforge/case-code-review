@@ -174,6 +174,9 @@ func generateSummaryOnce(ctx context.Context, model agentgo.ChatModel, execution
 		return "", fmt.Errorf("summarization failed: %w", err)
 	}
 
+	if message.StopReason == agentgo.StopReasonLength {
+		return "", fmt.Errorf("summarization: %w", agentgo.ErrOutputTruncated)
+	}
 	summary := extractStoredSummary(message.TextContent())
 	if summary == "" {
 		return "", fmt.Errorf("summarization returned empty content")

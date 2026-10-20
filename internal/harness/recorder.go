@@ -159,6 +159,7 @@ func toolResultText(raw []byte) string {
 func addLLMUsage(total *llm.UsageInfo, usage *llm.UsageInfo) {
 	total.PromptTokens += usage.PromptTokens
 	total.CompletionTokens += usage.CompletionTokens
+	total.ReasoningTokens += usage.ReasoningTokens
 	total.CacheReadTokens += usage.CacheReadTokens
 	total.CacheWriteTokens += usage.CacheWriteTokens
 	total.TotalTokens += usage.TotalTokens

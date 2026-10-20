@@ -169,8 +169,9 @@ func TestZoneCompactorOversizedActiveDoesNotEraseFreshEvidence(t *testing.T) {
 }
 
 type summaryModel struct {
-	calls int
-	fail  bool
+	stopReason agentgo.StopReason
+	calls      int
+	fail       bool
 }
 
 func (m *summaryModel) Generate(_ context.Context, messages []agentgo.Message, _ []agentgo.ToolSpec, _ ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
@@ -178,7 +179,7 @@ func (m *summaryModel) Generate(_ context.Context, messages []agentgo.Message, _
 	if m.fail {
 		return nil, errors.New("summary failed")
 	}
-	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock("Confirmed evidence: older source checked; continue the current investigation.")}}}, nil
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, StopReason: m.stopReason, Content: []agentgo.ContentBlock{agentgo.TextBlock("Confirmed evidence: older source checked; continue the current investigation.")}}}, nil
 }
 func (*summaryModel) GenerateStream(context.Context, []agentgo.Message, []agentgo.ToolSpec, ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
 	return nil, errors.New("unused")
@@ -246,5 +247,14 @@ func TestPrimaryDiffProtectionFollowsTaskLifetime(t *testing.T) {
 				t.Fatal("primary diff entered history")
 			}
 		}
+	}
+}
+
+func TestSummaryCompactorRejectsTruncatedCheckpoint(t *testing.T) {
+	model := &summaryModel{stopReason: agentgo.StopReasonLength}
+	compactor := NewSummaryCompactor(SummaryConfig{Model: model})
+	result, err := compactor.Compact(t.Context(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{agentgo.UserMsg("source evidence")}}, .5)
+	if !errors.Is(err, agentgo.ErrOutputTruncated) || result != nil || model.calls != 1 {
+		t.Fatalf("result=%v error=%v calls=%d", result, err, model.calls)
 	}
 }

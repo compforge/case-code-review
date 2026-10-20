@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -187,5 +188,19 @@ func TestApplyLanguage_DefaultEnglish(t *testing.T) {
 	suffix := "\n\nAlways respond in English."
 	if !strings.HasSuffix(tpl.MainTask.Messages[0].Content, suffix) {
 		t.Errorf("MainTask system message does not end with %q", suffix)
+	}
+}
+
+func TestReasoningEffortSurvivesTaskTemplateResolution(t *testing.T) {
+	conv, err := resolveConversation(manifestConversation{ReasoningEffort: "minimal"})
+	if err != nil || conv.ReasoningEffort != "minimal" {
+		t.Fatalf("conversation=%+v error=%v", conv, err)
+	}
+	var task LlmConversation
+	if err := json.Unmarshal([]byte(`{"reasoning_effort":"max","messages":[]}`), &task); err != nil {
+		t.Fatal(err)
+	}
+	if task.ReasoningEffort != "max" {
+		t.Fatalf("effort=%q", task.ReasoningEffort)
 	}
 }

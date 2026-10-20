@@ -41,11 +41,12 @@ func (m *chatModel) Generate(
 	}
 
 	request := llm.ChatRequest{
-		Model:      m.model,
-		Messages:   toLLMMessages(messages),
-		Tools:      toLLMToolDefs(tools),
-		ToolChoice: toLLMToolChoice(cfg.ToolChoice),
-		MaxTokens:  maxTokens,
+		Model:           m.model,
+		Messages:        toLLMMessages(messages),
+		Tools:           toLLMToolDefs(tools),
+		ToolChoice:      toLLMToolChoice(cfg.ToolChoice),
+		MaxTokens:       maxTokens,
+		ReasoningEffort: string(cfg.ThinkingLevel),
 	}
 	record := m.recorder.beginModel(m.taskType, request.Messages)
 	started := time.Now()
@@ -198,6 +199,7 @@ func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentg
 			// CCR input includes cache creation; AgentGo adds CacheWrite separately.
 			Input:       int(max(0, resp.Usage.PromptTokens-resp.Usage.CacheWriteTokens)),
 			Output:      int(resp.Usage.CompletionTokens),
+			Reasoning:   int(resp.Usage.ReasoningTokens),
 			CacheRead:   int(resp.Usage.CacheReadTokens),
 			CacheWrite:  int(resp.Usage.CacheWriteTokens),
 			TotalTokens: int(resp.Usage.TotalTokens),

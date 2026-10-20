@@ -57,8 +57,9 @@ type manifestMessage struct {
 }
 
 type manifestConversation struct {
-	Timeout  int               `json:"timeout"`
-	Messages []manifestMessage `json:"messages"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	Timeout         int               `json:"timeout"`
+	Messages        []manifestMessage `json:"messages"`
 }
 
 type templateManifest struct {
@@ -75,7 +76,7 @@ type templateManifest struct {
 }
 
 func resolveConversation(m manifestConversation) (LlmConversation, error) {
-	conv := LlmConversation{Timeout: m.Timeout}
+	conv := LlmConversation{Timeout: m.Timeout, ReasoningEffort: m.ReasoningEffort}
 	conv.Messages = make([]ChatMessage, len(m.Messages))
 	for i, mm := range m.Messages {
 		data, err := templateFS.ReadFile("prompts/" + mm.PromptFile)
@@ -249,8 +250,9 @@ func (t *ScanTemplate) Validate() error {
 
 // LlmConversation mirrors LlmConversation from the Java side — a preset prompt with settings.
 type LlmConversation struct {
-	Timeout  int           `json:"timeout"`
-	Messages []ChatMessage `json:"messages"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
+	Timeout         int           `json:"timeout"`
+	Messages        []ChatMessage `json:"messages"`
 }
 
 // ChatMessage represents a single message in a conversation.

@@ -45,16 +45,21 @@ func ReLocateComment(
 	}
 
 	resp, err := client.CompletionsWithCtx(ctx, llm.ChatRequest{
-		Model:     modelName,
-		Messages:  messages,
-		MaxTokens: maxTokens,
+		Model:           modelName,
+		Messages:        messages,
+		MaxTokens:       maxTokens,
+		ReasoningEffort: task.ReasoningEffort,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Re-location LLM call failed for %s: %v\n", cm.Path, err)
 		return false, nil, messages
 	}
 
-	code := extractCodeBlock(resp.Content())
+	content, err := resp.CompleteText()
+	if err != nil {
+		return false, resp, messages
+	}
+	code := extractCodeBlock(content)
 	if code == "" {
 		return false, resp, messages
 	}

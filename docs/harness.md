@@ -334,3 +334,26 @@ Harness 变更至少验证：
 - [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
 - [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
 - [`unit-model.md`](unit-model.md) — Review Messages 所承载的 Unit / Clue 语义
+
+## 模型截断与推理控制
+
+Harness 使用 AgentGo 的 `EndReasonLength`：当 length 恢复禁用或耗尽时，Execution 输出
+`truncated` / `length`，保留部分响应和已报告用量，不归类为正常完成或网络错误。
+`ExecutionSpec.MaxLengthRecoveries` 为 nil 时沿用 AgentGo 默认 3 次，显式 0 禁用；恢复仍受
+原 deadline、MaxTurns 和 token budget 约束。Plan、重定位、scan 汇总/去重等单次任务使用
+`CompleteText`，拒绝 `length` / `max_tokens` 及只有 reasoning 的响应，不把半份正文当完整结果。
+上下文摘要被截断时也不提交为完整 checkpoint。
+
+任务模板的 `reasoning_effort` 可分别用于 `MAIN_TASK`、`PLAN_TASK`、`HYPOTHESIS_REVIEW_TASK`、
+`RE_LOCATION_TASK` 及 scan 的 `PROJECT_SUMMARY_TASK` / `DEDUP_TASK`。例如为 PLAN_TASK 增加
+`"reasoning_effort": "low"`，即可覆盖该次调用的 provider 默认；空值或 `auto` 保留默认。
+既有模板不自动降档。其他 effort 值原样传给目标模型，不把 minimal/medium/xhigh/max 压成 high/low。
+模型支持的值与别名映射由服务端校验。上下文压缩继续沿用原有的显式 off 策略，现在该设置会真正传到模型请求。
+
+`off` / `none` 表示关闭思考。OpenAI Chat Completions 使用 `reasoning_effort`，同时覆盖该 endpoint
+已配置的 `thinking` / `enable_thinking` 扩展；Anthropic 使用 `thinking` 与 `output_config.effort`。
+覆盖只影响单次调用，不修改共享默认配置；不会按模型名猜测私有档位映射。
+
+`UsageInfo.ReasoningTokens` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
+不另计总 token 或费用；0 也可能表示供应商未报告。AgentGo Session 保留调用意图、截断恢复决定、
+stop reason 和 reasoning 用量，CCR 的成本投影继续保留这个分项。调用意图不等于服务端实际生效档位。

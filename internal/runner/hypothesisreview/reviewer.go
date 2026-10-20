@@ -102,6 +102,7 @@ func Review(
 		SessionCodecOptions: hypothesisCodecOptions(),
 		LLMClient:           config.LLMClient,
 		Model:               config.Model,
+		ReasoningEffort:     config.Task.ReasoningEffort,
 		Messages:            messages,
 		ToolDefs:            ToolDefs(config.ToolDefs),
 		Tools:               config.Tools,

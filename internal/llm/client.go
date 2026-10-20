@@ -335,12 +335,13 @@ type ToolChoice struct {
 
 // ChatRequest represents the payload for a chat completion call.
 type ChatRequest struct {
-	Model       string      `json:"model"`
-	Messages    []Message   `json:"messages"`
-	Tools       []ToolDef   `json:"tools,omitempty"`
-	ToolChoice  *ToolChoice `json:"tool_choice,omitempty"`
-	Temperature *float64    `json:"temperature,omitempty"`
-	MaxTokens   int         `json:"max_tokens,omitempty"`
+	ReasoningEffort string      `json:"reasoning_effort,omitempty"` // empty/auto preserves provider defaults
+	Model           string      `json:"model"`
+	Messages        []Message   `json:"messages"`
+	Tools           []ToolDef   `json:"tools,omitempty"`
+	ToolChoice      *ToolChoice `json:"tool_choice,omitempty"`
+	Temperature     *float64    `json:"temperature,omitempty"`
+	MaxTokens       int         `json:"max_tokens,omitempty"`
 }
 
 // CompletionsWithCtx sends a chat completion request with context support for cancellation and timeout.
@@ -355,7 +356,7 @@ func (c *OpenAIClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) 
 	progress := newRequestTrace()
 	defer progress.finish()
 	opts := []openaiopt.RequestOption{openaiopt.WithMiddleware(progress.middleware)}
-	for k, v := range c.cfg.ExtraBody {
+	for k, v := range reasoningExtra(c.cfg.ExtraBody, req.ReasoningEffort, false) {
 		opts = append(opts, openaiopt.WithJSONSet(k, v))
 	}
 
@@ -457,6 +458,7 @@ func (c *OpenAIClient) mapOpenAIResponse(sdkResp *openai.ChatCompletion) *ChatRe
 			usage = &UsageInfo{
 				PromptTokens:     u.PromptTokens,
 				CompletionTokens: u.CompletionTokens,
+				ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
 				TotalTokens:      u.TotalTokens,
 			}
 		}
@@ -578,7 +580,7 @@ func (c *AnthropicClient) CompletionsWithCtx(ctx context.Context, req ChatReques
 	progress := newRequestTrace()
 	defer progress.finish()
 	opts := []option.RequestOption{option.WithMiddleware(progress.middleware)}
-	for k, v := range c.cfg.ExtraBody {
+	for k, v := range reasoningExtra(c.cfg.ExtraBody, req.ReasoningEffort, true) {
 		opts = append(opts, option.WithJSONSet(k, v))
 	}
 
