@@ -126,3 +126,27 @@ class NativeSessionTests(unittest.TestCase):
             loop.write_bytes(content)
             path.with_suffix(".timeline").unlink()
             self.assertNotEqual(review_sha256(path), original)
+
+    def test_failed_partial_message_retains_usage_without_becoming_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(__file__).parents[1] / "testdata/recording"
+            shutil.copytree(source, directory, dirs_exist_ok=True)
+            path = Path(directory) / "review.jsonl"
+            loop = path.with_suffix(".sessions") / "loop.jsonl"
+            records = [json.loads(line) for line in loop.read_text().splitlines()]
+            for record in records:
+                data = record.get("data", {})
+                if record["type"] == "model_exec_end" and data.get("error"):
+                    data["partial_message"] = {"type": "message", "value": {
+                        "role": "assistant", "content": [{"type": "text", "text": "unfinished"}],
+                        "usage": {"input": 4, "output": 9, "reasoning": 7},
+                    }}
+            loop.write_text("".join(json.dumps(record) + "\n" for record in records))
+            recording = Recording.read(path)
+            self.assertFalse(recording.gaps)
+            failed = next(r for r in recording.records if r["type"] == "llm_error")
+            self.assertTrue(failed["partial"])
+            self.assertEqual(failed["content"], "unfinished")
+            costs = recording.costs()
+            self.assertEqual((costs["rounds"], costs["error_calls"], costs["unknown_usage"]), (3, 1, 0))
+            self.assertEqual((costs["prompt_tokens"], costs["completion_tokens"], costs["reasoning_tokens"]), (244, 29, 7))

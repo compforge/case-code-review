@@ -109,7 +109,9 @@ func (c *ZoneCompactor) Compact(ctx context.Context, input agentgo.TransformCont
 				report.Stages = append(report.Stages, stage.Name)
 				used = true
 			}
-			next, stageErr := stage.Compactor.Compact(ctx, agentgo.TransformContext{Messages: part.messages, Artifacts: input.Artifacts}, ratio)
+			stageInput := input
+			stageInput.Messages = part.messages
+			next, stageErr := stage.Compactor.Compact(ctx, stageInput, ratio)
 			if stageErr != nil {
 				return nil, fmt.Errorf("history %s: %w", stage.Name, stageErr)
 			}

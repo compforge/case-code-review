@@ -19,7 +19,7 @@ func TestPerCallEffortReachesOpenAIWire(t *testing.T) {
 		}
 		bodies <- body
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"response","model":"test","choices":[{"message":{"role":"assistant","reasoning_content":"partial"},"finish_reason":"length"}],"usage":{"prompt_tokens":4,"completion_tokens":32,"total_tokens":36,"completion_tokens_details":{"reasoning_tokens":32}}}`))
+		writeModelStream(t, w, `{"id":"response","model":"test","choices":[{"message":{"role":"assistant","reasoning_content":"partial"},"finish_reason":"length"}],"usage":{"prompt_tokens":4,"completion_tokens":32,"total_tokens":36,"completion_tokens_details":{"reasoning_tokens":32}}}`)
 	}))
 	defer server.Close()
 	defaults := map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoning_effort": "high", "custom_flag": true}
@@ -61,7 +61,7 @@ func TestPerCallEffortReachesAnthropicWire(t *testing.T) {
 		}
 		bodies <- body
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"response","type":"message","role":"assistant","model":"test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":1}}`))
+		writeModelStream(t, w, `{"id":"response","type":"message","role":"assistant","model":"test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":1}}`)
 	}))
 	defer server.Close()
 	client := newAnthropicModel(ModelConfig{URL: server.URL, Model: "test", APIKey: "fake", ExtraBody: map[string]any{"thinking": map[string]any{"type": "adaptive"}, "output_config": map[string]any{"effort": "high", "custom_flag": true}}})

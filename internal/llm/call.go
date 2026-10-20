@@ -8,15 +8,17 @@ import (
 
 // Call dispatches the exact native request captured by the caller's recorder.
 func Call(ctx context.Context, model agentgo.ChatModel, request agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
-	var opts []agentgo.CallOption
-	if request.Config != nil {
-		config := *request.Config
-		opts = append(opts, func(c *agentgo.CallConfig) { *c = config })
+	executor := agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{ModelRequestMiddleware}})
+	result, err := executor.Call(ctx, model, agentgo.ModelExecution{
+		Execution: agentgo.Execution{ID: "model-1", Kind: agentgo.ExecutionKindModel, Attempt: 1}, Request: request,
+	})
+	if err != nil && result.Message.Role == "" && len(result.Message.Content) == 0 && result.Message.Usage == nil {
+		return nil, err
 	}
-	return model.Generate(ctx, request.Messages, request.Tools, opts...)
+	return &agentgo.LLMResponse{Message: result.Message}, err
 }
 
-// CompletionStream exposes CCR's non-streaming call mode through ChatModel.
+// CompletionStream adapts an aggregate-only model or test fixture to ChatModel.
 // A failed completion may still carry partial content and reported usage.
 func CompletionStream(ctx context.Context, generate func() (*agentgo.LLMResponse, error)) (<-chan agentgo.StreamEvent, error) {
 	events := make(chan agentgo.StreamEvent, 1)

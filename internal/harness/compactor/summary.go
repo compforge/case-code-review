@@ -56,7 +56,7 @@ func (s *SummaryCompactor) Compact(ctx context.Context, input agentgo.TransformC
 	// A partition can have several history segments under the same parent.
 	// Give each call its own coordinate so usage and retries cannot collide.
 	execution := summaryExecution(ctx, fmt.Sprintf("summary-history-%d", s.sequence.Add(1)))
-	summary, err := generateSummary(ctx, s.cfg.Model, execution, prompts,
+	summary, err := generateSummary(ctx, s.cfg.Model, input, execution, prompts,
 		stripImageBlocks(source), strings.Join(previous, "\n\n"),
 		agentgo.WithMaxTokens(max(1, int(float64(reserve)*0.8))), agentgo.WithThinking(agentgo.ThinkingOff))
 	if err != nil {

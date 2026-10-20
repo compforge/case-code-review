@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +30,7 @@ func TestAgentGoRoutingOwnsModelIdentityAndTimeout(t *testing.T) {
 		if body["model"] != "backup-model" || body["reasoning_effort"] != "medium" || body["prompt_cache_key"] != "conversation" || body["max_tokens"] != float64(456) {
 			t.Errorf("lost routed configuration: %v", body)
 		}
-		fmt.Fprint(w, `{"model":"backup-model","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
+		writeModelStream(t, w, `{"model":"backup-model","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
 	}))
 	defer second.Close()
 	client := NewRouter([]ResolvedEndpoint{
@@ -61,9 +60,9 @@ func TestAgentGoProviderWireCacheAndTools(t *testing.T) {
 				}
 				bodies <- body
 				if protocol == "anthropic" {
-					fmt.Fprint(w, `{"type":"message","role":"assistant","model":"test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}`)
+					writeModelStream(t, w, `{"type":"message","role":"assistant","model":"test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":1,"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}`)
 				} else {
-					fmt.Fprint(w, `{"model":"test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+					writeModelStream(t, w, `{"model":"test","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 				}
 			}))
 			defer server.Close()

@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,20 +26,21 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 			t.Error(err)
 		}
 		bodies = append(bodies, body)
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", "text/event-stream")
 		if len(bodies) == 1 {
-			_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":"visible answer","reasoning_content":"retained reasoning","tool_calls":[{"id":"read-1","type":"function","function":{"name":"inspect","arguments":"{}"}}]}}],"usage":{"prompt_tokens":20,"completion_tokens":7,"total_tokens":27,"prompt_tokens_details":{"cached_tokens":12}}}`))
+			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", `{"model":"review-model","choices":[{"index":0,"finish_reason":"tool_calls","delta":{"role":"assistant","content":"visible answer","reasoning_content":"retained reasoning","tool_calls":[{"index":0,"id":"read-1","type":"function","function":{"name":"inspect","arguments":"{}"}}]}}],"usage":{"prompt_tokens":20,"completion_tokens":7,"total_tokens":27,"prompt_tokens_details":{"cached_tokens":12}}}`)
 		} else {
-			_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":30,"completion_tokens":1,"total_tokens":31}}`))
+			_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", `{"model":"review-model","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":"done"}}],"usage":{"prompt_tokens":30,"completion_tokens":1,"total_tokens":31}}`)
 		}
 	}))
 	defer server.Close()
-	model := &chatModel{
-		client: llm.NewModel(llm.ResolvedEndpoint{URL: server.URL, Model: "review-model"}),
-		model:  "review-model", maxTokens: 16384,
-		recorder: newExecutionRecorder(ExecutionSpec{}, "roundtrip"),
+	model := llm.NewModel(llm.ResolvedEndpoint{URL: server.URL, Model: "review-model"})
+	execution, err := NewExecution(ExecutionSpec{ChatModel: model, MaxTokens: 16384, Messages: []agentgo.AgentMessage{agentgo.UserMsg("work")}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	first, err := model.Generate(t.Context(), []agentgo.Message{agentgo.UserMsg("review")}, nil)
+	executor := agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{execution.recordModel()}})
+	first, err := executor.Call(t.Context(), model, agentgo.ModelExecution{Request: agentgo.LLMRequest{Messages: []agentgo.Message{agentgo.UserMsg("review")}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +50,9 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 	if first.Message.Usage.CacheRead != 12 {
 		t.Fatalf("cache usage = %+v", first.Message.Usage)
 	}
-	_, err = model.Generate(t.Context(), []agentgo.Message{
+	_, err = executor.Call(t.Context(), model, agentgo.ModelExecution{Request: agentgo.LLMRequest{Messages: []agentgo.Message{
 		agentgo.UserMsg("review"), first.Message, agentgo.ToolResultMsg("read-1", json.RawMessage(`"source"`), false),
-	}, nil)
+	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +61,9 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 		t.Fatalf("wire message = %#v", assistant)
 	}
 	for _, body := range bodies {
+		if body["stream"] != true {
+			t.Fatal("provider request is not streaming")
+		}
 		if body["max_tokens"] != float64(16384) {
 			t.Fatalf("output budget = %#v", body["max_tokens"])
 		}
@@ -112,8 +117,8 @@ func TestSDKExplorationTimeoutResumesWrapUp(t *testing.T) {
 		if !strings.Contains(text, "finish review now") {
 			t.Error("wrap-up request missing completion prompt")
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"review complete"}}]}`))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", `{"model":"review-model","choices":[{"index":0,"finish_reason":"stop","delta":{"role":"assistant","content":"review complete"}}]}`)
 	}))
 	defer server.Close()
 	client := llm.NewModel(llm.ResolvedEndpoint{URL: server.URL, Model: "review-model", Timeout: 5 * time.Second})

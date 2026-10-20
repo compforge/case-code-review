@@ -119,12 +119,12 @@ func (p summaryPrompts) update() string {
 
 // generateSummary calls the ChatModel to produce a conversation summary.
 // If previousSummary is non-empty, uses incremental update prompt.
-func generateSummary(ctx context.Context, model agentgo.ChatModel, execution agentgo.Execution, prompts summaryPrompts, msgs []agentgo.AgentMessage, previousSummary string, opts ...agentgo.CallOption) (string, error) {
+func generateSummary(ctx context.Context, model agentgo.ChatModel, input agentgo.TransformContext, execution agentgo.Execution, prompts summaryPrompts, msgs []agentgo.AgentMessage, previousSummary string, opts ...agentgo.CallOption) (string, error) {
 	const maxRetries = 3
 	current := append([]agentgo.AgentMessage(nil), msgs...)
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		summary, err := generateSummaryOnce(ctx, model, execution.WithAttempt(attempt+1), prompts, current, previousSummary, opts...)
+		summary, err := generateSummaryOnce(ctx, model, input, execution.WithAttempt(attempt+1), prompts, current, previousSummary, opts...)
 		if err == nil {
 			return summary, nil
 		}
@@ -144,7 +144,7 @@ func generateSummary(ctx context.Context, model agentgo.ChatModel, execution age
 	return "", fmt.Errorf("summarization failed")
 }
 
-func generateSummaryOnce(ctx context.Context, model agentgo.ChatModel, execution agentgo.Execution, prompts summaryPrompts, msgs []agentgo.AgentMessage, previousSummary string, opts ...agentgo.CallOption) (string, error) {
+func generateSummaryOnce(ctx context.Context, model agentgo.ChatModel, input agentgo.TransformContext, execution agentgo.Execution, prompts summaryPrompts, msgs []agentgo.AgentMessage, previousSummary string, opts ...agentgo.CallOption) (string, error) {
 	var fresh []agentgo.AgentMessage
 	for _, message := range msgs {
 		if _, ok := message.(agentcontext.ContextSummary); !ok {
@@ -166,7 +166,7 @@ func generateSummaryOnce(ctx context.Context, model agentgo.ChatModel, execution
 			prompts.summary()
 	}
 
-	message, err := executeSummaryModel(ctx, model, execution, []agentgo.Message{
+	message, err := executeSummaryModel(ctx, model, input, execution, []agentgo.Message{
 		agentgo.SystemMsg(prompts.system()),
 		agentgo.UserMsg(userPrompt),
 	}, opts...)
@@ -185,19 +185,12 @@ func generateSummaryOnce(ctx context.Context, model agentgo.ChatModel, execution
 }
 
 // executeSummaryModel keeps summary calls on AgentGo's model execution path so
-// they inherit the enclosing Loop's middleware and observable coordinates.
-func executeSummaryModel(ctx context.Context, model agentgo.ChatModel, execution agentgo.Execution, messages []agentgo.Message, opts ...agentgo.CallOption) (agentgo.Message, error) {
-	call := agentgo.ModelExecution{
-		Execution: execution,
-		Request:   agentgo.LLMRequest{Messages: messages},
-		Options:   opts,
-	}
-	result, err := agentgo.ExecuteModel(ctx, call, func(ctx context.Context, execution agentgo.ModelExecution) (agentgo.ModelResult, error) {
-		response, err := model.Generate(ctx, execution.Request.Messages, execution.Request.Tools, execution.Options...)
-		if err != nil {
-			return agentgo.ModelResult{}, err
-		}
-		return agentgo.ModelResult{Message: response.Message}, nil
+// they receive the Loop executor and staged materials explicitly.
+func executeSummaryModel(ctx context.Context, model agentgo.ChatModel, input agentgo.TransformContext, execution agentgo.Execution, messages []agentgo.Message, opts ...agentgo.CallOption) (agentgo.Message, error) {
+	config := agentgo.ResolveCallConfig(opts)
+	result, err := input.ModelExecutor.Call(ctx, model, agentgo.ModelExecution{
+		Execution: execution, Artifacts: input.Artifacts,
+		Request: agentgo.LLMRequest{Messages: messages, Config: &config},
 	})
 	return result.Message, err
 }

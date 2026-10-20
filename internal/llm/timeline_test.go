@@ -3,7 +3,6 @@ package llm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,7 +39,7 @@ func TestModelCallFallbackDoesNotRecordTransportStages(t *testing.T) {
 	defer failing.Close()
 	success := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
+		writeModelStream(t, w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
 	}))
 	defer success.Close()
 	router := NewRouter([]ResolvedEndpoint{
@@ -102,7 +101,7 @@ func TestModelCallDoesNotRetryInsideProvider(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"}}]}`)
+		writeModelStream(t, w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"}}]}`)
 	}))
 	defer server.Close()
 	client := newOpenAIModel(ModelConfig{URL: server.URL + "/v1/chat/completions", Model: "test"})

@@ -82,7 +82,7 @@ func TestCompressionBudgetStopsBeforeCallingSummaryModel(t *testing.T) {
 	// Force the summary stage to ensure budget exhaustion is not swallowed as a
 	// best-effort compression failure followed by another main model request.
 	execution.contextManager.engine = agentcontext.NewEngine(agentcontext.EngineConfig{ContextWindow: 100, ReserveTokens: 20,
-		Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{Model: &chatModel{client: budget, recorder: execution.recorder, taskType: recording.MemoryCompressionTask}})})
+		Compactor: compactor.NewSummaryCompactor(compactor.SummaryConfig{Model: budget})})
 	_, err = execution.contextManager.Compact(t.Context(), agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}}, agentgo.CompactReasonThreshold)
 	if !errors.Is(err, llm.ErrTokenBudget) || len(client.Requests()) != 1 {
 		t.Fatalf("compression error=%v calls=%d", err, len(client.Requests()))

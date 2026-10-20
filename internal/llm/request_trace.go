@@ -1,7 +1,10 @@
 package llm
 
 import (
+	"context"
 	"io"
+
+	"github.com/compforge/agentgo"
 	"net/http"
 	"net/http/httptrace"
 	"sync"
@@ -20,6 +23,7 @@ const (
 // requestTrace retains the latest transport phase for error diagnostics only.
 // The business timeline owns model calls, not HTTP spans.
 type requestTrace struct {
+	mu       sync.Mutex
 	current  *httpAttempt
 	attempts int
 }
@@ -35,9 +39,11 @@ type httpAttempt struct {
 func newRequestTrace() *requestTrace { return &requestTrace{} }
 
 func (p *requestTrace) middleware(req *http.Request, next func(*http.Request) (*http.Response, error)) (*http.Response, error) {
+	p.mu.Lock()
 	p.attempts++
 	a := &httpAttempt{started: time.Now(), facts: map[string]any{}}
 	p.current = a
+	p.mu.Unlock()
 	a.transition(requestPhaseConnectionPool)
 	trace := &httptrace.ClientTrace{
 		GetConn:      func(string) { a.transition(requestPhaseConnectionPool) },
@@ -116,6 +122,8 @@ func (a *httpAttempt) finish() {
 }
 
 func (p *requestTrace) finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.current != nil {
 		p.current.finish()
 	}
@@ -142,6 +150,8 @@ func (b *tracedBody) Close() error {
 
 // attributes projects the final HTTP attempt for the stable failure taxonomy.
 func (p *requestTrace) attributes() map[string]any {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	attrs := map[string]any{"request_phase": requestPhaseUnknown, "http_attempts": p.attempts, "connection_reused": false, "request_written": false, "response_started": false}
 	if p.current == nil {
 		return attrs
@@ -155,4 +165,17 @@ func (p *requestTrace) attributes() map[string]any {
 		attrs[key] = value
 	}
 	return attrs
+}
+
+// ModelRequestMiddleware keeps transport phase evidence available even when the
+// executor returns on cancellation before the provider goroutine terminates.
+func ModelRequestMiddleware(ctx context.Context, call agentgo.ModelExecution, next agentgo.ModelExecuteFunc) (agentgo.ModelResult, error) {
+	progress := newRequestTrace()
+	ctx = context.WithValue(ctx, requestTraceKey{}, progress)
+	result, err := next(ctx, call)
+	progress.finish()
+	if err != nil && DescribeError(err) == nil && progress.attributes()["http_attempts"] != 0 {
+		err = annotateRequestError(ctx, err, progress)
+	}
+	return result, err
 }

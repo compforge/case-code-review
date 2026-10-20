@@ -18,7 +18,7 @@ import (
 )
 
 func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
-	manager := newContextManager(ExecutionSpec{ContextWindow: 100, FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}})
+	manager := newContextManager(ExecutionSpec{ContextWindow: 100, FileEvictEnabled: true}, &scriptedClient{})
 	input := []agentgo.AgentMessage{msg.FixedText("user", strings.Repeat("required task constraints ", 200))}
 	projection, err := manager.Compact(t.Context(), agentgo.TransformContext{Messages: input}, agentgo.CompactReasonThreshold)
 	if !errors.Is(err, compactor.ErrBudget) || projection.Changed {
@@ -33,7 +33,7 @@ func TestContextZoneReportUsesTimeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := timeline.NewStageContext(t.Context(), timeline.StageRef{TimelineID: id})
-	manager := newContextManager(ExecutionSpec{ContextWindow: 400, FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}})
+	manager := newContextManager(ExecutionSpec{ContextWindow: 400, FileEvictEnabled: true}, &scriptedClient{})
 	_, err := manager.Compact(ctx, agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))}}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestContextCompactionReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := newContextCompactor(ExecutionSpec{FileEvictEnabled: true}, &chatModel{client: &scriptedClient{}}, before, before/5)
+	policy := newContextCompactor(ExecutionSpec{FileEvictEnabled: true}, &scriptedClient{}, before, before/5)
 	view, err := policy.Compact(t.Context(), agentgo.TransformContext{Messages: input}, fixture.Ratio)
 	if err != nil {
 		t.Fatal(err)

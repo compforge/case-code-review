@@ -80,6 +80,50 @@ func (c *configuredModel) Generate(ctx context.Context, messages []agentgo.Messa
 	if c.model == nil {
 		return nil, fmt.Errorf("llm: endpoint requires a model")
 	}
+	messages = cacheMessages(messages)
+	progress, _ := ctx.Value(requestTraceKey{}).(*requestTrace)
+	if progress == nil {
+		progress = newRequestTrace()
+	}
+	defer progress.finish()
+	ctxWithTrace := context.WithValue(ctx, requestTraceKey{}, progress)
+	response, err := c.model.Generate(ctxWithTrace, messages, tools, opts...)
+	if err != nil {
+		return response, annotateRequestError(ctx, err, progress)
+	}
+	if response == nil {
+		return nil, fmt.Errorf("llm: model returned no response")
+	}
+	return response, nil
+}
+func (c *configuredModel) SupportsTools() bool { return c.model != nil && c.model.SupportsTools() }
+func (c *configuredModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.model == nil {
+		return nil, fmt.Errorf("llm: endpoint requires a model")
+	}
+	progress, _ := ctx.Value(requestTraceKey{}).(*requestTrace)
+	if progress == nil {
+		progress = newRequestTrace()
+	}
+	traced := context.WithValue(ctx, requestTraceKey{}, progress)
+	stream, err := c.model.GenerateStream(traced, cacheMessages(messages), tools, opts...)
+	if err != nil {
+		progress.finish()
+		return nil, annotateRequestError(ctx, err, progress)
+	}
+	return observeStream(ctx, stream, func(message agentgo.Message, err error, sourceEnded bool) (agentgo.Message, error) {
+		progress.finish()
+		if err != nil {
+			err = annotateRequestError(ctx, err, progress)
+		}
+		return message, err
+	}), nil
+}
+
+func cacheMessages(messages []agentgo.Message) []agentgo.Message {
 	// Cache policy changes a request-local copy, never the accepted history.
 	messages = append([]agentgo.Message(nil), messages...)
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -95,21 +139,7 @@ func (c *configuredModel) Generate(ctx context.Context, messages []agentgo.Messa
 			break
 		}
 	}
-	progress := newRequestTrace()
-	defer progress.finish()
-	ctxWithTrace := context.WithValue(ctx, requestTraceKey{}, progress)
-	response, err := c.model.Generate(ctxWithTrace, messages, tools, opts...)
-	if err != nil {
-		return response, annotateRequestError(ctx, err, progress)
-	}
-	if response == nil {
-		return nil, fmt.Errorf("llm: model returned no response")
-	}
-	return response, nil
-}
-func (c *configuredModel) SupportsTools() bool { return c.model != nil && c.model.SupportsTools() }
-func (c *configuredModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
-	return CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
+	return messages
 }
 
 type requestTraceKey struct{}

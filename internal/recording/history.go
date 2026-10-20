@@ -434,6 +434,22 @@ func copyMessages(messages []agentgo.Message) []agentgo.Message {
 // SetResponse updates scope counters using reported usage when available and
 // local token estimation otherwise. It does not retain the response.
 func (tr *TaskRecord) SetResponse(resp *agentgo.LLMResponse, duration time.Duration) {
+	tr.setResponse(resp, duration, true)
+}
+
+// SetResult retains reported failure usage without counting partial tool calls.
+func (tr *TaskRecord) SetResult(resp *agentgo.LLMResponse, err error, duration time.Duration) {
+	if err == nil {
+		tr.SetResponse(resp, duration)
+		return
+	}
+	if resp != nil && resp.Message.Usage != nil {
+		tr.setResponse(resp, 0, false)
+	}
+	tr.SetError(err, duration)
+}
+
+func (tr *TaskRecord) setResponse(resp *agentgo.LLMResponse, duration time.Duration, countTools bool) {
 	if resp == nil {
 		tr.SetError(fmt.Errorf("empty response"), duration)
 		return
@@ -476,8 +492,10 @@ func (tr *TaskRecord) SetResponse(resp *agentgo.LLMResponse, duration time.Durat
 		ss.tokens.ReasoningTokens += usage.ReasoningTokens
 		ss.tokens.CacheReadTokens += usage.CacheReadTokens
 		ss.tokens.CacheWriteTokens += usage.CacheWriteTokens
-		for _, call := range resp.Message.ToolCalls() {
-			ss.toolCalls[call.Name]++
+		if countTools {
+			for _, call := range resp.Message.ToolCalls() {
+				ss.toolCalls[call.Name]++
+			}
 		}
 	}
 }

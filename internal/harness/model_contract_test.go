@@ -51,14 +51,18 @@ func TestHarnessPreservesNativeHistoryAndCallSettings(t *testing.T) {
 	thinking.ProviderState = state
 	response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{thinking, agentgo.TextBlock("partial")}, StopReason: agentgo.StopReasonLength, Usage: &agentgo.Usage{Input: 4, Output: 9, Reasoning: 7}, Metadata: map[string]any{"route_endpoint": "primary"}}}
 	client := &scriptedClient{responses: []*agentgo.LLMResponse{response}}
-	model := &chatModel{client: client, recorder: newExecutionRecorder(ExecutionSpec{}, "native")}
-	messages := []agentgo.Message{response.Message, agentgo.UserMsg("continue")}
-	config := agentgo.CallConfig{ThinkingLevel: "xhigh", ThinkingBudget: 128, MaxTokens: 256, PromptCacheKey: "stable-prefix", SessionID: "session", ToolChoice: "none", ResponseFormat: &agentgo.ResponseFormat{Type: agentgo.ResponseFormatJSONObject}}
-	result, err := model.Generate(t.Context(), messages, nil, func(c *agentgo.CallConfig) { *c = config })
+	execution, err := NewExecution(ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{agentgo.UserMsg("work")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result, response) {
+	executor := agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{execution.recordModel()}})
+	messages := []agentgo.Message{response.Message, agentgo.UserMsg("continue")}
+	config := agentgo.CallConfig{ThinkingLevel: "xhigh", ThinkingBudget: 128, MaxTokens: 256, PromptCacheKey: "stable-prefix", SessionID: "session", ToolChoice: "none", ResponseFormat: &agentgo.ResponseFormat{Type: agentgo.ResponseFormatJSONObject}}
+	result, err := executor.Call(t.Context(), client, agentgo.ModelExecution{Request: agentgo.LLMRequest{Messages: messages, Config: &config}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Message.Content, response.Message.Content) || !reflect.DeepEqual(result.Message.Usage, response.Message.Usage) {
 		t.Fatalf("native response changed: %+v", result)
 	}
 	request := client.Requests()[0]

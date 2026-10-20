@@ -66,13 +66,13 @@ func (c *BudgetModel) Generate(ctx context.Context, messages []agentgo.Message, 
 	if err := c.Check(); err != nil {
 		return nil, err
 	}
-	attempted := false
+	var attempted atomic.Bool
 	ctx = ObserveAttempts(ctx, func(_ context.Context, attempt agentgo.ModelAttempt, _ error) {
-		attempted = true
+		attempted.Store(true)
 		c.addUsage(attempt.Usage)
 	})
 	response, err := c.client.Generate(ctx, messages, tools, opts...)
-	if !attempted && response != nil {
+	if !attempted.Load() && response != nil {
 		c.addUsage(response.Message.Usage)
 	}
 	return response, err
@@ -91,5 +91,22 @@ func (c *BudgetModel) addUsage(usage *agentgo.Usage) {
 
 func (c *BudgetModel) SupportsTools() bool { return c.client.SupportsTools() }
 func (c *BudgetModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
-	return CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
+	if err := c.Check(); err != nil {
+		return nil, err
+	}
+	var attempted atomic.Bool
+	ctx = ObserveAttempts(ctx, func(_ context.Context, attempt agentgo.ModelAttempt, _ error) {
+		attempted.Store(true)
+		c.addUsage(attempt.Usage)
+	})
+	stream, err := c.client.GenerateStream(ctx, messages, tools, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return observeStream(ctx, stream, func(message agentgo.Message, err error, sourceEnded bool) (agentgo.Message, error) {
+		if sourceEnded && !attempted.Load() {
+			c.addUsage(message.Usage)
+		}
+		return message, err
+	}), nil
 }

@@ -181,8 +181,15 @@ func (m *summaryModel) Generate(_ context.Context, messages []agentgo.Message, _
 	}
 	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, StopReason: m.stopReason, Content: []agentgo.ContentBlock{agentgo.TextBlock("Confirmed evidence: older source checked; continue the current investigation.")}}}, nil
 }
-func (*summaryModel) GenerateStream(context.Context, []agentgo.Message, []agentgo.ToolSpec, ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
-	return nil, errors.New("unused")
+func (m *summaryModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	response, err := m.Generate(ctx, messages, tools, opts...)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan agentgo.StreamEvent, 1)
+	ch <- agentgo.StreamEvent{Type: agentgo.StreamEventDone, Message: response.Message}
+	close(ch)
+	return ch, nil
 }
 func (*summaryModel) SupportsTools() bool { return false }
 

@@ -11,66 +11,40 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
-// chatModel adds CCR recording and tool-argument normalization around the
-// AgentGo provider/router. Native messages and call options cross unchanged.
-type chatModel struct {
-	client       agentgo.ChatModel
-	model        string
-	maxTokens    int
-	recorder     *executionRecorder
-	taskType     recording.TaskType
-	events       bool
-	observeUsage func(*agentgo.Usage)
+// recordModel applies CCR call policy inside the shared AgentGo executor.
+// Provider streaming, request snapshots and execution lifecycle belong to AgentGo.
+func (e *Execution) recordModel() agentgo.ModelMiddleware {
+	return func(ctx context.Context, call agentgo.ModelExecution, next agentgo.ModelExecuteFunc) (agentgo.ModelResult, error) {
+		conversation := call.ParentID == ""
+		taskType := e.spec.TaskType
+		if !conversation {
+			taskType = recording.MemoryCompressionTask
+		}
+		if call.Request.Config.MaxTokens == 0 {
+			call.Request.Config.MaxTokens = e.spec.MaxTokens
+		}
+		record := e.recorder.beginModel(taskType, call.Request.Messages)
+		started := time.Now()
+		result, err := next(ctx, call)
+		response := &agentgo.LLMResponse{Message: result.Message}
+		duration := time.Since(started)
+		if record != nil {
+			record.SetResult(response, err, duration)
+		}
+		e.recorder.finishModel(response, duration, conversation, err == nil)
+		if conversation {
+			e.turns.observeUsage(result.Message.Usage)
+		}
+		if err != nil {
+			return result, err
+		}
+		result.Message, err = normalizeResponse(response, call.Request.Tools)
+		return result, err
+	}
 }
-
-func (m *chatModel) Generate(
-	ctx context.Context,
-	messages []agentgo.Message,
-	tools []agentgo.ToolSpec,
-	opts ...agentgo.CallOption,
-) (*agentgo.LLMResponse, error) {
-	cfg := agentgo.ResolveCallConfig(opts)
-	maxTokens := cfg.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = m.maxTokens
-	}
-
-	cfg.MaxTokens = maxTokens
-	request := agentgo.LLMRequest{Messages: messages, Tools: tools, Config: &cfg}
-	record := m.recorder.beginModel(m.taskType, request.Messages)
-	started := time.Now()
-	resp, err := record.Call(ctx, m.client, request)
-	if resp != nil && m.observeUsage != nil {
-		m.observeUsage(resp.Message.Usage)
-	}
-	m.recorder.finishModel(resp, time.Since(started), m.events)
-	if err != nil {
-		return resp, err
-	}
-	message, err := normalizeResponse(resp, tools)
-	if err != nil {
-		return nil, err
-	}
-	return &agentgo.LLMResponse{Message: message}, nil
-}
-
-// CCR records non-streaming completions. A one-event stream adapts that call
-// mode to AgentGo's loop contract; it does not stream partial provider output.
-func (m *chatModel) GenerateStream(
-	ctx context.Context,
-	messages []agentgo.Message,
-	tools []agentgo.ToolSpec,
-	opts ...agentgo.CallOption,
-) (<-chan agentgo.StreamEvent, error) {
-	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return m.Generate(ctx, messages, tools, opts...) })
-}
-
-func (m *chatModel) SupportsTools() bool { return m.client.SupportsTools() }
-func (m *chatModel) ModelName() string   { return m.model }
 
 // normalizeResponse preserves provider content and repairs only lossless tool argument drift.
 func normalizeResponse(response *agentgo.LLMResponse, tools []agentgo.ToolSpec) (agentgo.Message, error) {

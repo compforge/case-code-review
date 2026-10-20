@@ -104,13 +104,13 @@ func TestZoneCompactionReceivesStagedArtifactsAndPublishesAcceptedEvent(t *testi
 					}
 					return nil
 				},
-				ModelMiddlewares: []agentgo.ModelMiddleware{func(_ context.Context, execution agentgo.ModelExecution, _ agentgo.ModelExecuteFunc) (agentgo.ModelResult, error) {
+				ModelExecutor: agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{func(_ context.Context, execution agentgo.ModelExecution, _ agentgo.ModelExecuteFunc) (agentgo.ModelResult, error) {
 					models++
 					if _, ok := execution.Artifacts.GetArtifact("test:archive"); !ok {
 						t.Error("accepted material absent from model call")
 					}
 					return agentgo.ModelResult{Message: agentgo.Message{Role: agentgo.RoleAssistant, StopReason: agentgo.StopReasonStop}}, nil
-				}},
+				}}}),
 			}) {
 				if event.Type == agentgo.EventContextCompacted {
 					compactEvents++

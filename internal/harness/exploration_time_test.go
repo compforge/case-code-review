@@ -39,7 +39,7 @@ func (c *explorationClockClient) Generate(ctx context.Context, messages []agentg
 	c.delays = c.delays[1:]
 	select {
 	case <-time.After(delay):
-		return llm.Call(ctx, c.scriptedClient, request)
+		return c.scriptedClient.Generate(ctx, messages, tools, opts...)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -439,5 +439,12 @@ func TestModelMiddlewareDeadline(t *testing.T) {
 
 func (c *explorationClockClient) SupportsTools() bool { return true }
 func (c *explorationClockClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
-	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
+	response, err := c.Generate(ctx, messages, tools, opts...)
+	if err != nil {
+		return nil, err
+	}
+	events := make(chan agentgo.StreamEvent, 1)
+	events <- agentgo.StreamEvent{Type: agentgo.StreamEventDone, Message: response.Message}
+	close(events)
+	return events, nil
 }

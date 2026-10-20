@@ -107,7 +107,7 @@ func TestAnthropicClient_UsesConfiguredXAPIKeyHeader(t *testing.T) {
 		gotAuthorization = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
+		writeModelStream(t, w, `{
 			"id":"msg_test",
 			"type":"message",
 			"role":"assistant",
@@ -115,7 +115,7 @@ func TestAnthropicClient_UsesConfiguredXAPIKeyHeader(t *testing.T) {
 			"content":[{"type":"text","text":"ok"}],
 			"stop_reason":"end_turn",
 			"usage":{"input_tokens":1,"output_tokens":1}
-		}`))
+		}`)
 	}))
 	defer server.Close()
 
@@ -150,7 +150,7 @@ func TestAnthropicClient_UsesConfiguredAuthorizationHeader(t *testing.T) {
 		gotAuthorization = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
+		writeModelStream(t, w, `{
 			"id":"msg_test",
 			"type":"message",
 			"role":"assistant",
@@ -158,7 +158,7 @@ func TestAnthropicClient_UsesConfiguredAuthorizationHeader(t *testing.T) {
 			"content":[{"type":"text","text":"ok"}],
 			"stop_reason":"end_turn",
 			"usage":{"input_tokens":1,"output_tokens":1}
-		}`))
+		}`)
 	}))
 	defer server.Close()
 
@@ -190,7 +190,7 @@ func TestAnthropicClient_DefaultsToAuthorizationHeader(t *testing.T) {
 		gotAuthorization = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{
+		writeModelStream(t, w, `{
 			"id":"msg_test",
 			"type":"message",
 			"role":"assistant",
@@ -198,7 +198,7 @@ func TestAnthropicClient_DefaultsToAuthorizationHeader(t *testing.T) {
 			"content":[{"type":"text","text":"ok"}],
 			"stop_reason":"end_turn",
 			"usage":{"input_tokens":1,"output_tokens":1}
-		}`))
+		}`)
 	}))
 	defer server.Close()
 

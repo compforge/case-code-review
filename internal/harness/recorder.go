@@ -62,7 +62,7 @@ func (r *executionRecorder) beginModel(taskType recording.TaskType, messages []a
 	return r.session.GetOrCreateScope(r.scope).AppendExecutionTaskRecord(r.executionID, taskType, messages)
 }
 
-func (r *executionRecorder) finishModel(response *agentgo.LLMResponse, duration time.Duration, trackEvent bool) {
+func (r *executionRecorder) finishModel(response *agentgo.LLMResponse, duration time.Duration, trackEvent, succeeded bool) {
 	if response == nil {
 		return
 	}
@@ -72,12 +72,15 @@ func (r *executionRecorder) finishModel(response *agentgo.LLMResponse, duration 
 	if response.Message.Usage != nil {
 		addLLMUsage(&r.usage, response.Message.Usage)
 	}
-	if trackEvent {
+	if trackEvent && succeeded {
 		r.models = append(r.models, recordedModel{
 			alias:    llm.ResponseAlias(response),
 			model:    llm.ResponseModel(response),
 			duration: duration,
 		})
+	}
+	if !succeeded {
+		return
 	}
 	for _, call := range response.Message.ToolCalls() {
 		r.calls[call.ID] = append(r.calls[call.ID], recordedCall{
