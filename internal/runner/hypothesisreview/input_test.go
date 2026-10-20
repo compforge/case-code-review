@@ -23,8 +23,8 @@ func TestHypothesisMessageCompactionKeepsClaim(t *testing.T) {
 	condensed := renderReviewPrompt(template, Config{}, input, true, false)
 	message := newHypothesisMessage(full, condensed)
 
-	fullWire := message.ToLLM()
-	fullTokens := llm.CountTokens(fullWire.ExtractText())
+	fullWire := message.renderCurrent()
+	fullTokens := llm.CountTokens(fullWire.TextContent())
 	condensedTokens := llm.CountTokens(condensed)
 	projected, _ := message.Compact(float64(condensedTokens) / float64(fullTokens))
 	compact := projected.TextContent()

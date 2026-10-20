@@ -10,6 +10,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
@@ -20,10 +21,10 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
 	defer review.Finalize()
-	client := &scriptedClient{responses: []*llm.ChatResponse{textResponse("first answer"), textResponse("second answer")}}
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{textResponse("first answer"), textResponse("second answer")}}
 	session := &LoopSession{}
 	defer session.Close()
-	spec := ExecutionSpec{LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "private prompt body")}, Session: review, Scope: recording.Scope{ID: "lane-1", Kind: "lane"}, NaturalCompletion: true, MaxTurns: 1}
+	spec := ExecutionSpec{LoopSession: session, ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "private prompt body")}, Session: review, Scope: recording.Scope{ID: "lane-1", Kind: "lane"}, NaturalCompletion: true, MaxTurns: 1}
 	first, err := runExecution(context.Background(), spec)
 	if err != nil {
 		t.Fatal(err)
@@ -108,8 +109,8 @@ func TestSessionCaptureFailureDoesNotAbortExecution(t *testing.T) {
 	if err := os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".sessions", []byte("blocked"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	client := &scriptedClient{responses: []*llm.ChatResponse{textResponse("answer")}}
-	result, err := runExecution(context.Background(), ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, NaturalCompletion: true, MaxTurns: 1})
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{textResponse("answer")}}
+	result, err := runExecution(context.Background(), ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, NaturalCompletion: true, MaxTurns: 1})
 	if err != nil || result.State != OutcomeCompleted || result.Turns != 1 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -128,8 +129,8 @@ func TestSessionCodecFailureDoesNotAbortExecution(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
 	defer review.Finalize()
-	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}
-	result, err := runExecution(context.Background(), ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{newMaterialTestMessage("file-1", "snapshot", "source", "source body")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, MaxTurns: 1})
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, nil)}}
+	result, err := runExecution(context.Background(), ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{newMaterialTestMessage("file-1", "snapshot", "source", "source body")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, MaxTurns: 1})
 	if err != nil || result.State != OutcomeCompleted || result.Turns != 1 || result.ToolCalls != 1 {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
@@ -156,11 +157,11 @@ func TestLoopSessionCheckpointRunsWithoutResidentAgent(t *testing.T) {
 	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
 	defer review.Finalize()
 	session := &LoopSession{}
-	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponseID("done", "task_done", `{}`, &llm.UsageInfo{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12}),
-		toolCallResponseID("done", "task_done", `{}`, &llm.UsageInfo{PromptTokens: 20, CompletionTokens: 3, TotalTokens: 23}),
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
+		toolCallResponseID("done", "task_done", `{}`, &agentgo.Usage{Input: 10, Output: 2, TotalTokens: 12}),
+		toolCallResponseID("done", "task_done", `{}`, &agentgo.Usage{Input: 20, Output: 3, TotalTokens: 23}),
 	}}
-	spec := ExecutionSpec{LoopSession: session, Session: review, LLMClient: client,
+	spec := ExecutionSpec{LoopSession: session, Session: review, ChatModel: client,
 		Scope: recording.Scope{ID: "lane", Kind: "lane"}, MaxTurns: 1,
 		Messages: []agentgo.AgentMessage{msg.Text("user", "hyp-first"), msg.NewFile("a.go", 1, 1, 1, "1|retained source")},
 		ToolDefs: []llm.ToolDef{toolDef("task_done")},
@@ -235,11 +236,11 @@ func TestLengthFactsAndReasoningUsageSurviveCCRRecording(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
 	defer review.Finalize()
-	client := &scriptedClient{responses: []*llm.ChatResponse{{Choices: []llm.Choice{{FinishReason: "length", Message: llm.ResponseMessage{Role: "assistant", ReasoningContent: "partial"}}}, Usage: &llm.UsageInfo{PromptTokens: 4, CompletionTokens: 32, ReasoningTokens: 32, TotalTokens: 36}}}}
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{{Message: agentgo.Message{Role: agentgo.RoleAssistant, StopReason: agentgo.StopReasonLength, Content: []agentgo.ContentBlock{agentgo.ThinkingBlock("partial")}, Usage: &agentgo.Usage{Input: 4, Output: 32, Reasoning: 32, TotalTokens: 36}}}}}
 	session := &LoopSession{}
 	defer session.Close()
 	zero := 0
-	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{agentgo.UserMsg("work")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, NaturalCompletion: true, MaxLengthRecoveries: &zero, ReasoningEffort: "low"})
+	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session, ChatModel: client, Messages: []agentgo.AgentMessage{agentgo.UserMsg("work")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, NaturalCompletion: true, MaxLengthRecoveries: &zero, ReasoningEffort: "low"})
 	if err != nil || result.State != OutcomeTruncated {
 		t.Fatalf("result=%+v error=%v", result, err)
 	}

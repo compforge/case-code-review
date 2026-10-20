@@ -2,11 +2,10 @@ package recording
 
 import (
 	"os"
+	"testing"
 	"time"
 
-	"testing"
-
-	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/compforge/agentgo"
 )
 
 func TestGetOrCreateScopeMergesLanePaths(t *testing.T) {
@@ -38,9 +37,10 @@ func TestWriteDebrief(t *testing.T) {
 	ss := sh.GetOrCreateScope(sc)
 	mk := func(taskType TaskType, toolName string) {
 		rec := ss.AppendTaskRecord(taskType, nil)
-		response := &llm.ChatResponse{Choices: []llm.Choice{{}}, Usage: &llm.UsageInfo{PromptTokens: 100, CompletionTokens: 10, CacheReadTokens: 40}}
+		response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{}, StopReason: agentgo.StopReasonStop, Usage: &agentgo.Usage{Input: 100, Output: 10, CacheRead: 40}}}
+
 		if toolName != "" {
-			response.Choices[0].Message.ToolCalls = []llm.ToolCall{{Function: llm.FunctionCall{Name: toolName}}}
+			response.Message.Content = append(response.Message.Content, agentgo.ToolCallBlock(agentgo.ToolCall{Name: toolName}))
 		}
 		rec.SetResponse(response, 2*time.Second)
 	}
@@ -205,7 +205,7 @@ func TestScopeLifecycle(t *testing.T) {
 	// The last async task out finalizes: relocation-style record added by the
 	// worker is INSIDE the rollup.
 	rec := ss.AppendTaskRecord(ReLocationTask, nil)
-	rec.SetResponse(&llm.ChatResponse{Choices: []llm.Choice{{}}, Usage: &llm.UsageInfo{PromptTokens: 7}}, time.Second)
+	rec.SetResponse(&agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{}, StopReason: agentgo.StopReasonStop, Usage: &agentgo.Usage{Input: 7}}}, time.Second)
 	ss.EndAsync()
 
 	sh.Finalize()

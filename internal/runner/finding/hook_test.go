@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
@@ -15,7 +16,7 @@ func TestHookAnchorsFindingToScope(t *testing.T) {
 	result, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
 		Scope: recording.Scope{ID: "correct.go", Kind: "file", Type: "file", Paths: []string{"correct.go"}},
 		Tool:  CodeComment,
-		Call:  llm.ToolCall{Function: llm.FunctionCall{Name: "code_comment"}},
+		Call:  agentgo.ToolCall{Name: "code_comment"},
 		Args: map[string]any{
 			"path": "wrong.go",
 			"comments": []any{
@@ -38,7 +39,7 @@ func TestHookKeepsMemberPath(t *testing.T) {
 	_, handled := hook.HandleTool(context.Background(), harness.ToolRequest{
 		Scope: recording.Scope{ID: "chain", Kind: "unit", Type: "callchain", Paths: []string{"a.go", "b.go"}},
 		Tool:  CodeComment,
-		Call:  llm.ToolCall{Function: llm.FunctionCall{Name: "code_comment"}},
+		Call:  agentgo.ToolCall{Name: "code_comment"},
 		Args: map[string]any{
 			"path": "b.go",
 			"comments": []any{

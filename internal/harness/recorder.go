@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
@@ -33,7 +35,7 @@ type executionRecorder struct {
 	mu     sync.Mutex
 	calls  map[string][]recordedCall
 	models []recordedModel
-	usage  llm.UsageInfo
+	usage  agentgo.Usage
 }
 
 func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionRecorder {
@@ -50,10 +52,7 @@ func newExecutionRecorder(spec ExecutionSpec, executionID string) *executionReco
 	}
 }
 
-func (r *executionRecorder) beginModel(
-	taskType recording.TaskType,
-	messages []llm.Message,
-) *recording.TaskRecord {
+func (r *executionRecorder) beginModel(taskType recording.TaskType, messages []agentgo.Message) *recording.TaskRecord {
 	if r.session == nil {
 		return nil
 	}
@@ -63,36 +62,32 @@ func (r *executionRecorder) beginModel(
 	return r.session.GetOrCreateScope(r.scope).AppendExecutionTaskRecord(r.executionID, taskType, messages)
 }
 
-func (r *executionRecorder) finishModel(
-	response *llm.ChatResponse,
-	duration time.Duration,
-	trackEvent bool,
-) {
+func (r *executionRecorder) finishModel(response *agentgo.LLMResponse, duration time.Duration, trackEvent bool) {
 	if response == nil {
 		return
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if response.Usage != nil {
-		addLLMUsage(&r.usage, response.Usage)
+	if response.Message.Usage != nil {
+		addLLMUsage(&r.usage, response.Message.Usage)
 	}
 	if trackEvent {
 		r.models = append(r.models, recordedModel{
-			alias:    response.Alias,
-			model:    response.Model,
+			alias:    llm.ResponseAlias(response),
+			model:    llm.ResponseModel(response),
 			duration: duration,
 		})
 	}
-	for _, call := range response.ToolCalls() {
+	for _, call := range response.Message.ToolCalls() {
 		r.calls[call.ID] = append(r.calls[call.ID], recordedCall{
-			alias:     response.Alias,
-			arguments: call.Function.Arguments,
+			alias:     llm.ResponseAlias(response),
+			arguments: string(call.Args),
 		})
 	}
 }
 
-func (r *executionRecorder) Usage() llm.UsageInfo {
+func (r *executionRecorder) Usage() agentgo.Usage {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.usage
@@ -156,11 +151,11 @@ func toolResultText(raw []byte) string {
 	return string(raw)
 }
 
-func addLLMUsage(total *llm.UsageInfo, usage *llm.UsageInfo) {
-	total.PromptTokens += usage.PromptTokens
-	total.CompletionTokens += usage.CompletionTokens
-	total.ReasoningTokens += usage.ReasoningTokens
-	total.CacheReadTokens += usage.CacheReadTokens
-	total.CacheWriteTokens += usage.CacheWriteTokens
+func addLLMUsage(total *agentgo.Usage, usage *agentgo.Usage) {
+	total.Input += usage.Input
+	total.Output += usage.Output
+	total.Reasoning += usage.Reasoning
+	total.CacheRead += usage.CacheRead
+	total.CacheWrite += usage.CacheWrite
 	total.TotalTokens += usage.TotalTokens
 }

@@ -1,21 +1,14 @@
 package msg
 
 import (
+	"encoding/json"
 	"testing"
 
-	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/compforge/agentgo"
 )
 
 func TestWrapCreatesAgentMessages(t *testing.T) {
-	wire := []llm.Message{
-		llm.NewTextMessage("system", "you are a reviewer"),
-		llm.NewTextMessage("user", "review this"),
-		llm.NewToolCallMessage("thinking…", []llm.ToolCall{
-			{ID: "c1", Type: "function", Function: llm.FunctionCall{Name: "search_code", Arguments: `{"q":"x"}`}},
-		}),
-		llm.NewToolResultMessage("c1", "3 hits"),
-		llm.NewTextMessage("assistant", "done"),
-	}
+	wire := []agentgo.Message{{Role: agentgo.RoleSystem, Content: []agentgo.ContentBlock{agentgo.TextBlock("you are a reviewer")}}, {Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("review this")}}, {Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{agentgo.TextBlock("thinking…")}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: "c1", Name: "search_code", Args: json.RawMessage(`{"q":"x"}`)}))}, {Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock("3 hits")}, Metadata: map[string]any{"tool_call_id": "c1"}}, {Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock("done")}}}
 	got := Wrap(wire)
 	if len(got) != len(wire) {
 		t.Fatal("conversion must remain 1:1")

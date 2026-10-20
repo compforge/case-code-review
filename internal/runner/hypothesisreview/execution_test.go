@@ -2,10 +2,10 @@ package hypothesisreview
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
-
 	"time"
 
 	"github.com/compforge/agentgo"
@@ -23,7 +23,7 @@ import (
 func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	hypothesis := unitreview.Hypothesis{Path: "a.go", Content: "issue", ExistingCode: "x"}
 	hypothesis.ID = unitreview.IDFor(hypothesis)
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewToolResponse("call-1", SubmitAssessment.Name(), `{
 			"support":"supported",
 			"attribution":"caused",
@@ -35,7 +35,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 	}}
 	collector := NewAssessmentCollector(hypothesis.ID)
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
-		LLMClient:      client,
+		ChatModel:      client,
 		Messages:       []agentgo.AgentMessage{msg.Text("user", "review the case")},
 		ToolDefs:       []llm.ToolDef{AssessmentToolDef()},
 		ToolHandler:    &AssessmentHook{Collector: collector},
@@ -63,7 +63,7 @@ func TestAssessmentToolRunsThroughHarnessWithoutRegistryProvider(t *testing.T) {
 
 func TestReviewBindsAssessmentToCurrentHypothesis(t *testing.T) {
 	hypothesis := completeHypothesis("h-1", "a.go")
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewAssessmentResponse("call-1"),
 	}}
 	result := Review(context.Background(), Config{
@@ -71,7 +71,7 @@ func TestReviewBindsAssessmentToCurrentHypothesis(t *testing.T) {
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{prior_assessments}}"},
 		}},
-		LLMClient: client,
+		ChatModel: client,
 		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  1,
 		MaxTokens: 2_000,
@@ -91,7 +91,7 @@ func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.
 		Kind: unit.CurrentSnapshot, Path: "a.go", Start: 1, End: 1, Total: 1,
 		Content: "File: a.go (Total lines: 1)\n1|fixed",
 	})
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewToolResponse("call-1", SubmitAssessment.Name(), `{
 			"support":"supported","attribution":"caused",
 			"value":"actionable","novelty":"new","reason":"Unit evidence proves it",
@@ -103,7 +103,7 @@ func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}} {{evidence_paths}}"},
 		}},
-		LLMClient: client,
+		ChatModel: client,
 		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  1,
 		MaxTokens: 2_000,
@@ -115,7 +115,7 @@ func TestReviewCanAssessFromRetainedUnitSnapshotsWithoutReadingAgain(t *testing.
 	foundSnapshot := false
 	if len(client.requests) == 1 {
 		for _, message := range client.requests[0].Messages {
-			foundSnapshot = foundSnapshot || strings.Contains(message.ExtractText(), "fixed")
+			foundSnapshot = foundSnapshot || strings.Contains(message.TextContent(), "fixed")
 		}
 	}
 	if !foundSnapshot {
@@ -133,7 +133,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 	provider := &countingReviewReadProvider{}
 	registry := tool.NewRegistry()
 	registry.Register(provider)
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewToolResponse("read-1", tool.FileRead.Name(), `{"reads":[{"file_path":"a.go"}]}`),
 		reviewAssessmentResponse("submit-1"),
 	}}
@@ -142,7 +142,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypothesis}} {{change_set}} {{clues}}"},
 		}},
-		LLMClient: client,
+		ChatModel: client,
 		ToolDefs: []llm.ToolDef{{
 			Type: "function", Function: llm.FunctionDef{Name: tool.FileRead.Name()},
 		}},
@@ -156,7 +156,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 	covered := false
 	if len(client.requests) >= 2 {
 		for _, message := range client.requests[1].Messages {
-			covered = covered || strings.Contains(message.ExtractText(), "retained Unit context in this Lane")
+			covered = covered || strings.Contains(message.TextContent(), "retained Unit context in this Lane")
 		}
 	}
 	if !covered {
@@ -167,7 +167,7 @@ func TestReviewReadFilesReportsRetainedUnitCoverage(t *testing.T) {
 func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
 	hypothesis := completeHypothesis("h-external", "adapter.go")
 	hypothesis.Trigger = "external provider emits state x"
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewToolResponse("external-1", WebSearch.Name(), `{"query":"provider state x contract"}`),
 		reviewToolResponse("submit-supported", SubmitAssessment.Name(), `{
 			"support":"supported","attribution":"caused","value":"actionable",
@@ -181,7 +181,7 @@ func TestReviewExternalBoundaryForcesInsufficientAssessment(t *testing.T) {
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypothesis}}"},
 		}},
-		LLMClient: client,
+		ChatModel: client,
 		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  3,
 		MaxTokens: 2_000,
@@ -210,7 +210,7 @@ func TestReviewTimeoutRemainsUnassessed(t *testing.T) {
 			{Role: "system", Content: "verify"},
 			{Role: "user", Content: "{{hypothesis}}"},
 		}},
-		LLMClient: &blockingAssessmentClient{},
+		ChatModel: &blockingAssessmentClient{},
 		Session:   &recording.Review{Scopes: make(map[string]*recording.ReviewScope)},
 		MaxTurns:  2,
 		MaxTokens: 2_000,
@@ -232,7 +232,6 @@ func TestReviewTimeoutRemainsUnassessed(t *testing.T) {
 	if slices.Contains(warnings, "hypothesis_unassessed") {
 		t.Fatalf("reviewer duplicated pipeline-owned unassessed warning: %v", warnings)
 	}
-
 }
 
 func TestRenderReviewPromptDoesNotRepeatRetainedLaneHistory(t *testing.T) {
@@ -264,7 +263,7 @@ func completeHypothesis(id, path string) unitreview.Hypothesis {
 	}
 }
 
-func reviewAssessmentResponse(callID string) *llm.ChatResponse {
+func reviewAssessmentResponse(callID string) *agentgo.LLMResponse {
 	return reviewToolResponse(callID, SubmitAssessment.Name(), `{
 		"support":"insufficient","attribution":"unknown",
 		"value":"unknown","novelty":"new","reason":"missing decisive evidence","evidence":[]
@@ -272,43 +271,32 @@ func reviewAssessmentResponse(callID string) *llm.ChatResponse {
 }
 
 type assessmentScriptedClient struct {
-	responses []*llm.ChatResponse
-	requests  []llm.ChatRequest
+	responses []*agentgo.LLMResponse
+	requests  []agentgo.LLMRequest
 }
 
 type blockingAssessmentClient struct{}
 
-func (*blockingAssessmentClient) CompletionsWithCtx(
-	ctx context.Context,
-	_ llm.ChatRequest,
-) (*llm.ChatResponse, error) {
+func (c *blockingAssessmentClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (c *assessmentScriptedClient) CompletionsWithCtx(
-	_ context.Context,
-	request llm.ChatRequest,
-) (*llm.ChatResponse, error) {
+func (c *assessmentScriptedClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+	config := agentgo.ResolveCallConfig(opts)
+	request := agentgo.LLMRequest{Messages: messages,
+		Tools: tools, Config: &config}
+
 	c.requests = append(c.requests, request)
 	response := c.responses[0]
 	c.responses = c.responses[1:]
 	return response, nil
 }
 
-func reviewToolResponse(id, name, arguments string) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Role: "assistant",
-				ToolCalls: []llm.ToolCall{{
-					ID: id, Type: "function",
-					Function: llm.FunctionCall{Name: name, Arguments: arguments},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-	}
+func reviewToolResponse(id, name, arguments string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: id,
+		Name: name,
+		Args: json.RawMessage(arguments)})), StopReason: agentgo.StopReasonToolUse}}
 }
 
 type countingReviewReadProvider struct{ calls int }
@@ -332,7 +320,7 @@ func hasReceipt(receipts []EvidenceReceipt, kind, ref string) bool {
 func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
 	session := &harness.LoopSession{}
 	defer session.Close()
-	client := &assessmentScriptedClient{responses: []*llm.ChatResponse{
+	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewAssessmentResponse("call-1"), reviewAssessmentResponse("call-1"),
 	}}
 	config := Config{
@@ -340,7 +328,7 @@ func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
 			{Role: "system", Content: "stable verification rules"},
 			{Role: "user", Content: "{{hypothesis}} {{prior_assessments}}"},
 		}},
-		LLMClient: client, MaxTurns: 1, MaxTokens: 10000,
+		ChatModel: client, MaxTurns: 1, MaxTokens: 10000,
 	}
 	for _, id := range []string{"hyp-first", "hyp-second"} {
 		result := Review(t.Context(), config, ReviewInput{LaneID: "lane", Hypothesis: completeHypothesis(id, "a.go")}, session)
@@ -353,10 +341,20 @@ func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
 	}
 	var content strings.Builder
 	for _, message := range client.requests[1].Messages {
-		content.WriteString(message.ExtractText())
+		content.WriteString(message.TextContent())
 	}
 	text := content.String()
 	if strings.Count(text, "stable verification rules") != 1 || !strings.Contains(text, "hyp-first") || !strings.Contains(text, "hyp-second") || !strings.Contains(text, `"accepted":"hyp-first"`) {
 		t.Fatalf("second request did not append to the first conversation: %s", text)
 	}
+}
+
+func (c *blockingAssessmentClient) SupportsTools() bool { return true }
+func (c *blockingAssessmentClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
+}
+
+func (c *assessmentScriptedClient) SupportsTools() bool { return true }
+func (c *assessmentScriptedClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

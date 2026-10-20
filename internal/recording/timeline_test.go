@@ -8,15 +8,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/timeline/store"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 type waitingTimelineClient struct{ ready chan struct{} }
 
-func (c waitingTimelineClient) CompletionsWithCtx(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+func (c waitingTimelineClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	ref, _ := timeline.StageFromContext(ctx)
 	ctx, phase := telemetry.BeginTimelineStage(ctx, "await_response", timeline.WithParent(ref.StageID))
 	close(c.ready)
@@ -44,7 +46,7 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	history := New(t.TempDir(), "test", "model", SessionOptions{})
 	defer history.Finalize()
 	scope := history.GetOrCreateScope(Scope{ID: "unit-1", Kind: "unit", Type: "file"})
-	record := scope.AppendTaskRecord(MainTask, []llm.Message{llm.NewTextMessage("user", "test")})
+	record := scope.AppendTaskRecord(MainTask, []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("test")}}})
 	path, err := history.TranscriptPath()
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +55,10 @@ func TestTimelinePersistsBeforeRequestReturnsAndAfterCancellation(t *testing.T) 
 	defer cancel()
 	client := waitingTimelineClient{ready: make(chan struct{})}
 	done := make(chan error, 1)
-	go func() { _, err := record.Call(ctx, client, llm.ChatRequest{}); done <- err }()
+	go func() {
+		_, err := record.Call(ctx, client, agentgo.LLMRequest{Config: &agentgo.CallConfig{}})
+		done <- err
+	}()
 	select {
 	case <-client.ready:
 	case <-time.After(5 * time.Second):
@@ -157,4 +162,9 @@ func TestFinalSnapshotSurvivesCacheReleaseAndSessionsStayIsolated(t *testing.T) 
 		t.Fatalf("Session contexts shared parentage or cache: %+v %v", other, err)
 	}
 	finishSecond(nil)
+}
+
+func (c waitingTimelineClient) SupportsTools() bool { return true }
+func (c waitingTimelineClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/recording"
@@ -25,7 +26,7 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 	t.Setenv("HOME", home)
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	ctx := history.Context(context.Background())
-	a := New(Args{RepoDir: history.RepoDir, Session: history, LLMClient: &budgetClient{}, MaxConcurrency: 1,
+	a := New(Args{RepoDir: history.RepoDir, Session: history, ChatModel: &budgetClient{}, MaxConcurrency: 1,
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 10000, MaxToolRequestTimes: 2},
 	})
 	a.changes = []change.Change{goDiff("p.go", 1)}
@@ -106,7 +107,6 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 	if !foundStep || !foundReport {
 		t.Fatalf("missing persisted grouping: step=%v report=%v", foundStep, foundReport)
 	}
-
 }
 
 func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {

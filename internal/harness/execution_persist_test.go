@@ -22,13 +22,13 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 
 	history := recording.New(filepath.Join(home, "repo"), "main", "review-model", recording.SessionOptions{})
 	scope := recording.Scope{ID: "unit-1", Kind: "unit", Type: "func", Paths: []string{"a.go"}}
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("comment-1", "code_comment", `{"path":"a.go"}`, nil),
 		toolCallResponseID("done-1", "task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("code_comment"), toolDef("task_done")},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -97,8 +97,13 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 		if kind == "llm_request" {
 			for _, raw := range record["messages"].([]any) {
 				message := raw.(map[string]any)
-				if calls, ok := message["tool_calls"].([]any); ok && len(calls) > 0 {
-					keptToolInvocations = true
+				if blocks, ok := message["content"].([]any); ok {
+					for _, raw := range blocks {
+						block := raw.(map[string]any)
+						if block["tool_call"] != nil {
+							keptToolInvocations = true
+						}
+					}
 				}
 			}
 		}
@@ -112,7 +117,6 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 			t.Fatal("missing", kind)
 		}
 	}
-
 }
 
 func TestContextCompactionEventForwardsToUI(t *testing.T) {

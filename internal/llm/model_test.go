@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,13 +34,18 @@ func TestAgentGoRoutingOwnsModelIdentityAndTimeout(t *testing.T) {
 		fmt.Fprint(w, `{"model":"backup-model","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2,"total_tokens":7}}`)
 	}))
 	defer second.Close()
-	client := NewLLMRouter([]ResolvedEndpoint{
-		{URL: first.URL, Model: "slow-model", Alias: "primary", MaxRetries: 5},
+	client := NewRouter([]ResolvedEndpoint{
+		{URL: first.URL, Model: "slow-model", Alias: "primary"},
 		{URL: second.URL, Model: "backup-model", Alias: "backup"},
 	}, RoutingOptions{CallTimeout: time.Second, AttemptTimeout: 20 * time.Millisecond})
 	config := agentgo.ResolveCallConfig([]agentgo.CallOption{agentgo.WithThinking(agentgo.ThinkingMedium), agentgo.WithCallPromptCacheKey("conversation"), agentgo.WithMaxTokens(456)})
-	response, err := client.CompletionsWithCtx(t.Context(), ChatRequest{Model: "must-not-override-candidates", Native: &agentgo.LLMRequest{Messages: []agentgo.Message{agentgo.UserMsg("review")}, Config: &config}})
-	if err != nil || response.Alias != "backup" || response.Model != "backup-model" || attempts.Load() != 1 {
+	var facts []agentgo.ModelAttempt
+	ctx := ObserveAttempts(t.Context(), func(_ context.Context, fact agentgo.ModelAttempt, _ error) { facts = append(facts, fact) })
+	response, err := Call(ctx, client, agentgo.LLMRequest{Messages: []agentgo.Message{agentgo.UserMsg("review")}, Config: &config})
+	if len(facts) != 2 || facts[0].Endpoint != "primary" || !facts[0].WillFailover || facts[1].Usage == nil || facts[1].Usage.Output != 2 {
+		t.Fatalf("missing routed attempt facts: %+v", facts)
+	}
+	if err != nil || ResponseAlias(response) != "backup" || ResponseModel(response) != "backup-model" || attempts.Load() != 1 {
 		t.Fatalf("response=%+v error=%v attempts=%d", response, err, attempts.Load())
 	}
 }
@@ -61,13 +67,13 @@ func TestAgentGoProviderWireCacheAndTools(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client := NewLLMClient(ResolvedEndpoint{Protocol: protocol, URL: server.URL, Model: "test", Token: "fake"})
+			client := NewModel(ResolvedEndpoint{Protocol: protocol, URL: server.URL, Model: "test", Token: "fake"})
 			for _, mode := range []string{"auto", "required", "none", "named"} {
-				choice := &ToolChoice{Mode: mode}
+				var choice any = mode
 				if mode == "named" {
-					choice = &ToolChoice{Name: "inspect"}
+					choice = map[string]any{"name": "inspect"}
 				}
-				response, err := client.CompletionsWithCtx(t.Context(), ChatRequest{Messages: []Message{NewTextMessage("system", "stable one"), NewTextMessage("system", "stable two"), NewTextMessage("user", "review")}, Tools: []ToolDef{{Function: FunctionDef{Name: "inspect", Parameters: map[string]any{"type": "object", "properties": map[string]any{}}}}}, ToolChoice: choice})
+				response, err := Call(t.Context(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleSystem, Content: []agentgo.ContentBlock{agentgo.TextBlock("stable one")}}, {Role: agentgo.RoleSystem, Content: []agentgo.ContentBlock{agentgo.TextBlock("stable two")}}, {Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("review")}}}, Tools: []agentgo.ToolSpec{{Name: "inspect", Parameters: map[string]any{"type": "object", "properties": map[string]any{}}}}, Config: &agentgo.CallConfig{ToolChoice: choice}})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -78,8 +84,8 @@ func TestAgentGoProviderWireCacheAndTools(t *testing.T) {
 						t.Fatalf("system cache=%v", system)
 					}
 					// The system breakpoint covers the preceding tool prefix.
-					if response.Usage.PromptTokens != 9 || response.Usage.TotalTokens != 10 {
-						t.Fatalf("cache usage double counted: %+v", response.Usage)
+					if response.Message.Usage.Input+response.Message.Usage.CacheWrite != 9 || response.Message.Usage.TotalTokens != 10 {
+						t.Fatalf("cache usage double counted: %+v", response.Message.Usage)
 					}
 					want := map[string]string{"auto": "auto", "required": "any", "none": "none", "named": "tool"}[mode]
 					if body["tool_choice"].(map[string]any)["type"] != want {
@@ -104,14 +110,14 @@ func TestAgentGoRoutingDoesNotRetryBudgetOrBadRequest(t *testing.T) {
 		http.Error(w, `{"error":{"message":"invalid effort"}}`, 400)
 	}))
 	defer server.Close()
-	client := NewLLMRouter([]ResolvedEndpoint{{URL: server.URL, Model: "first"}, {URL: server.URL, Model: "second"}}, RoutingOptions{})
-	_, err := client.CompletionsWithCtx(t.Context(), ChatRequest{Messages: []Message{NewTextMessage("user", "review")}})
+	client := NewRouter([]ResolvedEndpoint{{URL: server.URL, Model: "first"}, {URL: server.URL, Model: "second"}}, RoutingOptions{})
+	_, err := Call(t.Context(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("review")}}}, Config: &agentgo.CallConfig{}})
 	if err == nil || calls.Load() != 1 {
 		t.Fatalf("bad request retried: calls=%d err=%v", calls.Load(), err)
 	}
-	budget := NewBudgetClient(client, 1, nil)
+	budget := NewBudgetModel(client, 1, nil)
 	budget.used.Store(1)
-	_, err = budget.CompletionsWithCtx(t.Context(), ChatRequest{})
+	_, err = Call(t.Context(), budget, agentgo.LLMRequest{Config: &agentgo.CallConfig{}})
 	if !errors.Is(err, ErrTokenBudget) || calls.Load() != 1 {
 		t.Fatalf("budget admission retried: %v", err)
 	}

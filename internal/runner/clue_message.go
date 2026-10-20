@@ -70,7 +70,7 @@ func (d *ClueMessage) WithMaterialReference(ref string) msg.MaterialMessage {
 
 var _ msg.MaterialMessage = (*ClueMessage)(nil)
 
-func (d *ClueMessage) render() llm.Message {
+func (d *ClueMessage) render() agentgo.Message {
 	header := "Clue (" + string(d.Kind) + "): " + d.MaterialReference()
 	if d.label != "" {
 		header += " — " + strings.TrimSpace(d.label)
@@ -82,15 +82,16 @@ func (d *ClueMessage) render() llm.Message {
 	if d.duplicateOf != "" {
 		body = "[Same body: " + d.duplicateOf + "]"
 	}
-	return llm.NewTextMessage("user", header+"\n"+body)
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(header + "\n" + body)}}
 }
-func (d *ClueMessage) ToLLM() llm.Message      { return d.render() }
 func (d *ClueMessage) GetRole() agentgo.Role   { return agentgo.RoleUser }
-func (d *ClueMessage) TextContent() string     { rendered := d.render(); return rendered.ExtractText() }
+func (d *ClueMessage) TextContent() string     { return d.render().TextContent() }
 func (d *ClueMessage) ThinkingContent() string { return "" }
 func (d *ClueMessage) HasToolCalls() bool      { return false }
 func (d *ClueMessage) ToMessage() (agentgo.Message, bool) {
-	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(d.TextContent())}, Timestamp: d.timestamp}, true
+	message := d.render()
+	message.Timestamp = d.timestamp
+	return message, true
 }
 func (d *ClueMessage) Raw() agentgo.AgentMessage {
 	copy := *d

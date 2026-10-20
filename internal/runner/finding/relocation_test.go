@@ -5,26 +5,25 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-type mockLLMClient struct {
-	response *llm.ChatResponse
+type mockModel struct {
+	response *agentgo.LLMResponse
 	err      error
 }
 
-func (m *mockLLMClient) CompletionsWithCtx(_ context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+func (m *mockModel) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+
 	return m.response, m.err
 }
 
-func newMockResponse(content string) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{
-			{Message: llm.ResponseMessage{Role: "assistant", Content: &content}},
-		},
-	}
+func newMockResponse(content string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}, StopReason: agentgo.StopReasonStop}}
 }
 
 func makeTask() *template.LlmConversation {
@@ -104,11 +103,11 @@ func TestReLocateComment_LLMReturnsValidCode(t *testing.T) {
 	}
 	d := makeDiff()
 
-	client := &mockLLMClient{
+	client := &mockModel{
 		response: newMockResponse("Here is the code:\n```go\nx := 1\ny := 2\n```\n"),
 	}
 
-	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), "test-model", 1000)
+	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), 1000)
 	if !ok {
 		t.Fatal("expected re-location to succeed")
 	}
@@ -131,11 +130,11 @@ func TestReLocateComment_LLMReturnsInvalidContent(t *testing.T) {
 	}
 	d := makeDiff()
 
-	client := &mockLLMClient{
+	client := &mockModel{
 		response: newMockResponse("I cannot find the code."),
 	}
 
-	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), "test-model", 1000)
+	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), 1000)
 	if ok {
 		t.Fatal("expected re-location to fail for invalid LLM response")
 	}
@@ -158,9 +157,9 @@ func TestReLocateComment_LLMError(t *testing.T) {
 	}
 	d := makeDiff()
 
-	client := &mockLLMClient{err: errors.New("network error")}
+	client := &mockModel{err: errors.New("network error")}
 
-	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), "test-model", 1000)
+	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, makeTask(), 1000)
 	if ok {
 		t.Fatal("expected false on LLM error")
 	}
@@ -179,9 +178,9 @@ func TestReLocateComment_NilTask(t *testing.T) {
 		ExistingCode: "bad code",
 	}
 	d := makeDiff()
-	client := &mockLLMClient{}
+	client := &mockModel{}
 
-	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, nil, "test-model", 1000)
+	ok, resp, msgs := ReLocateComment(context.Background(), &cm, d, client, nil, 1000)
 	if ok {
 		t.Fatal("expected false when task is nil")
 	}
@@ -213,4 +212,9 @@ func TestExtractCodeBlock(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (m *mockModel) SupportsTools() bool { return true }
+func (m *mockModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return m.Generate(ctx, messages, tools, opts...) })
 }

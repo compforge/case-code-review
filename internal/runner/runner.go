@@ -14,11 +14,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	repocli "github.com/compforge/repocli/toolkit/go"
-	"github.com/qiankunli/case-code-review/internal/sourceview"
-
+	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/slicesx"
 	"github.com/compforge/go-stdx/timeline"
+	repocli "github.com/compforge/repocli/toolkit/go"
+
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
@@ -37,6 +37,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/runner/trial"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
+	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -76,7 +77,7 @@ type Args struct {
 	FileFilter *rules.FileFilter
 
 	// LLM client for model inference.
-	LLMClient       llm.LLMClient
+	ChatModel       agentgo.ChatModel
 	MaxTokensBudget int64
 
 	// Tool registry mapping tool aliases to implementations.
@@ -201,7 +202,7 @@ type Runner struct {
 	// review_team gate is off). See docs/unit_review.md.
 	board          *board.Registry
 	hypothesisHook *unitreview.HypothesisHook
-	budget         *llm.BudgetClient
+	budget         *llm.BudgetModel
 }
 
 // sourceAnalyzer preserves the useful zero-value shape of Runner in focused
@@ -272,12 +273,12 @@ func New(args Args) *Runner {
 	a.configureFinders(spec.Catalog{})
 	a.observeGraphBuild(context.Background(), analyzer, "after")
 	if args.MaxTokensBudget > 0 {
-		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
+		a.budget = llm.NewBudgetModel(args.ChatModel, args.MaxTokensBudget, func(used, limit int64) {
 			a.recordWarning("token_budget_reached", "", fmt.Sprintf("reported token usage %d reached budget %d; no new model calls", used, limit))
 			a.session.WriteArtifact("token_budget", map[string]any{"used": used, "limit": limit, "exhausted": true})
 		})
-		args.LLMClient = a.budget
-		a.args.LLMClient = a.budget
+		args.ChatModel = a.budget
+		a.args.ChatModel = a.budget
 	}
 	// Review Team board (docs/unit_review.md): one shared in-memory board per run
 	// when the gate is on; nil otherwise (loop behavior byte-identical).
@@ -288,16 +289,15 @@ func New(args Args) *Runner {
 		WorkerPool:   args.WorkerPool,
 		Session:      args.Session,
 		ChangeLookup: a.findChange,
-		LLMClient:    args.LLMClient,
+		ChatModel:    args.ChatModel,
 		Template:     args.Template,
-		Model:        args.Model,
 		Relocation:   f.Enabled(feature.Relocation),
 	}
 	a.hypothesisHook = hypothesisHook
 	compressionSystemPrompt, compressionPrompt := reviewCompressionPrompts(args)
 	a.executor = unitreview.NewExecutor(unitreview.ExecutorConfig{
 		SessionCodecOptions:     clueCodecOptions(),
-		LLMClient:               args.LLMClient,
+		ChatModel:               args.ChatModel,
 		Model:                   args.Model,
 		ReasoningEffort:         args.Template.MainTask.ReasoningEffort,
 		Tools:                   args.Tools,
@@ -1331,7 +1331,7 @@ func (a *Runner) extFromPath(path string) string {
 func (a *Runner) executePlanPhase(ctx context.Context, sc recording.Scope, rawDiff, changeFiles, rule string) (string, error) {
 	newPath := sc.Path()
 	pt := a.args.Template.PlanTask
-	messages := make([]llm.Message, 0, len(pt.Messages))
+	messages := make([]agentgo.Message, 0, len(pt.Messages))
 	for _, m := range pt.Messages {
 		content := m.Content
 		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
@@ -1341,23 +1341,18 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc recording.Scope, rawDi
 		content = strings.ReplaceAll(content, "{{diff}}", rawDiff)
 		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
 		content = strings.ReplaceAll(content, "{{plan_tools}}", formatToolDefs(a.args.PlanToolDefs))
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 
 	fs := a.session.GetOrCreateScope(sc)
 	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
-	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:           a.args.Model,
-		Messages:        messages,
-		MaxTokens:       a.args.Template.CompletionTokenLimit(),
-		ReasoningEffort: pt.ReasoningEffort,
-	})
+	resp, err := rec.Call(ctx, a.args.ChatModel, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: a.args.Template.CompletionTokenLimit(), ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(pt.ReasoningEffort))}})
 	if err != nil {
 		return "", fmt.Errorf("plan request: %w", err)
 	}
-	a.executor.RecordUsage(resp.Usage)
-	content, err := resp.CompleteText()
+	a.executor.RecordUsage(resp.Message.Usage)
+	content, err := llm.CompleteText(resp)
 	if err != nil {
 		return "", fmt.Errorf("plan response: %w", err)
 	}

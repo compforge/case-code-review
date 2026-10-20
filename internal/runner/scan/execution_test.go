@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		return "echo:" + args["value"].(string), nil
 	}))
 	registry.Freeze()
-	client := &scanScriptedClient{responses: []*llm.ChatResponse{
+	client := &scanScriptedClient{responses: []*agentgo.LLMResponse{
 		scanToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
 		scanToolResponse("call-2", "task_done", `{}`, "route-a", 3),
 	}}
@@ -47,7 +48,7 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
 	defer history.Finalize()
 	executor := newScanExecutor(Args{
-		LLMClient: client,
+		ChatModel: client,
 		Model:     "scan-model",
 		Tools:     registry,
 		MainToolDefs: []llm.ToolDef{
@@ -85,11 +86,11 @@ func TestScanExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 }
 
 func TestScanExecutorRecordsIncompleteReview(t *testing.T) {
-	client := &scanScriptedClient{responses: []*llm.ChatResponse{
+	client := &scanScriptedClient{responses: []*agentgo.LLMResponse{
 		scanTextResponse("finished without task_done"),
 	}}
 	executor := newScanExecutor(Args{
-		LLMClient: client,
+		ChatModel: client,
 		Template: template.ScanTemplate{
 			MaxToolRequestTimes: 1,
 			MaxTokens:           1_000,
@@ -114,13 +115,10 @@ func TestScanExecutorRecordsIncompleteReview(t *testing.T) {
 
 type scanScriptedClient struct {
 	mu        sync.Mutex
-	responses []*llm.ChatResponse
+	responses []*agentgo.LLMResponse
 }
 
-func (c *scanScriptedClient) CompletionsWithCtx(
-	_ context.Context,
-	_ llm.ChatRequest,
-) (*llm.ChatResponse, error) {
+func (c *scanScriptedClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	response := c.responses[0]
@@ -141,34 +139,14 @@ func scanToolDef(name string) llm.ToolDef {
 	}
 }
 
-func scanToolResponse(id, name, arguments, alias string, totalTokens int64) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Alias: alias,
-		Model: "served-model",
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Role: "assistant",
-				ToolCalls: []llm.ToolCall{{
-					ID: id, Type: "function",
-					Function: llm.FunctionCall{Name: name, Arguments: arguments},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-		Usage: &llm.UsageInfo{
-			PromptTokens: totalTokens,
-			TotalTokens:  totalTokens,
-		},
-	}
+func scanToolResponse(id, name, arguments, alias string, totalTokens int64) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: id, Name: name, Args: json.RawMessage(arguments)})), StopReason: agentgo.StopReasonToolUse, Usage: &agentgo.Usage{Input: int(totalTokens), TotalTokens: int(totalTokens)}, Metadata: map[string]any{"model": "served-model",
+		"route_endpoint": alias}}}
 }
 
-func scanTextResponse(text string) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{{
-			Message:      llm.ResponseMessage{Role: "assistant", Content: &text},
-			FinishReason: "stop",
-		}},
-	}
+func scanTextResponse(text string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{
+		agentgo.TextBlock(text)}, StopReason: agentgo.StopReasonStop}}
 }
 
 func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
@@ -189,4 +167,9 @@ func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
 		}
 	}
 	return records
+}
+
+func (c *scanScriptedClient) SupportsTools() bool { return true }
+func (c *scanScriptedClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

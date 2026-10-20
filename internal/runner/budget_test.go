@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -16,10 +18,10 @@ import (
 
 type budgetClient struct{ calls int }
 
-func (c *budgetClient) CompletionsWithCtx(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+func (c *budgetClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	c.calls++
 	content := "No further issues."
-	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", Content: &content}, FinishReason: "stop"}}, Usage: &llm.UsageInfo{PromptTokens: 100}}, nil
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}, StopReason: agentgo.StopReasonStop, Usage: &agentgo.Usage{Input: 100}}}, nil
 }
 
 func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
@@ -38,7 +40,7 @@ func TestReviewBudgetSharesPlanAndExecutionAndSkipsQueuedUnits(t *testing.T) {
 			if plan {
 				tpl.PlanTask = &conversation
 			}
-			a := New(Args{RepoDir: repo, Template: tpl, LLMClient: client, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100})
+			a := New(Args{RepoDir: repo, Template: tpl, ChatModel: client, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100})
 			// Queue independent files: multiple symbols in one file share the
 			// file-count allowance and no longer guarantee multiple executions.
 			a.changes = []change.Change{goDiff("p.go", 1), goDiff("q.go", 1), goDiff("r.go", 1)}
@@ -84,7 +86,7 @@ func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 	client := &budgetClient{}
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	// Explicitly admit the text fixture so this test isolates the merge budget.
-	a := New(Args{RepoDir: t.TempDir(), Session: history, LLMClient: client, FileFilter: &rules.FileFilter{Include: []string{"large.txt"}},
+	a := New(Args{RepoDir: t.TempDir(), Session: history, ChatModel: client, FileFilter: &rules.FileFilter{Include: []string{"large.txt"}},
 		Template: template.Template{MainTask: template.LlmConversation{Messages: []template.ChatMessage{{Role: "user", Content: "review {{diff}}"}}}, MaxTokens: 100000, MaxToolRequestTimes: 5}})
 	defer history.Finalize()
 	a.changes = []change.Change{{NewPath: "large.txt", Diff: "@@ -0,0 +1 @@\n+" + strings.Repeat("word ", 10000) + "\n", Insertions: 1}}
@@ -101,4 +103,9 @@ func TestFileAboveMergeBudgetStillReceivesReview(t *testing.T) {
 	if client.calls != 1 {
 		t.Fatalf("whole-file review was skipped by merge budget: %d calls", client.calls)
 	}
+}
+
+func (c *budgetClient) SupportsTools() bool { return true }
+func (c *budgetClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

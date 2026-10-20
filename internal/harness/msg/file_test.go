@@ -41,7 +41,7 @@ func TestFileFromLLM(t *testing.T) {
 		t.Fatal("error result must not promote")
 	}
 	// Lowering an un-stubbed File is the original wire message.
-	if got := f.ToLLM(); got.ToolCallID != "c1" || !strings.Contains(got.ExtractText(), "1|code") {
+	if got := f.renderCurrent(); got.Metadata["tool_call_id"] != "c1" || !strings.Contains(got.TextContent(), "1|code") {
 		t.Fatalf("lowered wire off: %+v", got)
 	}
 }
@@ -57,8 +57,8 @@ func TestFileFromBaselineResultKeepsSnapshotIdentity(t *testing.T) {
 	if baseline.Covers(current) || current.Covers(baseline) {
 		t.Fatal("baseline and current snapshots must never deduplicate each other")
 	}
-	baselineWire := baseline.ToLLM()
-	path, start, end, total, ok := VisibleFileRange(baselineWire.ExtractText())
+	baselineWire := baseline.renderCurrent()
+	path, start, end, total, ok := VisibleFileRange(baselineWire.TextContent())
 	if !ok || path != "pkg/a.go" || start != 10 || end != 40 || total != 120 {
 		t.Fatalf("baseline visible range = %q %d-%d/%d ok=%t", path, start, end, total, ok)
 	}
@@ -82,26 +82,26 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	f := mkFile(t, "pkg/a.go", 120, 10, 40)
 	f.ConfigurePresentation("code under review", "File: pkg/a.go (Total lines: 120)\nLINE_RANGE: 10-40\n10|condensed\n")
 
-	full := f.ToLLM()
-	if full.ToolCallID != "c1" || !strings.Contains(full.ExtractText(), "CONTEXT: code under review") {
+	full := f.renderCurrent()
+	if full.Metadata["tool_call_id"] != "c1" || !strings.Contains(full.TextContent(), "CONTEXT: code under review") {
 		t.Fatalf("full projection lost pairing or label: %+v", full)
 	}
-	path, start, end, total, ok := VisibleFileRange(full.ExtractText())
+	path, start, end, total, ok := VisibleFileRange(full.TextContent())
 	if !ok || path != "pkg/a.go" || start != 10 || end != 40 || total != 120 {
 		t.Fatalf("labeled range = %q %d-%d/%d ok=%t", path, start, end, total, ok)
 	}
-	if got := VisibleFileLabel(full.ExtractText()); got != "code under review" {
+	if got := VisibleFileLabel(full.TextContent()); got != "code under review" {
 		t.Fatalf("label = %q", got)
 	}
 
 	outlineView := *f
 	outlineView.representation = fileOutline
-	outlineWire := outlineView.ToLLM()
-	outlineRatio := float64(llm.CountTokens(outlineWire.ExtractText())) / float64(llm.CountTokens(full.ExtractText()))
+	outlineWire := outlineView.renderCurrent()
+	outlineRatio := float64(llm.CountTokens(outlineWire.TextContent())) / float64(llm.CountTokens(full.TextContent()))
 	projected, _ := f.Compact(outlineRatio)
 	outline := projected.(*File)
-	condensed := outline.ToLLM()
-	if !strings.Contains(condensed.ExtractText(), "10|condensed") || condensed.ToolCallID != "c1" {
+	condensed := outline.renderCurrent()
+	if !strings.Contains(condensed.TextContent(), "10|condensed") || condensed.Metadata["tool_call_id"] != "c1" {
 		t.Fatalf("condensed projection off: %+v", condensed)
 	}
 	if outline.FullContentVisible() {
@@ -116,11 +116,11 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 	}
 	referenceProjection, _ := f.Compact(0)
 	referenceFile := referenceProjection.(*File)
-	reference := referenceFile.ToLLM()
-	if reference.ToolCallID != "c1" || !strings.Contains(reference.ExtractText(), "compacted to a reference") {
+	reference := referenceFile.renderCurrent()
+	if reference.Metadata["tool_call_id"] != "c1" || !strings.Contains(reference.TextContent(), "compacted to a reference") {
 		t.Fatalf("reference projection off: %+v", reference)
 	}
-	if _, _, _, _, ok := VisibleFileRange(reference.ExtractText()); ok {
+	if _, _, _, _, ok := VisibleFileRange(reference.TextContent()); ok {
 		t.Fatal("reference-only file must not count as visible content")
 	}
 	if items := referenceFile.ContextItems(); len(items) != 1 || items[0].Representation != "reference" {
@@ -131,27 +131,29 @@ func TestFileCompactionPreservesRangeAndPairing(t *testing.T) {
 func TestFileCompactChoosesItsOwnRepresentationByRatio(t *testing.T) {
 	f := mkFile(t, "pkg/a.go", 120, 10, 40)
 	f.ConfigurePresentation("code under review", "File outline: pkg/a.go\nfunc F()")
-	textOf := func(message llm.Message) string { return message.ExtractText() }
+	textOf := func(message agentgo.Message) string {
+		return message.TextContent()
+	}
 
-	fullTokens := llm.CountTokens(textOf(f.ToLLM()))
+	fullTokens := llm.CountTokens(textOf(f.renderCurrent()))
 	outlineView := *f
 	outlineView.representation = fileOutline
-	outlineTokens := llm.CountTokens(textOf(outlineView.ToLLM()))
+	outlineTokens := llm.CountTokens(textOf(outlineView.renderCurrent()))
 	outlineRatio := float64(outlineTokens) / float64(fullTokens)
 
 	projected, actual := f.Compact(outlineRatio)
 	outline := projected.(*File)
-	if text := textOf(outline.ToLLM()); !strings.Contains(text, "File outline: pkg/a.go") {
+	if text := textOf(outline.renderCurrent()); !strings.Contains(text, "File outline: pkg/a.go") {
 		t.Fatalf("ratio projection did not choose outline: %q", text)
 	}
 	if actual != outlineRatio {
 		t.Fatalf("actual ratio = %f, want %f", actual, outlineRatio)
 	}
 	projected, _ = outline.Compact(0)
-	if text := textOf(projected.(*File).ToLLM()); !strings.Contains(text, "compacted to a reference") {
+	if text := textOf(projected.(*File).renderCurrent()); !strings.Contains(text, "compacted to a reference") {
 		t.Fatalf("terminal projection did not choose path reference: %q", text)
 	}
-	if text := textOf(f.ToLLM()); !strings.Contains(text, "1|code") {
+	if text := textOf(f.renderCurrent()); !strings.Contains(text, "1|code") {
 		t.Fatal("Compact mutated the original File")
 	}
 }

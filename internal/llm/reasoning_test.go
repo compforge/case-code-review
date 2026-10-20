@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/compforge/agentgo"
 )
 
 func TestPerCallEffortReachesOpenAIWire(t *testing.T) {
@@ -21,9 +23,9 @@ func TestPerCallEffortReachesOpenAIWire(t *testing.T) {
 	}))
 	defer server.Close()
 	defaults := map[string]any{"thinking": map[string]any{"type": "enabled"}, "reasoning_effort": "high", "custom_flag": true}
-	client := NewOpenAIClient(ClientConfig{URL: server.URL, APIKey: "fake", ExtraBody: defaults, MaxRetries: -1})
+	client := newOpenAIModel(ModelConfig{URL: server.URL, Model: "test", APIKey: "fake", ExtraBody: defaults})
 	for _, effort := range []string{"minimal", "low", "medium", "high", "xhigh", "max", "off", "none", "auto", ""} {
-		response, err := client.CompletionsWithCtx(t.Context(), ChatRequest{Model: "test", Messages: []Message{NewTextMessage("user", "work")}, ReasoningEffort: effort})
+		response, err := Call(t.Context(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("work")}}}, Config: &agentgo.CallConfig{ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(effort))}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -41,7 +43,7 @@ func TestPerCallEffortReachesOpenAIWire(t *testing.T) {
 		if effort != "" && effort != "auto" && body["thinking"] != nil {
 			t.Fatal("raw thinking default overrode typed intent")
 		}
-		if response.Usage.ReasoningTokens != 32 || response.Usage.TotalTokens != 36 || response.Choices[0].FinishReason != "length" {
+		if response.Message.Usage.Reasoning != 32 || response.Message.Usage.TotalTokens != 36 || response.Message.StopReason != "length" {
 			t.Fatalf("response=%+v", response)
 		}
 	}
@@ -62,9 +64,9 @@ func TestPerCallEffortReachesAnthropicWire(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"response","type":"message","role":"assistant","model":"test","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":1}}`))
 	}))
 	defer server.Close()
-	client := NewAnthropicClient(ClientConfig{URL: server.URL, APIKey: "fake", ExtraBody: map[string]any{"thinking": map[string]any{"type": "adaptive"}, "output_config": map[string]any{"effort": "high", "custom_flag": true}}, MaxRetries: -1})
+	client := newAnthropicModel(ModelConfig{URL: server.URL, Model: "test", APIKey: "fake", ExtraBody: map[string]any{"thinking": map[string]any{"type": "adaptive"}, "output_config": map[string]any{"effort": "high", "custom_flag": true}}})
 	for _, effort := range []string{"low", "max", "off", ""} {
-		_, err := client.CompletionsWithCtx(t.Context(), ChatRequest{Model: "test", Messages: []Message{NewTextMessage("user", "work")}, ReasoningEffort: effort})
+		_, err := Call(t.Context(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("work")}}}, Config: &agentgo.CallConfig{ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(effort))}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,18 +93,20 @@ func TestPerCallEffortReachesAnthropicWire(t *testing.T) {
 
 func TestCompleteTextRejectsTruncatedAndReasoningOnlyResponses(t *testing.T) {
 	visible := "partial plan"
-	for _, reason := range []string{"length", "max_tokens"} {
-		response := &ChatResponse{Choices: []Choice{{FinishReason: reason, Message: ResponseMessage{Content: &visible}}}}
-		if text, err := response.CompleteText(); text != "" || !errors.Is(err, ErrOutputTruncated) {
+	for _, reason := range []string{"length"} {
+		response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(visible)}, StopReason: agentgo.StopReason(reason)}}
+
+		if text, err := CompleteText(response); text != "" || !errors.Is(err, ErrOutputTruncated) {
 			t.Fatalf("text=%q error=%v", text, err)
 		}
 	}
-	response := &ChatResponse{Choices: []Choice{{FinishReason: "stop", Message: ResponseMessage{ReasoningContent: "private reasoning"}}}}
-	if _, err := response.CompleteText(); err == nil {
+	response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.ThinkingBlock("private reasoning")}, StopReason: agentgo.StopReasonStop}}
+
+	if _, err := CompleteText(response); err == nil {
 		t.Fatal("reasoning used as final answer")
 	}
-	response.Choices[0].Message.Content = &visible
-	if text, err := response.CompleteText(); err != nil || text != visible {
+	response.Message.Content = []agentgo.ContentBlock{agentgo.TextBlock(visible)}
+	if text, err := CompleteText(response); err != nil || text != visible {
 		t.Fatalf("text=%q error=%v", text, err)
 	}
 }

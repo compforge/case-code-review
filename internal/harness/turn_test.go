@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -33,7 +34,7 @@ func TestWrapUpConditionsAreIndependentAndReminderIsOnce(t *testing.T) {
 				defer cancel()
 			}
 			controller := newTurnController(ExecutionSpec{
-				LLMClient: llm.NewBudgetClient(&scriptedClient{}, test.budget, nil),
+				ChatModel: llm.NewBudgetModel(&scriptedClient{}, test.budget, nil),
 				MaxTurns:  test.maxTurns, WrapUpAfterTurns: 12, WrapUpPrompt: "wrap up",
 			})
 			turn := agentgo.BeforeTurnContext{TurnIndex: test.turn, Context: agentgo.AgentContext{Messages: []agentgo.AgentMessage{msg.Text("user", "review")}}}
@@ -51,12 +52,12 @@ func TestWrapUpConditionsAreIndependentAndReminderIsOnce(t *testing.T) {
 
 func TestWrapUpForecastUsesUsageThenCompactedBaseline(t *testing.T) {
 	controller := newTurnController(ExecutionSpec{MaxTokens: 20000, WrapUpPrompt: "finish", ToolDefs: []llm.ToolDef{toolDef("read_files")}})
-	response, err := toAgentGoResponse(toolCallResponse("read_files", `{}`, &llm.UsageInfo{PromptTokens: 30000, CompletionTokens: 8000}), nil)
+	response, err := normalizeResponse(toolCallResponse("read_files", `{}`, &agentgo.Usage{Input: 30000, Output: 8000}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	controller.observeUsage(&llm.UsageInfo{CompletionTokens: 8000})
-	controller.observeUsage(&llm.UsageInfo{CompletionTokens: 10})
+	controller.observeUsage(&agentgo.Usage{Output: 8000})
+	controller.observeUsage(&agentgo.Usage{Output: 10})
 	investigation, wrapUp := controller.forecast([]agentgo.AgentMessage{response})
 	if investigation < 38000 || wrapUp < 46000 {
 		t.Fatalf("forecast ignored recent usage: %d/%d", investigation, wrapUp)
@@ -68,8 +69,8 @@ func TestWrapUpForecastUsesUsageThenCompactedBaseline(t *testing.T) {
 	if compactedInvestigation < 8000 {
 		t.Fatal("recent short reply erased output reserve")
 	}
-	controller.observeUsage(&llm.UsageInfo{CompletionTokens: 10})
-	controller.observeUsage(&llm.UsageInfo{CompletionTokens: 10})
+	controller.observeUsage(&agentgo.Usage{Output: 10})
+	controller.observeUsage(&agentgo.Usage{Output: 10})
 	decayed, _ := controller.forecast([]agentgo.AgentMessage{msg.Text("user", "short committed summary")})
 	if decayed >= compactedInvestigation || decayed < wrapUpOutputFloor {
 		t.Fatalf("recent output window/floor failed: %d", decayed)

@@ -5,7 +5,6 @@ import (
 
 	"github.com/compforge/agentgo"
 
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
@@ -38,11 +37,8 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 		out.Model = recorded.model
 		out.Duration = recorded.duration
 		if message, ok := event.Message.(agentgo.Message); ok {
-			wire := toLLMMessages([]agentgo.Message{message})
-			if len(wire) == 1 {
-				out.Message = &wire[0]
-			}
-			out.Usage = usageInfo(message.Usage)
+			out.Message = &message
+			out.Usage = message.Usage
 		}
 	case agentgo.EventToolExecStart:
 		out.Type = EventToolStart
@@ -70,19 +66,6 @@ func emitExecutionEvent(sink EventSink, recorder *executionRecorder, event agent
 		return
 	}
 	sink.OnExecutionEvent(out)
-}
-
-func usageInfo(usage *agentgo.Usage) *llm.UsageInfo {
-	if usage == nil {
-		return nil
-	}
-	return &llm.UsageInfo{
-		PromptTokens:     int64(usage.Input),
-		CompletionTokens: int64(usage.Output),
-		CacheReadTokens:  int64(usage.CacheRead),
-		CacheWriteTokens: int64(usage.CacheWrite),
-		TotalTokens:      int64(usage.TotalTokens),
-	}
 }
 
 func cloneRaw(raw json.RawMessage) json.RawMessage {

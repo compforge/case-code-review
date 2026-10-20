@@ -50,7 +50,7 @@ type turnController struct {
 }
 
 func newTurnController(spec ExecutionSpec) *turnController {
-	budget, _ := spec.LLMClient.(tokenAllowance)
+	budget, _ := spec.ChatModel.(tokenAllowance)
 	schemas, _ := json.Marshal(spec.ToolDefs)
 	return &turnController{
 		budget:         budget,
@@ -107,13 +107,13 @@ func (c *turnController) modelDeadline() time.Time {
 	return c.wrapUpAt
 }
 
-func (c *turnController) observeUsage(usage *llm.UsageInfo) {
+func (c *turnController) observeUsage(usage *agentgo.Usage) {
 	if usage == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.outputs[c.outputIndex%len(c.outputs)] = usage.CompletionTokens
+	c.outputs[c.outputIndex%len(c.outputs)] = int64(usage.Output)
 	c.outputIndex++
 }
 

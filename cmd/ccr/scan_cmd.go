@@ -199,7 +199,7 @@ func runScan(args []string) error {
 		Template:              *scanTpl,
 		SystemRule:            cc.Resolver,
 		FileFilter:            cc.FileFilter,
-		LLMClient:             rt.Client,
+		ChatModel:             rt.Client,
 		Tools:                 tools,
 		MainToolDefs:          scanToolDefs,
 		Findings:              rt.Findings,

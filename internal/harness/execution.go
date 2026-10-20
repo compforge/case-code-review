@@ -12,14 +12,14 @@ import (
 	"github.com/compforge/agentgo"
 	"github.com/compforge/agentgo/codec"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/qiankunli/case-code-review/internal/telemetry"
-
 	"github.com/compforge/go-stdx/uuid"
+
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 var errExplorationExpired = errors.New("exploration request deadline reached")
@@ -41,7 +41,7 @@ const (
 type ExecutionSpec struct {
 	// SessionCodecOptions register caller-owned message representations. The Session protocol remains AgentGo-owned.
 	SessionCodecOptions []codec.Option
-	LLMClient           llm.LLMClient
+	ChatModel           agentgo.ChatModel
 	Model               string
 	Messages            []agentgo.AgentMessage
 	ToolDefs            []llm.ToolDef
@@ -106,7 +106,7 @@ type ExecutionResult struct {
 	Duration   time.Duration
 	State      string
 	Reason     string
-	Usage      llm.UsageInfo
+	Usage      agentgo.Usage
 	Turns      int
 	ToolCalls  int
 	ToolErrors int
@@ -154,8 +154,8 @@ type Execution struct {
 
 // NewExecution validates and assembles one isolated Harness execution.
 func NewExecution(spec ExecutionSpec) (*Execution, error) {
-	if spec.LLMClient == nil {
-		return nil, fmt.Errorf("harness: LLM client is required")
+	if spec.ChatModel == nil {
+		return nil, fmt.Errorf("harness: chat model is required")
 	}
 	if len(spec.Messages) == 0 {
 		return nil, fmt.Errorf("harness: at least one message is required")
@@ -192,7 +192,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		taskType = recording.MainTask
 	}
 	e.model = &chatModel{
-		client:    spec.LLMClient,
+		client:    spec.ChatModel,
 		model:     spec.Model,
 		maxTokens: spec.MaxTokens,
 		recorder:  e.recorder,
@@ -200,7 +200,7 @@ func NewExecution(spec ExecutionSpec) (*Execution, error) {
 		events:    true,
 	}
 	contextModel := &chatModel{
-		client:    spec.LLMClient,
+		client:    spec.ChatModel,
 		model:     spec.Model,
 		maxTokens: spec.MaxTokens,
 		recorder:  e.recorder,
@@ -506,11 +506,7 @@ func (e *Execution) contextSnapshot() []agentgo.AgentMessage {
 }
 
 func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
-	return func(
-		ctx context.Context,
-		execution agentgo.ToolExecution,
-		next agentgo.ToolExecuteFunc,
-	) (agentgo.ToolResult, error) {
+	return func(ctx context.Context, execution agentgo.ToolExecution, next agentgo.ToolExecuteFunc) (agentgo.ToolResult, error) {
 		call := execution.Call
 		started := time.Now()
 		defer func() {
@@ -546,17 +542,12 @@ func (e *Execution) toolMiddleware() agentgo.ToolMiddleware {
 				return next(ctx, execution)
 			}
 			recorded := e.recorder.call(call.ID)
+			requestCall := call
+			requestCall.Args = raw
 			checkpoint, handled := e.spec.ToolHandler.HandleTool(ctx, ToolRequest{
 				Scope: e.spec.Scope,
 				Tool:  tool.OfName(call.Name),
-				Call: llm.ToolCall{
-					ID:   call.ID,
-					Type: "function",
-					Function: llm.FunctionCall{
-						Name:      call.Name,
-						Arguments: string(raw),
-					},
-				},
+				Call:  requestCall,
 				Args:  parsed,
 				Alias: recorded.alias,
 			})
@@ -691,26 +682,6 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 	result.State = OutcomeTruncated
 	result.Reason = string(e.summary.EndReason)
 	return result, nil
-}
-
-func wireToAgentMessage(message llm.Message) agentgo.Message {
-	content := []agentgo.ContentBlock{agentgo.TextBlock(message.ExtractText())}
-	for _, call := range message.ToolCalls {
-		args := json.RawMessage(call.Function.Arguments)
-		content = append(content, agentgo.ToolCallBlock(agentgo.ToolCall{
-			ID:   call.ID,
-			Name: call.Function.Name,
-			Args: args,
-		}))
-	}
-	agentMessage := agentgo.Message{
-		Role:    agentgo.Role(message.Role),
-		Content: content,
-	}
-	if message.ToolCallID != "" {
-		agentMessage.Metadata = map[string]any{"tool_call_id": message.ToolCallID}
-	}
-	return agentMessage
 }
 
 type adaptedTool struct {

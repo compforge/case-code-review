@@ -46,7 +46,7 @@ func (a *Runner) reviewHypothesis(
 		WrapUpDeadline:          wrapUpDeadline,
 		ExplorationFraction:     a.args.Template.ReviewTimeBudget.WithDefaults().ExplorationFraction,
 		Task:                    *task,
-		LLMClient:               a.args.LLMClient,
+		ChatModel:               a.args.ChatModel,
 		Model:                   a.args.Model,
 		ToolDefs:                a.args.MainToolDefs,
 		Tools:                   a.args.Tools,
@@ -147,7 +147,7 @@ func (a *Runner) hypothesisReviewEvents(ctx context.Context) harness.EventSink {
 			}
 			var tokens int64
 			if event.Usage != nil {
-				tokens = event.Usage.TotalTokens
+				tokens = int64(event.Usage.TotalTokens)
 			}
 			telemetry.RecordLLMRequest(ctx, model, event.Duration, tokens, "ok")
 		case harness.EventToolStart:

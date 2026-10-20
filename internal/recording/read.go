@@ -12,6 +12,7 @@ import (
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/timelinelog"
 )
@@ -176,7 +177,7 @@ func (t *Transcript) readLoop(path string) error {
 			rounds[executionKey]++
 			facts["type"] = "llm_request"
 			facts["request_no"] = rounds[executionKey]
-			facts["messages"] = wireMessages(data.ModelRequest.Messages)
+			facts["messages"] = data.ModelRequest.Messages
 			facts["tools"] = data.ModelRequest.Tools
 			if data.ModelRequest.Config != nil {
 				cfg := data.ModelRequest.Config

@@ -1,12 +1,13 @@
 package llm
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/compforge/agentgo"
+)
 
 func TestCountMessagesTokensSumsMessageText(t *testing.T) {
-	messages := []Message{
-		NewTextMessage("user", "first message"),
-		NewTextMessage("assistant", "second message"),
-	}
+	messages := []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("first message")}}, {Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock("second message")}}}
 	want := CountTokens("first message") + CountTokens("second message")
 	if got := CountMessagesTokens(messages); got != want {
 		t.Fatalf("CountMessagesTokens() = %d, want %d", got, want)

@@ -13,7 +13,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
@@ -181,12 +180,7 @@ func (a *Runner) preloadSpans(
 
 // assembleReviewMessages keeps [system, task] as a stable prefix and appends
 // every selected source range as a separate full-fidelity File message.
-func (a *Runner) assembleReviewMessages(
-	build func(unitSlot, relatedSlot string) []llm.Message,
-	own, related []*msg.File,
-	initial []msg.FileContextEntry,
-	materials ...agentgo.AgentMessage,
-) []agentgo.AgentMessage {
+func (a *Runner) assembleReviewMessages(build func(unitSlot, relatedSlot string) []agentgo.Message, own, related []*msg.File, initial []msg.FileContextEntry, materials ...agentgo.AgentMessage) []agentgo.AgentMessage {
 	unitSlot := sourceNotPreloaded
 	if len(own) > 0 {
 		unitSlot = unitSourcePointer

@@ -6,10 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -46,7 +47,7 @@ func TestDependencySourceRetainsIdentityAndCannotMintRepositoryReceipt(t *testin
 	if !strings.Contains(compacted.TextContent(), source.Ref) {
 		t.Fatal("compaction lost dependency version identity")
 	}
-	request := harness.ToolRequest{Tool: tool.ReadGoDependency, Call: llm.ToolCall{ID: "read-1"}}
+	request := harness.ToolRequest{Tool: tool.ReadGoDependency, Call: agentgo.ToolCall{ID: "read-1"}}
 	if got := receiptsFor(request, string(bytes)); len(got) != 1 || got[0].Kind != "dependency" {
 		t.Fatalf("read receipts=%+v", got)
 	}

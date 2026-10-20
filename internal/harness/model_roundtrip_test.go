@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
@@ -33,7 +34,7 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 	}))
 	defer server.Close()
 	model := &chatModel{
-		client: llm.NewOpenAIClient(llm.ClientConfig{URL: server.URL, Model: "review-model"}),
+		client: llm.NewModel(llm.ResolvedEndpoint{URL: server.URL, Model: "review-model"}),
 		model:  "review-model", maxTokens: 16384,
 		recorder: newExecutionRecorder(ExecutionSpec{}, "roundtrip"),
 	}
@@ -65,10 +66,10 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 }
 
 func TestExecutionKeepsContextLargerThanOutputBudget(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{textResponse("done")}}
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{textResponse("done")}}
 	source := strings.Repeat("specific source evidence\n", 1000)
 	result, err := runExecution(t.Context(), ExecutionSpec{
-		LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", source)},
+		ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", source)},
 		MaxTokens: 512, ContextWindow: 200000, MaxTurns: 1, NaturalCompletion: true,
 	})
 	if err != nil {
@@ -78,7 +79,7 @@ func TestExecutionKeepsContextLargerThanOutputBudget(t *testing.T) {
 		t.Fatalf("state = %s", result.State)
 	}
 	requests := client.Requests()
-	if len(requests) != 1 || requests[0].MaxTokens != 512 || requests[0].Messages[0].ExtractText() != source {
+	if len(requests) != 1 || requests[0].Config.MaxTokens != 512 || requests[0].Messages[0].TextContent() != source {
 		t.Fatal("output cap changed the input context budget")
 	}
 }
@@ -90,7 +91,12 @@ func TestSDKExplorationTimeoutResumesWrapUp(t *testing.T) {
 	defer history.Finalize()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body llm.ChatRequest
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 			return
@@ -101,7 +107,7 @@ func TestSDKExplorationTimeoutResumesWrapUp(t *testing.T) {
 		}
 		text := ""
 		for _, message := range body.Messages {
-			text += message.ExtractText()
+			text += message.Content
 		}
 		if !strings.Contains(text, "finish review now") {
 			t.Error("wrap-up request missing completion prompt")
@@ -110,10 +116,10 @@ func TestSDKExplorationTimeoutResumesWrapUp(t *testing.T) {
 		_, _ = w.Write([]byte(`{"model":"review-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"review complete"}}]}`))
 	}))
 	defer server.Close()
-	client := llm.NewOpenAIClient(llm.ClientConfig{URL: server.URL, Model: "review-model", MaxRetries: -1, Timeout: 5 * time.Second})
+	client := llm.NewModel(llm.ResolvedEndpoint{URL: server.URL, Model: "review-model", Timeout: 5 * time.Second})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, MaxTurns: 10, WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish review now", NaturalCompletion: true})
+	result, err := runExecution(ctx, ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, MaxTurns: 10, WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish review now", NaturalCompletion: true})
 	if err != nil || result.State != OutcomeCompleted || calls.Load() != 2 {
 		t.Fatalf("result=%+v calls=%d err=%v", result, calls.Load(), err)
 	}

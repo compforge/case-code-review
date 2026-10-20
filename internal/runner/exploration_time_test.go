@@ -12,6 +12,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -21,9 +23,13 @@ import (
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
-type timedReviewClient func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error)
+type timedReviewClient func(context.Context, agentgo.LLMRequest) (*agentgo.LLMResponse, error)
 
-func (f timedReviewClient) CompletionsWithCtx(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+func (f timedReviewClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+	config := agentgo.ResolveCallConfig(
+		opts)
+	req := agentgo.LLMRequest{Messages: messages, Tools: tools, Config: &config}
+
 	return f(ctx, req)
 }
 
@@ -35,27 +41,30 @@ func waitReview(ctx context.Context, delay time.Duration) error {
 		return ctx.Err()
 	}
 }
-func reviewText(text string) *llm.ChatResponse {
-	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", Content: &text}, FinishReason: "stop"}}}
+func reviewText(text string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, StopReason: agentgo.StopReasonStop}}
 }
-func reviewCall(id, name string, arguments any) *llm.ChatResponse {
+func reviewCall(id, name string, arguments any) *agentgo.LLMResponse {
 	data, _ := json.Marshal(arguments)
-	return &llm.ChatResponse{Choices: []llm.Choice{{Message: llm.ResponseMessage{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: id, Type: "function", Function: llm.FunctionCall{Name: name, Arguments: string(data)}}}}, FinishReason: "tool_calls"}}}
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: id,
+		Name: name,
+		Args: json.RawMessage(string(data))}),
+	), StopReason: agentgo.StopReasonToolUse}}
 }
-func suspicion(id string) *llm.ChatResponse {
+func suspicion(id string) *agentgo.LLMResponse {
 	return reviewCall(id, "submit_hypothesis", map[string]any{
 		"path": "a.go", "existing_code": "_ = 0", "content": id,
 		"trigger": id, "impact": id, "change_attribution": "changed assignment",
 		"evidence": []string{"a.go:4"}, "uncertainty": "verify caller", "category": "bug", "severity": "high",
 	})
 }
-func confirmed() *llm.ChatResponse {
+func confirmed() *agentgo.LLMResponse {
 	return reviewCall("assessment", "submit_assessment", map[string]any{
 		"support": "supported", "attribution": "caused", "value": "actionable", "novelty": "new",
 		"reason": "Unit diff proves the changed assignment", "evidence": []string{"a.go:4"},
 	})
 }
-func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *recording.Review) {
+func timeoutRunner(t *testing.T, client agentgo.ChatModel) (*Runner, *recording.Review) {
 	t.Helper()
 	// The manager workers and Session must share the synctest clock.
 	shutdownTimeline, err := telemetry.InitTimeline()
@@ -74,7 +83,7 @@ func timeoutRunner(t *testing.T, client llm.LLMClient) (*Runner, *recording.Revi
 		HypothesisReviewTask: &template.LlmConversation{Messages: []template.ChatMessage{{Role: "system", Content: "R2"}, {Role: "user", Content: "{{hypothesis}}"}}},
 		MaxTokens:            100000, MaxToolRequestTimes: 30,
 	}
-	a := New(Args{RepoDir: repo, Session: history, LLMClient: client, MaxConcurrency: 1, ConcurrentTaskTimeout: 10,
+	a := New(Args{RepoDir: repo, Session: history, ChatModel: client, MaxConcurrency: 1, ConcurrentTaskTimeout: 10,
 		MainToolDefs: []llm.ToolDef{unitreview.HypothesisToolDef()}, Template: tpl})
 	a.changes = []change.Change{goDiff("a.go", 1)}
 	return a, history
@@ -105,8 +114,8 @@ func timeoutTranscript(t *testing.T, history *recording.Review) []map[string]any
 func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-			if req.Messages[0].ExtractText() == "R2" {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
+			if req.Messages[0].TextContent() == "R2" {
 				if err := waitReview(ctx, 4*time.Minute); err != nil {
 					return nil, err
 				}
@@ -152,8 +161,8 @@ func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
 func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls, r2Calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-			if req.Messages[0].ExtractText() == "R2" {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
+			if req.Messages[0].TextContent() == "R2" {
 				delay := 2 * time.Minute
 				if r2Calls.Add(1) > 1 {
 					delay = 20 * time.Minute
@@ -217,7 +226,6 @@ func TestExplorationDeadlineRetainsAssessmentAndMarksRemainingReviewIncomplete(t
 		if completion.Status != "partial" || len(completion.Units) != 1 || len(completion.Units[0].Unassessed) != 1 {
 			t.Fatalf("partial Finding lost completion evidence: %+v", completion)
 		}
-
 	})
 }
 
@@ -225,7 +233,7 @@ func TestUnitTimeoutIncludesPlanAndBoundsWrapUp(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
 		var reminders atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 			n := calls.Add(1)
 			if n == 1 {
 				if err := waitReview(ctx, 6*time.Minute); err != nil {
@@ -234,7 +242,7 @@ func TestUnitTimeoutIncludesPlanAndBoundsWrapUp(t *testing.T) {
 				return reviewText("plan"), nil
 			}
 			for _, message := range req.Messages {
-				if strings.Contains(message.ExtractText(), "BUDGET NEARLY EXHAUSTED") {
+				if strings.Contains(message.TextContent(), "BUDGET NEARLY EXHAUSTED") {
 					reminders.Add(1)
 				}
 			}
@@ -262,8 +270,8 @@ func TestReview1SlotReleasedWhileReview2StillRuns(t *testing.T) {
 		var r1Calls atomic.Int32
 		r2Started := make(chan struct{})
 		secondUnit := make(chan struct{})
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-			if req.Messages[0].ExtractText() == "R2" {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
+			if req.Messages[0].TextContent() == "R2" {
 				close(r2Started)
 				<-secondUnit
 				return confirmed(), nil
@@ -292,8 +300,8 @@ func TestReview1SlotReleasedWhileReview2StillRuns(t *testing.T) {
 func TestAsyncHypothesisResolutionStaysInsideUnitLifecycle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-			if req.Messages[0].ExtractText() == "R2" {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
+			if req.Messages[0].TextContent() == "R2" {
 				if err := waitReview(ctx, 4*time.Minute); err != nil {
 					return nil, err
 				}
@@ -331,7 +339,7 @@ func TestAsyncHypothesisResolutionStaysInsideUnitLifecycle(t *testing.T) {
 func TestWaitingUnitStartsItsOwnClockAfterDiscoverySlot(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+		client := timedReviewClient(func(ctx context.Context, _ agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 			deadline, ok := ctx.Deadline()
 			// Each newly admitted Unit receives its own 5m55.81s exploration
 			// interval (70% of 9m58s, then 85% exploration).
@@ -361,8 +369,8 @@ func TestWaitingUnitStartsItsOwnClockAfterDiscoverySlot(t *testing.T) {
 func TestUnitTimeoutDoesNotWaitForAnotherUnitsResolutionWorker(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var r1Calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
-			if req.Messages[0].ExtractText() == "R2" {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
+			if req.Messages[0].TextContent() == "R2" {
 				return confirmed(), nil
 			}
 			if r1Calls.Add(1) == 1 {
@@ -405,7 +413,7 @@ func TestUnitTimeoutDoesNotWaitForAnotherUnitsResolutionWorker(t *testing.T) {
 
 // +case:id=unit_failure_reported_once,desc=`R1 returns a provider error`,expect=`the pipeline emits exactly one unit_incomplete with the original reason and retains failure status`
 func TestUnitFailureReportedOnce(t *testing.T) {
-	client := timedReviewClient(func(context.Context, llm.ChatRequest) (*llm.ChatResponse, error) {
+	client := timedReviewClient(func(context.Context, agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 		return nil, errors.New("provider unavailable")
 	})
 	a, history := timeoutRunner(t, client)
@@ -429,7 +437,7 @@ func TestUnitFailureReportedOnce(t *testing.T) {
 func TestReview1ExplorationTimeoutCompletesWithoutWarning(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var calls atomic.Int32
-		client := timedReviewClient(func(ctx context.Context, req llm.ChatRequest) (*llm.ChatResponse, error) {
+		client := timedReviewClient(func(ctx context.Context, req agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 			if calls.Add(1) == 1 {
 				<-ctx.Done()
 				return nil, ctx.Err()
@@ -469,4 +477,9 @@ func TestReview1ExplorationTimeoutCompletesWithoutWarning(t *testing.T) {
 			t.Fatalf("recovered Unit lost recording: %v", gaps)
 		}
 	})
+}
+
+func (f timedReviewClient) SupportsTools() bool { return true }
+func (f timedReviewClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return f.Generate(ctx, messages, tools, opts...) })
 }

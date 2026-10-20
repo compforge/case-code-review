@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
@@ -22,7 +23,7 @@ func TestReviewHandlerReceiptsComeFromExecutedReadTools(t *testing.T) {
 	handler := &ReviewHandler{Evidence: ledger, Tools: registry}
 	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 		Tool: tool.FileReadDiff,
-		Call: llm.ToolCall{ID: "call-diff"},
+		Call: agentgo.ToolCall{ID: "call-diff"},
 		Args: map[string]any{"paths": []any{"a.go", "missing.go"}},
 	})
 	if !handled || checkpoint.Data == "" {
@@ -46,7 +47,7 @@ func TestReviewHandlerReceiptsEachSuccessfulBatchMember(t *testing.T) {
 	handler := &ReviewHandler{Evidence: ledger, Tools: registry, Unit: &reviewUnit}
 	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 		Tool: tool.FileRead,
-		Call: llm.ToolCall{ID: "call-source"},
+		Call: agentgo.ToolCall{ID: "call-source"},
 		Args: map[string]any{"reads": []any{
 			map[string]any{"file_path": "a.go"},
 			map[string]any{"file_path": "missing.go"},
@@ -76,7 +77,7 @@ func TestReviewHandlerReceiptsEachSuccessfulSearch(t *testing.T) {
 	handler := &ReviewHandler{Evidence: ledger, Tools: registry}
 	checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 		Tool: tool.CodeSearch,
-		Call: llm.ToolCall{ID: "call-search"},
+		Call: agentgo.ToolCall{ID: "call-search"},
 		Args: map[string]any{"searches": []any{
 			map[string]any{"query": "package a", "syntax": "literal"},
 			map[string]any{"query": "", "syntax": "literal"},
@@ -116,7 +117,7 @@ func TestReviewHandlerRecordsExternalEvidenceBoundaryWithoutFailure(t *testing.T
 			handler := &ReviewHandler{Evidence: ledger, Hypothesis: hypothesis}
 			checkpoint, handled := handler.HandleTool(context.Background(), harness.ToolRequest{
 				Tool: tt.tool,
-				Call: llm.ToolCall{ID: "call-external"},
+				Call: agentgo.ToolCall{ID: "call-external"},
 				Args: tt.args,
 			})
 			if !handled || checkpoint.Data == "" || checkpoint.Data[:1] != "{" {

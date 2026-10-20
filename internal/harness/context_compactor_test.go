@@ -10,6 +10,7 @@ import (
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -65,7 +66,7 @@ func TestContextCompactionReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	var fixture struct {
-		Messages []llm.Message     `json:"messages"`
+		Messages []agentgo.Message `json:"messages"`
 		Result   msg.LLMToolResult `json:"result"`
 		Ratio    float64           `json:"ratio"`
 	}
@@ -78,7 +79,7 @@ func TestContextCompactionReplay(t *testing.T) {
 		if wire, ok := message.(agentgo.Message); ok && i == 1 && wire.Role == agentgo.RoleUser {
 			input[i] = msg.Instruction{Message: wire}
 		}
-		if fixture.Messages[i].ToolCallID == fixture.Result.ToolCallID {
+		if fixture.Messages[i].Metadata["tool_call_id"] == fixture.Result.ToolCallID {
 			input[i], latest = msg.FromLLM(fixture.Result), i
 		}
 	}
@@ -117,7 +118,7 @@ func TestContextCompactionReplay(t *testing.T) {
 func TestExecutionReportsContextBudgetAsTruncated(t *testing.T) {
 	client := &scriptedClient{}
 	result, err := runExecution(t.Context(), ExecutionSpec{
-		LLMClient: client, ContextWindow: 100, MaxTurns: 2,
+		ChatModel: client, ContextWindow: 100, MaxTurns: 2,
 		Messages: []agentgo.AgentMessage{msg.FixedText("user", strings.Repeat("required constraints ", 200))},
 		ToolDefs: []llm.ToolDef{toolDef("task_done")},
 	})

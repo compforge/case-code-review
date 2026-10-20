@@ -10,8 +10,8 @@ func TestFileContextKeepsViewsDistinct(t *testing.T) {
 		{Path: "c.go", View: ViewReference, Reason: "repository_reference"},
 		{Path: "b.go", View: ViewOutline, Reason: "callee", Ref: "b.go::B", Content: "File outline: b.go (go)\n- func B — L3-8"},
 	})
-	fullMessage := context.ToLLM()
-	full := fullMessage.ExtractText()
+	fullMessage := context.renderCurrent()
+	full := fullMessage.TextContent()
 	if !strings.Contains(full, "[outline] b.go — callee (b.go::B)") ||
 		!strings.Contains(full, "- func B") ||
 		!strings.Contains(full, "[reference] c.go") {
@@ -19,8 +19,8 @@ func TestFileContextKeepsViewsDistinct(t *testing.T) {
 	}
 	projected, _ := context.Compact(0)
 	condensedContext := projected.(*FileContext)
-	condensedMessage := condensedContext.ToLLM()
-	condensed := condensedMessage.ExtractText()
+	condensedMessage := condensedContext.renderCurrent()
+	condensed := condensedMessage.TextContent()
 	if strings.Contains(condensed, "- func B") || !strings.Contains(condensed, "[reference] b.go") {
 		t.Fatalf("condensed context = %q", condensed)
 	}

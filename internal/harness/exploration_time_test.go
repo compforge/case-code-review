@@ -12,6 +12,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -20,12 +21,17 @@ import (
 
 type explorationClockClient struct {
 	*scriptedClient
-	delays    []time.Duration
-	attempts  []llm.ChatRequest
+	delays   []time.Duration
+	attempts []agentgo.LLMRequest
+
 	deadlines []time.Time
 }
 
-func (c *explorationClockClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
+func (c *explorationClockClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+	config := agentgo.ResolveCallConfig(opts)
+	request := agentgo.LLMRequest{Messages: messages,
+		Tools: tools, Config: &config}
+
 	c.attempts = append(c.attempts, request)
 	deadline, _ := ctx.Deadline()
 	c.deadlines = append(c.deadlines, deadline)
@@ -33,7 +39,7 @@ func (c *explorationClockClient) CompletionsWithCtx(ctx context.Context, request
 	c.delays = c.delays[1:]
 	select {
 	case <-time.After(delay):
-		return c.scriptedClient.CompletionsWithCtx(ctx, request)
+		return llm.Call(ctx, c.scriptedClient, request)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -42,7 +48,7 @@ func (c *explorationClockClient) CompletionsWithCtx(ctx context.Context, request
 // +case:id=exploration_expiry_preserves_wrapup,desc=`a tool finishes after the exploration limit`,expect=`the next model request enters wrap-up and retains the caller deadline`
 func TestExplorationExpiryDuringToolCallPreservesWrapUp(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{
 			toolCallResponse("read_files", `{"reads":[{"file_path":"a.go"}]}`, nil),
 			toolCallResponseID("result", "submit_result", `{}`, nil),
 		}}, delays: []time.Duration{4 * time.Minute, 10 * time.Minute}}
@@ -61,7 +67,7 @@ func TestExplorationExpiryDuringToolCallPreservesWrapUp(t *testing.T) {
 		})
 		began := time.Now()
 		result, err := runExecution(context.Background(), ExecutionSpec{
-			LLMClient: client, Model: "test", Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
+			ChatModel: client, Model: "test", Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
 			ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")}, ToolHandler: handler,
 			MaxTurns: 10, WrapUpAt: began.Add(5 * time.Minute), WrapUpPrompt: "exploration finished; submit mature claims", WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true,
 		})
@@ -86,7 +92,7 @@ func TestExplorationClockDoesNotDetachCallerCancellation(t *testing.T) {
 		timer := time.AfterFunc(time.Minute, cancel)
 		defer timer.Stop()
 		client := &explorationClockClient{scriptedClient: &scriptedClient{}, delays: []time.Duration{10 * time.Minute}}
-		result, _ := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 5, WrapUpAt: time.Now().Add(-time.Minute), WrapUpPrompt: "finish now", NaturalCompletion: true})
+		result, _ := runExecution(ctx, ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 5, WrapUpAt: time.Now().Add(-time.Minute), WrapUpPrompt: "finish now", NaturalCompletion: true})
 		if result.State != OutcomeAborted {
 			t.Fatalf("caller cancellation lost during wrap-up: %+v", result)
 		}
@@ -145,11 +151,11 @@ func TestExplorationModelCallResumesWrapUp(t *testing.T) {
 		began := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{textResponse("review complete")}}, delays: []time.Duration{time.Minute, time.Second}}
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{textResponse("review complete")}}, delays: []time.Duration{time.Minute, time.Second}}
 		time.Sleep(9 * time.Second)
 		var events []ExecutionEvent
 		result, err := runExecution(ctx, ExecutionSpec{
-			LLMClient: client,
+			ChatModel: client,
 			Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 			MaxTurns:  10, WrapUpAt: began.Add(10 * time.Second), WrapUpPrompt: "finish review now", NaturalCompletion: true,
 			Events: EventSinkFunc(func(e ExecutionEvent) { events = append(events, e) }),
@@ -186,9 +192,9 @@ func TestExplorationRecoveryPersistsOneExecution(t *testing.T) {
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{textResponse("complete")}}, delays: []time.Duration{time.Minute, 0}}
+	client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{textResponse("complete")}}, delays: []time.Duration{time.Minute, 0}}
 	result, err := runExecution(ctx, ExecutionSpec{
-		LLMClient: client, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"},
+		ChatModel: client, Session: history, Scope: recording.Scope{ID: "unit-1", Kind: "unit"},
 		Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10,
 		WrapUpAt: time.Now().Add(time.Second), WrapUpPrompt: "finish", NaturalCompletion: true,
 	})
@@ -250,16 +256,17 @@ func TestExplorationRecoveryPreservesCommittedState(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		first := toolCallResponseID("accepted", "submit_result", `{}`, &llm.UsageInfo{PromptTokens: 3, CompletionTokens: 2, TotalTokens: 5})
+		first := toolCallResponseID("accepted", "submit_result", `{}`, &agentgo.Usage{Input: 3, Output: 2, TotalTokens: 5})
 		last := textResponse("review complete")
-		last.Usage = &llm.UsageInfo{PromptTokens: 4, CompletionTokens: 3, TotalTokens: 7}
-		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{first, last}}, delays: []time.Duration{time.Second, time.Minute, time.Second}}
+		last.Message.Usage = &agentgo.Usage{Input: 4, Output: 3, TotalTokens: 7}
+
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{first, last}}, delays: []time.Duration{time.Second, time.Minute, time.Second}}
 		submitted := 0
 		session := &LoopSession{}
 		defer session.Close()
 		initial := msg.NewFile("a.go", 1, 1, 1, "1|evidence")
 		result, err := runExecution(ctx, ExecutionSpec{
-			LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{initial},
+			LoopSession: session, ChatModel: client, Messages: []agentgo.AgentMessage{initial},
 			ToolDefs: []llm.ToolDef{toolDef("submit_result")},
 			ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 				submitted++
@@ -298,7 +305,7 @@ func TestExplorationRecoveryRetainsCallerLimits(t *testing.T) {
 					time.AfterFunc(tc.abort, cancel)
 				}
 				client := &explorationClockClient{scriptedClient: &scriptedClient{}, delays: []time.Duration{time.Minute, time.Minute}}
-				result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", NaturalCompletion: true})
+				result, err := runExecution(ctx, ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 10, WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", NaturalCompletion: true})
 				if err == nil || result.State != tc.want || len(client.attempts) != tc.calls {
 					t.Fatalf("result=%+v calls=%d err=%v", result, len(client.attempts), err)
 				}
@@ -338,10 +345,10 @@ func TestExplorationRecoveryFromSummaryTimeout(t *testing.T) {
 		for range 8 {
 			messages = append(messages, msg.Text("user", strings.Repeat("review evidence and reasoning ", 30)))
 		}
-		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{
 			textResponse("<summary>preserve the confirmed review facts</summary>"), textResponse("review complete"),
 		}}, delays: []time.Duration{time.Minute, time.Second, 0}}
-		result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: messages, MaxTurns: 10, MaxTokens: 400, ContextWindow: 400,
+		result, err := runExecution(ctx, ExecutionSpec{ChatModel: client, Messages: messages, MaxTurns: 10, MaxTokens: 400, ContextWindow: 400,
 			WrapUpAt: time.Now().Add(10 * time.Second), WrapUpPrompt: "finish", NaturalCompletion: true})
 		if err != nil || result.State != OutcomeCompleted || len(client.attempts) != 3 {
 			t.Fatalf("result=%+v calls=%d err=%v", result, len(client.attempts), err)
@@ -356,11 +363,11 @@ func TestExplorationRecoveryClosesInvestigationTools(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 		defer cancel()
-		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*llm.ChatResponse{
+		client := &explorationClockClient{scriptedClient: &scriptedClient{responses: []*agentgo.LLMResponse{
 			toolCallResponse("read_files", `{}`, nil), textResponse("review complete"),
 		}}, delays: []time.Duration{time.Minute, 0, 0}}
 		reads := 0
-		result, err := runExecution(ctx, ExecutionSpec{LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
+		result, err := runExecution(ctx, ExecutionSpec{ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
 			ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")},
 			ToolHandler: toolHandlerFunc(func(context.Context, ToolRequest) (tool.TaskCheckpoint, bool) {
 				reads++
@@ -428,4 +435,9 @@ func TestModelMiddlewareDeadline(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (c *explorationClockClient) SupportsTools() bool { return true }
+func (c *explorationClockClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

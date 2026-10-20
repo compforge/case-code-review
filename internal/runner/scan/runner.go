@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
@@ -46,7 +48,7 @@ type Args struct {
 	Template              template.ScanTemplate
 	SystemRule            rules.Resolver
 	FileFilter            *rules.FileFilter
-	LLMClient             llm.LLMClient
+	ChatModel             agentgo.ChatModel
 	Tools                 *tool.Registry
 	MainToolDefs          []llm.ToolDef
 	Findings              *finding.Collector
@@ -103,7 +105,7 @@ func (a *Runner) summaryEnabled() bool {
 // (file enumeration, FULL_SCAN_TASK rendering, per-file filtering) and
 // delegates each file's tool-use loop to a Harness Execution.
 type Runner struct {
-	budget         *llm.BudgetClient
+	budget         *llm.BudgetModel
 	args           Args
 	items          []Item
 	currentDate    string
@@ -137,12 +139,12 @@ func New(args Args) *Runner {
 		session: args.Session,
 	}
 	if args.MaxTokensBudget > 0 {
-		a.budget = llm.NewBudgetClient(args.LLMClient, args.MaxTokensBudget, func(used, limit int64) {
+		a.budget = llm.NewBudgetModel(args.ChatModel, args.MaxTokensBudget, func(used, limit int64) {
 			a.recordWarning("token_budget_reached", "", fmt.Sprintf("reported token usage %d reached budget %d; no new model calls", used, limit))
 			a.session.WriteArtifact("token_budget", map[string]any{"used": used, "limit": limit, "exhausted": true})
 		})
-		args.LLMClient = a.budget
-		a.args.LLMClient = a.budget
+		args.ChatModel = a.budget
+		a.args.ChatModel = a.budget
 	}
 	findingTemplate := toFindingTemplate(args.Template)
 	findingHook := &finding.Hook{
@@ -150,9 +152,8 @@ func New(args Args) *Runner {
 		WorkerPool:   args.WorkerPool,
 		Session:      args.Session,
 		ChangeLookup: a.lookupChange,
-		LLMClient:    args.LLMClient,
+		ChatModel:    args.ChatModel,
 		Template:     findingTemplate,
-		Model:        args.Model,
 		Relocation:   true,
 	}
 	a.executor = newScanExecutor(args, findingHook)
@@ -606,32 +607,27 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	pt := a.args.Template.PlanTask
 
 	// Render plan messages.
-	messages := make([]llm.Message, 0, len(pt.Messages))
+	messages := make([]agentgo.Message, 0, len(pt.Messages))
 	for _, m := range pt.Messages {
 		content := m.Content
 		content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
 		content = strings.ReplaceAll(content, "{{current_file_path}}", it.Path)
 		content = strings.ReplaceAll(content, "{{system_rule}}", rule)
 		content = strings.ReplaceAll(content, "{{file_content}}", it.Content)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 
 	fs := a.session.GetOrCreateScope(scanScope(it.Path))
 	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
-	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:           a.args.Model,
-		Messages:        messages,
-		MaxTokens:       a.args.Template.CompletionTokenLimit(),
-		ReasoningEffort: pt.ReasoningEffort,
-	})
+	resp, err := rec.Call(ctx, a.args.ChatModel, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: a.args.Template.CompletionTokenLimit(), ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(pt.ReasoningEffort))}})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
 		return noPlan
 	}
-	a.executor.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Message.Usage)
 
-	content, err := resp.CompleteText()
+	content, err := llm.CompleteText(resp)
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan plan incomplete for %s: %v (falling back to plan-less)\n", it.Path, err)
 		return noPlan
@@ -662,32 +658,27 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	}
 	payload := buildSummaryCommentsList(comments)
 
-	messages := make([]llm.Message, 0, len(pt.Messages))
+	messages := make([]agentgo.Message, 0, len(pt.Messages))
 	for _, m := range pt.Messages {
 		content := m.Content
 		content = strings.ReplaceAll(content, "{{comment_count}}", fmt.Sprintf("%d", len(comments)))
 		content = strings.ReplaceAll(content, "{{file_count}}", fmt.Sprintf("%d", len(fileSet)))
 		content = strings.ReplaceAll(content, "{{all_comments}}", payload)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 
 	const pathKey = "__scan_project_summary__"
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
 	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type
 
-	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:           a.args.Model,
-		Messages:        messages,
-		MaxTokens:       a.args.Template.CompletionTokenLimit(),
-		ReasoningEffort: pt.ReasoningEffort,
-	})
+	resp, err := rec.Call(ctx, a.args.ChatModel, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: a.args.Template.CompletionTokenLimit(), ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(pt.ReasoningEffort))}})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan project summary failed: %v\n", err)
 		return
 	}
-	a.executor.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Message.Usage)
 
-	content, err := resp.CompleteText()
+	content, err := llm.CompleteText(resp)
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan project summary incomplete: %v\n", err)
 		return
@@ -741,10 +732,10 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	}
 
 	payload := buildDedupCommentsJSON(batchComments)
-	messages := make([]llm.Message, 0, len(dt.Messages))
+	messages := make([]agentgo.Message, 0, len(dt.Messages))
 	for _, m := range dt.Messages {
 		content := strings.ReplaceAll(m.Content, "{{batch_comments}}", payload)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 
 	// Use a synthetic file path keyed by batch index so the session JSONL
@@ -753,19 +744,14 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	fs := a.session.GetOrCreateScope(scanScope(pathKey))
 	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type; no scan-specific type to invent
 
-	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:           a.args.Model,
-		Messages:        messages,
-		MaxTokens:       a.args.Template.CompletionTokenLimit(),
-		ReasoningEffort: dt.ReasoningEffort,
-	})
+	resp, err := rec.Call(ctx, a.args.ChatModel, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: a.args.Template.CompletionTokenLimit(), ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(dt.ReasoningEffort))}})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
 		return
 	}
-	a.executor.RecordUsage(resp.Usage)
+	a.executor.RecordUsage(resp.Message.Usage)
 
-	content, err := resp.CompleteText()
+	content, err := llm.CompleteText(resp)
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup incomplete: %v (keeping originals)\n", err)
 		return
@@ -919,9 +905,9 @@ func formatPlanGuidance(raw string) string {
 // gets substituted into {{plan_guidance}}; callers should pass a non-empty
 // sentinel when planning is disabled so the surrounding section header in
 // the prompt template doesn't dangle.
-func (a *Runner) renderMessages(it Item, rule, planGuidance string) []llm.Message {
+func (a *Runner) renderMessages(it Item, rule, planGuidance string) []agentgo.Message {
 	rawMsgs := a.args.Template.MainTask.Messages
-	messages := make([]llm.Message, 0, len(rawMsgs))
+	messages := make([]agentgo.Message, 0, len(rawMsgs))
 	for _, m := range rawMsgs {
 		content := m.Content
 		content = strings.ReplaceAll(content, "{{plan_guidance}}", planGuidance)
@@ -931,7 +917,7 @@ func (a *Runner) renderMessages(it Item, rule, planGuidance string) []llm.Messag
 		content = strings.ReplaceAll(content, "{{change_files}}", changeFilesScanLiteral)
 		content = strings.ReplaceAll(content, "{{file_content}}", it.Content)
 		content = strings.ReplaceAll(content, "{{requirement_background}}", a.args.Background)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 	return messages
 }

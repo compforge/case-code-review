@@ -20,7 +20,7 @@ import (
 // tightens (file content is the one thing that can always be fetched again).
 //
 // Deliberately NO wire form is stored: the identity is content + pairing, and
-// the wire SHAPE (tool_result vs user text) is ToLLM's rendering decision —
+// the wire SHAPE (tool_result vs user text) is renderCurrent's rendering decision —
 // the precondition for ever A/B-ing per-provider forms (see docs/harness.md).
 // Today the decision is fixed: paired content renders as the
 // tool_result it answers, unpaired as user text.
@@ -80,16 +80,16 @@ const (
 	StubSuperseded StubReason = "superseded"
 )
 
-// ToLLM renders the current semantic projection.
-func (f *File) ToLLM() llm.Message {
+// renderCurrent renders the current semantic projection.
+func (f *File) renderCurrent() agentgo.Message {
 	text := f.render()
 	if f.toolCallID != "" {
-		return llm.NewToolResultMessage(f.toolCallID, text)
+		return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, Metadata: map[string]any{"tool_call_id": f.toolCallID}}
 	}
-	return llm.NewTextMessage("user", text)
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}}
 }
 
-func (f *File) GetRole() agentgo.Role { return domainRole(f.ToLLM()) }
+func (f *File) GetRole() agentgo.Role { return domainRole(f.renderCurrent()) }
 
 // Raw restores the complete source projection without changing the current
 // compacted value.
@@ -103,11 +103,11 @@ func (f *File) Raw() agentgo.AgentMessage {
 	return &raw
 }
 
-func (f *File) TextContent() string     { return domainText(f.ToLLM()) }
+func (f *File) TextContent() string     { return domainText(f.renderCurrent()) }
 func (f *File) ThinkingContent() string { return "" }
-func (f *File) HasToolCalls() bool      { return domainHasToolCalls(f.ToLLM()) }
+func (f *File) HasToolCalls() bool      { return domainHasToolCalls(f.renderCurrent()) }
 func (f *File) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(f.ToLLM(), f.ToolName(), f.GetTimestamp())
+	return domainToMessage(f.renderCurrent(), f.ToolName(), f.GetTimestamp())
 }
 
 func (f *File) render() string {
@@ -135,7 +135,7 @@ func (f *File) render() string {
 	return text
 }
 
-// FromLLM restores a file tool result into this message. Keep it beside ToLLM:
+// FromLLM restores a file tool result into this message. Keep it beside renderCurrent:
 // changes to the file wire contract must update both directions together.
 func (f *File) FromLLM(result LLMToolResult) bool {
 	if result.Tool == tool.ReadGoDependency.Name() && !result.failed() {

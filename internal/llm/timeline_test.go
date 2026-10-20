@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
@@ -41,17 +43,17 @@ func TestModelCallFallbackDoesNotRecordTransportStages(t *testing.T) {
 		fmt.Fprint(w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"},"finish_reason":"stop"}]}`)
 	}))
 	defer success.Close()
-	router := NewLLMRouter([]ResolvedEndpoint{
+	router := NewRouter([]ResolvedEndpoint{
 		{Protocol: "openai", URL: failing.URL + "/v1/chat/completions", Model: "a", Alias: "primary", Timeout: time.Second},
 		{Protocol: "openai", URL: success.URL + "/v1/chat/completions", Model: "b", Alias: "fallback", Timeout: time.Second},
 	}, RoutingOptions{CallTimeout: time.Second})
 	snapshot := recordedRequest(t, func(ctx context.Context) error {
-		response, err := router.CompletionsWithCtx(ctx, ChatRequest{Messages: []Message{NewTextMessage("user", "hi")}})
+		response, err := Call(ctx, router, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("hi")}}}, Config: &agentgo.CallConfig{}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if response.Alias != "fallback" {
-			t.Fatalf("alias=%q", response.Alias)
+		if ResponseAlias(response) != "fallback" {
+			t.Fatalf("alias=%q", ResponseAlias(response))
 		}
 		return err
 	})
@@ -69,11 +71,11 @@ func TestModelCallTimeoutPreservesNetworkErrorPhase(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	client := NewOpenAIClient(ClientConfig{URL: server.URL + "/v1/chat/completions", Model: "test", MaxRetries: -1})
+	client := newOpenAIModel(ModelConfig{URL: server.URL + "/v1/chat/completions", Model: "test"})
 	snapshot := recordedRequest(t, func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 		defer cancel()
-		_, err := client.CompletionsWithCtx(ctx, ChatRequest{Messages: []Message{NewTextMessage("user", "hi")}})
+		_, err := Call(ctx, client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("hi")}}}, Config: &agentgo.CallConfig{}})
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("error=%v", err)
 		}
@@ -91,7 +93,7 @@ func TestModelCallTimeoutPreservesNetworkErrorPhase(t *testing.T) {
 	}
 }
 
-func TestModelCallSDKRetriesDoNotRecordTransportStages(t *testing.T) {
+func TestModelCallDoesNotRetryInsideProvider(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
@@ -103,15 +105,15 @@ func TestModelCallSDKRetriesDoNotRecordTransportStages(t *testing.T) {
 		fmt.Fprint(w, `{"id":"ok","model":"test","choices":[{"message":{"role":"assistant","content":"done"}}]}`)
 	}))
 	defer server.Close()
-	client := NewOpenAIClient(ClientConfig{URL: server.URL + "/v1/chat/completions", Model: "test", MaxRetries: 1})
+	client := newOpenAIModel(ModelConfig{URL: server.URL + "/v1/chat/completions", Model: "test"})
 	snapshot := recordedRequest(t, func(ctx context.Context) error {
-		_, err := client.CompletionsWithCtx(ctx, ChatRequest{Messages: []Message{NewTextMessage("user", "hi")}})
+		_, err := Call(ctx, client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("hi")}}}, Config: &agentgo.CallConfig{}})
 		return err
 	})
-	if snapshot.Status != timeline.Succeeded {
+	if snapshot.Status != timeline.Failed {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	if calls.Load() != 2 || len(snapshot.Stages) != 0 {
+	if calls.Load() != 1 || len(snapshot.Stages) != 0 {
 		t.Fatalf("calls=%d stages=%+v", calls.Load(), snapshot.Stages)
 	}
 }
@@ -125,11 +127,11 @@ func TestModelCallTimeoutPreservesResponseReadError(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	client := NewOpenAIClient(ClientConfig{URL: server.URL + "/v1/chat/completions", Model: "test", MaxRetries: -1})
+	client := newOpenAIModel(ModelConfig{URL: server.URL + "/v1/chat/completions", Model: "test"})
 	snapshot := recordedRequest(t, func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 		defer cancel()
-		_, err := client.CompletionsWithCtx(ctx, ChatRequest{Messages: []Message{NewTextMessage("user", "hi")}})
+		_, err := Call(ctx, client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("hi")}}}, Config: &agentgo.CallConfig{}})
 		details := DescribeError(err)
 		if details == nil || details.Attributes["request_phase"] != requestPhaseResponseRead {
 			t.Fatalf("error=%v details=%+v", err, details)

@@ -9,7 +9,6 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 const (
@@ -83,29 +82,29 @@ func (r *SearchResult) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (r SearchResult) ToLLM() llm.Message {
+func (r SearchResult) renderCurrent() agentgo.Message {
 	text := r.render(r.representation)
 	if r.Label != "" {
 		text = r.Label + ":\n" + text
 	}
 	if r.ToolCallID != "" {
-		return llm.NewToolResultMessage(r.ToolCallID, text)
+		return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, Metadata: map[string]any{"tool_call_id": r.ToolCallID}}
 	}
-	return llm.NewTextMessage("user", text)
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}}
 }
 
-func (r SearchResult) GetRole() agentgo.Role { return domainRole(r.ToLLM()) }
+func (r SearchResult) GetRole() agentgo.Role { return domainRole(r.renderCurrent()) }
 func (r SearchResult) Raw() agentgo.AgentMessage {
 	raw := r
 	raw.Paths = append([]string(nil), r.Paths...)
 	raw.representation = searchFull
 	return raw
 }
-func (r SearchResult) TextContent() string     { return domainText(r.ToLLM()) }
+func (r SearchResult) TextContent() string     { return domainText(r.renderCurrent()) }
 func (r SearchResult) ThinkingContent() string { return "" }
-func (r SearchResult) HasToolCalls() bool      { return domainHasToolCalls(r.ToLLM()) }
+func (r SearchResult) HasToolCalls() bool      { return domainHasToolCalls(r.renderCurrent()) }
 func (r SearchResult) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(r.ToLLM(), r.ToolName(), r.GetTimestamp())
+	return domainToMessage(r.renderCurrent(), r.ToolName(), r.GetTimestamp())
 }
 
 func (r SearchResult) render(representation searchRepresentation) string {
@@ -145,10 +144,10 @@ func (r *SearchResult) ConfigurePresentation(label string, priority int) *Search
 func (r SearchResult) Compact(expect float64) (agentgo.AgentMessage, float64) {
 	next := r
 	next.Paths = append([]string(nil), r.Paths...)
-	next.representation, expect = compactRepresentation(expect, r.representation, searchReference, func(representation searchRepresentation) llm.Message {
+	next.representation, expect = compactRepresentation(expect, r.representation, searchReference, func(representation searchRepresentation) agentgo.Message {
 		view := next
 		view.representation = representation
-		return view.ToLLM()
+		return view.renderCurrent()
 	})
 	return next, expect
 }
@@ -240,23 +239,25 @@ func (d *Diff) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (d Diff) ToLLM() llm.Message { return d.render(d.representation) }
+func (d Diff) renderCurrent() agentgo.Message {
+	return d.render(d.representation)
+}
 
-func (d Diff) GetRole() agentgo.Role { return domainRole(d.ToLLM()) }
+func (d Diff) GetRole() agentgo.Role { return domainRole(d.renderCurrent()) }
 func (d Diff) Raw() agentgo.AgentMessage {
 	raw := d
 	raw.Paths = append([]string(nil), d.Paths...)
 	raw.representation = diffFull
 	return raw
 }
-func (d Diff) TextContent() string     { return domainText(d.ToLLM()) }
+func (d Diff) TextContent() string     { return domainText(d.renderCurrent()) }
 func (d Diff) ThinkingContent() string { return "" }
-func (d Diff) HasToolCalls() bool      { return domainHasToolCalls(d.ToLLM()) }
+func (d Diff) HasToolCalls() bool      { return domainHasToolCalls(d.renderCurrent()) }
 func (d Diff) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(d.ToLLM(), d.ToolName(), d.GetTimestamp())
+	return domainToMessage(d.renderCurrent(), d.ToolName(), d.GetTimestamp())
 }
 
-func (d Diff) render(representation diffRepresentation) llm.Message {
+func (d Diff) render(representation diffRepresentation) agentgo.Message {
 	text := d.Content
 	switch representation {
 	case diffAnchors:
@@ -279,9 +280,9 @@ func (d Diff) render(representation diffRepresentation) llm.Message {
 		text = d.Label + ":\n" + text
 	}
 	if d.ToolCallID != "" {
-		return llm.NewToolResultMessage(d.ToolCallID, text)
+		return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, Metadata: map[string]any{"tool_call_id": d.ToolCallID}}
 	}
-	return llm.NewTextMessage("user", text)
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}}
 }
 
 func (d Diff) ToolName() string { return FileReadDiffToolName }
@@ -320,17 +321,17 @@ func (r *ToolReceipt) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (r ToolReceipt) ToLLM() llm.Message {
-	return llm.NewToolResultMessage(r.ToolCallID, r.Content)
+func (r ToolReceipt) renderCurrent() agentgo.Message {
+	return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(r.Content)}, Metadata: map[string]any{"tool_call_id": r.ToolCallID}}
 }
 
-func (r ToolReceipt) GetRole() agentgo.Role     { return domainRole(r.ToLLM()) }
+func (r ToolReceipt) GetRole() agentgo.Role     { return domainRole(r.renderCurrent()) }
 func (r ToolReceipt) Raw() agentgo.AgentMessage { return r }
-func (r ToolReceipt) TextContent() string       { return domainText(r.ToLLM()) }
+func (r ToolReceipt) TextContent() string       { return domainText(r.renderCurrent()) }
 func (r ToolReceipt) ThinkingContent() string   { return "" }
-func (r ToolReceipt) HasToolCalls() bool        { return domainHasToolCalls(r.ToLLM()) }
+func (r ToolReceipt) HasToolCalls() bool        { return domainHasToolCalls(r.renderCurrent()) }
 func (r ToolReceipt) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(r.ToLLM(), r.ToolName(), r.GetTimestamp())
+	return domainToMessage(r.renderCurrent(), r.ToolName(), r.GetTimestamp())
 }
 func (r ToolReceipt) Compact(float64) (agentgo.AgentMessage, float64) { return r, 1 }
 
@@ -345,7 +346,7 @@ type llmDecoder interface {
 
 // FromLLM restores one wire tool result to the first matching message type.
 // The dispatcher contains no message-specific parsing; each decoder sits next
-// to that type's ToLLM so the two directions evolve together.
+// to that type's renderCurrent so the two directions evolve together.
 func FromLLM(result LLMToolResult) agentgo.AgentMessage {
 	decoders := []llmDecoder{&FileBatch{}, &File{}, &SearchBatch{}, &SearchResult{}, &Diff{}}
 	for _, decoder := range decoders {

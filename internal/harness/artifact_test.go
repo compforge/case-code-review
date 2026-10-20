@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -16,12 +17,12 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 	defer session.Close()
 	initial := msg.NewFile("a.go", 1, 1, 2, "File: a.go (Total lines: 2)\nIS_TRUNCATED: true\nLINE_RANGE: 1-1\n1|first\n")
 	source := "File: a.go (Total lines: 2)\nIS_TRUNCATED: false\nLINE_RANGE: 1-2\n1|first\n2|second\n"
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("read", "read_files", `{"reads":[{"file_path":"a.go","start_line":1,"end_line":2}]}`, nil),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session,
-		LLMClient: client, Messages: []agentgo.AgentMessage{initial},
+		ChatModel: client, Messages: []agentgo.AgentMessage{initial},
 		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
 			if request.Tool.Name() == "read_files" {
@@ -46,7 +47,7 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 	}
 	found := false
 	for _, m := range requests[1].Messages {
-		if m.Role == "tool" && m.ToolCallID == "read" {
+		if m.Role == "tool" && m.Metadata["tool_call_id"] == "read" {
 			found = true
 		}
 	}
@@ -66,8 +67,8 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 	// Continuation may retain only a summary. Materials survive independently,
 	// but cannot by themselves make any source line count as visible evidence.
 	session.state.Messages = []agentgo.AgentMessage{msg.Text("user", "summary")}
-	continuationClient := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}
-	continued, err := runExecution(t.Context(), ExecutionSpec{LLMClient: continuationClient, LoopSession: session, Messages: []agentgo.AgentMessage{initial}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
+	continuationClient := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, nil)}}
+	continued, err := runExecution(t.Context(), ExecutionSpec{ChatModel: continuationClient, LoopSession: session, Messages: []agentgo.AgentMessage{initial}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
 	if err != nil || continued.State != OutcomeCompleted || len(session.state.Artifacts) != 2 {
 		t.Fatalf("continue=%+v err=%v", continued, err)
 	}
@@ -76,7 +77,7 @@ func TestExecutionArtifactRegistrationAndContinuation(t *testing.T) {
 	}
 	independentSession := &LoopSession{}
 	defer independentSession.Close()
-	_, err = runExecution(t.Context(), ExecutionSpec{LoopSession: independentSession, LLMClient: &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}, Messages: []agentgo.AgentMessage{msg.Text("user", "unrelated")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1})
+	_, err = runExecution(t.Context(), ExecutionSpec{LoopSession: independentSession, ChatModel: &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, nil)}}, Messages: []agentgo.AgentMessage{msg.Text("user", "unrelated")}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1})
 	if err != nil || len(independentSession.state.Artifacts) != 0 {
 		t.Fatal("independent execution inherited materials")
 	}
@@ -86,11 +87,11 @@ func TestExecutionProjectsCallerMaterialsOnEveryRequest(t *testing.T) {
 	session := &LoopSession{}
 	defer session.Close()
 	body := strings.Repeat("Preserve cancellation and report the original error. ", 30)
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponse("inspect", `{}`, nil), toolCallResponse("task_done", `{}`, nil),
 	}}
 	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session,
-		LLMClient: client,
+		ChatModel: client,
 		Messages: []agentgo.AgentMessage{
 			msg.FixedText("user", "Review the change using the supplied evidence."),
 			newMaterialTestMessage("caller.go::Run", "", "caller", body),
@@ -186,8 +187,8 @@ func TestPreviewProjectionMatchesLiveRequest(t *testing.T) {
 			t.Fatal("non-idempotent projection")
 		}
 	}
-	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, nil)}}
-	result, err := runExecution(t.Context(), ExecutionSpec{LLMClient: client, Messages: initial, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, nil)}}
+	result, err := runExecution(t.Context(), ExecutionSpec{ChatModel: client, Messages: initial, ToolDefs: []llm.ToolDef{toolDef("task_done")}, MaxTurns: 1, FileDedupEnabled: true})
 	if err != nil || result.State != OutcomeCompleted {
 		t.Fatal(result.State, err)
 	}
@@ -196,7 +197,7 @@ func TestPreviewProjectionMatchesLiveRequest(t *testing.T) {
 		t.Fatalf("live=%d preview=%d", len(request.Messages), len(expected))
 	}
 	for i, m := range expected {
-		if request.Messages[i].ExtractText() != m.TextContent() {
+		if request.Messages[i].TextContent() != m.TextContent() {
 			t.Fatalf("message %d differs", i)
 		}
 	}

@@ -10,8 +10,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
+
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
@@ -132,11 +134,12 @@ type TaskRecord struct {
 	StageID         timeline.StageID
 	ExecutionID     string
 	Type            TaskType
-	RequestNo       int           // sequential number within this task type
-	RequestMessages []llm.Message // messages sent to LLM
-	Duration        time.Duration
-	Error           string
-	scopeSession    *ReviewScope // back-reference for JSONL persistence
+	RequestNo       int // sequential number within this task type
+	RequestMessages []agentgo.Message
+	// messages sent to LLM
+	Duration     time.Duration
+	Error        string
+	scopeSession *ReviewScope // back-reference for JSONL persistence
 }
 
 // ContextCompaction is one aggregate ContextManager rewrite. It deliberately
@@ -387,18 +390,18 @@ func (sh *Review) Finalize(operationErr ...error) {
 
 // AppendTaskRecord starts transient accounting for a call and assigns its
 // request number. The scope retains counters, not requests or responses.
-func (ss *ReviewScope) AppendTaskRecord(taskType TaskType, messages []llm.Message) *TaskRecord {
+func (ss *ReviewScope) AppendTaskRecord(taskType TaskType, messages []agentgo.Message) *TaskRecord {
 	return ss.appendTaskRecord("", taskType, messages)
 }
 
 // AppendExecutionTaskRecord records one model call inside a Harness
 // Execution. Direct auxiliary calls may still use AppendTaskRecord, while all
 // AgentGo loop calls carry the execution identity used by Viewer and eval.
-func (ss *ReviewScope) AppendExecutionTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
+func (ss *ReviewScope) AppendExecutionTaskRecord(executionID string, taskType TaskType, messages []agentgo.Message) *TaskRecord {
 	return ss.appendTaskRecord(executionID, taskType, messages)
 }
 
-func (ss *ReviewScope) appendTaskRecord(executionID string, taskType TaskType, messages []llm.Message) *TaskRecord {
+func (ss *ReviewScope) appendTaskRecord(executionID string, taskType TaskType, messages []agentgo.Message) *TaskRecord {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
 
@@ -424,50 +427,36 @@ func (ss *ReviewScope) appendTaskRecord(executionID string, taskType TaskType, m
 }
 
 // copyMessages retains the message fields needed for local token estimation.
-func copyMessages(msgs []llm.Message) []llm.Message {
-	cp := make([]llm.Message, len(msgs))
-	for i, m := range msgs {
-		cp[i] = llm.Message{
-			Role:             m.Role,
-			Content:          m.Content,
-			ToolCallID:       m.ToolCallID,
-			ToolCalls:        append([]llm.ToolCall(nil), m.ToolCalls...),
-			ReasoningContent: m.ReasoningContent,
-		}
-	}
-	return cp
+func copyMessages(messages []agentgo.Message) []agentgo.Message {
+	return append([]agentgo.Message(nil), messages...)
 }
 
 // SetResponse updates scope counters using reported usage when available and
 // local token estimation otherwise. It does not retain the response.
-func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration) {
-	if resp == nil || len(resp.Choices) == 0 {
+func (tr *TaskRecord) SetResponse(resp *agentgo.LLMResponse, duration time.Duration) {
+	if resp == nil {
 		tr.SetError(fmt.Errorf("empty response"), duration)
 		return
 	}
-	choice := resp.Choices[0]
-	content := ""
-	if choice.Message.Content != nil {
-		content = *choice.Message.Content
-	}
-	reasoning := choice.Message.ReasoningContent
+	content := resp.Message.TextContent()
+	reasoning := resp.Message.ThinkingContent()
 
 	var promptTokens, completionTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens int
-	if resp.Usage != nil {
-		promptTokens = int(resp.Usage.PromptTokens)
-		completionTokens = int(resp.Usage.CompletionTokens)
-		reasoningTokens = int(resp.Usage.ReasoningTokens)
-		cacheReadTokens = int(resp.Usage.CacheReadTokens)
-		cacheWriteTokens = int(resp.Usage.CacheWriteTokens)
+	if resp.Message.Usage != nil {
+		promptTokens = resp.Message.Usage.Input + resp.Message.Usage.CacheWrite
+		completionTokens = resp.Message.Usage.Output
+		reasoningTokens = resp.Message.Usage.Reasoning
+		cacheReadTokens = resp.Message.Usage.CacheRead
+		cacheWriteTokens = resp.Message.Usage.CacheWrite
 	} else {
 		for _, m := range tr.RequestMessages {
-			promptTokens += llm.CountTokens(m.ExtractText())
+			promptTokens += llm.CountTokens(m.TextContent())
 		}
 		completionTokens = llm.CountTokens(content + reasoning)
 	}
 
 	usage := &TokenUsage{
-		Estimated:        resp.Usage == nil,
+		Estimated:        resp.Message.Usage == nil,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
 		ReasoningTokens:  reasoningTokens,
@@ -487,8 +476,8 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		ss.tokens.ReasoningTokens += usage.ReasoningTokens
 		ss.tokens.CacheReadTokens += usage.CacheReadTokens
 		ss.tokens.CacheWriteTokens += usage.CacheWriteTokens
-		for _, call := range choice.Message.ToolCalls {
-			ss.toolCalls[call.Function.Name]++
+		for _, call := range resp.Message.ToolCalls() {
+			ss.toolCalls[call.Name]++
 		}
 	}
 }

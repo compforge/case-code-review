@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/compforge/agentgo"
 )
 
 func TestNewOpenAIClient_URLNormalization(t *testing.T) {
@@ -42,7 +44,7 @@ func TestNewOpenAIClient_URLNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := NewOpenAIClient(ClientConfig{URL: tt.inputURL})
+			client := newOpenAIModel(ModelConfig{URL: tt.inputURL})
 			if client.cfg.URL != tt.wantURL {
 				t.Errorf("got URL %q, want %q", client.cfg.URL, tt.wantURL)
 			}
@@ -85,7 +87,7 @@ func TestNewAnthropicClient_URLNormalization(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := NewAnthropicClient(ClientConfig{URL: tt.inputURL})
+			client := newAnthropicModel(ModelConfig{URL: tt.inputURL})
 			if client.cfg.URL != tt.wantURL {
 				t.Errorf("got URL %q, want %q", client.cfg.URL, tt.wantURL)
 			}
@@ -117,19 +119,16 @@ func TestAnthropicClient_UsesConfiguredXAPIKeyHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClient(ClientConfig{
+	client := newAnthropicModel(ModelConfig{
 		URL:        server.URL + "/v1/messages",
 		APIKey:     "sk-ant-api03-test",
 		Model:      "claude-test",
 		AuthHeader: "x-api-key",
 	})
 
-	_, err := client.CompletionsWithCtx(context.Background(), ChatRequest{
-		Messages:  []Message{{Role: "user", Content: "ping"}},
-		MaxTokens: 64,
-	})
+	_, err := Call(context.Background(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("ping")}}}, Config: &agentgo.CallConfig{MaxTokens: 64}})
 	if err != nil {
-		t.Fatalf("CompletionsWithCtx: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if gotXAPIKey != "sk-ant-api03-test" {
 		t.Errorf("X-Api-Key = %q, want %q", gotXAPIKey, "sk-ant-api03-test")
@@ -163,19 +162,16 @@ func TestAnthropicClient_UsesConfiguredAuthorizationHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClient(ClientConfig{
+	client := newAnthropicModel(ModelConfig{
 		URL:        server.URL + "/v1/messages",
 		APIKey:     "oauth-token",
 		Model:      "claude-test",
 		AuthHeader: "authorization",
 	})
 
-	_, err := client.CompletionsWithCtx(context.Background(), ChatRequest{
-		Messages:  []Message{{Role: "user", Content: "ping"}},
-		MaxTokens: 64,
-	})
+	_, err := Call(context.Background(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("ping")}}}, Config: &agentgo.CallConfig{MaxTokens: 64}})
 	if err != nil {
-		t.Fatalf("CompletionsWithCtx: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if gotAuthorization != "Bearer oauth-token" {
 		t.Errorf("Authorization = %q, want %q", gotAuthorization, "Bearer oauth-token")
@@ -206,18 +202,15 @@ func TestAnthropicClient_DefaultsToAuthorizationHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewAnthropicClient(ClientConfig{
+	client := newAnthropicModel(ModelConfig{
 		URL:    server.URL + "/v1/messages",
 		APIKey: "oauth-token",
 		Model:  "claude-test",
 	})
 
-	_, err := client.CompletionsWithCtx(context.Background(), ChatRequest{
-		Messages:  []Message{{Role: "user", Content: "ping"}},
-		MaxTokens: 64,
-	})
+	_, err := Call(context.Background(), client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("ping")}}}, Config: &agentgo.CallConfig{MaxTokens: 64}})
 	if err != nil {
-		t.Fatalf("CompletionsWithCtx: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if gotAuthorization != "Bearer oauth-token" {
 		t.Errorf("Authorization = %q, want %q", gotAuthorization, "Bearer oauth-token")
