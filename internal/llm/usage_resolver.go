@@ -7,6 +7,7 @@ import (
 
 // UsageInfo holds token usage extracted from an LLM API response.
 type UsageInfo struct {
+	ReasoningTokens  int64 `json:"reasoning_tokens,omitempty"` // subset of CompletionTokens; zero may mean unreported
 	TotalTokens      int64 `json:"total_tokens"`
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
@@ -61,6 +62,7 @@ func resolveUsage(raw []byte) *UsageInfo {
 	completion, _ := probePath(rawBody, completionTokensPaths)
 	cacheRead, _ := probePath(rawBody, cacheReadTokensPaths)
 	cacheWrite, _ := probePath(rawBody, cacheWriteTokensPaths)
+	reasoning, _ := probePath(rawBody, []string{"usage.completion_tokens_details.reasoning_tokens", "data.usage.completion_tokens_details.reasoning_tokens", "completion_tokens_details.reasoning_tokens"})
 
 	if !hasAny && prompt == 0 && completion == 0 {
 		return nil
@@ -70,6 +72,7 @@ func resolveUsage(raw []byte) *UsageInfo {
 		TotalTokens:      total,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
+		ReasoningTokens:  reasoning,
 		CacheReadTokens:  cacheRead,
 		CacheWriteTokens: cacheWrite,
 	}

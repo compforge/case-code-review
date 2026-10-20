@@ -620,9 +620,10 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:     a.args.Model,
-		Messages:  messages,
-		MaxTokens: a.args.Template.CompletionTokenLimit(),
+		Model:           a.args.Model,
+		Messages:        messages,
+		MaxTokens:       a.args.Template.CompletionTokenLimit(),
+		ReasoningEffort: pt.ReasoningEffort,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan plan failed for %s: %v (falling back to plan-less)\n", it.Path, err)
@@ -630,7 +631,12 @@ func (a *Runner) maybeRunPlan(ctx context.Context, it Item, rule string) string 
 	}
 	a.executor.RecordUsage(resp.Usage)
 
-	guidance := formatPlanGuidance(resp.Content())
+	content, err := resp.CompleteText()
+	if err != nil {
+		fmt.Fprintf(console.Out(), "[ccr] scan plan incomplete for %s: %v (falling back to plan-less)\n", it.Path, err)
+		return noPlan
+	}
+	guidance := formatPlanGuidance(content)
 	if guidance == "" {
 		return noPlan
 	}
@@ -670,9 +676,10 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:     a.args.Model,
-		Messages:  messages,
-		MaxTokens: a.args.Template.CompletionTokenLimit(),
+		Model:           a.args.Model,
+		Messages:        messages,
+		MaxTokens:       a.args.Template.CompletionTokenLimit(),
+		ReasoningEffort: pt.ReasoningEffort,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan project summary failed: %v\n", err)
@@ -680,7 +687,12 @@ func (a *Runner) maybeRunProjectSummary(ctx context.Context, comments []finding.
 	}
 	a.executor.RecordUsage(resp.Usage)
 
-	body := strings.TrimSpace(llm.StripMarkdownFences(resp.Content()))
+	content, err := resp.CompleteText()
+	if err != nil {
+		fmt.Fprintf(console.Out(), "[ccr] scan project summary incomplete: %v\n", err)
+		return
+	}
+	body := strings.TrimSpace(llm.StripMarkdownFences(content))
 	if body == "" {
 		return
 	}
@@ -742,9 +754,10 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	rec := fs.AppendTaskRecord(recording.MemoryCompressionTask, messages) // reuse existing task type; no scan-specific type to invent
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:     a.args.Model,
-		Messages:  messages,
-		MaxTokens: a.args.Template.CompletionTokenLimit(),
+		Model:           a.args.Model,
+		Messages:        messages,
+		MaxTokens:       a.args.Template.CompletionTokenLimit(),
+		ReasoningEffort: dt.ReasoningEffort,
 	})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup failed for batch #%d: %v (keeping originals)\n", batchIdx, err)
@@ -752,7 +765,12 @@ func (a *Runner) maybeRunDedup(ctx context.Context, batchIdx, batchStart int) {
 	}
 	a.executor.RecordUsage(resp.Usage)
 
-	deduped, ok := applyDedupGroups(resp.Content(), batchComments)
+	content, err := resp.CompleteText()
+	if err != nil {
+		fmt.Fprintf(console.Out(), "[ccr] scan dedup incomplete: %v (keeping originals)\n", err)
+		return
+	}
+	deduped, ok := applyDedupGroups(content, batchComments)
 	if !ok {
 		fmt.Fprintf(console.Out(), "[ccr] scan dedup batch #%d: malformed groups, keeping originals\n", batchIdx)
 		return

@@ -9,7 +9,7 @@ import (
 )
 
 func nativeRequest(request llm.ChatRequest) *agentgo.LLMRequest {
-	out := &agentgo.LLMRequest{}
+	out := &agentgo.LLMRequest{Config: &agentgo.CallConfig{ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(request.ReasoningEffort)), MaxTokens: request.MaxTokens}}
 	for _, m := range msg.Wrap(request.Messages) {
 		wire, _ := m.ToMessage()
 		out.Messages = append(out.Messages, wire)
@@ -39,7 +39,7 @@ func nativeResponse(response *llm.ChatResponse) agentgo.Message {
 		m.Content = append(m.Content, agentgo.ToolCallBlock(call))
 	}
 	if u := response.Usage; u != nil {
-		m.Usage = &agentgo.Usage{Provider: response.Alias, Model: response.Model, Input: int(u.PromptTokens - u.CacheWriteTokens), Output: int(u.CompletionTokens), CacheRead: int(u.CacheReadTokens), CacheWrite: int(u.CacheWriteTokens), TotalTokens: int(u.TotalTokens)}
+		m.Usage = &agentgo.Usage{Provider: response.Alias, Model: response.Model, Input: int(u.PromptTokens - u.CacheWriteTokens), Output: int(u.CompletionTokens), Reasoning: int(u.ReasoningTokens), CacheRead: int(u.CacheReadTokens), CacheWrite: int(u.CacheWriteTokens), TotalTokens: int(u.TotalTokens)}
 	}
 	return m
 }

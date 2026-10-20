@@ -159,6 +159,7 @@ type TokenUsage struct {
 	Estimated        bool `json:"estimated,omitempty"`
 	PromptTokens     int  `json:"prompt_tokens"`
 	CompletionTokens int  `json:"completion_tokens"`
+	ReasoningTokens  int  `json:"reasoning_tokens,omitempty"`
 	CacheReadTokens  int  `json:"cache_read_tokens,omitempty"`
 	CacheWriteTokens int  `json:"cache_write_tokens,omitempty"`
 }
@@ -451,10 +452,11 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 	}
 	reasoning := choice.Message.ReasoningContent
 
-	var promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens int
+	var promptTokens, completionTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens int
 	if resp.Usage != nil {
 		promptTokens = int(resp.Usage.PromptTokens)
 		completionTokens = int(resp.Usage.CompletionTokens)
+		reasoningTokens = int(resp.Usage.ReasoningTokens)
 		cacheReadTokens = int(resp.Usage.CacheReadTokens)
 		cacheWriteTokens = int(resp.Usage.CacheWriteTokens)
 	} else {
@@ -468,6 +470,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		Estimated:        resp.Usage == nil,
 		PromptTokens:     promptTokens,
 		CompletionTokens: completionTokens,
+		ReasoningTokens:  reasoningTokens,
 		CacheReadTokens:  cacheReadTokens,
 		CacheWriteTokens: cacheWriteTokens,
 	}
@@ -481,6 +484,7 @@ func (tr *TaskRecord) SetResponse(resp *llm.ChatResponse, duration time.Duration
 		ss.tokens.Estimated = ss.tokens.Estimated || usage.Estimated
 		ss.tokens.PromptTokens += usage.PromptTokens
 		ss.tokens.CompletionTokens += usage.CompletionTokens
+		ss.tokens.ReasoningTokens += usage.ReasoningTokens
 		ss.tokens.CacheReadTokens += usage.CacheReadTokens
 		ss.tokens.CacheWriteTokens += usage.CacheWriteTokens
 		for _, call := range choice.Message.ToolCalls {
@@ -540,6 +544,7 @@ func (sh *Review) totalUsage() TokenUsage {
 		scope.mu.Lock()
 		usage.PromptTokens += scope.tokens.PromptTokens
 		usage.CompletionTokens += scope.tokens.CompletionTokens
+		usage.ReasoningTokens += scope.tokens.ReasoningTokens
 		usage.CacheReadTokens += scope.tokens.CacheReadTokens
 		usage.CacheWriteTokens += scope.tokens.CacheWriteTokens
 		usage.Estimated = usage.Estimated || scope.tokens.Estimated

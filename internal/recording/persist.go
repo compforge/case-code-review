@@ -252,6 +252,7 @@ func (jw *jsonlWriter) WriteDebrief(ss *ReviewScope, d Debrief) string {
 		"tokens": map[string]int{
 			"prompt_tokens":      d.Tokens.PromptTokens,
 			"completion_tokens":  d.Tokens.CompletionTokens,
+			"reasoning_tokens":   d.Tokens.ReasoningTokens,
 			"cache_read_tokens":  d.Tokens.CacheReadTokens,
 			"cache_write_tokens": d.Tokens.CacheWriteTokens,
 		},

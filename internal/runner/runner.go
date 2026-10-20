@@ -299,6 +299,7 @@ func New(args Args) *Runner {
 		SessionCodecOptions:     clueCodecOptions(),
 		LLMClient:               args.LLMClient,
 		Model:                   args.Model,
+		ReasoningEffort:         args.Template.MainTask.ReasoningEffort,
 		Tools:                   args.Tools,
 		ToolDefs:                args.MainToolDefs,
 		Session:                 args.Session,
@@ -1347,16 +1348,21 @@ func (a *Runner) executePlanPhase(ctx context.Context, sc recording.Scope, rawDi
 	rec := fs.AppendTaskRecord(recording.PlanTask, messages)
 
 	resp, err := rec.Call(ctx, a.args.LLMClient, llm.ChatRequest{
-		Model:     a.args.Model,
-		Messages:  messages,
-		MaxTokens: a.args.Template.CompletionTokenLimit(),
+		Model:           a.args.Model,
+		Messages:        messages,
+		MaxTokens:       a.args.Template.CompletionTokenLimit(),
+		ReasoningEffort: pt.ReasoningEffort,
 	})
 	if err != nil {
 		return "", fmt.Errorf("plan request: %w", err)
 	}
 	a.executor.RecordUsage(resp.Usage)
+	content, err := resp.CompleteText()
+	if err != nil {
+		return "", fmt.Errorf("plan response: %w", err)
+	}
 	fmt.Fprintf(console.Out(), "[ccr] Plan completed for %s\n", newPath)
-	return resp.Content(), nil
+	return content, nil
 }
 
 // formatToolDefs renders tool definitions as human-readable text for embedding in prompts.

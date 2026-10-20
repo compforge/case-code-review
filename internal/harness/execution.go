@@ -54,6 +54,8 @@ type ExecutionSpec struct {
 	TurnContext         TurnContextProvider
 	MaxTurns            int
 	MaxTokens           int
+	ReasoningEffort     string
+	MaxLengthRecoveries *int // nil retains AgentGo default; zero disables continuations
 	ContextWindow       int
 	FileDedupEnabled    bool
 	FileEvictEnabled    bool
@@ -255,6 +257,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
 		MaxTurns:                 e.spec.MaxTurns,
+		ThinkingLevel:            agentgo.ThinkingLevel(e.spec.ReasoningEffort),
+		MaxLengthRecoveries:      e.spec.MaxLengthRecoveries,
 		ContextManager:           e.contextManager,
 		ToolResultMessageFactory: e.toolResultMessage,
 		CommitContext:            e.replaceContext,
@@ -652,9 +656,14 @@ func (e *Execution) finish(ctx context.Context) (ExecutionResult, error) {
 		result.Reason = context.Canceled.Error()
 		return result, ctx.Err()
 	}
-	if e.summary != nil && e.summary.EndReason == agentgo.EndReasonMaxTurns {
+	if e.summary != nil && (e.summary.EndReason == agentgo.EndReasonMaxTurns || e.summary.EndReason == agentgo.EndReasonLength) {
 		result.State = OutcomeTruncated
 		result.Reason = string(e.summary.EndReason)
+		return result, nil
+	}
+	if errors.Is(e.runErr, agentgo.ErrOutputTruncated) {
+		result.State = OutcomeTruncated
+		result.Reason = string(agentgo.EndReasonLength)
 		return result, nil
 	}
 	if errors.Is(e.runErr, llm.ErrTokenBudget) {

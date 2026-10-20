@@ -23,6 +23,7 @@ type Cost struct {
 func (c *Cost) add(other Cost) {
 	c.Tokens.PromptTokens += other.Tokens.PromptTokens
 	c.Tokens.CompletionTokens += other.Tokens.CompletionTokens
+	c.Tokens.ReasoningTokens += other.Tokens.ReasoningTokens
 	c.Tokens.CacheReadTokens += other.Tokens.CacheReadTokens
 	c.Tokens.CacheWriteTokens += other.Tokens.CacheWriteTokens
 	c.Calls += other.Calls

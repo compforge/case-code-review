@@ -230,3 +230,55 @@ func TestLoopSessionCheckpointRunsWithoutResidentAgent(t *testing.T) {
 		t.Fatalf("runs=%d checkpoints=%d err=%v", runs, checkpoints, err)
 	}
 }
+
+func TestLengthFactsAndReasoningUsageSurviveCCRRecording(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
+	defer review.Finalize()
+	client := &scriptedClient{responses: []*llm.ChatResponse{{Choices: []llm.Choice{{FinishReason: "length", Message: llm.ResponseMessage{Role: "assistant", ReasoningContent: "partial"}}}, Usage: &llm.UsageInfo{PromptTokens: 4, CompletionTokens: 32, ReasoningTokens: 32, TotalTokens: 36}}}}
+	session := &LoopSession{}
+	defer session.Close()
+	zero := 0
+	result, err := runExecution(t.Context(), ExecutionSpec{LoopSession: session, LLMClient: client, Messages: []agentgo.AgentMessage{agentgo.UserMsg("work")}, Session: review, Scope: recording.Scope{ID: "unit-1", Kind: "unit"}, NaturalCompletion: true, MaxLengthRecoveries: &zero, ReasoningEffort: "low"})
+	if err != nil || result.State != OutcomeTruncated {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	review.Finalize()
+	path, _ := review.TranscriptPath()
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	costs := transcript.Costs().Total
+	if costs.Tokens.ReasoningTokens != 32 || costs.Tokens.CompletionTokens != 32 || costs.Tokens.PromptTokens != 4 {
+		t.Fatalf("costs=%+v", costs)
+	}
+	f, err := os.Open(session.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	settings, recovery := false, false
+	_, err = agentsession.Read(f, func(record agentsession.Record) error {
+		if len(record.Data) == 0 {
+			return nil
+		}
+		var data agentsession.EventData
+		if err := json.Unmarshal(record.Data, &data); err != nil {
+			return err
+		}
+		if record.Type == string(agentgo.EventModelExecEnd) {
+			settings = data.ModelCall != nil && data.ModelCall.ThinkingLevel == agentgo.ThinkingLow
+		}
+		if record.Type == string(agentgo.EventModelResponse) {
+			recovery = data.LengthRecovery != nil && !data.LengthRecovery.WillRecover
+		}
+		return nil
+	})
+	if err != nil || !settings || !recovery {
+		t.Fatalf("settings=%v recovery=%v error=%v", settings, recovery, err)
+	}
+}

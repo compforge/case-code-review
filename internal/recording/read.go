@@ -178,8 +178,15 @@ func (t *Transcript) readLoop(path string) error {
 			facts["request_no"] = rounds[executionKey]
 			facts["messages"] = wireMessages(data.ModelRequest.Messages)
 			facts["tools"] = data.ModelRequest.Tools
+			if data.ModelRequest.Config != nil {
+				cfg := data.ModelRequest.Config
+				facts["model_call"] = &agentgo.ModelCallSettings{ThinkingLevel: cfg.ThinkingLevel, MaxTokens: cfg.MaxTokens, ThinkingBudget: cfg.ThinkingBudget}
+			}
 		case agentgo.EventModelExecEnd:
 			ended[refKey(ref)] = true
+			if data.ModelCall != nil {
+				facts["model_call"] = data.ModelCall
+			}
 			if data.Error != "" {
 				facts["type"] = "llm_error"
 				facts["error"] = data.Error
@@ -202,7 +209,7 @@ func (t *Transcript) readLoop(path string) error {
 			if u := m.Usage; u != nil {
 				facts["model"] = u.Model
 				facts["usage_source"] = "reported"
-				facts["usage"] = TokenUsage{PromptTokens: u.Input + u.CacheWrite, CompletionTokens: u.Output, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite}
+				facts["usage"] = TokenUsage{PromptTokens: u.Input + u.CacheWrite, CompletionTokens: u.Output, ReasoningTokens: u.Reasoning, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite}
 			}
 			toolCalls := []map[string]any{}
 			for _, call := range m.ToolCalls() {
@@ -215,6 +222,12 @@ func (t *Transcript) readLoop(path string) error {
 				args[record.RunID+"/"+call.ID] = argument
 			}
 			facts["tool_calls"] = toolCalls
+		case agentgo.EventModelResponse:
+			if data.LengthRecovery == nil {
+				return nil
+			}
+			facts["type"] = "length_recovery"
+			facts["length_recovery"] = data.LengthRecovery
 		case agentgo.EventToolExecEnd:
 			ended[refKey(ref)] = true
 			facts["type"] = "tool_result"

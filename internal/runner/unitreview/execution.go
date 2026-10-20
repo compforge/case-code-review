@@ -46,6 +46,7 @@ type Executor struct {
 	sessionCodecOptions     []codec.Option
 	llmClient               llm.LLMClient
 	model                   string
+	reasoningEffort         string
 	tools                   *tool.Registry
 	toolDefs                []llm.ToolDef
 	session                 *recording.Review
@@ -78,6 +79,7 @@ type ExecutorConfig struct {
 	SessionCodecOptions     []codec.Option
 	LLMClient               llm.LLMClient
 	Model                   string
+	ReasoningEffort         string
 	Tools                   *tool.Registry
 	ToolDefs                []llm.ToolDef
 	Session                 *recording.Review
@@ -107,6 +109,7 @@ func NewExecutor(
 		sessionCodecOptions:     config.SessionCodecOptions,
 		llmClient:               config.LLMClient,
 		model:                   config.Model,
+		reasoningEffort:         config.ReasoningEffort,
 		tools:                   config.Tools,
 		toolDefs:                defs,
 		session:                 config.Session,
@@ -146,6 +149,7 @@ func (e *Executor) Run(
 		SessionCodecOptions:     e.sessionCodecOptions,
 		LLMClient:               e.llmClient,
 		Model:                   e.model,
+		ReasoningEffort:         e.reasoningEffort,
 		Messages:                messages,
 		ToolDefs:                e.toolDefs,
 		Tools:                   e.tools,
