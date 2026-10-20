@@ -15,9 +15,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
-// chatModel keeps CCR's provider routing and retry behavior behind agentgo's
-// model contract. The execution kernel must not know which concrete provider
-// or LLMRouter served a request.
+// chatModel adds CCR recording and tool-argument normalization around the
+// AgentGo provider/router. Native messages and call options cross unchanged.
 type chatModel struct {
 	client       llm.LLMClient
 	model        string
@@ -40,7 +39,9 @@ func (m *chatModel) Generate(
 		maxTokens = m.maxTokens
 	}
 
+	cfg.MaxTokens = maxTokens
 	request := llm.ChatRequest{
+		Native:          &agentgo.LLMRequest{Messages: messages, Tools: tools, Config: &cfg},
 		Model:           m.model,
 		Messages:        toLLMMessages(messages),
 		Tools:           toLLMToolDefs(tools),
@@ -65,9 +66,8 @@ func (m *chatModel) Generate(
 	return &agentgo.LLMResponse{Message: message}, nil
 }
 
-// CCR's current clients are non-streaming. A one-event stream preserves
-// agentgo's execution contract while provider streaming remains a separate
-// concern from adopting the loop runtime.
+// CCR records non-streaming completions. A one-event stream adapts that call
+// mode to AgentGo's loop contract; it does not stream partial provider output.
 func (m *chatModel) GenerateStream(
 	ctx context.Context,
 	messages []agentgo.Message,
@@ -161,6 +161,19 @@ func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentg
 		return agentgo.Message{}, fmt.Errorf("harness: LLM returned no choices")
 	}
 
+	if resp.Native != nil {
+		message := *resp.Native
+		message.Content = append([]agentgo.ContentBlock(nil), message.Content...)
+		for i := range message.Content {
+			block := &message.Content[i]
+			if block.ToolCall != nil {
+				call := *block.ToolCall
+				call.Args = canonicalToolArguments(call.Name, call.Args, toolParameters(tools, call.Name))
+				block.ToolCall = &call
+			}
+		}
+		return message, nil
+	}
 	choice := resp.Choices[0]
 	content := make([]agentgo.ContentBlock, 0, len(choice.Message.ToolCalls)+1)
 	if choice.Message.ReasoningContent != "" {

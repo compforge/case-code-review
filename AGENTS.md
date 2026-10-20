@@ -39,7 +39,7 @@ case-code-review/
     ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力，`llmloop` 作为旧实现隔离保留。详见 `docs/harness.md`
     ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 和业务 timeline
-    ├── llm/        基础模型 client、provider 协议与 token 估算；作为稳定基础设施平铺
+    ├── llm/        模型配置与业务 client 投影、token 估算；协议和路由复用 AgentGo/litellm；作为稳定基础设施平铺
     ├── config/     模板 prompt、rule.json、tools 配置
     └── gitcmd · telemetry · viewer …   独立支撑能力
 ```
@@ -70,7 +70,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
-   AgentGo 只存在于 Harness 边界内，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
+   AgentGo 只在 Harness 执行与 llm 模型适配边界内使用，Session JSONL 必须记录实际 prompt、response、工具与完成状态。
    Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；一次 Review 只有一个业务 timeline，Stage 通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制到 timeline。
    Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
 5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。

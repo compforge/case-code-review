@@ -58,8 +58,8 @@ func TestOpenAIReasoningSurvivesAgentGoRoundTrip(t *testing.T) {
 		t.Fatalf("wire message = %#v", assistant)
 	}
 	for _, body := range bodies {
-		if body["max_completion_tokens"] != float64(16384) {
-			t.Fatalf("output budget = %#v", body["max_completion_tokens"])
+		if body["max_tokens"] != float64(16384) {
+			t.Fatalf("output budget = %#v", body["max_tokens"])
 		}
 	}
 }
