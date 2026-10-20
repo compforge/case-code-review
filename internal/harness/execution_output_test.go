@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -17,7 +18,7 @@ func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(provider)
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("read-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("read-2", "read_files", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":1}]}`, nil),
 		toolCallResponseID("done", "task_done", `{}`, nil),
@@ -27,7 +28,7 @@ func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
 	defer history.Finalize()
 	scope := recording.Scope{ID: "bounded", Kind: "unit", Paths: []string{"pkg/a.go"}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review this unit")},
+		ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("task_done")}, Tools: registry,
 		Session: history, Scope: scope, MaxTurns: 3, ContextWindow: 100_000, FileDedupEnabled: true,
 	})
@@ -40,7 +41,7 @@ func TestExecutionBoundsModelOutputWithoutSuppressingReread(t *testing.T) {
 			if message.Role != "tool" {
 				continue
 			}
-			content := message.ExtractText()
+			content := message.TextContent()
 			if len(content) > tool.MaxResultBytes || !strings.Contains(content, "Output truncated") {
 				t.Fatalf("unbounded/unmarked tool output: %d bytes", len(content))
 			}

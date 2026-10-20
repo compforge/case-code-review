@@ -12,7 +12,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/language"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
@@ -122,19 +121,17 @@ func TestPreloadReviewFilesAddsBoundedCallNeighbors(t *testing.T) {
 }
 
 func TestAssembleReviewMessages(t *testing.T) {
-	build := func(unitSlot, relatedSlot string) []llm.Message {
-		return []llm.Message{
-			llm.NewTextMessage("system", "sys"),
-			llm.NewTextMessage("user", "task\n[unit:"+unitSlot+"]\n[rel:"+relatedSlot+"]"),
+	build := func(unitSlot, relatedSlot string) []agentgo.Message {
+		return []agentgo.Message{
+			agentgo.SystemMsg("sys"),
+			agentgo.UserMsg("task\n[unit:" + unitSlot + "]\n[rel:" + relatedSlot + "]"),
 		}
 	}
 	own := []*msg.File{
-		msg.NewFile("a.go", 1, 2, 2, "File: a.go (Total lines: 2)\n1|x\n2|y").
-			ConfigurePresentation("code under review", ""),
+		msg.NewFile("a.go", 1, 2, 2, "File: a.go (Total lines: 2)\n1|x\n2|y").ConfigurePresentation("code under review", ""),
 	}
 	related := []*msg.File{
-		msg.NewFile("n.go", 5, 9, 9, "File: n.go (Total lines: 9)\nLINE_RANGE: 5-9\n5|z").
-			ConfigurePresentation("related caller n.go::C", ""),
+		msg.NewFile("n.go", 5, 9, 9, "File: n.go (Total lines: 9)\nLINE_RANGE: 5-9\n5|z").ConfigurePresentation("related caller n.go::C", ""),
 	}
 	a := &Runner{}
 

@@ -7,7 +7,6 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -57,8 +56,8 @@ func (a *Runner) prepareReviewInput(ctx context.Context, u unit.Unit) reviewInpu
 
 func (a *Runner) reviewMessages(u unit.Unit, input reviewInput, planResult string) []agentgo.AgentMessage {
 	rawMsgs := a.args.Template.MainTask.Messages
-	buildMessages := func(unitSource, relatedSource string) []llm.Message {
-		messages := make([]llm.Message, 0, len(rawMsgs))
+	buildMessages := func(unitSource, relatedSource string) []agentgo.Message {
+		messages := make([]agentgo.Message, 0, len(rawMsgs))
 		for _, m := range rawMsgs {
 			content := m.Content
 			content = strings.ReplaceAll(content, "{{current_system_date_time}}", a.currentDate)
@@ -92,7 +91,7 @@ func (a *Runner) reviewMessages(u unit.Unit, input reviewInput, planResult strin
 				content = stripEmptyPlanBlock(content)
 			}
 			content = strings.ReplaceAll(content, "{{plan_guidance}}", planResult)
-			messages = append(messages, llm.NewTextMessage(m.Role, content))
+			messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 		}
 		return messages
 	}

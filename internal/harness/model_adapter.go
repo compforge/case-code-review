@@ -18,13 +18,13 @@ import (
 // chatModel adds CCR recording and tool-argument normalization around the
 // AgentGo provider/router. Native messages and call options cross unchanged.
 type chatModel struct {
-	client       llm.LLMClient
+	client       agentgo.ChatModel
 	model        string
 	maxTokens    int
 	recorder     *executionRecorder
 	taskType     recording.TaskType
 	events       bool
-	observeUsage func(*llm.UsageInfo)
+	observeUsage func(*agentgo.Usage)
 }
 
 func (m *chatModel) Generate(
@@ -40,26 +40,18 @@ func (m *chatModel) Generate(
 	}
 
 	cfg.MaxTokens = maxTokens
-	request := llm.ChatRequest{
-		Native:          &agentgo.LLMRequest{Messages: messages, Tools: tools, Config: &cfg},
-		Model:           m.model,
-		Messages:        toLLMMessages(messages),
-		Tools:           toLLMToolDefs(tools),
-		ToolChoice:      toLLMToolChoice(cfg.ToolChoice),
-		MaxTokens:       maxTokens,
-		ReasoningEffort: string(cfg.ThinkingLevel),
-	}
+	request := agentgo.LLMRequest{Messages: messages, Tools: tools, Config: &cfg}
 	record := m.recorder.beginModel(m.taskType, request.Messages)
 	started := time.Now()
 	resp, err := record.Call(ctx, m.client, request)
 	if resp != nil && m.observeUsage != nil {
-		m.observeUsage(resp.Usage)
+		m.observeUsage(resp.Message.Usage)
 	}
 	m.recorder.finishModel(resp, time.Since(started), m.events)
 	if err != nil {
-		return nil, err
+		return resp, err
 	}
-	message, err := toAgentGoResponse(resp, tools)
+	message, err := normalizeResponse(resp, tools)
 	if err != nil {
 		return nil, err
 	}
@@ -74,148 +66,25 @@ func (m *chatModel) GenerateStream(
 	tools []agentgo.ToolSpec,
 	opts ...agentgo.CallOption,
 ) (<-chan agentgo.StreamEvent, error) {
-	events := make(chan agentgo.StreamEvent, 1)
-	go func() {
-		defer close(events)
-		resp, err := m.Generate(ctx, messages, tools, opts...)
-		if err != nil {
-			events <- agentgo.StreamEvent{Type: agentgo.StreamEventError, Err: err}
-			return
-		}
-		events <- agentgo.StreamEvent{
-			Type:       agentgo.StreamEventDone,
-			Message:    resp.Message,
-			StopReason: resp.Message.StopReason,
-		}
-	}()
-	return events, nil
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return m.Generate(ctx, messages, tools, opts...) })
 }
 
-func (m *chatModel) SupportsTools() bool { return true }
+func (m *chatModel) SupportsTools() bool { return m.client.SupportsTools() }
 func (m *chatModel) ModelName() string   { return m.model }
 
-func toLLMToolChoice(choice any) *llm.ToolChoice {
-	switch value := choice.(type) {
-	case string:
-		if value != "" {
-			return &llm.ToolChoice{Mode: value}
-		}
-	case map[string]any:
-		if name, _ := value["name"].(string); name != "" {
-			return &llm.ToolChoice{Name: name}
-		}
+// normalizeResponse preserves provider content and repairs only lossless tool argument drift.
+func normalizeResponse(response *agentgo.LLMResponse, tools []agentgo.ToolSpec) (agentgo.Message, error) {
+	if response == nil {
+		return agentgo.Message{}, fmt.Errorf("harness: model returned no response")
 	}
-	return nil
-}
-
-func toLLMMessages(messages []agentgo.Message) []llm.Message {
-	out := make([]llm.Message, 0, len(messages))
-	for _, message := range messages {
-		switch message.Role {
-		case agentgo.RoleAssistant:
-			calls := message.ToolCalls()
-			toolCalls := make([]llm.ToolCall, 0, len(calls))
-			for _, call := range calls {
-				toolCalls = append(toolCalls, llm.ToolCall{
-					ID:   call.ID,
-					Type: "function",
-					Function: llm.FunctionCall{
-						Name:      call.Name,
-						Arguments: string(call.Args),
-					},
-				})
-			}
-			assistant := llm.NewToolCallMessage(message.TextContent(), toolCalls)
-			assistant.ReasoningContent = message.ThinkingContent()
-			out = append(out, assistant)
-		case agentgo.RoleTool:
-			out = append(out, llm.NewToolResultMessage(
-				metadataString(message.Metadata, "tool_call_id"),
-				message.TextContent(),
-			))
-		default:
-			out = append(out, llm.NewTextMessage(string(message.Role), message.TextContent()))
-		}
-	}
-	return out
-}
-
-func toLLMToolDefs(tools []agentgo.ToolSpec) []llm.ToolDef {
-	out := make([]llm.ToolDef, 0, len(tools))
-	for _, tool := range tools {
-		parameters, _ := tool.Parameters.(map[string]any)
-		out = append(out, llm.ToolDef{
-			Type: "function",
-			Function: llm.FunctionDef{
-				Name:        tool.Name,
-				Description: tool.Description,
-				Parameters:  parameters,
-			},
-		})
-	}
-	return out
-}
-
-func toAgentGoResponse(resp *llm.ChatResponse, tools []agentgo.ToolSpec) (agentgo.Message, error) {
-	if resp == nil || len(resp.Choices) == 0 {
-		return agentgo.Message{}, fmt.Errorf("harness: LLM returned no choices")
-	}
-
-	if resp.Native != nil {
-		message := *resp.Native
-		message.Content = append([]agentgo.ContentBlock(nil), message.Content...)
-		for i := range message.Content {
-			block := &message.Content[i]
-			if block.ToolCall != nil {
-				call := *block.ToolCall
-				call.Args = canonicalToolArguments(call.Name, call.Args, toolParameters(tools, call.Name))
-				block.ToolCall = &call
-			}
-		}
-		return message, nil
-	}
-	choice := resp.Choices[0]
-	content := make([]agentgo.ContentBlock, 0, len(choice.Message.ToolCalls)+1)
-	if choice.Message.ReasoningContent != "" {
-		content = append(content, agentgo.ThinkingBlock(choice.Message.ReasoningContent))
-	}
-	if text := resp.VisibleContent(); text != "" {
-		content = append(content, agentgo.TextBlock(text))
-	}
-	for _, call := range choice.Message.ToolCalls {
-		rawArgs := json.RawMessage(call.Function.Arguments)
-		args := canonicalToolArguments(call.Function.Name, rawArgs, toolParameters(tools, call.Function.Name))
-		toolCall := agentgo.ToolCall{
-			ID:   call.ID,
-			Name: call.Function.Name,
-			Args: args,
-		}
-		if !json.Valid(args) {
-			toolCall.Args = json.RawMessage(`{}`)
-			toolCall.ArgsInvalid = true
-			toolCall.ArgsRawText = call.Function.Arguments
-			toolCall.ArgsParseError = "invalid JSON tool arguments"
-		}
-		content = append(content, agentgo.ToolCallBlock(toolCall))
-	}
-
-	message := agentgo.Message{
-		Role:       agentgo.RoleAssistant,
-		Content:    content,
-		StopReason: toStopReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0),
-		Timestamp:  time.Now(),
-	}
-	if resp.Usage != nil {
-		message.Usage = &agentgo.Usage{
-			Provider: resp.Alias,
-			Model:    resp.Model,
-			// CCR input includes cache creation; AgentGo adds CacheWrite separately.
-			Input:       int(max(0, resp.Usage.PromptTokens-resp.Usage.CacheWriteTokens)),
-			Output:      int(resp.Usage.CompletionTokens),
-			Reasoning:   int(resp.Usage.ReasoningTokens),
-			CacheRead:   int(resp.Usage.CacheReadTokens),
-			CacheWrite:  int(resp.Usage.CacheWriteTokens),
-			TotalTokens: int(resp.Usage.TotalTokens),
+	message := response.Message
+	message.Content = append([]agentgo.ContentBlock(nil), message.Content...)
+	for i := range message.Content {
+		b := &message.Content[i]
+		if b.ToolCall != nil {
+			c := *b.ToolCall
+			c.Args = canonicalToolArguments(c.Name, c.Args, toolParameters(tools, c.Name))
+			b.ToolCall = &c
 		}
 	}
 	return message, nil
@@ -402,23 +271,6 @@ func searchSharedArguments(args map[string]any) map[string]any {
 		}
 	}
 	return shared
-}
-
-func toStopReason(finishReason string, hasToolCalls bool) agentgo.StopReason {
-	switch strings.ToLower(finishReason) {
-	case "length", "max_tokens":
-		return agentgo.StopReasonLength
-	case "error":
-		return agentgo.StopReasonError
-	case "content_filter", "safety":
-		return agentgo.StopReasonSafety
-	case "tool_calls", "tool_use":
-		return agentgo.StopReasonToolUse
-	}
-	if hasToolCalls {
-		return agentgo.StopReasonToolUse
-	}
-	return agentgo.StopReasonStop
 }
 
 func metadataString(metadata map[string]any, key string) string {

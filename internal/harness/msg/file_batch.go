@@ -4,7 +4,6 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 // FileBatch preserves one read_files tool call as one message while retaining
@@ -53,9 +52,11 @@ func (b *FileBatch) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (b *FileBatch) ToLLM() llm.Message { return b.render(b.representation) }
+func (b *FileBatch) renderCurrent() agentgo.Message {
+	return b.render(b.representation)
+}
 
-func (b *FileBatch) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *FileBatch) GetRole() agentgo.Role { return domainRole(b.renderCurrent()) }
 func (b *FileBatch) Raw() agentgo.AgentMessage {
 	raw := b.clone()
 	raw.representation = fileBatchSource
@@ -67,14 +68,14 @@ func (b *FileBatch) Raw() agentgo.AgentMessage {
 	}
 	return raw
 }
-func (b *FileBatch) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *FileBatch) TextContent() string     { return domainText(b.renderCurrent()) }
 func (b *FileBatch) ThinkingContent() string { return "" }
-func (b *FileBatch) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *FileBatch) HasToolCalls() bool      { return domainHasToolCalls(b.renderCurrent()) }
 func (b *FileBatch) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(b.ToLLM(), b.ToolName(), b.GetTimestamp())
+	return domainToMessage(b.renderCurrent(), b.ToolName(), b.GetTimestamp())
 }
 
-func (b *FileBatch) render(representation fileBatchRepresentation) llm.Message {
+func (b *FileBatch) render(representation fileBatchRepresentation) agentgo.Message {
 	parts := make([]string, len(b.items))
 	for i, item := range b.items {
 		if item.file != nil {
@@ -88,7 +89,7 @@ func (b *FileBatch) render(representation fileBatchRepresentation) llm.Message {
 			parts[i] = item.raw
 		}
 	}
-	return llm.NewToolResultMessage(b.toolCallID, tool.EncodeFileReadResults(parts))
+	return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(tool.EncodeFileReadResults(parts))}, Metadata: map[string]any{"tool_call_id": b.toolCallID}}
 }
 
 func (b *FileBatch) ToolName() string { return b.tool }

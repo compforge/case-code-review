@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -18,16 +19,12 @@ import (
 )
 
 func TestExecutionCompletesWithTaskDone(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponse("task_done", `{}`, &llm.UsageInfo{
-			PromptTokens:     10,
-			CompletionTokens: 2,
-			TotalTokens:      12,
-		}),
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
+		toolCallResponse("task_done", `{}`, &agentgo.Usage{Input: 10, Output: 2, TotalTokens: 12}),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Model:     "review-model",
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
@@ -51,13 +48,13 @@ func TestExecutionCompletesWithTaskDone(t *testing.T) {
 	if len(requests) != 1 {
 		t.Fatalf("requests = %d, want 1", len(requests))
 	}
-	if requests[0].Model != "review-model" || requests[0].MaxTokens != 512 {
+	if requests[0].Config.MaxTokens != 512 {
 		t.Fatalf("request did not preserve model config: %+v", requests[0])
 	}
 }
 
 func TestExecutionCompletesWithDomainTerminalTool(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("submit-1", "submit_result", `{"items":[]}`, nil),
 	}}
 	handler := toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -68,7 +65,7 @@ func TestExecutionCompletesWithDomainTerminalTool(t *testing.T) {
 	})
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:        client,
+		ChatModel:        client,
 		Messages:         []agentgo.AgentMessage{msg.Text("user", "produce a result")},
 		ToolDefs:         []llm.ToolDef{toolDef("submit_result")},
 		ToolHandler:      handler,
@@ -83,13 +80,13 @@ func TestExecutionCompletesWithDomainTerminalTool(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", result)
 	}
 	requests := client.Requests()
-	if len(requests) != 1 || len(requests[0].Tools) != 1 || requests[0].Tools[0].Function.Name != "submit_result" {
+	if len(requests) != 1 || len(requests[0].Tools) != 1 || requests[0].Tools[0].Name != "submit_result" {
 		t.Fatalf("custom terminal tool set = %+v", requests)
 	}
 }
 
 func TestExecutionKeepsRunningAfterRejectedTerminalSubmission(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("submit-1", "submit_result", `{"items":[{}]}`, nil),
 		toolCallResponseID("submit-2", "submit_result", `{"items":[]}`, nil),
 	}}
@@ -106,7 +103,7 @@ func TestExecutionKeepsRunningAfterRejectedTerminalSubmission(t *testing.T) {
 	})
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:      client,
+		ChatModel:      client,
 		Messages:       []agentgo.AgentMessage{msg.Text("user", "produce a result")},
 		ToolDefs:       []llm.ToolDef{toolDef("submit_result")},
 		ToolHandler:    handler,
@@ -129,11 +126,11 @@ func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 	if _, err := NewExecution(ExecutionSpec{}); err == nil {
 		t.Fatal("missing LLM client must be rejected at construction")
 	}
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 	execution, err := NewExecution(ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		MaxTurns:  1,
 	})
@@ -151,12 +148,12 @@ func TestNewExecutionValidatesInputAndRunsOnce(t *testing.T) {
 func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 	session := &LoopSession{}
 	defer session.Close()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("done-1", "task_done", `{}`, nil),
 		toolCallResponseID("done-2", "task_done", `{}`, nil),
 	}}
 	first, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client, LoopSession: session,
+		ChatModel: client, LoopSession: session,
 		Messages: []agentgo.AgentMessage{msg.Text("user", "first hypothesis")},
 		ToolDefs: []llm.ToolDef{toolDef("task_done")},
 		MaxTurns: 1,
@@ -165,7 +162,7 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:   client,
+		ChatModel:   client,
 		Messages:    []agentgo.AgentMessage{msg.Text("user", "second hypothesis")},
 		ToolDefs:    []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:    1,
@@ -188,13 +185,13 @@ func TestExecutionContinuesFromPriorCommittedContext(t *testing.T) {
 }
 
 func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		textResponse("I am finished."),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  2,
@@ -211,18 +208,18 @@ func TestExecutionRequiresTaskDoneBeforeNaturalStop(t *testing.T) {
 		t.Fatalf("requests = %d, want 2", len(requests))
 	}
 	last := requests[1].Messages[len(requests[1].Messages)-1]
-	if last.Role != "user" || last.ExtractText() != defaultCompletionPrompt {
+	if last.Role != "user" || last.TextContent() != defaultCompletionPrompt {
 		t.Fatalf("completion guard message = %#v", last)
 	}
 }
 
 func TestExecutionAllowsConfiguredNaturalCompletion(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		textResponse("No material work remains."),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:         client,
+		ChatModel:         client,
 		Messages:          []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		MaxTurns:          3,
 		NaturalCompletion: true,
@@ -245,7 +242,7 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 		return "ok", nil
 	}))
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "echo", `{}`, nil),
 		toolCallResponseID("call-2", "submit_result", `{"items":[]}`, nil),
 	}}
@@ -257,7 +254,7 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 	})
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"), toolDef("submit_result"),
@@ -281,7 +278,7 @@ func TestExecutionStopsAfterAcceptedWrapUpResultInNaturalMode(t *testing.T) {
 	if got := strings.Join(requestToolNames(requests[0]), ","); got != "echo,submit_result" {
 		t.Fatalf("tools = %s", got)
 	}
-	if len(requests) != 2 || requests[1].ToolChoice != nil {
+	if len(requests) != 2 || requests[1].Config.ToolChoice != nil {
 		t.Fatalf("natural-completion wrap-up forced a tool: %#v", requests)
 	}
 }
@@ -291,14 +288,14 @@ func TestExecutionNaturalCompletionFinalCorrectionKeepsTools(t *testing.T) {
 	provider := &fileReadProvider{body: "ok"}
 	registry.Register(provider)
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		textResponse("No mature result remains."),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:          client,
+		ChatModel:          client,
 		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")},
 		Tools:              registry,
@@ -328,13 +325,13 @@ func TestExecutionNaturalCompletionFinalCorrectionKeepsTools(t *testing.T) {
 }
 
 func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("done-1", "task_done", `{}`, nil),
 		toolCallResponseID("done-2", "task_done", `{}`, nil),
 	}}
 	checks := 0
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "assess every item")},
 		ToolDefs:  []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:  2,
@@ -350,18 +347,18 @@ func TestExecutionRejectsTaskDoneUntilDomainCompletion(t *testing.T) {
 		t.Fatalf("result = %+v, want completion on second task_done", result)
 	}
 	requests := client.Requests()
-	if len(requests) != 2 || !strings.Contains(requests[1].Messages[len(requests[1].Messages)-1].ExtractText(), "one item is still missing") {
+	if len(requests) != 2 || !strings.Contains(requests[1].Messages[len(requests[1].Messages)-1].TextContent(), "one item is still missing") {
 		t.Fatalf("rejection was not returned to the model: %+v", requests)
 	}
 }
 
 func TestExecutionReportsTurnBudgetAsTruncation(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		textResponse("I am finished."),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		MaxTurns:  1,
 	})
@@ -380,12 +377,12 @@ func TestExecutionAdaptsRegistryTools(t *testing.T) {
 	}))
 	registry.Freeze()
 
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponse("echo", `{"value":"ok"}`, nil),
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "use echo")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
@@ -407,7 +404,7 @@ func TestExecutionAdaptsRegistryTools(t *testing.T) {
 	}
 	var found bool
 	for _, message := range requests[1].Messages {
-		if message.Role == "tool" && message.ExtractText() == "echo:ok" {
+		if message.Role == "tool" && message.TextContent() == "echo:ok" {
 			found = true
 		}
 	}
@@ -417,11 +414,11 @@ func TestExecutionAdaptsRegistryTools(t *testing.T) {
 }
 
 func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
-		toolCallResponse("code_comment", `{"path":"a.go"}`, &llm.UsageInfo{TotalTokens: 7}),
-		toolCallResponse("task_done", `{}`, &llm.UsageInfo{TotalTokens: 3}),
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
+		toolCallResponse("code_comment", `{"path":"a.go"}`, &agentgo.Usage{TotalTokens: 7}),
+		toolCallResponse("task_done", `{}`, &agentgo.Usage{TotalTokens: 3}),
 	}}
-	client.responses[0].Alias = "route-a"
+	client.responses[0].Message.Metadata["route_endpoint"] = "route-a"
 
 	t.Setenv("HOME", t.TempDir())
 	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
@@ -443,7 +440,7 @@ func TestExecutionConnectsHandlerSessionAndEvents(t *testing.T) {
 	var events []ExecutionEvent
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:   client,
+		ChatModel:   client,
 		Messages:    []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs:    []llm.ToolDef{toolDef("code_comment"), toolDef("task_done")},
 		ToolHandler: handler,
@@ -496,13 +493,13 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 	registry.Register(provider)
 	registry.Freeze()
 
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review this unit")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("read_files"),
@@ -532,7 +529,7 @@ func TestExecutionSkipsFileReadAlreadyCoveredByEarlierRead(t *testing.T) {
 		if message.Role != "tool" {
 			continue
 		}
-		text := message.ExtractText()
+		text := message.TextContent()
 		switch {
 		case strings.Contains(text, "Already available in the current context from an earlier read_files result"):
 			covered++
@@ -556,7 +553,8 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 	result := tool.EncodeFileReadResults([]string{
 		"File: pkg/a.go (Total lines: 3)\nIS_TRUNCATED: false\nLINE_RANGE: 1-3\n1|package a\n",
 	})
-	wire := wireToAgentMessage(llm.NewToolResultMessage("call-1", result))
+	wire := agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(result)}, Metadata: map[string]any{"tool_call_id": "call-1"}}
+
 	wire.Metadata = map[string]any{
 		"tool_name":    msg.FileReadToolName,
 		"tool_call_id": "call-1",
@@ -574,22 +572,18 @@ func TestContextPromotesFileReadResultBackToDomainMessage(t *testing.T) {
 		t.Fatalf("promoted message = %#v", batch)
 	}
 	file := batch.Files()[0]
+	batchMessage, _ := batch.ToMessage()
 	if file.Path != "pkg/a.go" || file.Start != 1 || file.End != 3 ||
-		batch.ToLLM().ToolCallID != "call-1" {
+		batchMessage.Metadata["tool_call_id"] != "call-1" {
 		t.Fatalf("promoted message = %#v", batch)
 	}
 }
 
 func TestContextUsesToolCallArgumentsWhenPromotingResult(t *testing.T) {
-	assistant := wireToAgentMessage(llm.NewToolCallMessage("", []llm.ToolCall{{
-		ID: "search-1", Type: "function",
-		Function: llm.FunctionCall{Name: msg.CodeSearchToolName, Arguments: `{"searches":[{"query":"NewExecution","syntax":"literal"}]}`},
-	}}))
-	result := wireToAgentMessage(llm.NewToolResultMessage(
-		"search-1", tool.EncodeCodeSearchResults([]string{
-			"File: internal/harness/execution.go\nMatch lines: 1\n10|func NewExecution\n",
-		}),
-	))
+	assistant := agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{agentgo.TextBlock("")}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: "search-1", Name: msg.CodeSearchToolName, Args: json.RawMessage(`{"searches":[{"query":"NewExecution","syntax":"literal"}]}`)}))}
+
+	result := agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(tool.EncodeCodeSearchResults([]string{"File: internal/harness/execution.go\nMatch lines: 1\n10|func NewExecution\n"}))}, Metadata: map[string]any{"tool_call_id": "search-1"}}
+
 	result.Metadata = map[string]any{"tool_call_id": "search-1"}
 
 	normalized, changed := normalizeContextMessages([]agentgo.AgentMessage{assistant, result})
@@ -648,16 +642,15 @@ func TestExecutionSkipsFileReadAlreadyCoveredByPreload(t *testing.T) {
 	registry.Register(provider)
 	registry.Freeze()
 
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
-			msg.NewFile("pkg/a.go", 1, 3, 3, body).
-				ConfigurePresentation("code under review", ""),
+			msg.NewFile("pkg/a.go", 1, 3, 3, body).ConfigurePresentation("code under review", ""),
 		},
 		ToolDefs:         []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:            registry,
@@ -716,12 +709,12 @@ func TestExecutionRunsOnlyUncoveredMembersOfFileReadBatch(t *testing.T) {
 	registry.Register(provider)
 	registry.Freeze()
 
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"},{"file_path":"pkg/b.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 1, 3, 3, preload),
@@ -903,13 +896,13 @@ func TestExecutionWrapUpKeepsToolsAndBlocksInvestigation(t *testing.T) {
 	provider := &fileReadProvider{body: "unexpected"}
 	registry.Register(provider)
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:          client,
+		ChatModel:          client,
 		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("submit_result"), toolDef("task_done")},
 		Tools:              registry,
@@ -938,7 +931,7 @@ func TestExecutionWrapUpKeepsToolsAndBlocksInvestigation(t *testing.T) {
 }
 
 func TestExecutionWrapUpResultSubmissionRequestsFinalCompletion(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "submit_result", `{"items":[]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
@@ -950,7 +943,7 @@ func TestExecutionWrapUpResultSubmissionRequestsFinalCompletion(t *testing.T) {
 	})
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("read_files"), toolDef("submit_result"), toolDef("task_done"),
@@ -981,7 +974,7 @@ func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
 	provider := &fileReadProvider{body: "unexpected"}
 	registry.Register(provider)
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-2", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
 		toolCallResponseID("call-3", "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, nil),
@@ -989,7 +982,7 @@ func TestExecutionWrapUpStopsAfterOneIgnoredCompletionTurn(t *testing.T) {
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:          client,
+		ChatModel:          client,
 		Messages:           []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs:           []llm.ToolDef{toolDef("read_files"), toolDef("task_done")},
 		Tools:              registry,
@@ -1028,12 +1021,12 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 	registry.Register(provider)
 	registry.Freeze()
 
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "read_files", `{"reads":[{"file_path":"pkg/a.go","start_line":1,"end_line":20}]}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
 	_, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages: []agentgo.AgentMessage{
 			msg.Text("user", "review this unit"),
 			msg.NewFile("pkg/a.go", 10, 20, 30, "File: pkg/a.go (Total lines: 30)\nLINE_RANGE: 10-20\n10|func F() {}\n"),
@@ -1055,12 +1048,12 @@ func TestExecutionRunsFileReadWhenPreloadOnlyPartiallyCoversRange(t *testing.T) 
 func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	content := "File: pkg/large.go (Total lines: 200)\n" + strings.Repeat("1|some code content\n", 200)
 	file := msg.NewFile("pkg/large.go", 1, 200, 200, content)
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponse("task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:        client,
+		ChatModel:        client,
 		Messages:         []agentgo.AgentMessage{msg.Text("user", "review"), file},
 		ToolDefs:         []llm.ToolDef{toolDef("task_done")},
 		MaxTurns:         1,
@@ -1083,7 +1076,7 @@ func TestExecutionContextEvictsWithoutMutatingInput(t *testing.T) {
 	}
 	var compacted bool
 	for _, message := range requests[0].Messages {
-		if strings.Contains(message.ExtractText(), "compacted to a reference") {
+		if strings.Contains(message.TextContent(), "compacted to a reference") {
 			compacted = true
 		}
 	}
@@ -1098,17 +1091,18 @@ func TestExecutionUsesSummaryAndRecordsItsUsage(t *testing.T) {
 	for range 8 {
 		messages = append(messages, msg.Text("user", long))
 	}
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		textResponse("<summary>preserve the confirmed review facts</summary>"),
-		toolCallResponse("task_done", `{}`, &llm.UsageInfo{TotalTokens: 7}),
+		toolCallResponse("task_done", `{}`, &agentgo.Usage{TotalTokens: 7}),
 	}}
-	client.responses[0].Usage = &llm.UsageInfo{TotalTokens: 5}
+	client.responses[0].Message.Usage = &agentgo.Usage{TotalTokens: 5}
+
 	t.Setenv("HOME", t.TempDir())
 	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
 	defer history.Finalize()
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient:     client,
+		ChatModel:     client,
 		Messages:      messages,
 		ToolDefs:      []llm.ToolDef{toolDef("task_done")},
 		Session:       history,
@@ -1146,14 +1140,14 @@ func TestExecutionInjectsWrapUpBeforeTurnBudgetEnds(t *testing.T) {
 		return "ok", nil
 	}))
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "echo", `{}`, nil),
 		toolCallResponseID("call-2", "echo", `{}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
@@ -1187,14 +1181,14 @@ func TestExecutionWrapsUpAfterPlannedInvestigationTurns(t *testing.T) {
 		return "ok", nil
 	}))
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "echo", `{}`, nil),
 		toolCallResponseID("call-2", "echo", `{}`, nil),
 		toolCallResponseID("call-3", "task_done", `{}`, nil),
 	}}
 
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
@@ -1230,7 +1224,7 @@ func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 		return "ok", nil
 	}))
 	registry.Freeze()
-	client := &scriptedClient{responses: []*llm.ChatResponse{
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{
 		toolCallResponseID("call-1", "echo", `{}`, nil),
 		toolCallResponseID("call-2", "task_done", `{}`, nil),
 	}}
@@ -1244,7 +1238,7 @@ func TestExecutionCommitsIncrementalTurnContext(t *testing.T) {
 		return []agentgo.AgentMessage{msg.NewBoard("peer confirmed the call path")}
 	})
 	result, err := runExecution(context.Background(), ExecutionSpec{
-		LLMClient: client,
+		ChatModel: client,
 		Messages:  []agentgo.AgentMessage{msg.Text("user", "review")},
 		ToolDefs: []llm.ToolDef{
 			toolDef("echo"),
@@ -1308,11 +1302,15 @@ func (p *fileReadProvider) Execute(_ context.Context, args map[string]any) (stri
 
 type scriptedClient struct {
 	mu        sync.Mutex
-	responses []*llm.ChatResponse
-	requests  []llm.ChatRequest
+	responses []*agentgo.LLMResponse
+	requests  []agentgo.LLMRequest
 }
 
-func (c *scriptedClient) CompletionsWithCtx(_ context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
+func (c *scriptedClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+	config := agentgo.ResolveCallConfig(opts)
+	request := agentgo.LLMRequest{Messages: messages,
+		Tools: tools, Config: &config}
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.requests = append(c.requests, request)
@@ -1324,10 +1322,10 @@ func (c *scriptedClient) CompletionsWithCtx(_ context.Context, request llm.ChatR
 	return response, nil
 }
 
-func (c *scriptedClient) Requests() []llm.ChatRequest {
+func (c *scriptedClient) Requests() []agentgo.LLMRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]llm.ChatRequest(nil), c.requests...)
+	return append([]agentgo.LLMRequest(nil), c.requests...)
 }
 
 func toolDef(name string) llm.ToolDef {
@@ -1343,63 +1341,41 @@ func toolDef(name string) llm.ToolDef {
 	}
 }
 
-func toolCallResponse(name, arguments string, usage *llm.UsageInfo) *llm.ChatResponse {
+func toolCallResponse(name, arguments string, usage *agentgo.Usage) *agentgo.LLMResponse {
 	return toolCallResponseID("call-1", name, arguments, usage)
 }
 
-func toolCallResponseID(id, name, arguments string, usage *llm.UsageInfo) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Model: "served-model",
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Role: "assistant",
-				ToolCalls: []llm.ToolCall{{
-					ID:   id,
-					Type: "function",
-					Function: llm.FunctionCall{
-						Name:      name,
-						Arguments: arguments,
-					},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-		Usage: usage,
-	}
+func toolCallResponseID(id, name, arguments string, usage *agentgo.Usage) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: id, Name: name, Args: json.RawMessage(arguments)})), StopReason: agentgo.StopReasonToolUse, Usage: usage, Metadata: map[string]any{"model": "served-model"}}}
 }
 
-func textResponse(text string) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{{
-			Message:      llm.ResponseMessage{Role: "assistant", Content: &text},
-			FinishReason: "stop",
-		}},
-	}
+func textResponse(text string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, StopReason: agentgo.StopReasonStop}}
 }
 
-func requestText(request llm.ChatRequest) string {
+func requestText(request agentgo.LLMRequest) string {
 	var out strings.Builder
 	for _, message := range request.Messages {
-		out.WriteString(message.ExtractText())
+		out.WriteString(message.TextContent())
 	}
 	return out.String()
 }
 
-func requestToolNames(request llm.ChatRequest) []string {
+func requestToolNames(request agentgo.LLMRequest) []string {
 	names := make([]string, 0, len(request.Tools))
 	for _, definition := range request.Tools {
-		names = append(names, definition.Function.Name)
+		names = append(names, definition.Name)
 	}
 	return names
 }
 
-func assertStableToolRequests(t *testing.T, requests []llm.ChatRequest) {
+func assertStableToolRequests(t *testing.T, requests []agentgo.LLMRequest) {
 	t.Helper()
 	if len(requests) == 0 {
 		t.Fatal("no model requests")
 	}
 	for i, request := range requests {
-		if !reflect.DeepEqual(request.Tools, requests[0].Tools) || request.ToolChoice != nil {
+		if !reflect.DeepEqual(request.Tools, requests[0].Tools) || request.Config.ToolChoice != nil {
 			t.Fatalf("request %d changed tools or tool_choice during wrap-up", i+1)
 		}
 	}
@@ -1408,13 +1384,13 @@ func assertStableToolRequests(t *testing.T, requests []llm.ChatRequest) {
 func TestWrapUpFinalCorrectionRejectsFurtherResults(t *testing.T) {
 	for _, natural := range []bool{false, true} {
 		t.Run(fmt.Sprintf("natural=%v", natural), func(t *testing.T) {
-			client := &scriptedClient{responses: []*llm.ChatResponse{
+			client := &scriptedClient{responses: []*agentgo.LLMResponse{
 				toolCallResponseID("first", "submit_result", `{}`, nil),
 				toolCallResponseID("second", "submit_result", `{}`, nil),
 			}}
 			handled := 0
 			result, err := runExecution(t.Context(), ExecutionSpec{
-				LLMClient: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 2,
+				ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 2,
 				ToolDefs:     []llm.ToolDef{toolDef("submit_result"), toolDef("task_done")},
 				WrapUpPrompt: "wrap up", WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: natural,
 				ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -1457,4 +1433,9 @@ func readExecutionRecords(t *testing.T, review *recording.Review, kind string) [
 		}
 	}
 	return records
+}
+
+func (c *scriptedClient) SupportsTools() bool { return true }
+func (c *scriptedClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

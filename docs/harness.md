@@ -81,11 +81,11 @@ Assessment 或 warning；任何领域后处理都发生在 Harness 外。
 CCR 的 domain message 直接实现 AgentGo `AgentMessage`，保留文件、来源、范围、优先级和可重取性等语义。
 `AgentMessage` 是 Harness 唯一的消息生命周期契约：普通 prompt 使用 `agentgo.Message`；
 可识别的工具结果（例如 `read_files`）会重新提升为 `File` / `FileBatch`，因此后续压缩始终从 typed message
-视角出发。只有在调用模型前才降成 provider wire message：
+视角出发。调用模型前通过 `ToMessage()` 投影成 AgentGo 原生消息，provider 协议序列化由 AgentGo/litellm 负责：
 
 ```text
 agentgo.Message / msg.File / msg.Diff / msg.SearchResult
-   ── context lifecycle ──▶ lowered model messages
+   ── context lifecycle / ToMessage ──▶ agentgo.Message ── AgentGo/litellm ──▶ provider API
 ```
 
 Harness 外始终传入保留完整事实的消息。`Compact(expect)` 中的 ratio 只表达预算目标，不表达统一压缩档位；
@@ -103,7 +103,7 @@ ContextManager 才能判断两个范围是否
 重叠、后一次完整读取是否覆盖前一次局部读取，以及 token 压力下哪些内容可以先淘汰后按需重取。
 
 工具结果通过其前一条 assistant tool call 的 call ID 找回工具名和参数，再由统一 `FromLLM` 入口归入
-少量语义类型，而不是“一种工具一个 class”。每种双向消息把 `FromLLM` 与 `ToLLM` 放在同一处，
+少量语义类型，而不是“一种工具一个 class”。每种双向消息把 `FromLLM` 与 `ToMessage` 放在同一处，
 修改 wire contract 或压缩投影时可以同时核对两个方向：
 
 - `read_files` / `read_base_files` → `FileBatch`（内部保留各个 `File`），current 与 baseline snapshot
@@ -114,8 +114,8 @@ ContextManager 才能判断两个范围是否
 - `FileContext` → 初始 `outline / reference` 导航目录；source 只由独立 `File` 消息表达并参与覆盖判断；
 - 结果提交、终态和可恢复错误 → `ToolReceipt`，领域 artifact 仍只由 Runner collector 持有。
 
-无法识别的普通 LLM 消息退化为 `Raw`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
-wire 来源，因此只定义 `ToLLM`。
+普通模型消息直接使用 AgentGo `Message`。初始任务、试验性的 Board 等只由 CCR 内部创建的单向消息没有可恢复的
+wire 来源，因此只定义 `ToMessage`。
 
 降低边界应保持可解释的顺序和一对一关系，避免 adapter 再暗中合并消息。Session 记录的是最终实际
 发送的 wire shape，因此 Viewer 能回答“模型当时究竟看到了什么”。
@@ -354,7 +354,7 @@ Harness 使用 AgentGo 的 `EndReasonLength`：当 length 恢复禁用或耗尽�
 已配置的 `thinking` / `enable_thinking` 扩展；Anthropic 使用 `thinking` 与 `output_config.effort`。
 覆盖只影响单次调用，不修改共享默认配置；不会按模型名猜测私有档位映射。
 
-`UsageInfo.ReasoningTokens` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
+`agentgo.Usage.Reasoning` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
 不另计总 token 或费用；0 也可能表示供应商未报告。AgentGo Session 保留调用意图、截断恢复决定、
 stop reason 和 reasoning 用量，CCR 的成本投影继续保留这个分项。调用意图不等于服务端实际生效档位。
 
@@ -378,3 +378,17 @@ failover decisions; these facts do not prove production latency improvements.
 CCR retains non-streaming completion calls. The final system message gets a cache
 breakpoint unless explicitly configured; the provider decides whether caching is
 supported. No cache-hit claim is inferred from prompt layout alone.
+
+All CCR model callers use AgentGo `ChatModel`, `LLMRequest`, `LLMResponse` and
+`Message` directly, including planning, relocation and context compression.
+Domain `AgentMessage.ToMessage()` is the sole projection into model messages;
+there is no CCR message DTO, native escape hatch, or reverse response conversion.
+The Harness only repairs lossless tool argument drift, retaining native reasoning,
+stop reason, usage, metadata and opaque provider state.
+
+Auxiliary calls record the same native request and response in a local AgentGo
+Session. Router attempt facts are recorded there as well; loop executions use
+AgentGo's own event recording. The review budget charges each reported attempt
+once, including usage on failed attempts, with the final response as a fallback
+for models without attempt facts. Cache reads and reasoning are already included
+in input and output; cache writes are added once. Missing usage stays unknown.

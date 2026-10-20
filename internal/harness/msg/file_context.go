@@ -6,8 +6,6 @@ import (
 	"strings"
 
 	"github.com/compforge/agentgo"
-
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 // FileContextView describes how much navigation context was supplied for a
@@ -66,22 +64,24 @@ func NewFileContext(entries []FileContextEntry) *FileContext {
 	return &FileContext{messageMeta: newMessageMeta(), entries: copyEntries}
 }
 
-func (c *FileContext) ToLLM() llm.Message { return c.render(c.representation) }
+func (c *FileContext) renderCurrent() agentgo.Message {
+	return c.render(c.representation)
+}
 
-func (c *FileContext) GetRole() agentgo.Role { return domainRole(c.ToLLM()) }
+func (c *FileContext) GetRole() agentgo.Role { return domainRole(c.renderCurrent()) }
 func (c *FileContext) Raw() agentgo.AgentMessage {
 	raw := c.clone()
 	raw.representation = fileContextDetailed
 	return raw
 }
-func (c *FileContext) TextContent() string     { return domainText(c.ToLLM()) }
+func (c *FileContext) TextContent() string     { return domainText(c.renderCurrent()) }
 func (c *FileContext) ThinkingContent() string { return "" }
-func (c *FileContext) HasToolCalls() bool      { return domainHasToolCalls(c.ToLLM()) }
+func (c *FileContext) HasToolCalls() bool      { return domainHasToolCalls(c.renderCurrent()) }
 func (c *FileContext) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(c.ToLLM(), "", c.GetTimestamp())
+	return domainToMessage(c.renderCurrent(), "", c.GetTimestamp())
 }
 
-func (c *FileContext) render(representation fileContextRepresentation) llm.Message {
+func (c *FileContext) render(representation fileContextRepresentation) agentgo.Message {
 	var b strings.Builder
 	b.WriteString("INITIAL FILE CONTEXT (outline/reference are navigation hints; exact source, when present, is supplied as separate file messages):\n")
 	for _, entry := range c.entries {
@@ -107,7 +107,7 @@ func (c *FileContext) render(representation fileContextRepresentation) llm.Messa
 			}
 		}
 	}
-	return llm.NewTextMessage("user", strings.TrimRight(b.String(), "\n"))
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(strings.TrimRight(b.String(), "\n"))}}
 }
 
 func (c *FileContext) Compact(expect float64) (agentgo.AgentMessage, float64) {

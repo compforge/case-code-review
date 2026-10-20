@@ -103,7 +103,7 @@ func TestScanRunDiffMapContainsOnlyAdmittedBodies(t *testing.T) {
 	diffs := tool.NewFileReadDiff(tool.DiffMap{})
 	registry.Register(diffs)
 	a := New(Args{RepoDir: repo, Template: makeTemplateWithFullScan(), Tools: registry,
-		LLMClient: &fakeBudgetClient{perCallTokens: 1}, MaxConcurrency: 1})
+		ChatModel: &fakeBudgetClient{perCallTokens: 1}, MaxConcurrency: 1})
 	if _, err := a.Run(t.Context()); err != nil {
 		t.Fatal(err)
 	}

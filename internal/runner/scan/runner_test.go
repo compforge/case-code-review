@@ -203,12 +203,12 @@ func TestRenderMessages(t *testing.T) {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
 
-	sysText := msgs[0].ExtractText()
+	sysText := msgs[0].TextContent()
 	if !strings.Contains(sysText, "rule=rule-text") {
 		t.Errorf("system missing system_rule: %q", sysText)
 	}
 
-	userText := msgs[1].ExtractText()
+	userText := msgs[1].TextContent()
 	checks := map[string]string{
 		"path":     "path=internal/foo/bar.go",
 		"date":     "date=2026-06-09 10:00",

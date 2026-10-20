@@ -6,8 +6,8 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/agentgo/codec"
-
 	"github.com/compforge/go-stdx/slicesx"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
@@ -176,20 +176,20 @@ func newHypothesisMessage(full, condensed string) hypothesisMessage {
 	return hypothesisMessage{full: full, condensed: condensed, timestamp: time.Now()}
 }
 
-func (m hypothesisMessage) ToLLM() llm.Message {
+func (m hypothesisMessage) renderCurrent() agentgo.Message {
 	content := m.full
 	if m.compacted && m.condensed != "" {
 		content = m.condensed
 	}
-	return llm.NewTextMessage("user", content)
+	return agentgo.Message{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}}
 }
 
 func (m hypothesisMessage) GetRole() agentgo.Role     { return agentgo.RoleUser }
 func (m hypothesisMessage) GetTimestamp() time.Time   { return m.timestamp }
 func (m hypothesisMessage) Raw() agentgo.AgentMessage { m.compacted = false; return m }
 func (m hypothesisMessage) TextContent() string {
-	wire := m.ToLLM()
-	return wire.ExtractText()
+	wire := m.renderCurrent()
+	return wire.TextContent()
 }
 func (m hypothesisMessage) ThinkingContent() string { return "" }
 func (m hypothesisMessage) HasToolCalls() bool      { return false }
@@ -205,14 +205,14 @@ func (m hypothesisMessage) Compact(expect float64) (agentgo.AgentMessage, float6
 	if rawTokens <= 0 {
 		return m, 1
 	}
-	currentWire := m.ToLLM()
-	currentRatio := float64(llm.CountTokens(currentWire.ExtractText())) / float64(rawTokens)
+	currentWire := m.renderCurrent()
+	currentRatio := float64(llm.CountTokens(currentWire.TextContent())) / float64(rawTokens)
 	if currentRatio <= expect || m.compacted || m.condensed == "" {
 		return m, currentRatio
 	}
 	m.compacted = true
-	compactedWire := m.ToLLM()
-	return m, float64(llm.CountTokens(compactedWire.ExtractText())) / float64(rawTokens)
+	compactedWire := m.renderCurrent()
+	return m, float64(llm.CountTokens(compactedWire.TextContent())) / float64(rawTokens)
 }
 
 func (m hypothesisMessage) Priority() int { return priorityHypothesis }

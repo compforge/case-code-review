@@ -1,13 +1,17 @@
 package llm
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/compforge/agentgo"
+)
 
 // CountMessagesTokens returns the rough token count of messages by summing
 // their text content.
-func CountMessagesTokens(messages []Message) int {
+func CountMessagesTokens(messages []agentgo.Message) int {
 	var total int
 	for _, message := range messages {
-		total += CountTokens(message.ExtractText())
+		total += CountTokens(message.TextContent())
 	}
 	return total
 }

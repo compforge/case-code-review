@@ -5,10 +5,11 @@ import (
 	"slices"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -21,11 +22,10 @@ type Hook struct {
 	WorkerPool   *harness.WorkerPool
 	Session      *recording.Review
 	ChangeLookup func(path string) *change.Change
-	LLMClient    llm.LLMClient
+	ChatModel    agentgo.ChatModel
 	Template     template.Template
-	Model        string
 	Relocation   bool
-	RecordUsage  func(*llm.UsageInfo)
+	RecordUsage  func(*agentgo.Usage)
 }
 
 var _ harness.ToolHandler = (*Hook)(nil)
@@ -105,14 +105,14 @@ func (h *Hook) handleTool(
 }
 
 func (h *Hook) relocate(ctx context.Context, scope recording.Scope, finding *Finding, ch *change.Change) {
-	client := h.LLMClient
+	client := h.ChatModel
 	if h.Session != nil {
-		client = h.Session.GetOrCreateScope(scope).RecordingClient(client, recording.ReLocationTask)
+		client = h.Session.GetOrCreateScope(scope).RecordingModel(client, recording.ReLocationTask)
 	}
 	_, response, _ := ReLocateComment(
-		ctx, finding, ch, client, h.Template.ReLocationTask, h.Model, h.Template.CompletionTokenLimit(),
+		ctx, finding, ch, client, h.Template.ReLocationTask, h.Template.CompletionTokenLimit(),
 	)
 	if response != nil && h.RecordUsage != nil {
-		h.RecordUsage(response.Usage)
+		h.RecordUsage(response.Message.Usage)
 	}
 }

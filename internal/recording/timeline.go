@@ -8,8 +8,8 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
@@ -59,16 +59,16 @@ func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) 
 
 // Call records bodies in a local framework Session and references it from the
 // business timeline. Routing and HTTP instrumentation inherit this stage and timeline ID.
-func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request llm.ChatRequest) (*llm.ChatResponse, error) {
+func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, request agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 	if tr == nil {
-		return client.CompletionsWithCtx(ctx, request)
+		return llm.Call(ctx, client, request)
 	}
 	if tr.scopeSession != nil {
 		ctx = tr.scopeSession.session.Context(ctx)
 	}
 	if tr.ExecutionID != "" {
 		started := time.Now()
-		response, err := client.CompletionsWithCtx(ctx, request)
+		response, err := llm.Call(ctx, client, request)
 		if err != nil {
 			tr.SetError(err, time.Since(started))
 		} else {
@@ -108,12 +108,18 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	ctx, stage := telemetry.BeginTimelineStage(ctx, "llm.request", timeline.WithParent(ref.StageID), timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
 	if run != nil {
 		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelExecStart, Execution: &execution, Timestamp: started}))
-		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelRequest, Execution: &execution, ModelRequest: nativeRequest(request)}))
+		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelRequest, Execution: &execution, ModelRequest: &request}))
 	}
-	response, err := client.CompletionsWithCtx(ctx, request)
+	if run != nil {
+		ctx = agentgo.ContextWithExecution(ctx, execution)
+		ctx = llm.ObserveAttempts(ctx, func(_ context.Context, fact agentgo.ModelAttempt, err error) {
+			reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelAttempt, Execution: &execution, ModelAttempt: &fact, Err: err}))
+		})
+	}
+	response, err := llm.Call(ctx, client, request)
 	finished := time.Now()
 	duration := finished.Sub(started)
-	if err == nil && (response == nil || len(response.Choices) == 0) {
+	if err == nil && response == nil {
 		err = fmt.Errorf("empty response")
 	}
 	if err != nil {
@@ -123,8 +129,8 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	}
 	if run != nil {
 		var message agentgo.AgentMessage
-		if response != nil && len(response.Choices) > 0 {
-			message = nativeResponse(response)
+		if response != nil {
+			message = response.Message
 		}
 		reportCapture(run.Record(agentgo.Event{Type: agentgo.EventModelExecEnd, Execution: &execution, Timestamp: finished, Message: message, Err: err}))
 	}
@@ -133,16 +139,25 @@ func (tr *TaskRecord) Call(ctx context.Context, client llm.LLMClient, request ll
 	return response, err
 }
 
-func (ss *ReviewScope) RecordingClient(client llm.LLMClient, taskType TaskType) llm.LLMClient {
-	return &recordingClient{scope: ss, client: client, taskType: taskType}
+func (ss *ReviewScope) RecordingModel(client agentgo.ChatModel, taskType TaskType) agentgo.ChatModel {
+	return &recordingModel{scope: ss, client: client, taskType: taskType}
 }
 
-type recordingClient struct {
+type recordingModel struct {
 	scope    *ReviewScope
-	client   llm.LLMClient
+	client   agentgo.ChatModel
 	taskType TaskType
 }
 
-func (c *recordingClient) CompletionsWithCtx(ctx context.Context, request llm.ChatRequest) (*llm.ChatResponse, error) {
+func (c *recordingModel) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
+	config := agentgo.ResolveCallConfig(opts)
+	request := agentgo.LLMRequest{Messages: messages,
+		Tools: tools, Config: &config}
+
 	return c.scope.AppendTaskRecord(c.taskType, request.Messages).Call(ctx, c.client, request)
+}
+
+func (c *recordingModel) SupportsTools() bool { return c.client.SupportsTools() }
+func (c *recordingModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

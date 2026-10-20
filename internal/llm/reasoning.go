@@ -4,23 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/compforge/agentgo"
 )
 
-// ErrOutputTruncated applies to consumers that require a complete text answer.
-// Provider calls still return partial responses and usage without a transport error.
 var ErrOutputTruncated = errors.New("model output reached the token limit")
 
-// CompleteText rejects truncated or reasoning-only output for single-shot tasks.
-// Agent loops consume the original response so they can decide whether to continue.
-func (r *ChatResponse) CompleteText() (string, error) {
-	if r == nil || len(r.Choices) == 0 {
-		return "", fmt.Errorf("model returned no choices")
+// CompleteText is CCR's completion policy for tasks requiring a whole visible answer.
+func CompleteText(response *agentgo.LLMResponse) (string, error) {
+	if response == nil {
+		return "", fmt.Errorf("model returned no response")
 	}
-	switch strings.ToLower(r.Choices[0].FinishReason) {
-	case "length", "max_tokens":
+	if response.Message.StopReason == agentgo.StopReasonLength {
 		return "", ErrOutputTruncated
 	}
-	text := r.VisibleContent()
+	text := strings.TrimSpace(stripThinkTags(response.Message.TextContent()))
 	if text == "" {
 		return "", fmt.Errorf("model returned no visible text")
 	}

@@ -7,6 +7,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/testconnection"
 	"github.com/qiankunli/case-code-review/internal/llm"
 )
@@ -59,35 +61,31 @@ func runLLMTest() error {
 		timeout = time.Duration(task.Timeout) * time.Second
 	}
 
-	llmClient := llm.NewLLMClient(ep)
+	chatModel := llm.NewModel(ep)
 
-	messages := make([]llm.Message, 0, len(task.Messages))
+	messages := make([]agentgo.Message, 0, len(task.Messages))
 	for _, m := range task.Messages {
-		messages = append(messages, llm.Message{Role: m.Role, Content: m.Content})
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(m.Content)}})
 	}
 
-	resp, err := func() (*llm.ChatResponse, error) {
+	resp, err := func() (*agentgo.LLMResponse, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		return llmClient.CompletionsWithCtx(ctx, llm.ChatRequest{
-			Model:     ep.Model,
-			Messages:  messages,
-			MaxTokens: 2048,
-		})
+		return llm.Call(ctx, chatModel, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: 2048}})
 	}()
 	if err != nil {
 		return fmt.Errorf("llm request failed: %w", err)
 	}
 
 	model := ep.Model
-	if resp.Model != "" {
-		model = resp.Model
+	if llm.ResponseModel(resp) != "" {
+		model = llm.ResponseModel(resp)
 	}
 	fmt.Printf("Source: %s\n", ep.Source)
 	fmt.Printf("URL:    %s\n", ep.URL)
 	fmt.Printf("Model:  %s\n", model)
 
-	content := resp.Content()
+	content := resp.Message.TextContent()
 	if content == "" {
 		content = "(empty response)"
 	}

@@ -107,7 +107,7 @@ func runReview(args []string) error {
 		Template:              *cc.Template,
 		SystemRule:            cc.Resolver,
 		FileFilter:            cc.FileFilter,
-		LLMClient:             rt.Client,
+		ChatModel:             rt.Client,
 		MaxTokensBudget:       int64(opts.maxTokensBudget),
 		Tools:                 tools,
 		PlanToolDefs:          rt.PlanToolDefs,

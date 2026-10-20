@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -16,15 +18,7 @@ import (
 // when text-based matching fails, then retries ResolveComment with the new snippet.
 // Returns (success, response, requestMessages) so the caller can record session
 // history and track token usage. Response and messages are nil on early exits.
-func ReLocateComment(
-	ctx context.Context,
-	cm *Finding,
-	d *change.Change,
-	client llm.LLMClient,
-	task *template.LlmConversation,
-	modelName string,
-	maxTokens int,
-) (bool, *llm.ChatResponse, []llm.Message) {
+func ReLocateComment(ctx context.Context, cm *Finding, d *change.Change, client agentgo.ChatModel, task *template.LlmConversation, maxTokens int) (bool, *agentgo.LLMResponse, []agentgo.Message) {
 	if task == nil || len(task.Messages) == 0 {
 		return false, nil, nil
 	}
@@ -35,27 +29,22 @@ func ReLocateComment(
 		defer cancel()
 	}
 
-	messages := make([]llm.Message, 0, len(task.Messages))
+	messages := make([]agentgo.Message, 0, len(task.Messages))
 	for _, m := range task.Messages {
 		content := m.Content
 		content = strings.ReplaceAll(content, "{diff}", d.Diff)
 		content = strings.ReplaceAll(content, "{existing_code}", cm.ExistingCode)
 		content = strings.ReplaceAll(content, "{suggestion_content}", cm.Content)
-		messages = append(messages, llm.NewTextMessage(m.Role, content))
+		messages = append(messages, agentgo.Message{Role: agentgo.Role(m.Role), Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}})
 	}
 
-	resp, err := client.CompletionsWithCtx(ctx, llm.ChatRequest{
-		Model:           modelName,
-		Messages:        messages,
-		MaxTokens:       maxTokens,
-		ReasoningEffort: task.ReasoningEffort,
-	})
+	resp, err := llm.Call(ctx, client, agentgo.LLMRequest{Messages: messages, Config: &agentgo.CallConfig{MaxTokens: maxTokens, ThinkingLevel: agentgo.NormalizeThinkingLevel(agentgo.ThinkingLevel(task.ReasoningEffort))}})
 	if err != nil {
 		fmt.Fprintf(console.Out(), "[ccr] Re-location LLM call failed for %s: %v\n", cm.Path, err)
-		return false, nil, messages
+		return false, resp, messages
 	}
 
-	content, err := resp.CompleteText()
+	content, err := llm.CompleteText(resp)
 	if err != nil {
 		return false, resp, messages
 	}

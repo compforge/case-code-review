@@ -30,8 +30,8 @@ func TestFileBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 	if len(items) != 2 || items[0].Identity != "a.go" || items[0].Representation != "reference" || items[1].Identity != "b.go" {
 		t.Fatalf("batch context items = %#v", items)
 	}
-	wire := batch.ToLLM()
-	if wire.ToolCallID != "batch-1" || !strings.Contains(wire.ExtractText(), "missing.go") {
+	wire := batch.renderCurrent()
+	if wire.Metadata["tool_call_id"] != "batch-1" || !strings.Contains(wire.TextContent(), "missing.go") {
 		t.Fatalf("batch lowering lost pairing/error: %+v", wire)
 	}
 }

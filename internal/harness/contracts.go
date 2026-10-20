@@ -8,17 +8,15 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
-// ToolRequest is the Harness-level view of one validated tool call. It keeps
-// agentgo's call type inside the adapter while giving domain extensions the
-// scope and served-model identity they need.
+// ToolRequest adds review scope and endpoint identity to a native tool call.
 type ToolRequest struct {
 	Scope recording.Scope
 	Tool  tool.Tool
-	Call  llm.ToolCall
+	Call  agentgo.ToolCall
+
 	Args  map[string]any
 	Alias string
 }
@@ -47,13 +45,14 @@ const (
 	EventExecutionError   ExecutionEventType = "execution_error"
 )
 
-// ExecutionEvent is the agentgo-free event stream exposed by Harness.
-// Consumers may persist, render, or measure it without depending on the
-// execution library's event schema.
+// ExecutionEvent is the review-facing event stream exposed by Harness.
+// Model facts retain AgentGo native types; review scope and UI routing stay here.
 type ExecutionEvent struct {
-	Type       ExecutionEventType
-	Message    *llm.Message
-	Usage      *llm.UsageInfo
+	Type    ExecutionEventType
+	Message *agentgo.Message
+
+	Usage *agentgo.Usage
+
 	ToolCallID string
 	Tool       string
 	Arguments  json.RawMessage

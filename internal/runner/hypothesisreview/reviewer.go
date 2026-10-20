@@ -24,7 +24,7 @@ type Config struct {
 	WrapUpDeadline          func() time.Time
 	ExplorationFraction     float64
 	Task                    template.LlmConversation
-	LLMClient               llm.LLMClient
+	ChatModel               agentgo.ChatModel
 	Model                   string
 	ToolDefs                []llm.ToolDef
 	Tools                   *tool.Registry
@@ -38,7 +38,7 @@ type Config struct {
 	CompressionSystemPrompt string
 	CompressionPrompt       string
 	ResolveRule             func(path string) string
-	RecordUsage             func(*llm.UsageInfo)
+	RecordUsage             func(*agentgo.Usage)
 	RecordWarning           func(warningType, file, message string)
 	OnAssessment            func(AssessmentSubmission)
 	Events                  harness.EventSink
@@ -100,7 +100,7 @@ func Review(
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		SessionCodecOptions: hypothesisCodecOptions(),
-		LLMClient:           config.LLMClient,
+		ChatModel:           config.ChatModel,
 		Model:               config.Model,
 		ReasoningEffort:     config.Task.ReasoningEffort,
 		Messages:            messages,

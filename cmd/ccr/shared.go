@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/config/toolsconfig"
@@ -110,7 +112,7 @@ func resolveWorkingDir(input string, requireGit bool) (string, bool, error) {
 // adjusted template (mutated in place via ApplyLanguage), the LLM client,
 // the resolved model name, and a fresh comment collector.
 type llmRuntime struct {
-	Client       llm.LLMClient
+	Client       agentgo.ChatModel
 	Model        string
 	PlanToolDefs []llm.ToolDef
 	MainToolDefs []llm.ToolDef
@@ -186,12 +188,12 @@ func loadLLMRuntime(
 	}
 	if !options.routingEnabled && len(eps) > 1 {
 		// routing gate off: collapse to a single model (deterministic — no
-		// round-robin variance). NewLLMRouter with a 1-pool returns a plain client.
+		// round-robin variance). NewRouter with a 1-pool returns a plain client.
 		eps, routing = eps[:1], llm.RoutingOptions{}
 	}
 
 	return &llmRuntime{
-		Client:       llm.NewLLMRouter(eps, routing),
+		Client:       llm.NewRouter(eps, routing),
 		Model:        eps[0].Model,
 		PlanToolDefs: planToolDefs,
 		MainToolDefs: mainToolDefs,

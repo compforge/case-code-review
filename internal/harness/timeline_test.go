@@ -10,6 +10,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/timeline"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -28,12 +29,12 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			reviewCtx, finish := recording.Begin(ctx, "review.unit", timeline.Attribute{Key: "unit_id", Value: fmt.Sprint(i)})
-			client := &scriptedClient{responses: []*llm.ChatResponse{
+			client := &scriptedClient{responses: []*agentgo.LLMResponse{
 				toolCallResponseID("same-call", "inspect", `{}`, nil),
 				toolCallResponseID("same-done", "task_done", `{}`, nil),
 			}}
 			result, err := runExecution(reviewCtx, ExecutionSpec{
-				LLMClient: client, Session: history, Scope: recording.Scope{ID: fmt.Sprint(i), Kind: "unit"},
+				ChatModel: client, Session: history, Scope: recording.Scope{ID: fmt.Sprint(i), Kind: "unit"},
 				Messages: []agentgo.AgentMessage{msg.Text("user", "review")},
 				ToolDefs: []llm.ToolDef{toolDef("inspect"), toolDef("task_done")}, MaxTurns: 2,
 				ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {

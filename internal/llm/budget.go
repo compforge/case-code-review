@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+
+	"github.com/compforge/agentgo"
 )
 
 // ErrTokenBudget means a run's reported token allowance is exhausted. It is a
@@ -23,30 +25,30 @@ func (e *TokenBudgetError) errorDetails() ErrorDetails {
 	return ErrorDetails{Kind: "policy", Phase: "admission", ErrorType: "budget", Code: "token_budget_exhausted", Message: e.Error(), Attributes: map[string]any{"used": e.Used, "limit": e.Limit}}
 }
 
-// BudgetClient shares one soft allowance across all calls in a run, including
+// BudgetModel shares one soft allowance across all calls in a run, including
 // compression and auxiliary tasks. Requests already admitted (and provider
 // retries inside them) can finish; missing provider usage is not fabricated.
 // It does not reserve estimated cost or promise an exact billing ceiling.
-type BudgetClient struct {
-	client      LLMClient
+type BudgetModel struct {
+	client      agentgo.ChatModel
 	limit       int64
 	used        atomic.Int64
 	once        sync.Once
 	onExhausted func(used, limit int64)
 }
 
-func NewBudgetClient(client LLMClient, limit int64, onExhausted func(int64, int64)) *BudgetClient {
-	return &BudgetClient{client: client, limit: limit, onExhausted: onExhausted}
+func NewBudgetModel(client agentgo.ChatModel, limit int64, onExhausted func(int64, int64)) *BudgetModel {
+	return &BudgetModel{client: client, limit: limit, onExhausted: onExhausted}
 }
-func (c *BudgetClient) Used() int64 { return c.used.Load() }
+func (c *BudgetModel) Used() int64 { return c.used.Load() }
 
 // Remaining reports the shared, reported allowance. It is a snapshot, not a
 // reservation: in-flight calls may still spend tokens after it is read.
-func (c *BudgetClient) Remaining() (tokens int64, limited bool) {
+func (c *BudgetModel) Remaining() (tokens int64, limited bool) {
 	return max(0, c.limit-c.Used()), c.limit > 0
 }
 
-func (c *BudgetClient) Check() error {
+func (c *BudgetModel) Check() error {
 	used := c.Used()
 	if c.limit <= 0 || used < c.limit {
 		return nil
@@ -58,21 +60,36 @@ func (c *BudgetClient) Check() error {
 	})
 	return &TokenBudgetError{Used: used, Limit: c.limit}
 }
-func (c *BudgetClient) CompletionsWithCtx(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+
+// +spec=`Each routed attempt's reported usage is charged once; the final response is only a fallback when no attempt facts exist`
+func (c *BudgetModel) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	if err := c.Check(); err != nil {
 		return nil, err
 	}
-	response, err := c.client.CompletionsWithCtx(ctx, req)
-	if response != nil && response.Usage != nil {
-		usage := response.Usage
-		// CCR adapters normalize PromptTokens to include cached input. TotalTokens
-		// is a fallback for clients reporting only an aggregate; never add it twice.
-		tokens := usage.PromptTokens + usage.CompletionTokens
-		if tokens == 0 {
-			tokens = usage.TotalTokens
-		}
-		c.used.Add(tokens)
-		_ = c.Check()
+	attempted := false
+	ctx = ObserveAttempts(ctx, func(_ context.Context, attempt agentgo.ModelAttempt, _ error) {
+		attempted = true
+		c.addUsage(attempt.Usage)
+	})
+	response, err := c.client.Generate(ctx, messages, tools, opts...)
+	if !attempted && response != nil {
+		c.addUsage(response.Message.Usage)
 	}
 	return response, err
+}
+func (c *BudgetModel) addUsage(usage *agentgo.Usage) {
+	if usage == nil {
+		return
+	}
+	tokens := usage.Input + usage.CacheWrite + usage.Output
+	if tokens == 0 {
+		tokens = usage.TotalTokens
+	}
+	c.used.Add(int64(tokens))
+	_ = c.Check()
+}
+
+func (c *BudgetModel) SupportsTools() bool { return c.client.SupportsTools() }
+func (c *BudgetModel) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

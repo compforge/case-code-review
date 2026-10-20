@@ -6,7 +6,6 @@ import (
 	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 // SearchBatch keeps search_code's one call/result pairing while exposing each
@@ -70,9 +69,11 @@ func (b *SearchBatch) FromLLM(result LLMToolResult) bool {
 	return true
 }
 
-func (b *SearchBatch) ToLLM() llm.Message { return b.render(b.representation) }
+func (b *SearchBatch) renderCurrent() agentgo.Message {
+	return b.render(b.representation)
+}
 
-func (b *SearchBatch) GetRole() agentgo.Role { return domainRole(b.ToLLM()) }
+func (b *SearchBatch) GetRole() agentgo.Role { return domainRole(b.renderCurrent()) }
 func (b *SearchBatch) Raw() agentgo.AgentMessage {
 	raw := b.clone()
 	raw.representation = searchBatchFull
@@ -83,14 +84,14 @@ func (b *SearchBatch) Raw() agentgo.AgentMessage {
 	}
 	return raw
 }
-func (b *SearchBatch) TextContent() string     { return domainText(b.ToLLM()) }
+func (b *SearchBatch) TextContent() string     { return domainText(b.renderCurrent()) }
 func (b *SearchBatch) ThinkingContent() string { return "" }
-func (b *SearchBatch) HasToolCalls() bool      { return domainHasToolCalls(b.ToLLM()) }
+func (b *SearchBatch) HasToolCalls() bool      { return domainHasToolCalls(b.renderCurrent()) }
 func (b *SearchBatch) ToMessage() (agentgo.Message, bool) {
-	return domainToMessage(b.ToLLM(), b.ToolName(), b.GetTimestamp())
+	return domainToMessage(b.renderCurrent(), b.ToolName(), b.GetTimestamp())
 }
 
-func (b *SearchBatch) render(representation searchBatchRepresentation) llm.Message {
+func (b *SearchBatch) render(representation searchBatchRepresentation) agentgo.Message {
 	parts := make([]string, len(b.items))
 	for i, item := range b.items {
 		if item.result != nil {
@@ -103,7 +104,7 @@ func (b *SearchBatch) render(representation searchBatchRepresentation) llm.Messa
 	if representation == searchBatchFull {
 		content = tool.AppendCodeSearchSource(content, b.sharedSource)
 	}
-	return llm.NewToolResultMessage(b.toolCallID, content)
+	return agentgo.Message{Role: agentgo.RoleTool, Content: []agentgo.ContentBlock{agentgo.TextBlock(content)}, Metadata: map[string]any{"tool_call_id": b.toolCallID}}
 }
 
 func (b *SearchBatch) ToolName() string { return CodeSearchToolName }

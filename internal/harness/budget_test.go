@@ -10,6 +10,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
+
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -19,12 +20,12 @@ import (
 
 func TestExecutionBudgetRetainsAcceptedResultsAndStopsNextTurn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("submit_result", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("submit_result", `{}`, &agentgo.Usage{Input: 100})}}
 	accepted := 0
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
 	defer history.Finalize()
 	result, err := runExecution(t.Context(), ExecutionSpec{
-		LLMClient: llm.NewBudgetClient(client, 100, nil), Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 5,
+		ChatModel: llm.NewBudgetModel(client, 100, nil), Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 5,
 		ToolDefs: []llm.ToolDef{toolDef("submit_result"), toolDef("task_done")}, Session: history,
 		Scope: recording.Scope{ID: "u", Kind: "unit"},
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -48,8 +49,8 @@ func TestExecutionBudgetRetainsAcceptedResultsAndStopsNextTurn(t *testing.T) {
 
 func TestContextCountsToolArgumentsAndDoesNotDoubleCountCacheCreation(t *testing.T) {
 	args, _ := json.Marshal(map[string]string{"body": strings.Repeat("x", 40000)})
-	response := toolCallResponse("submit_result", string(args), &llm.UsageInfo{PromptTokens: 100, CacheWriteTokens: 30, CompletionTokens: 10000})
-	message, err := toAgentGoResponse(response, nil)
+	response := toolCallResponse("submit_result", string(args), &agentgo.Usage{Input: 100 - 30, Output: 10000, CacheWrite: 30})
+	message, err := normalizeResponse(response, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +70,12 @@ func TestContextCountsToolArgumentsAndDoesNotDoubleCountCacheCreation(t *testing
 }
 
 func TestCompressionBudgetStopsBeforeCallingSummaryModel(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("task_done", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
-	budget := llm.NewBudgetClient(client, 100, nil)
-	if _, err := budget.CompletionsWithCtx(t.Context(), llm.ChatRequest{}); err != nil {
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, &agentgo.Usage{Input: 100})}}
+	budget := llm.NewBudgetModel(client, 100, nil)
+	if _, err := llm.Call(t.Context(), budget, agentgo.LLMRequest{Config: &agentgo.CallConfig{}}); err != nil {
 		t.Fatal(err)
 	}
-	execution, err := NewExecution(ExecutionSpec{LLMClient: budget, Messages: []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}, MaxTurns: 5, ContextWindow: 100})
+	execution, err := NewExecution(ExecutionSpec{ChatModel: budget, Messages: []agentgo.AgentMessage{msg.Text("user", strings.Repeat("source ", 2000)), msg.Text("assistant", "reviewed"), msg.Text("user", "continue")}, MaxTurns: 5, ContextWindow: 100})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,17 +96,17 @@ func TestTokenBudgetClosesBeforeInvestigationLimit(t *testing.T) {
 	costs := [][2]int64{{7624, 1529}, {8824, 1068}, {11276, 309}, {14235, 1483}, {15858, 3862}, {20868, 1982}, {22240, 3075}, {26687, 3780}, {31765, 3084}, {33947, 3964}, {35653, 6573}}
 	client := &scriptedClient{}
 	for i, cost := range costs {
-		client.responses = append(client.responses, toolCallResponseID(fmt.Sprintf("call-%d", i), "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, &llm.UsageInfo{PromptTokens: cost[0], CompletionTokens: cost[1]}))
+		client.responses = append(client.responses, toolCallResponseID(fmt.Sprintf("call-%d", i), "read_files", `{"reads":[{"file_path":"pkg/a.go"}]}`, &agentgo.Usage{Input: int(cost[0]), Output: int(cost[1])}))
 	}
-	client.responses = append(client.responses, toolCallResponse("submit_result", `{}`, &llm.UsageInfo{PromptTokens: 38000, CompletionTokens: 500}))
-	budget := llm.NewBudgetClient(client, 300000, nil)
+	client.responses = append(client.responses, toolCallResponse("submit_result", `{}`, &agentgo.Usage{Input: 38000, Output: 500}))
+	budget := llm.NewBudgetModel(client, 300000, nil)
 	provider := &fileReadProvider{body: "ok"}
 	registry := tool.NewRegistry()
 	registry.Register(provider)
 	registry.Freeze()
 	accepted := 0
 	result, err := runExecution(t.Context(), ExecutionSpec{
-		LLMClient: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
+		ChatModel: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
 		ToolDefs: []llm.ToolDef{toolDef("read_files"), toolDef("submit_result")}, Tools: registry,
 		WrapUpPrompt: "stop investigating now", WrapUpAfterTurns: 12, WrapUpAllowedTools: []string{"submit_result"}, NaturalCompletion: true,
 		ToolHandler: toolHandlerFunc(func(_ context.Context, request ToolRequest) (tool.TaskCheckpoint, bool) {
@@ -135,13 +136,13 @@ func TestTokenBudgetClosesBeforeInvestigationLimit(t *testing.T) {
 }
 
 func TestAlreadyExhaustedBudgetDoesNotInventCompletion(t *testing.T) {
-	client := &scriptedClient{responses: []*llm.ChatResponse{toolCallResponse("read_files", `{}`, &llm.UsageInfo{PromptTokens: 100})}}
-	budget := llm.NewBudgetClient(client, 100, nil)
-	if _, err := budget.CompletionsWithCtx(t.Context(), llm.ChatRequest{}); err != nil {
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("read_files", `{}`, &agentgo.Usage{Input: 100})}}
+	budget := llm.NewBudgetModel(client, 100, nil)
+	if _, err := llm.Call(t.Context(), budget, agentgo.LLMRequest{Config: &agentgo.CallConfig{}}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := runExecution(t.Context(), ExecutionSpec{
-		LLMClient: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
+		ChatModel: budget, Messages: []agentgo.AgentMessage{msg.Text("user", "review")}, MaxTurns: 30,
 		WrapUpPrompt: "finish now", NaturalCompletion: true,
 	})
 	if err != nil {

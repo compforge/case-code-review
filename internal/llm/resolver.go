@@ -21,7 +21,6 @@ type ResolvedEndpoint struct {
 	AuthHeader string         // Anthropic auth header: "x-api-key" or "authorization"
 	Source     string         // human-readable config source label
 	ExtraBody  map[string]any // vendor-specific request body fields
-	MaxRetries int            // internal SDK retry budget (non-positive = disabled); not read from config — routed pools disable it so Router owns recovery
 	Alias      string         // routing alias (routing.models[].alias); stamped onto comments this endpoint produces
 	Timeout    time.Duration  // per-request HTTP timeout; 0 means client default (5 min). A stalled call fails here instead of hanging the whole review.
 }

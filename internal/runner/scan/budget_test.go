@@ -2,9 +2,12 @@ package scan
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/compforge/agentgo"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -22,26 +25,11 @@ type fakeBudgetClient struct {
 	calls         int64 // atomic
 }
 
-func (f *fakeBudgetClient) CompletionsWithCtx(_ context.Context, _ llm.ChatRequest) (*llm.ChatResponse, error) {
+func (f *fakeBudgetClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	atomic.AddInt64(&f.calls, 1)
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Role: "assistant",
-				ToolCalls: []llm.ToolCall{{
-					ID:       "1",
-					Type:     "function",
-					Function: llm.FunctionCall{Name: "task_done", Arguments: "{}"},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-		Usage: &llm.UsageInfo{
-			PromptTokens:     f.perCallTokens,
-			CompletionTokens: 0,
-			TotalTokens:      f.perCallTokens,
-		},
-	}, nil
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{
+			ID: "1", Name: "task_done", Args: json.RawMessage("{}")})), StopReason: agentgo.StopReasonToolUse, Usage: &agentgo.Usage{Input: int(f.perCallTokens), Output: 0, TotalTokens: int(f.perCallTokens)}}},
+		nil
 }
 
 func budgetTestTemplate() template.ScanTemplate {
@@ -79,7 +67,7 @@ func TestBudgetGate_StopsBeforeExceeding(t *testing.T) {
 
 	a := New(Args{
 		Template:        budgetTestTemplate(),
-		LLMClient:       fake,
+		ChatModel:       fake,
 		Findings:        finding.NewCollector(),
 		Tools:           tool.NewRegistry(),
 		MaxConcurrency:  1, // serialize so the gate is deterministic
@@ -125,7 +113,7 @@ func TestBudgetGate_Unlimited(t *testing.T) {
 	fake := &fakeBudgetClient{perCallTokens: 50_000}
 	a := New(Args{
 		Template:        budgetTestTemplate(),
-		LLMClient:       fake,
+		ChatModel:       fake,
 		Findings:        finding.NewCollector(),
 		Tools:           tool.NewRegistry(),
 		MaxConcurrency:  1,
@@ -155,7 +143,7 @@ func TestRunningScanAndSummaryShareBudget(t *testing.T) {
 	fake := &fakeBudgetClient{perCallTokens: 100_000}
 	history := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{ReviewMode: recording.ReviewModeFullScan})
 	defer history.Finalize()
-	a := New(Args{Template: tpl, LLMClient: fake, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100_000})
+	a := New(Args{Template: tpl, ChatModel: fake, Session: history, MaxConcurrency: 1, MaxTokensBudget: 100_000})
 	a.items = makeScanItems(3)
 	a.args.Tools.Freeze()
 	if _, err := a.dispatchSubtasks(t.Context()); err != nil {
@@ -177,4 +165,9 @@ func TestRunningScanAndSummaryShareBudget(t *testing.T) {
 	if !found {
 		t.Fatalf("missing incomplete outcome: %+v", a.Warnings())
 	}
+}
+
+func (f *fakeBudgetClient) SupportsTools() bool { return true }
+func (f *fakeBudgetClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return f.Generate(ctx, messages, tools, opts...) })
 }

@@ -2,6 +2,7 @@ package unitreview
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 		return "echo:" + args["value"].(string), nil
 	}))
 	registry.Freeze()
-	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+	client := &unitScriptedClient{responses: []*agentgo.LLMResponse{
 		unitToolResponse("call-1", "echo", `{"value":"ok"}`, "route-a", 7),
 		unitToolResponse("call-2", "submit_hypothesis", `{"path":"a.go","content":"issue","existing_code":"x","trigger":"input","impact":"failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}`, "route-a", 3),
 		unitTextResponse("No material lead remains."),
@@ -43,7 +44,7 @@ func TestUnitExecutorRunsHarnessAndAggregatesFacts(t *testing.T) {
 	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
 	defer history.Finalize()
 	executor := NewExecutor(ExecutorConfig{
-		LLMClient: client,
+		ChatModel: client,
 		Model:     "review-model",
 		Tools:     registry,
 		ToolDefs: []llm.ToolDef{
@@ -83,7 +84,7 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 		return "next lead checked", nil
 	}))
 	registry.Freeze()
-	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+	client := &unitScriptedClient{responses: []*agentgo.LLMResponse{
 		unitToolResponse("submit-1", "submit_hypothesis", `{"path":"a.go","content":"first issue","existing_code":"x","trigger":"first trigger","impact":"first failure","change_attribution":"changed here","evidence":["a.go:1"],"uncertainty":"","category":"bug","severity":"high"}`, "route-a", 1),
 		unitToolResponse("check-2", "echo", `{}`, "route-a", 1),
 		unitToolResponse("submit-3", "submit_hypothesis", `{"path":"a.go","content":"second issue","existing_code":"y","trigger":"second trigger","impact":"second failure","change_attribution":"changed here","evidence":["a.go:2"],"uncertainty":"","category":"bug","severity":"medium"}`, "route-a", 1),
@@ -92,7 +93,7 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 	var hypotheses []Hypothesis
 	hook := &HypothesisHook{OnResolved: func(h Hypothesis) { hypotheses = append(hypotheses, h) }}
 	executor := NewExecutor(ExecutorConfig{
-		LLMClient: client,
+		ChatModel: client,
 		Tools:     registry,
 		ToolDefs:  []llm.ToolDef{unitToolDef("echo")},
 		MaxTurns:  10,
@@ -115,14 +116,14 @@ func TestUnitExecutorSubmitsHypothesesIncrementally(t *testing.T) {
 }
 
 func TestUnitExecutorCompletesSimpleReviewImmediately(t *testing.T) {
-	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+	client := &unitScriptedClient{responses: []*agentgo.LLMResponse{
 		unitTextResponse("The supplied diff has no material defect mechanism."),
 	}}
 	t.Setenv("HOME", t.TempDir())
 	history := recording.New(t.TempDir(), "test", "test", recording.SessionOptions{})
 	defer history.Finalize()
 	executor := NewExecutor(ExecutorConfig{
-		LLMClient: client,
+		ChatModel: client,
 		MaxTurns:  10,
 		MaxTokens: 1_000,
 		Session:   history,
@@ -146,11 +147,11 @@ func TestUnitExecutorReturnsIncompleteOutcome(t *testing.T) {
 		return "ok", nil
 	}))
 	registry.Freeze()
-	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+	client := &unitScriptedClient{responses: []*agentgo.LLMResponse{
 		unitToolResponse("call-1", "echo", `{}`, "", 0),
 	}}
 	executor := NewExecutor(ExecutorConfig{
-		LLMClient: client,
+		ChatModel: client,
 		Tools:     registry,
 		ToolDefs: []llm.ToolDef{
 			unitToolDef("echo"),
@@ -181,12 +182,12 @@ func TestUnitExecutorAdaptsBoardWithoutExposingItToHarness(t *testing.T) {
 		From: "unit-2", Turn: 1, Level: board.LevelConfirmed,
 		Paths: []string{"a.go"}, Text: "peer read the caller",
 	})
-	client := &unitScriptedClient{responses: []*llm.ChatResponse{
+	client := &unitScriptedClient{responses: []*agentgo.LLMResponse{
 		unitToolResponse("call-1", "post_bulletin", `{"text":"check the callee","paths":["a.go"]}`, "", 0),
 		unitTextResponse("No material lead remains."),
 	}}
 	executor := NewExecutor(ExecutorConfig{
-		LLMClient: client,
+		ChatModel: client,
 		ToolDefs: []llm.ToolDef{
 			unitToolDef("post_bulletin"),
 		},
@@ -232,13 +233,10 @@ func TestUnitExecutionDoesNotPublishHypothesisAsConfirmedFact(t *testing.T) {
 
 type unitScriptedClient struct {
 	mu        sync.Mutex
-	responses []*llm.ChatResponse
+	responses []*agentgo.LLMResponse
 }
 
-func (c *unitScriptedClient) CompletionsWithCtx(
-	_ context.Context,
-	_ llm.ChatRequest,
-) (*llm.ChatResponse, error) {
+func (c *unitScriptedClient) Generate(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (*agentgo.LLMResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	response := c.responses[0]
@@ -259,34 +257,18 @@ func unitToolDef(name string) llm.ToolDef {
 	}
 }
 
-func unitToolResponse(id, name, arguments, alias string, totalTokens int64) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Alias: alias,
-		Model: "served-model",
-		Choices: []llm.Choice{{
-			Message: llm.ResponseMessage{
-				Role: "assistant",
-				ToolCalls: []llm.ToolCall{{
-					ID: id, Type: "function",
-					Function: llm.FunctionCall{Name: name, Arguments: arguments},
-				}},
-			},
-			FinishReason: "tool_calls",
-		}},
-		Usage: &llm.UsageInfo{
-			PromptTokens: totalTokens,
-			TotalTokens:  totalTokens,
-		},
-	}
+func unitToolResponse(id, name, arguments, alias string, totalTokens int64) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: id, Name: name, Args: json.RawMessage(arguments)})), StopReason: agentgo.StopReason(
+		"tool_calls",
+	), Usage: &agentgo.Usage{Input: int(totalTokens), TotalTokens: int(totalTokens)}, Metadata: map[string]any{"model": "served-model",
+		"route_endpoint": alias,
+	}}}
 }
 
-func unitTextResponse(text string) *llm.ChatResponse {
-	return &llm.ChatResponse{
-		Choices: []llm.Choice{{
-			Message:      llm.ResponseMessage{Role: "assistant", Content: &text},
-			FinishReason: "stop",
-		}},
-	}
+func unitTextResponse(text string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{agentgo.TextBlock(text)}, StopReason: agentgo.StopReason(
+		"stop",
+	)}}
 }
 
 func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
@@ -307,4 +289,9 @@ func recordedRequests(t *testing.T, review *recording.Review) []map[string]any {
 		}
 	}
 	return records
+}
+
+func (c *unitScriptedClient) SupportsTools() bool { return true }
+func (c *unitScriptedClient) GenerateStream(ctx context.Context, messages []agentgo.Message, tools []agentgo.ToolSpec, opts ...agentgo.CallOption) (<-chan agentgo.StreamEvent, error) {
+	return llm.CompletionStream(ctx, func() (*agentgo.LLMResponse, error) { return c.Generate(ctx, messages, tools, opts...) })
 }

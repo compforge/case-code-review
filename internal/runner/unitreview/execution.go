@@ -44,7 +44,7 @@ type Outcome struct {
 // Harness receives only its domain-neutral interfaces.
 type Executor struct {
 	sessionCodecOptions     []codec.Option
-	llmClient               llm.LLMClient
+	chatModel               agentgo.ChatModel
 	model                   string
 	reasoningEffort         string
 	tools                   *tool.Registry
@@ -77,7 +77,7 @@ type Executor struct {
 
 type ExecutorConfig struct {
 	SessionCodecOptions     []codec.Option
-	LLMClient               llm.LLMClient
+	ChatModel               agentgo.ChatModel
 	Model                   string
 	ReasoningEffort         string
 	Tools                   *tool.Registry
@@ -107,7 +107,7 @@ func NewExecutor(
 	}
 	return &Executor{
 		sessionCodecOptions:     config.SessionCodecOptions,
-		llmClient:               config.LLMClient,
+		chatModel:               config.ChatModel,
 		model:                   config.Model,
 		reasoningEffort:         config.ReasoningEffort,
 		tools:                   config.Tools,
@@ -147,7 +147,7 @@ func (e *Executor) Run(
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
 		SessionCodecOptions:     e.sessionCodecOptions,
-		LLMClient:               e.llmClient,
+		ChatModel:               e.chatModel,
 		Model:                   e.model,
 		ReasoningEffort:         e.reasoningEffort,
 		Messages:                messages,
@@ -197,14 +197,14 @@ func (e *Executor) Run(
 	}, err
 }
 
-func (e *Executor) RecordUsage(usage *llm.UsageInfo) {
+func (e *Executor) RecordUsage(usage *agentgo.Usage) {
 	if usage == nil {
 		return
 	}
-	atomic.AddInt64(&e.totalInputTokens, usage.PromptTokens)
-	atomic.AddInt64(&e.totalOutputTokens, usage.CompletionTokens)
-	atomic.AddInt64(&e.totalCacheReadTokens, usage.CacheReadTokens)
-	atomic.AddInt64(&e.totalCacheWriteTokens, usage.CacheWriteTokens)
+	atomic.AddInt64(&e.totalInputTokens, int64(usage.Input+usage.CacheWrite))
+	atomic.AddInt64(&e.totalOutputTokens, int64(usage.Output))
+	atomic.AddInt64(&e.totalCacheReadTokens, int64(usage.CacheRead))
+	atomic.AddInt64(&e.totalCacheWriteTokens, int64(usage.CacheWrite))
 }
 
 func (e *Executor) TotalInputTokens() int64 {
@@ -354,7 +354,7 @@ func (r *unitExecution) OnExecutionEvent(event harness.ExecutionEvent) {
 		}
 		totalTokens := int64(0)
 		if event.Usage != nil {
-			totalTokens = event.Usage.TotalTokens
+			totalTokens = int64(event.Usage.TotalTokens)
 		}
 		telemetry.RecordLLMRequest(r.ctx, model, event.Duration, totalTokens, "ok")
 	case harness.EventToolStart:

@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
-
-	"github.com/qiankunli/case-code-review/internal/llm"
 )
 
 func TestToAgentGoResponseCanonicalizesSingletonBatchTools(t *testing.T) {
@@ -31,7 +29,7 @@ func TestToAgentGoResponseCanonicalizesSingletonBatchTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			message, err := toAgentGoResponse(toolResponse(tt.tool, tt.arguments), nil)
+			message, err := normalizeResponse(toolResponse(tt.tool, tt.arguments), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -147,7 +145,7 @@ func TestCanonicalToolArgumentsUnwrapsSchemaShapedObject(t *testing.T) {
 			"content": map[string]any{"type": "string"},
 		},
 	}
-	message, err := toAgentGoResponse(
+	message, err := normalizeResponse(
 		toolResponse("submit_hypothesis", `{"hypothesis":{"path":"a.go","content":"issue"}}`),
 		[]agentgo.ToolSpec{{Name: "submit_hypothesis", Parameters: parameters}},
 	)
@@ -181,30 +179,30 @@ func TestCanonicalToolArgumentsLeavesAmbiguousWrappersObservable(t *testing.T) {
 	}
 }
 
-func TestToAgentGoResponseLeavesMalformedArgumentsObservable(t *testing.T) {
+func TestNativeInvalidToolArgumentsSurviveNormalization(t *testing.T) {
 	raw := `{"searches":[{"query":"Target","syntax":"literal"}]` // missing closing brace
-	message, err := toAgentGoResponse(toolResponse("search_code", raw), nil)
+	response := toolResponse("search_code", `{}`)
+	call := response.Message.Content[0].ToolCall
+	call.ArgsInvalid = true
+	call.ArgsRawText = raw
+	call.ArgsParseError = "unexpected end of JSON"
+	message, err := normalizeResponse(response, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	call := message.ToolCalls()[0]
+	call = message.Content[0].ToolCall
 	if !call.ArgsInvalid || call.ArgsRawText != raw {
 		t.Fatalf("malformed call was hidden: %+v", call)
 	}
 }
 
-func toolResponse(name, arguments string) *llm.ChatResponse {
-	return &llm.ChatResponse{Choices: []llm.Choice{{
-		Message: llm.ResponseMessage{ToolCalls: []llm.ToolCall{{
-			ID: "call-1", Type: "function",
-			Function: llm.FunctionCall{Name: name, Arguments: arguments},
-		}}},
-	}}}
+func toolResponse(name, arguments string) *agentgo.LLMResponse {
+	return &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: append([]agentgo.ContentBlock{}, agentgo.ToolCallBlock(agentgo.ToolCall{ID: "call-1", Name: name, Args: json.RawMessage(arguments)})), StopReason: agentgo.StopReasonStop}}
 }
 
 func canonicalResponseArgs(t *testing.T, name, arguments string) map[string]any {
 	t.Helper()
-	message, err := toAgentGoResponse(toolResponse(name, arguments), nil)
+	message, err := normalizeResponse(toolResponse(name, arguments), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

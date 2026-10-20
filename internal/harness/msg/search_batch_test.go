@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
+
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 )
 
@@ -31,9 +32,9 @@ func TestSearchBatchKeepsOnePairingAndTypedMembers(t *testing.T) {
 		t.Fatalf("search order = %#v", batch.Results())
 	}
 	projected, _ := batch.Compact(0)
-	wire := projected.(*SearchBatch).ToLLM()
-	text := wire.ExtractText()
-	if wire.ToolCallID != "search-1" ||
+	wire := projected.(*SearchBatch).renderCurrent()
+	text := wire.TextContent()
+	if wire.Metadata["tool_call_id"] != "search-1" ||
 		!strings.Contains(text, `search_code "Missing" returned no matches across 3 scoped files`) ||
 		!strings.Contains(text, "invalid regular expression") {
 		t.Fatalf("batch lowering lost pairing/result: %+v", wire)
@@ -66,8 +67,8 @@ func TestSearchBatchRetainsEmptyScopeWarningAfterCompaction(t *testing.T) {
 	}).(*SearchBatch)
 
 	projected, _ := message.Compact(0)
-	wire := projected.(*SearchBatch).ToLLM()
-	if text := wire.ExtractText(); !strings.Contains(text, "searched no files because its path scope was empty") {
+	wire := projected.(*SearchBatch).renderCurrent()
+	if text := wire.TextContent(); !strings.Contains(text, "searched no files because its path scope was empty") {
 		t.Fatalf("compacted result lost scope warning: %s", text)
 	}
 }
@@ -86,8 +87,8 @@ func TestSearchBatchCondensesSymbolSourceToAnchors(t *testing.T) {
 	}).(*SearchBatch)
 
 	projected, _ := message.Compact(0.8)
-	wire := projected.(*SearchBatch).ToLLM()
-	text := wire.ExtractText()
+	wire := projected.(*SearchBatch).renderCurrent()
+	text := wire.TextContent()
 	if !strings.Contains(text, "matched symbol candidates") ||
 		!strings.Contains(text, "func Alpha() — a.go:L9-L11") ||
 		strings.Contains(text, "Symbol source:") {
@@ -104,7 +105,7 @@ func TestSearchBatchSharedSourceRoundTripAndCompaction(t *testing.T) {
 	message := FromLLM(LLMToolResult{Tool: CodeSearchToolName, ToolCallID: "search-shared",
 		Arguments: map[string]any{"searches": []any{map[string]any{"query": "Alpha"}, map[string]any{"query": "("}}}, Content: content})
 	batch, ok := message.(*SearchBatch)
-	if !ok || batch.ToLLM().ToolCallID != "search-shared" || batch.TextContent() != content {
+	if !ok || batch.renderCurrent().Metadata["tool_call_id"] != "search-shared" || batch.TextContent() != content {
 		t.Fatalf("roundtrip: %v", message)
 	}
 	if len(tool.CodeSearchSourceRanges(batch.TextContent())) != 1 {
