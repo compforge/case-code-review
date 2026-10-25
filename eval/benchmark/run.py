@@ -1,4 +1,4 @@
-"""Run frozen review cases through case-harness and retain case → Session links."""
+"""Run frozen review cases through quality-harness and retain case → Session links."""
 from __future__ import annotations
 
 import argparse

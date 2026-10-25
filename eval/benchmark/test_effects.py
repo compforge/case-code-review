@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 from eval_harness.engine import run_experiment
 from eval_harness.model.experiment import Service
 from eval_harness.worksheet.worksheet import Row
-from harness_common.llm import LLMClient, LLMConfig, ChatResult
+from harness_toolbox.llm import LLMClient, LLMConfig, ChatResult
 
 from eval.benchmark.adapter import DurationS, EngineFailed, FindingCount, RepoProvisioner, ReviewSolver
 from eval.benchmark.converters.aacr import convert
@@ -173,7 +173,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(reference()["text"], " ".join(run.call_args.args[0]))
         self.assertEqual(result.meta["session_sha256"], review_sha256(session))
 
-    async def test_case_harness_resume_and_effect_selection_share_same_session(self):
+    async def test_quality_harness_resume_and_effect_selection_share_same_session(self):
         session = self.recording()
         corpus = self.root / "corpus.json"
         corpus.write_text(json.dumps({"dataset": "test", "repo": str(self.root), "entries": [

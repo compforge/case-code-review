@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent_ledger.view import Document, ToolCall
 from trajectory_harness.model import trajectory_recording_id
 
 import json
@@ -109,6 +110,18 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             self.assertTrue(result.run_path.is_file())
             self.assertTrue(result.report_path.is_file())
             self.assertTrue(result.verdict_path.is_file())
+            view_path = result.run_dir / "agent-view.json"
+            view_json = view_path.read_text(encoding="utf-8")
+            view = Document.model_validate_json(view_json)
+            self.assertEqual(len(view.runs), 1)
+            self.assertEqual(view.runs[0].session_id, "unit-1")
+            self.assertEqual(
+                view.runs[0].attributes["atif_extra"]["quality_harness"]["recording"]["id"],
+                "session-1",
+            )
+            calls = [item for item in view.runs[0].items if isinstance(item, ToolCall)]
+            self.assertEqual([call.tool_call_id for call in calls], ["call-1", "call-2"])
+            self.assertTrue(all(call.evidence for call in calls))
             persisted = load_run_artifact(result.run_dir)
             self.assertEqual(
                 persisted.dataset.to_dict(), result.artifact.dataset.to_dict()
@@ -201,6 +214,7 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                     (session,),
                 )
 
+            self.assertEqual(view_path.read_text(encoding="utf-8"), view_json)
             self.assertEqual(failures, set())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["session_id"], "session-1")

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from harness_common.llm import LLMClient
+from harness_toolbox.llm import LLMClient
 
 from eval.eval_snapshot import canonical_sha256
 

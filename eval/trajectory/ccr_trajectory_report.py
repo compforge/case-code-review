@@ -644,6 +644,7 @@ def main() -> int:
                 "run_dir": str(result.run_dir),
                 "dataset": str(result.dataset_path),
                 "report": str(result.report_path),
+                "agent_view": str(result.run_dir / "agent-view.json"),
                 "verdict": str(result.verdict_path),
                 "trajectories": summary.included_trajectories,
                 "annotations": summary.included_annotations,
