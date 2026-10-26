@@ -44,6 +44,30 @@ from eval.trajectory.trajectory_judge import main_deductions, objective_analysis
 
 
 class CCRTrajectoryTest(unittest.TestCase):
+    def test_session_identity_uses_only_unambiguous_native_references(self):
+        for refs, expected in (
+            (("native-a", "native-a"), "native-a"),
+            (("native-a", "native-b"), None),
+            (("", ""), None),
+        ):
+            with self.subTest(refs=refs):
+                raw = {
+                    "session_id": "review-id",
+                    "subagent_trajectories": [{
+                        "trajectory_id": "unit-id",
+                        "session_id": "review-id",
+                        "steps": [{
+                            "source": "agent",
+                            "message": "recorded response",
+                            "extra": {"session_ref": {"session_id": ref}},
+                        } for ref in refs],
+                    }],
+                }
+                trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
+                self.assertEqual(trajectory.session_id, expected)
+                self.assertEqual(trajectory.trajectory_id, "unit-id")
+                self.assertEqual(trajectory_metadata(trajectory)["session_id"], "review-id")
+
     def test_atif_roundtrip_preserves_identity_calls_and_evidence(self):
         payload = self.trajectory.to_json_dict()
         restored = Trajectory.model_validate(payload)

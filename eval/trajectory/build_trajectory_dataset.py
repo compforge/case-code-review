@@ -80,8 +80,8 @@ class CCRTrajectoryDatasetBuilder(TrajectoryDatasetBuilder):
                     "trajectory_id": dataset_id,
                     "extra": {
                         **(trajectory.extra or {}),
-                        "case_harness": {
-                            **(trajectory.extra or {}).get("case_harness", {}),
+                        "quality_harness": {
+                            **(trajectory.extra or {}).get("quality_harness", {}),
                             "metadata": {**trajectory_metadata(trajectory), "ccr_scope_id": scope_id},
                         },
                     },

@@ -6,7 +6,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from harness_common.llm import LLMClient
+from harness_toolbox.llm import LLMClient
 
 from eval.benchmark.matching import Matcher, match_reference
 from eval.benchmark.report import write_report

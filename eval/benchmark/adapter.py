@@ -33,7 +33,7 @@ from eval_harness.model.experiment import Service
 from eval_harness.model.sample import MetricResult, Sample
 from eval_harness.schedule.reconcile import Solver, SolveResult
 from eval_harness.worksheet.worksheet import Row
-from harness_common.llm import LLMClient
+from harness_toolbox.llm import LLMClient
 
 SOLVE_TIMEOUT_S = 35 * 60  # 长跑 review（外层再叠 engine 自身的超时）
 _DIFF_CAP = 24_000  # judge prompt 里 diff 的字符上限（超出截断，宁可漏判不炸上下文）

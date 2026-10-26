@@ -49,7 +49,7 @@ uv run --project eval python -m eval.benchmark.run \
   eval/data/experiments/aacr.yaml --only 'example/project#123@' --run-id baseline-1
 ```
 
-调度、worksheet、断点续跑和基础指标使用 `case-harness`；相同配置与 run-id 恢复 checkpoint，
+调度、worksheet、断点续跑和基础指标使用 `quality-harness`；相同配置与 run-id 恢复 checkpoint，
 独立重复实验使用新的 `--run-id`。默认输出
 `eval/data/runs/benchmark/<experiment>/<run-id>/runs.jsonl`，关联冻结 case、原始 Session、
 内容 hash、实际版本/模型/feature 与命令状态。失败与超时保留已产生的 Session。

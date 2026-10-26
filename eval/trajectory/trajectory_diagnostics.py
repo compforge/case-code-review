@@ -314,7 +314,7 @@ def build_diagnostic_prompt(candidate: DiagnosticCandidate) -> DiagnosticPrompt:
     # This is a bounded diagnostic view, never a persisted Dataset trajectory.
     evidence_trajectory = trajectory.model_copy(update={
         "steps": list(selected_steps),
-        "extra": {"case_harness": {"metadata": {
+        "extra": {"quality_harness": {"metadata": {
             "generation": dict(trajectory_generation(trajectory)),
             "total_steps": len(steps),
             "expanded_steps": len(selected_steps),

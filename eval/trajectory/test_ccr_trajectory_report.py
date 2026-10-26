@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent_ledger.observation import SessionView, ToolCall
 from trajectory_harness.model import trajectory_recording_id
 
 import json
@@ -72,6 +73,7 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                                 {
                                     "step_id": str(index),
                                     "source": "agent",
+                                    "extra": {"session_ref": {"session_id": "agent-session-1"}},
                                     "tool_calls": [
                                         {
                                             "tool_call_id": f"call-{index}",
@@ -109,6 +111,24 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             self.assertTrue(result.run_path.is_file())
             self.assertTrue(result.report_path.is_file())
             self.assertTrue(result.verdict_path.is_file())
+            index_path = result.run_dir / "session-views" / "index.json"
+            index_json = index_path.read_text(encoding="utf-8")
+            index = json.loads(index_json)
+            self.assertEqual(len(index["sessions"]), 1)
+            self.assertEqual(index["unassigned_trajectories"], [])
+            view_path = index_path.parent / index["sessions"][0]["file"]
+            view_json = view_path.read_text(encoding="utf-8")
+            view = SessionView.model_validate_json(view_json)
+            self.assertEqual(view.schema_version, "agent-ledger/session@1")
+            self.assertEqual(view.session.id, "agent-session-1")
+            self.assertEqual(
+                view.attributes["atif_trajectories"]["session-1/unit-1"]["extra"]
+                ["quality_harness"]["recording"]["id"],
+                "session-1",
+            )
+            calls = [node for node in view.nodes if isinstance(node, ToolCall)]
+            self.assertEqual([call.tool_call_id for call in calls], ["call-1", "call-2"])
+            self.assertTrue(all(call.evidence for call in calls))
             persisted = load_run_artifact(result.run_dir)
             self.assertEqual(
                 persisted.dataset.to_dict(), result.artifact.dataset.to_dict()
@@ -201,6 +221,8 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                     (session,),
                 )
 
+            self.assertEqual(index_path.read_text(encoding="utf-8"), index_json)
+            self.assertEqual(view_path.read_text(encoding="utf-8"), view_json)
             self.assertEqual(failures, set())
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["session_id"], "session-1")

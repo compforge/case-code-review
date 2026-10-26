@@ -66,12 +66,36 @@ Detection、Evaluation 与 Measurement 明细保留在 Dataset / Run JSON 中。
 日常生成完整周报时直接使用下文的 `weekly_report.py`：它会先生成本周和上周的这些 canonical
 Trajectory Run，再从同一持久化结果投影 Markdown，不会另行执行一套 Detector/Verifier/Measurer。
 
+### 共享 Session 观测
+
+周报目录生成 `session-views/index.json`，列出每个 Agent Session 对应的 JSON 文件。
+文件使用 Agent Ledger Observation 的 `SessionView`（`agent-ledger/session@1`），保留
+模型调用、工具执行和来源证据。`trajectory_harness` 从同一 Dataset 导出这些快照；离线
+`rerender` 使用已有 Dataset / Run 更新快照，不重跑采集、模型或评测。
+
+Review ID 与 Unit/Lane ID 继续用于业务归属；Agent Session 身份只取原生 `session_ref.session_id`。
+同一 Session 的多条轨迹合并为一个视图。缺少引用，或一个 scope 涉及多个 Session 时，
+轨迹进入索引的 `unassigned_trajectories`，不会借用 Review / Unit ID 伪造 Session。
+ATIF 继续保存这些业务轨迹，跨 Session 的任务视角后续由 JobView 承接。
+
+从索引选出一个 Session 文件后，可通过已发布的 renderer 离线查看：
+
+```bash
+npx --package @compforge/agent-observation@0.2.0 agent-observation \
+  eval/data/reports/trajectory/ccr-weekly/<YYYY-Www>/session-views/<file-from-index>.json \
+  --output session.html
+```
+
+原始请求缺失、多个模型调用被聚合、工具只有提议却没有执行证据时，视图保留缺口，
+不补造调用、prompt 或 Turn。生成的 JSON 和 HTML 可能包含源码、prompt 与工具结果，
+按本地 Session 数据管理。Python SDK 当前固定到 Git 提交，npm renderer 可直接安装。
+
 ### Trajectory 接口与升级
 
-评测依赖固定到 case-harness `afb1f3e`（ATIF v1.7、Verifier API），需要 Python 3.11+。
+评测依赖固定到 quality-harness 的 Git 提交（见 `eval/pyproject.toml` 和 `uv.lock`），需要 Python 3.11+。
 `ATIFTrajectoryLoader` 将 CCR 的历史 Session/Scope 导出转换为官方 ATIF models：模型身份、
 消息、token metrics、工具参数与 observation 使用标准字段；执行状态、上下文曝光和来源身份
-保留在 `extra.case_harness`。步骤 ID 是连续整数，Finding / Verification 的证据使用对应 ID
+保留在 `extra.quality_harness`。步骤 ID 是连续整数，Finding / Verification 的证据使用对应 ID
 的字符串形式；批内请求序号不再拼入步骤 ID。
 
 处理顺序为 `Trajectory → Measurements → Detector / Verifier`。Measurer 确定性派生事实，

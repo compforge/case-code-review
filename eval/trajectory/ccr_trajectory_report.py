@@ -644,6 +644,7 @@ def main() -> int:
                 "run_dir": str(result.run_dir),
                 "dataset": str(result.dataset_path),
                 "report": str(result.report_path),
+                "session_views": str(result.run_dir / "session-views" / "index.json"),
                 "verdict": str(result.verdict_path),
                 "trajectories": summary.included_trajectories,
                 "annotations": summary.included_annotations,
