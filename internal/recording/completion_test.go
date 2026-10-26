@@ -57,7 +57,7 @@ func TestCompletionPersistsWithoutReadingSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	transcript, err := ReadTimeline(path)
+	transcript, err := ReadJournal(path)
 	if err != nil {
 		t.Fatal(err)
 	}

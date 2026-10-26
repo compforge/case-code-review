@@ -276,7 +276,7 @@ AgentGo 的运行时消息协议可以出现在 Runner 的 execution assembly，
 一次昂贵或异常的 review 必须能回答三类问题：整体花费在哪里、每个 loop 如何演进、最终决策为何
 产生。仅打印终端摘要不够，Harness 因而把实际执行持续写入 Session JSONL。
 
-### 4.1 Framework Session 与业务 timeline
+### 4.1 Framework Session 与业务 Operation
 
 一个独立 loop 使用一个原生 AgentGo Session；同一 Lane 的连续 Execution 复用 Session，每次 loop
 调用使用新的 Run。Session 记录模型请求/响应、工具请求/结果、消息提交和上下文变化，其 envelope
@@ -285,14 +285,15 @@ Harness 在每次 Execution 的终态边界保存一次 AgentGo checkpoint；内
 checkpoint 可由 AgentGo 加载。checkpoint 不包含模型、工具闭包或业务完成条件，也不按 turn 或定时追加。
 局部状态持久化不提供恢复中断的整个 Review 的能力。
 
-Review 持有一个业务 timeline，覆盖构图、Unit/Lane 排队、Review 1/2、Trial 和非 loop 动作。
-Execution stage 保存业务 outcome；模型与工具 stage 通过 AgentGo `Session.Ref` 的四元组关联正文。
+Review 持有业务 Operation journal，覆盖构图、Unit/Lane 排队、Review 1/2、Trial 和非 loop 动作。
+Execution Operation 保存业务 outcome；模型与工具 Operation 通过 AgentGo `Session.Ref` 的四元组关联正文。
 Harness 只将原生事件的源头时间投影为阶段，不重复存储 prompt/response/tool body。
-Manager 的增量更新写入 `.timeline`，整轮结束时 Flush 并关闭文件，不轮询 Snapshot。
+Operation 状态同步追加到 Review JSONL，与业务产物共用存储；不再持有 Timeline Manager 或独立 `.timeline` 文件。
 
 `internal/recording.Review` 只保留配置、业务 artifacts/findings、scope 计数与录制生命周期。
-查询时按 ID 连接 timeline 和局部 Session，提供 Viewer、stats、export、eval 需要的内容视图。
+查询时按 ID 连接 Operation 和局部 Session，提供 Viewer、stats、export、eval 需要的内容视图。
 同名 tool call 在不同 Session/Run 内互不冲突，缺失记录保持 incomplete，不补造成功或零成本。
+一个 Unit 的业务过程投影为 `agent-ledger/observation.JobView`；持续式 Lane Session 只贡献属于该 Unit 的调用。
 详见[整轮时间线](observability.md#整轮时间线)。
 
 ### 4.2 HTML Viewer 是诊断投影

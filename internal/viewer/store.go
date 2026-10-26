@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // SessionsRoot returns the root directory where session JSONL files are stored.
@@ -245,14 +245,15 @@ func peekSession(path string) (SessionSummary, error) {
 // ViewSession is the lightweight business Timeline page projection.
 // Model and tool bodies belong to the selected Stage view.
 type ViewSession struct {
+	Jobs              []recording.UnitResult
 	RecordingWarnings []string
-	Timeline          *timeline.Snapshot
+	Journal           *operation.Snapshot
 	Summary           SessionSummary
 	CompletionLabel   string
 	Findings          int
 }
 
-// LoadSession projects business records and the timeline. Call contents are
+// LoadSession projects business records and the operation. Call contents are
 // loaded by the selected Stage view, never by page navigation.
 func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	path := filepath.Join(root, encodedRepo, sessionID+".jsonl")
@@ -260,15 +261,15 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	transcript, err := recording.ReadTimeline(path)
+	transcript, err := recording.ReadJournal(path)
 	if err != nil {
 		return nil, err
 	}
 	summary.SessionID = sessionID
 	summary.Completion = transcript.Completion()
-	vs := &ViewSession{Summary: summary, RecordingWarnings: transcript.Gaps}
-	if transcript.Timeline.ID != "" {
-		vs.Timeline = &transcript.Timeline
+	vs := &ViewSession{Summary: summary, RecordingWarnings: transcript.Gaps, Jobs: transcript.Jobs()}
+	if transcript.Journal.ID != "" {
+		vs.Journal = &transcript.Journal
 	}
 	if transcript.TruncatedTail {
 		vs.RecordingWarnings = append(vs.RecordingWarnings, "Recording has an incomplete final line.")

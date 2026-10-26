@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -131,7 +131,7 @@ func (s Scope) Path() string {
 
 // TaskRecord is transient per-call accounting, never an in-memory conversation history.
 type TaskRecord struct {
-	StageID         timeline.StageID
+	OperationID     operation.ID
 	ExecutionID     string
 	Type            TaskType
 	RequestNo       int // sequential number within this task type
@@ -228,7 +228,7 @@ func (sh *Review) WriteFindingsContext(ctx context.Context, findings []Finding) 
 		return
 	}
 	for _, f := range findings {
-		p.WriteFinding(f, sh.stageRef(ctx).StageID)
+		p.WriteFinding(f, sh.stageRef(ctx).OperationID)
 	}
 }
 
@@ -258,7 +258,7 @@ func (sh *Review) WriteArtifactContext(ctx context.Context, kind string, data ma
 	if p == nil || kind == "" {
 		return
 	}
-	p.WriteArtifact(kind, data, sh.stageRef(ctx).StageID)
+	p.WriteArtifact(kind, data, sh.stageRef(ctx).OperationID)
 }
 
 // BoardPost is one bulletin published to the Review Team board during the run,
@@ -310,7 +310,7 @@ func New(repoDir, gitBranch, model string, opts SessionOptions) *Review {
 		p.WriteSessionStart(sh.StartTime)
 	}
 
-	sh.startTimeline()
+	sh.startOperations()
 	return sh
 }
 
@@ -381,8 +381,8 @@ func (sh *Review) Finalize(operationErr ...error) {
 	if finishErr == nil && !completion.Complete() {
 		finishErr = fmt.Errorf("review %s: admitted work did not complete", completion.Status)
 	}
-	telemetry.ReportTimelineError(timeline.Finish(sh.SessionID, finishErr))
-	telemetry.ReportTimelineError(telemetry.CloseTimeline(sh.SessionID))
+	telemetry.ReportRecordingError(operation.Finish(sh.SessionID, finishErr))
+	operation.Release(sh.SessionID)
 	if p != nil {
 		p.WriteSessionEnd(duration, filesReviewed, failures, stats, completion, sh.totalUsage())
 	}
@@ -415,7 +415,7 @@ func (ss *ReviewScope) appendTaskRecord(executionID string, taskType TaskType, m
 
 	rec := &TaskRecord{
 		ExecutionID:     executionID,
-		StageID:         timeline.StageID(uuid.V4()),
+		OperationID:     operation.ID(uuid.V4()),
 		Type:            taskType,
 		RequestNo:       ss.rounds[string(taskType)] + 1,
 		RequestMessages: copyMessages(messages),
@@ -530,10 +530,10 @@ func (sh *Review) LLMFailures() int64 {
 }
 
 // A record without a narrower producer belongs to the Session operation.
-func (sh *Review) stageRef(ctx context.Context) timeline.StageRef {
-	ref, _ := timeline.StageFromContext(ctx)
-	if ref.StageID == "" {
-		ref = timeline.StageRef{TimelineID: sh.SessionID, StageID: timeline.StageID("operation:" + sh.SessionID)}
+func (sh *Review) stageRef(ctx context.Context) operation.Ref {
+	ref, _ := operation.FromContext(ctx)
+	if ref.OperationID == "" {
+		ref = operation.Ref{ReviewID: sh.SessionID, OperationID: operation.ID("operation:" + sh.SessionID)}
 	}
 	return ref
 }

@@ -12,44 +12,44 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // Agent view contains call summaries, not prompt/response copies. Stage IDs
 // lead back to the same Default/Model detail and exact Session reference.
 type agentView struct {
-	StageID    timeline.StageID `json:"stage_id"`
-	Turns      []*agentTurnView `json:"turns"`
-	Operations []*agentItemView `json:"operations,omitempty"`
-	Warnings   []string         `json:"warnings,omitempty"`
+	OperationID operation.ID     `json:"operation_id"`
+	Turns       []*agentTurnView `json:"turns"`
+	Operations  []*agentItemView `json:"operations,omitempty"`
+	Warnings    []string         `json:"warnings,omitempty"`
 }
 
 type agentTurnView struct {
-	OffsetMS   int64            `json:"offset_ms"`
-	DurationMS *int64           `json:"duration_ms,omitempty"`
-	StageID    timeline.StageID `json:"stage_id"`
-	Label      string           `json:"label"`
-	Status     string           `json:"status"`
-	Items      []*agentItemView `json:"items"`
+	OffsetMS    int64            `json:"offset_ms"`
+	DurationMS  *int64           `json:"duration_ms,omitempty"`
+	OperationID operation.ID     `json:"operation_id"`
+	Label       string           `json:"label"`
+	Status      string           `json:"status"`
+	Items       []*agentItemView `json:"items"`
 }
 
 type agentItemView struct {
-	StageID    timeline.StageID `json:"stage_id"`
-	ParentID   timeline.StageID `json:"parent_id"`
-	Kind       string           `json:"kind"`
-	Depth      int              `json:"depth"`
-	Label      string           `json:"label"`
-	Status     string           `json:"status"`
-	OffsetMS   int64            `json:"offset_ms"`
-	DurationMS *int64           `json:"duration_ms,omitempty"`
-	Attempt    int              `json:"attempt,omitempty"`
-	Ref        agentsession.Ref `json:"ref"`
-	Usage      *agentgo.Usage   `json:"usage,omitempty"`
-	Error      string           `json:"error,omitempty"`
+	OperationID operation.ID     `json:"operation_id"`
+	ParentID    operation.ID     `json:"parent_id"`
+	Kind        string           `json:"kind"`
+	Depth       int              `json:"depth"`
+	Label       string           `json:"label"`
+	Status      string           `json:"status"`
+	OffsetMS    int64            `json:"offset_ms"`
+	DurationMS  *int64           `json:"duration_ms,omitempty"`
+	Attempt     int              `json:"attempt,omitempty"`
+	Ref         agentsession.Ref `json:"ref"`
+	Usage       *agentgo.Usage   `json:"usage,omitempty"`
+	Error       string           `json:"error,omitempty"`
 }
 
-func stageStatus(stage timeline.Stage) string {
+func stageStatus(stage operation.Record) string {
 	if stage.FinishedAt.IsZero() {
 		return "incomplete"
 	}
@@ -57,7 +57,7 @@ func stageStatus(stage timeline.Stage) string {
 }
 
 // +spec=`Agent projection follows recorded turn ancestry, keeps attempts and concurrent calls distinct, and joins usage by the complete Session reference without copying call bodies`
-func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
+func loadStageAgent(path string, id operation.ID) (*agentView, error) {
 	source, err := readStageSource(path)
 	if err != nil {
 		return nil, err
@@ -66,11 +66,11 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 	if !ok || root.Name != "execution" {
 		return nil, fmt.Errorf("stage has no Agent view: %s", id)
 	}
-	view := &agentView{StageID: id, Turns: []*agentTurnView{}}
+	view := &agentView{OperationID: id, Turns: []*agentTurnView{}}
 	// A nested execution owns a different loop. It is reachable as an operation,
 	// but its calls are not counted as part of the selected loop's turns.
-	belongs := func(stage timeline.Stage) bool {
-		seen := map[timeline.StageID]bool{}
+	belongs := func(stage operation.Record) bool {
+		seen := map[operation.ID]bool{}
 		for parent := source.byID[stage.ParentID]; parent.ID != "" && !seen[parent.ID]; parent = source.byID[parent.ParentID] {
 			if parent.ID == id {
 				return true
@@ -82,12 +82,12 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		}
 		return false
 	}
-	turns := map[timeline.StageID]*agentTurnView{}
+	turns := map[operation.ID]*agentTurnView{}
 	for _, stage := range source.rows {
 		if stage.Name != "turn" || !belongs(stage) {
 			continue
 		}
-		turn := &agentTurnView{StageID: stage.ID, Label: (timelineRow{Stage: stage}).Label(), Status: stageStatus(stage), Items: []*agentItemView{}}
+		turn := &agentTurnView{OperationID: stage.ID, Label: (timelineRow{Record: stage}).Label(), Status: stageStatus(stage), Items: []*agentItemView{}}
 		turn.OffsetMS = stage.StartedAt.Sub(root.StartedAt).Milliseconds()
 		if !stage.FinishedAt.IsZero() {
 			duration := stage.Duration(time.Time{}).Milliseconds()
@@ -97,7 +97,7 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		view.Turns = append(view.Turns, turn)
 	}
 	byFile := map[string]map[agentsession.Ref][]*agentItemView{}
-	stageOrder := map[timeline.StageID]int{}
+	stageOrder := map[operation.ID]int{}
 	for index, stage := range source.rows {
 		if stage.Name == "turn" || !belongs(stage) {
 			continue
@@ -106,7 +106,7 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		if stage.Name == "tool.queue" || (stage.Name == "tool.invoke" && source.byID[stage.ParentID].Name == "tool.execution") {
 			continue
 		}
-		item := &agentItemView{StageID: stage.ID, ParentID: stage.ParentID, Kind: "operation", Label: (timelineRow{Stage: stage}).Label(), Status: stageStatus(stage), OffsetMS: stage.StartedAt.Sub(root.StartedAt).Milliseconds(), Error: stage.Error}
+		item := &agentItemView{OperationID: stage.ID, ParentID: stage.ParentID, Kind: "operation", Label: (timelineRow{Record: stage}).Label(), Status: stageStatus(stage), OffsetMS: stage.StartedAt.Sub(root.StartedAt).Milliseconds(), Error: stage.Error}
 		if !stage.FinishedAt.IsZero() {
 			duration := stage.Duration(time.Time{}).Milliseconds()
 			item.DurationMS = &duration
@@ -116,12 +116,12 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 			item.Kind = "model"
 		case "tool.execution", "tool.invoke":
 			item.Kind = "tool"
-			if tool, _ := timeline.AttributeValue[string](stage.Attributes, "tool"); tool != "" {
+			if tool, _ := operation.AttributeValue[string](stage.Attributes, "tool"); tool != "" {
 				item.Label = tool
 			}
 		}
-		item.Attempt, _ = timeline.AttributeValue[int](stage.Attributes, "attempt")
-		seen := map[timeline.StageID]bool{}
+		item.Attempt, _ = operation.AttributeValue[int](stage.Attributes, "attempt")
+		seen := map[operation.ID]bool{}
 		var turn *agentTurnView
 		for parent := source.byID[stage.ParentID]; parent.ID != "" && parent.ID != id && !seen[parent.ID]; parent = source.byID[parent.ParentID] {
 			seen[parent.ID] = true
@@ -159,7 +159,7 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 		view.Warnings = append(view.Warnings, readAgentUsage(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", name), items)...)
 	}
 	for _, turn := range view.Turns {
-		turn.Items = agentHierarchy(turn.Items, source, turn.StageID, stageOrder)
+		turn.Items = agentHierarchy(turn.Items, source, turn.OperationID, stageOrder)
 	}
 	view.Operations = agentHierarchy(view.Operations, source, root.ID, stageOrder)
 	return view, nil
@@ -168,15 +168,15 @@ func loadStageAgent(path string, id timeline.StageID) (*agentView, error) {
 // Use the same tree traversal as Default. Hidden intermediates still contribute
 // their recorded ancestry; neither timestamp order nor call kind defines depth.
 // +spec=`Each turn collects only its own items and ancestors; the shared source order is indexed once rather than rescanning the review timeline for every turn`
-func agentHierarchy(items []*agentItemView, source *stageSource, root timeline.StageID, stageOrder map[timeline.StageID]int) []*agentItemView {
-	selected := map[timeline.StageID]*agentItemView{}
-	included := map[timeline.StageID]bool{}
+func agentHierarchy(items []*agentItemView, source *stageSource, root operation.ID, stageOrder map[operation.ID]int) []*agentItemView {
+	selected := map[operation.ID]*agentItemView{}
+	included := map[operation.ID]bool{}
 	var rows []timelineRow
 	for _, item := range items {
-		selected[item.StageID] = item
-		for stage := source.byID[item.StageID]; stage.ID != "" && stage.ID != root && !included[stage.ID]; stage = source.byID[stage.ParentID] {
+		selected[item.OperationID] = item
+		for stage := source.byID[item.OperationID]; stage.ID != "" && stage.ID != root && !included[stage.ID]; stage = source.byID[stage.ParentID] {
 			included[stage.ID] = true
-			rows = append(rows, timelineRow{Stage: stage})
+			rows = append(rows, timelineRow{Record: stage})
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool { return stageOrder[rows[i].ID] < stageOrder[rows[j].ID] })
@@ -273,7 +273,7 @@ func handleStageAgent(w http.ResponseWriter, r *http.Request, root, repo, sessio
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	view, err := loadStageAgent(filepath.Join(root, repo, sessionID+".jsonl"), timeline.StageID(r.URL.Query().Get("stage")))
+	view, err := loadStageAgent(filepath.Join(root, repo, sessionID+".jsonl"), operation.ID(r.URL.Query().Get("stage")))
 	if err != nil {
 		fmt.Fprintf(console.Err(), "[viewer] Agent view repo=%s review=%s stage=%s: %v\n", repo, sessionID, r.URL.Query().Get("stage"), err)
 		http.Error(w, "Agent view unavailable: review timeline or loop stage could not be loaded.", http.StatusNotFound)

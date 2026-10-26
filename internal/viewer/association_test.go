@@ -8,7 +8,7 @@ import (
 
 func TestViewerReportsTruncatedTail(t *testing.T) {
 	root, repo, id := t.TempDir(), "repo", "run"
-	writeViewerSession(t, root, repo, id, sessionStart(id), `{"type":"llm_request","scope_id":"unit","kind":"unit","stage_id":"r1"}`)
+	writeViewerSession(t, root, repo, id, sessionStart(id), `{"type":"llm_request","scope_id":"unit","kind":"unit","operation_id":"r1"}`)
 	path := filepath.Join(root, repo, id+".jsonl")
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {

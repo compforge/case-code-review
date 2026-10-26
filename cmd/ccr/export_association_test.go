@@ -11,17 +11,17 @@ import (
 // the opposite order to their declarations. Neither ordering implies ownership.
 func TestExportExecutionAndToolIdentity(t *testing.T) {
 	records := []map[string]any{
-		{"type": "session_start", "schema_version": 13, "sessionId": "run"},
+		{"type": "session_start", "schema_version": 14, "sessionId": "run"},
 	}
 	for _, id := range []string{"e1", "e2"} {
 		records = append(records,
-			map[string]any{"type": "llm_request", "scope_id": "lane", "execution_id": id, "stage_id": id + "/request", "messages": []map[string]any{{"role": "user", "content": id}}},
-			map[string]any{"type": "llm_response", "scope_id": "lane", "execution_id": id, "stage_id": id + "/request", "content": id, "tool_calls": []map[string]any{{"id": "a", "name": "read_files"}, {"id": "b", "name": "read_files"}}},
+			map[string]any{"type": "llm_request", "scope_id": "lane", "execution_id": id, "operation_id": id + "/request", "messages": []map[string]any{{"role": "user", "content": id}}},
+			map[string]any{"type": "llm_response", "scope_id": "lane", "execution_id": id, "operation_id": id + "/request", "content": id, "tool_calls": []map[string]any{{"id": "a", "name": "read_files"}, {"id": "b", "name": "read_files"}}},
 		)
 	}
 	for _, id := range []string{"e2", "e1"} {
 		for _, call := range []string{"b", "a"} {
-			records = append(records, map[string]any{"type": "tool_result", "scope_id": "lane", "execution_id": id, "stage_id": id + "/tool/" + call, "request_id": id + "/request", "tool_call_id": call, "result": id + call})
+			records = append(records, map[string]any{"type": "tool_result", "scope_id": "lane", "execution_id": id, "operation_id": id + "/tool/" + call, "request_id": id + "/request", "tool_call_id": call, "result": id + call})
 		}
 	}
 	var stages []map[string]any
@@ -29,7 +29,9 @@ func TestExportExecutionAndToolIdentity(t *testing.T) {
 		outcome := []string{"completed", "timeout"}[i]
 		stages = append(stages, map[string]any{"id": id, "name": "execution", "parent_id": "operation:run", "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z", "status": "succeeded", "attributes": map[string]any{"execution_id": id, "scope_id": "lane", "outcome": outcome}})
 	}
-	records = append(records, map[string]any{"type": "timeline_snapshot", "timeline_id": "run", "snapshot": map[string]any{"id": "run", "stages": stages}})
+	for _, stage := range stages {
+		records = append(records, map[string]any{"type": "operation", "review_id": "run", "operation": stage})
+	}
 	file := filepath.Join(t.TempDir(), "run.jsonl")
 	f, err := os.Create(file)
 	if err != nil {

@@ -3,19 +3,17 @@ package recording
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
-	"github.com/qiankunli/case-code-review/internal/telemetry"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
-	prefix := `{"type":"session_start","schema_version":13}` + "\n"
+	prefix := `{"type":"session_start","schema_version":14}` + "\n"
 	for _, tc := range []struct {
 		name, tail     string
 		truncated, bad bool
@@ -43,13 +41,13 @@ func TestTranscriptInterruptedTailAndCorruption(t *testing.T) {
 
 func TestTranscriptUsesLatestCompleteSnapshot(t *testing.T) {
 	start := time.Now().UTC()
-	stage := timeline.Stage{ID: "execution", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: timeline.Running, Attributes: map[string]json.RawMessage{"outcome": json.RawMessage(`"completed"`)}}
+	stage := operation.Record{ID: "execution", ParentID: "operation:run", Name: "execution", StartedAt: start, Status: operation.Running, Attributes: map[string]json.RawMessage{"outcome": json.RawMessage(`"completed"`)}}
 	var stream bytes.Buffer
 	enc := json.NewEncoder(&stream)
 	write := func() {
 		t.Helper()
-		snapshot := timeline.Snapshot{ID: "run", RootStageID: "operation:run", Stages: []timeline.Stage{stage}}
-		if err := enc.Encode(map[string]any{"type": "timeline_snapshot", "timeline_id": "run", "snapshot": snapshot}); err != nil {
+
+		if err := enc.Encode(map[string]any{"type": "operation", "review_id": "run", "operation": stage}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -62,7 +60,7 @@ func TestTranscriptUsesLatestCompleteSnapshot(t *testing.T) {
 		t.Fatal("a running stage became a completed execution")
 	}
 	stage.FinishedAt = start.Add(7 * time.Millisecond)
-	stage.Status = timeline.Succeeded
+	stage.Status = operation.Succeeded
 	write()
 	write()
 	transcript, err := ReadTranscript(&stream)
@@ -78,20 +76,14 @@ func TestTranscriptUsesLatestCompleteSnapshot(t *testing.T) {
 	}
 }
 
-func TestTranscriptSnapshotIdentityAndActors(t *testing.T) {
-	raw := `{"type":"timeline_snapshot","timeline_id":"run","snapshot":{"id":"run","actors":[{"id":"worker"}],"stages":[{"id":"exec","name":"execution","actor_ref":1,"started_at":"2026-10-01T00:00:00Z","finished_at":"2026-10-01T00:00:01Z","status":"succeeded","attributes":{"execution_id":"exec","outcome":"completed","turns":3}}]}}`
+func TestTranscriptOperationIdentity(t *testing.T) {
+	raw := `{"type":"operation","review_id":"run","operation":{"id":"exec","name":"execution","started_at":"2026-10-01T00:00:00Z","finished_at":"2026-10-01T00:00:01Z","status":"completed","attributes":{"outcome":"completed","turns":3}}}`
 	transcript, err := ReadTranscript(strings.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(transcript.ExecutionFacts()) != 1 {
+		t.Fatalf("facts=%v error=%v", transcript, err)
 	}
-	facts := transcript.ExecutionFacts()
-	if len(facts) != 1 || facts[0]["outcome"] != "completed" || facts[0]["turns"] != float64(3) || transcript.Timeline.Stages[0].Actor.ID != "worker" {
-		t.Fatalf("lost snapshot facts: %+v", transcript)
-	}
-	for _, bad := range []string{strings.Replace(raw, `"id":"run"`, `"id":"other"`, 1), strings.Replace(raw, `"actor_ref":1`, `"actor_ref":2`, 1)} {
-		if _, err := ReadTranscript(strings.NewReader(bad)); err == nil {
-			t.Fatal("accepted invalid snapshot")
-		}
+	if _, err := ReadTranscript(strings.NewReader(raw + "\n" + strings.Replace(raw, `"review_id":"run"`, `"review_id":"other"`, 1))); err == nil {
+		t.Fatal("accepted inconsistent review identity")
 	}
 }
 
@@ -104,11 +96,11 @@ func (f *failingSink) Write(p []byte) (int, error) { f.calls++; return 0, f.err 
 
 func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	id := t.Name()
-	defer telemetry.ReleaseTimeline(id)
-	if err := timeline.Start(id, "review"); err != nil {
+	defer operation.Release(id)
+	if err := operation.Start(id, "review"); err != nil {
 		t.Fatal(err)
 	}
-	defer timeline.Finish(id, nil)
+	defer operation.Finish(id, nil)
 	var data bytes.Buffer
 	writer := &jsonlWriter{sessionID: id, startTime: time.Now(), writer: bufio.NewWriter(&data)}
 	writer.writeRecordLocked(map[string]any{"type": "llm_request"})
@@ -141,7 +133,7 @@ func TestSessionWriterSharedSequenceAndFailure(t *testing.T) {
 	if sink.calls != 1 || writer.sequence != 3 {
 		t.Fatalf("failed recording kept advancing: calls=%d seq=%d", sink.calls, writer.sequence)
 	}
-	if _, err := timeline.Read(context.Background(), id, false); err != nil {
+	if _, err := operation.Read(id); err != nil {
 		t.Fatal("failed export discarded cached facts", err)
 	}
 }

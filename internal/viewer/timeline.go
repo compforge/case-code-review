@@ -6,15 +6,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 type timelineRow struct {
 	ScopeID     string
 	SessionID   string
 	ExecutionID string
-	timeline.Stage
+	operation.Record
 	OffsetMS      int64
 	DurationMS    int64
 	MissingParent bool
@@ -29,12 +29,12 @@ func (row timelineRow) Label() string {
 		return "Model call"
 	}
 	if row.Name == "turn" {
-		if turn, ok := timeline.AttributeValue[int](row.Attributes, "turn"); ok {
+		if turn, ok := operation.AttributeValue[int](row.Attributes, "turn"); ok {
 			return fmt.Sprintf("turn %d", turn)
 		}
 	}
 	if row.Name == "review.pipeline" {
-		if unit, ok := timeline.AttributeValue[string](row.Attributes, "unit_id"); ok && unit != "" {
+		if unit, ok := operation.AttributeValue[string](row.Attributes, "unit_id"); ok && unit != "" {
 			return "Pipeline · " + unit
 		}
 	}
@@ -42,53 +42,53 @@ func (row timelineRow) Label() string {
 }
 
 // Layout preserves hierarchy and overlapping intervals; it never sums durations.
-func timelineRows(doc *timeline.Snapshot) []timelineRow {
+func timelineRows(doc *operation.Snapshot) []timelineRow {
 	if doc == nil {
 		return nil
 	}
-	stages := append([]timeline.Stage(nil), doc.Stages...)
+	stages := append([]operation.Record(nil), doc.Operations...)
 	sort.SliceStable(stages, func(i, j int) bool {
 		if stages[i].StartedAt.Equal(stages[j].StartedAt) {
 			return stages[i].ID < stages[j].ID
 		}
 		return stages[i].StartedAt.Before(stages[j].StartedAt)
 	})
-	index := map[timeline.StageID]timeline.Stage{}
+	index := map[operation.ID]operation.Record{}
 	for _, stage := range stages {
 		index[stage.ID] = stage
 	}
-	inheritedAttribute := func(stage timeline.Stage, key string) string {
-		seen := map[timeline.StageID]bool{}
+	inheritedAttribute := func(stage operation.Record, key string) string {
+		seen := map[operation.ID]bool{}
 		for stage.ID != "" && !seen[stage.ID] {
 			seen[stage.ID] = true
-			if id, ok := timeline.AttributeValue[string](stage.Attributes, key); ok && id != "" {
+			if id, ok := operation.AttributeValue[string](stage.Attributes, key); ok && id != "" {
 				return id
 			}
 			stage = index[stage.ParentID]
 		}
 		return ""
 	}
-	known := map[timeline.StageID]bool{doc.RootStageID: true}
-	children := map[timeline.StageID][]timeline.Stage{}
+	known := map[operation.ID]bool{doc.RootID: true}
+	children := map[operation.ID][]operation.Record{}
 	for _, stage := range stages {
 		known[stage.ID] = true
 		children[stage.ParentID] = append(children[stage.ParentID], stage)
 	}
-	seen := map[timeline.StageID]bool{}
+	seen := map[operation.ID]bool{}
 	var rows []timelineRow
-	var visit func(timeline.Stage, int)
-	visit = func(stage timeline.Stage, depth int) {
+	var visit func(operation.Record, int)
+	visit = func(stage operation.Record, depth int) {
 		if seen[stage.ID] {
 			return
 		}
 		seen[stage.ID] = true
-		rows = append(rows, timelineRow{Stage: stage, ScopeID: inheritedAttribute(stage, "scope_id"), SessionID: inheritedAttribute(stage, "session_id"), ExecutionID: inheritedAttribute(stage, "execution_id"), OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: stage.ParentID != "" && !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
+		rows = append(rows, timelineRow{Record: stage, ScopeID: inheritedAttribute(stage, "scope_id"), SessionID: inheritedAttribute(stage, "session_id"), ExecutionID: inheritedAttribute(stage, "execution_id"), OffsetMS: stage.StartedAt.Sub(doc.StartedAt).Milliseconds(), DurationMS: stage.Duration(doc.FinishedAt).Milliseconds(), MissingParent: stage.ParentID != "" && !known[stage.ParentID], Depth: depth, HasChildren: len(children[stage.ID]) > 0})
 		for _, child := range children[stage.ID] {
 			visit(child, depth+1)
 		}
 	}
 	for _, stage := range stages {
-		if stage.ParentID == doc.RootStageID || !known[stage.ParentID] {
+		if stage.ParentID == doc.RootID || !known[stage.ParentID] {
 			visit(stage, 0)
 		}
 	}
@@ -105,12 +105,12 @@ type timelineView struct {
 	WindowMS   int64
 	Incomplete int
 	Lanes      []timelineLane
-	Children   map[timeline.StageID][]timelineRow
+	Children   map[operation.ID][]timelineRow
 }
 
 // spec: Bars share source timestamps; unknown end times are markers, never
 // intervals extended to the current wall clock. Elapsed is kept for the label.
-func layoutTimeline(doc *timeline.Snapshot) timelineView {
+func layoutTimeline(doc *operation.Snapshot) timelineView {
 	view := timelineView{Rows: timelineRows(doc)}
 	if doc == nil {
 		return view
@@ -139,7 +139,7 @@ func layoutTimeline(doc *timeline.Snapshot) timelineView {
 		row.WidthPercent = max(0, min(100-row.StartPercent, 100*float64(row.FinishedAt.Sub(row.StartedAt))/float64(window)))
 	}
 	view.Lanes = stageLanes(view.Rows)
-	view.Children = map[timeline.StageID][]timelineRow{}
+	view.Children = map[operation.ID][]timelineRow{}
 	for _, row := range view.Rows {
 		view.Children[row.ParentID] = append(view.Children[row.ParentID], row)
 	}
@@ -165,13 +165,13 @@ type timelineBranch struct {
 // Only recorded ParentIDs define nesting. Lane roots may have parents displayed
 // in another lane; they remain roots here without inventing a new relationship.
 func stageTree(rows []timelineRow) []*timelineBranch {
-	index := map[timeline.StageID]timelineRow{}
-	children := map[timeline.StageID][]timelineRow{}
+	index := map[operation.ID]timelineRow{}
+	children := map[operation.ID][]timelineRow{}
 	for _, row := range rows {
 		index[row.ID] = row
 		children[row.ParentID] = append(children[row.ParentID], row)
 	}
-	seen := map[timeline.StageID]bool{}
+	seen := map[operation.ID]bool{}
 	var visit func(timelineRow, int) *timelineBranch
 	visit = func(row timelineRow, depth int) *timelineBranch {
 		if seen[row.ID] {
@@ -205,19 +205,19 @@ func stageTree(rows []timelineRow) []*timelineBranch {
 
 // +spec=`All stages remain reachable in swimlanes on the shared review clock; R1/R2 loops stay separate, overlapping roots use separate tracks, and missing ends are never extended`
 func stageLanes(rows []timelineRow) []timelineLane {
-	byID := map[timeline.StageID]timelineRow{}
+	byID := map[operation.ID]timelineRow{}
 	for _, row := range rows {
 		byID[row.ID] = row
 	}
 	type owner struct{ key, phase, label string }
-	owners := map[timeline.StageID]owner{}
+	owners := map[operation.ID]owner{}
 	for _, row := range rows {
 		group := owner{key: "Review", phase: "Review", label: "Other stages"}
-		seen := map[timeline.StageID]bool{}
+		seen := map[operation.ID]bool{}
 		for ancestor := row; ancestor.ID != "" && !seen[ancestor.ID]; ancestor = byID[ancestor.ParentID] {
 			seen[ancestor.ID] = true
 			if ancestor.Name == "execution" {
-				task, _ := timeline.AttributeValue[string](ancestor.Attributes, "task_type")
+				task, _ := operation.AttributeValue[string](ancestor.Attributes, "task_type")
 				phase := ""
 				switch recording.TaskType(task) {
 				case recording.MainTask:

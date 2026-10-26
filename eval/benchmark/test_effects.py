@@ -35,7 +35,7 @@ class EffectsTest(unittest.IsolatedAsyncioTestCase):
 
     def recording(self, *, closed=True, assessed=True, support="supported", low_value=True):
         path = self.root / "session.jsonl"
-        events = [{"type": "session_start", "schema_version": 13, "sessionId": "session-1", "tool_version": "test"},
+        events = [{"type": "session_start", "schema_version": 14, "sessionId": "session-1", "tool_version": "test"},
                   artifact("review_input", version=1, repository="repo", change_digest="change"),
                   *unit(), *pipeline(support=support, assessed=assessed)]
         for event in events:

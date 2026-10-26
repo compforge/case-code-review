@@ -9,12 +9,11 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
-	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
 func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
@@ -28,17 +27,17 @@ func TestContextBudgetFailureStopsBeforeModel(t *testing.T) {
 
 func TestContextZoneReportUsesTimeline(t *testing.T) {
 	id := t.Name()
-	defer telemetry.ReleaseTimeline(id)
-	if err := timeline.Start(id, "compaction"); err != nil {
+	defer operation.Release(id)
+	if err := operation.Start(id, "compaction"); err != nil {
 		t.Fatal(err)
 	}
-	ctx := timeline.NewStageContext(t.Context(), timeline.StageRef{TimelineID: id})
+	ctx := operation.NewContext(t.Context(), operation.Ref{ReviewID: id})
 	manager := newContextManager(ExecutionSpec{ContextWindow: 400, FileEvictEnabled: true}, &scriptedClient{})
 	_, err := manager.Compact(ctx, agentgo.TransformContext{Messages: []agentgo.AgentMessage{msg.FixedText("user", "review the file"), msg.NewFile("example.go", 1, 200, 200, strings.Repeat("1|source line\n", 200))}}, agentgo.CompactReasonThreshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := timeline.Read(ctx, id, false)
+	snapshot, err := operation.Read(id)
 	if err != nil {
 		t.Fatal(err)
 	}

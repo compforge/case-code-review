@@ -16,8 +16,8 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/slicesx"
-	"github.com/compforge/go-stdx/timeline"
 	repocli "github.com/compforge/repocli/toolkit/go"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
@@ -595,7 +595,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 				OnFinished:    a.finishHypothesis,
 				OnHypothesis:  a.persistHypothesis, OnAssigned: a.persistLaneAssignment,
 				OnAssessment: func(reviewUnit unit.Unit, hypothesis unitreview.Hypothesis, assessment hypothesisreview.Assessment) {
-					trialCtx, finishTrial := recording.Begin(a.unitRuns[reviewUnit.ID].budget.ctx, "trial.assess", timeline.Attribute{Key: "unit_id", Value: reviewUnit.ID}, timeline.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
+					trialCtx, finishTrial := recording.Begin(a.unitRuns[reviewUnit.ID].budget.ctx, "trial.assess", operation.Attribute{Key: "unit_id", Value: reviewUnit.ID}, operation.Attribute{Key: "hypothesis_id", Value: hypothesis.ID})
 					defer finishTrial(nil)
 					delivered, decision, fresh := deliveryGate.Assess(reviewUnit, hypothesis, assessment)
 					if fresh {
@@ -637,7 +637,7 @@ func (a *Runner) dispatchUnits(ctx context.Context) ([]finding.Finding, error) {
 
 	var dispatched int64
 	for i := range units {
-		_, finishQueue := recording.Begin(ctx, "unit.queue", timeline.Attribute{Key: "unit_id", Value: units[i].ID})
+		_, finishQueue := recording.Begin(ctx, "unit.queue", operation.Attribute{Key: "unit_id", Value: units[i].ID})
 		select {
 		case sem <- struct{}{}: // Unit queueing is outside its own deadline.
 		case <-ctx.Done():
@@ -845,7 +845,7 @@ func unitHypotheses(units []unit.Unit) []unitreview.Hypothesis {
 }
 
 func (a *Runner) persistHypothesis(h unitreview.Hypothesis) {
-	ctx := timeline.NewStageContext(a.session.Context(context.Background()), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID("review.unit/" + h.OriginUnit)})
+	ctx := operation.NewContext(a.session.Context(context.Background()), operation.Ref{ReviewID: a.session.SessionID, OperationID: operation.ID("review.unit/" + h.OriginUnit)})
 	a.session.WriteArtifactContext(ctx, "review_hypothesis", map[string]any{
 		"id": h.ID, "fingerprint": h.Fingerprint, "origin_unit": h.OriginUnit, "path": h.Path,
 		"content": h.Content, "existing_code": h.ExistingCode,
@@ -1087,7 +1087,7 @@ func relationClueLabel(c unit.Clue) string {
 
 // reviewUnit performs the Plan Phase + Main Loop for a single review Unit.
 func (a *Runner) reviewUnit(ctx context.Context, u unit.Unit, wrapUpAt time.Time) (deb recording.Debrief, reviewErr error) {
-	ctx, finish := recording.BeginStage(ctx, "review.unit", timeline.WithStageID(timeline.StageID("review.unit/"+u.ID)), timeline.WithAttributes(timeline.Attribute{Key: "unit_id", Value: u.ID}))
+	ctx, finish := recording.BeginOperation(ctx, "review.unit", operation.WithID(operation.ID("review.unit/"+u.ID)), operation.WithAttributes(operation.Attribute{Key: "unit_id", Value: u.ID}))
 	defer func() {
 		if p := recover(); p != nil {
 			finish(fmt.Errorf("panic: %v", p))

@@ -957,13 +957,13 @@ p { color: #586069; padding: 1rem 0; }
 .timeline-scroll { overflow: auto; max-height: 70vh; border: 1px solid #d8dee4; border-radius: 5px; }
 .timeline-scale { display: flex; justify-content: space-between; }
 .timeline-status { white-space: nowrap; font-size: .75rem; color: #57606a; }
-.timeline-status.status-succeeded { color: #1a7f37; }
+.timeline-status.status-completed { color: #1a7f37; }
 .timeline-status.status-failed { color: #cf222e; }
 .timeline-status.status-incomplete { color: #9a6700; }
 .timeline-track { position: relative; height: 20px; border-left: 1px solid #d8dee4; border-right: 1px solid #d8dee4; background: repeating-linear-gradient(to right, transparent 0, transparent calc(25% - 1px), #eaeef2 calc(25% - 1px), #eaeef2 25%); }
 .timeline-bar { position: absolute; top: 4px; height: 12px; min-width: 2px; max-width: 100%; border-radius: 2px; background: #54aeff; }
 .timeline-bar.status-failed { background: #fa4549; }
-.timeline-bar.status-canceled { background: #8c959f; }
+.timeline-bar.status-cancelled { background: #8c959f; }
 .timeline-bar.timeline-unfinished { min-width: 7px; height: 12px; border: 2px solid #bf8700; background: #fff; transform: translateX(-50%); }
 .timeline-attributes { margin-top: .75rem; display: grid; gap: .35rem; }
 .timeline-attributes code { white-space: pre-wrap; }
@@ -1072,3 +1072,6 @@ p { color: #586069; padding: 1rem 0; }
     .agent-tree { max-height: 35vh; border-right: 0; border-bottom: 1px solid #d8dee4; }
     .agent-node-detail { max-height: 50vh; }
 }
+
+.job-node { margin: .6rem 0 .6rem 1rem; border-left: 2px solid #9ca3af; padding-left: 1rem; }
+.job-details { white-space: pre-wrap; overflow-wrap: anywhere; }

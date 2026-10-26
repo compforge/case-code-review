@@ -14,11 +14,11 @@ from eval.trajectory.attribute_failures import (
 
 
 def execution_stage(fields: dict) -> dict:
-    return {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{
+    return {"type": "operation", "review_id": "run", "operation": {
         "id": fields["scope_id"], "name": "execution", "parent_id": "operation:run",
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
         "status": "failed", "attributes": fields,
-    }]}}
+    }}
 
 
 def issue() -> dict:
@@ -26,7 +26,7 @@ def issue() -> dict:
 
 
 def session(*records: dict) -> list[dict]:
-    return [{"type": "session_start", "schema_version": 13}, *records, {"type": "session_end"}]
+    return [{"type": "session_start", "schema_version": 14}, *records, {"type": "session_end"}]
 
 
 def unit(outcome: str = "completed") -> dict:
@@ -105,7 +105,7 @@ class AttributeFailuresTest(unittest.TestCase):
 
     def test_attributes_interrupted_unit_to_execution(self):
         records = [
-            {"type": "session_start", "schema_version": 13},
+            {"type": "session_start", "schema_version": 14},
             execution_stage({
                 "kind": "unit",
                 "scope_id": "unit-a",

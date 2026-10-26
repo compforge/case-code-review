@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // Cost is a projection of recorded model calls, including unfinished calls.
@@ -33,19 +33,19 @@ func (c *Cost) add(other Cost) {
 	c.EstimatedUsage += other.EstimatedUsage
 }
 
-type StageCost struct {
-	Stage      timeline.Stage `json:"stage"`
-	DurationMS float64        `json:"duration_ms"`
-	SelfMS     float64        `json:"self_ms"`
-	Finished   bool           `json:"finished"`
-	Cost       Cost           `json:"cost"` // includes descendant calls; do not sum parent and child rows
+type OperationCost struct {
+	Operation  operation.Record `json:"operation"`
+	DurationMS float64          `json:"duration_ms"`
+	SelfMS     float64          `json:"self_ms"`
+	Finished   bool             `json:"finished"`
+	Cost       Cost             `json:"cost"` // includes descendant calls; do not sum parent and child rows
 }
 
 type CostReport struct {
-	Total           Cost        `json:"total"`
-	Unattributed    Cost        `json:"unattributed"`
-	Stages          []StageCost `json:"stages"`
-	ObservedThrough time.Time   `json:"observed_through"`
+	Total           Cost            `json:"total"`
+	Unattributed    Cost            `json:"unattributed"`
+	Operations      []OperationCost `json:"operations"`
+	ObservedThrough time.Time       `json:"observed_through"`
 }
 
 // Costs associates each request with its native timeline ancestry. Durations are
@@ -76,7 +76,7 @@ func (t *Transcript) Costs() CostReport {
 			calls[id] = r
 		}
 	}
-	stages := t.StageIndex()
+	stages := t.OperationIndex()
 	for _, s := range stages {
 		for _, at := range []time.Time{s.StartedAt, s.FinishedAt} {
 			if at.After(report.ObservedThrough) {
@@ -84,7 +84,7 @@ func (t *Transcript) Costs() CostReport {
 			}
 		}
 	}
-	rollup := map[timeline.StageID]Cost{}
+	rollup := map[operation.ID]Cost{}
 	for _, r := range calls {
 		cost := Cost{Calls: 1}
 		switch r["type"] {
@@ -103,12 +103,12 @@ func (t *Transcript) Costs() CostReport {
 			cost.UnknownUsage = 1
 		}
 		report.Total.add(cost)
-		id := timeline.StageID(stringField(r, "stage_id"))
+		id := operation.ID(stringField(r, "operation_id"))
 		if _, ok := stages[id]; !ok {
 			report.Unattributed.add(cost)
 			continue
 		}
-		visited := map[timeline.StageID]bool{}
+		visited := map[operation.ID]bool{}
 		for id != "" && !visited[id] {
 			s, ok := stages[id]
 			if !ok {
@@ -121,7 +121,7 @@ func (t *Transcript) Costs() CostReport {
 			id = s.ParentID
 		}
 	}
-	children := map[timeline.StageID][]timeline.Stage{}
+	children := map[operation.ID][]operation.Record{}
 	for _, s := range stages {
 		children[s.ParentID] = append(children[s.ParentID], s)
 	}
@@ -159,10 +159,10 @@ func (t *Transcript) Costs() CostReport {
 				cursor = b
 			}
 		}
-		report.Stages = append(report.Stages, StageCost{Stage: s, DurationMS: duration, SelfMS: max(0, duration-covered), Finished: !s.FinishedAt.IsZero(), Cost: rollup[id]})
+		report.Operations = append(report.Operations, OperationCost{Operation: s, DurationMS: duration, SelfMS: max(0, duration-covered), Finished: !s.FinishedAt.IsZero(), Cost: rollup[id]})
 	}
-	sort.Slice(report.Stages, func(i, j int) bool {
-		a, b := report.Stages[i].Stage, report.Stages[j].Stage
+	sort.Slice(report.Operations, func(i, j int) bool {
+		a, b := report.Operations[i].Operation, report.Operations[j].Operation
 		if a.StartedAt.Equal(b.StartedAt) {
 			return a.ID < b.ID
 		}
@@ -191,7 +191,7 @@ func (t *Transcript) IncompleteReasons() []string {
 	if !closed {
 		reasons = append(reasons, "missing session_end")
 	}
-	for _, s := range t.Timeline.Stages {
+	for _, s := range t.Journal.Operations {
 		if s.FinishedAt.IsZero() {
 			reasons = append(reasons, "unfinished timeline stages")
 			break

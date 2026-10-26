@@ -1,6 +1,7 @@
 package recording
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,15 @@ func TestReadSessionWithoutTimeline(t *testing.T) {
 	if err := os.CopyFS(dir, os.DirFS("../../testdata/recording")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(dir, "review.timeline")); err != nil {
+	data, _ := os.ReadFile(filepath.Join(dir, "review.jsonl"))
+	var kept []byte
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(line) > 0 && !bytes.Contains(line, []byte(`"type":"operation"`)) {
+			kept = append(kept, line...)
+			kept = append(kept, '\n')
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "review.jsonl"), kept, 0600); err != nil {
 		t.Fatal(err)
 	}
 	transcript, err := ReadReview(filepath.Join(dir, "review.jsonl"))

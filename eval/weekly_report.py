@@ -86,7 +86,7 @@ def read_session(path: Path, zone: ZoneInfo) -> SessionRecord | None:
                     finding_count += 1
     except OSError:
         return None
-    if manifest is None or manifest.get("schema_version") != 13:
+    if manifest is None or manifest.get("schema_version") != 14:
         return None
     started_at = parse_timestamp(manifest.get("timestamp"), zone) or first_timestamp
     if started_at is None:

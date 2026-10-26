@@ -224,7 +224,8 @@ func (m hypothesisMessage) FixedContext() agentgo.AgentMessage {
 	return next
 }
 
-func hypothesisCodecOptions() []codec.Option {
+// SessionCodecOptions registers domain messages for both execution and observation.
+func SessionCodecOptions() []codec.Option {
 	return []codec.Option{codec.WithHandler[hypothesisMessage, hypothesisRecord]("ccr.hypothesis.v1", hypothesisCodec{})}
 }
 

@@ -11,23 +11,21 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
-
-	"github.com/qiankunli/case-code-review/internal/telemetry"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
-func recordedRequest(t *testing.T, run func(context.Context) error) timeline.Snapshot {
+func recordedRequest(t *testing.T, run func(context.Context) error) operation.Snapshot {
 	t.Helper()
 	id := t.Name()
-	defer telemetry.ReleaseTimeline(id)
-	if err := timeline.Start(id, "llm.request"); err != nil {
+	defer operation.Release(id)
+	if err := operation.Start(id, "llm.request"); err != nil {
 		t.Fatal(err)
 	}
-	err := run(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}))
-	if finishErr := timeline.Finish(id, err); finishErr != nil {
+	err := run(operation.NewContext(context.Background(), operation.Ref{ReviewID: id}))
+	if finishErr := operation.Finish(id, err); finishErr != nil {
 		t.Fatal(finishErr)
 	}
-	snapshot, collectErr := timeline.Read(context.Background(), id, false)
+	snapshot, collectErr := operation.Read(id)
 	if collectErr != nil {
 		t.Fatal(collectErr)
 	}
@@ -56,11 +54,11 @@ func TestModelCallFallbackDoesNotRecordTransportStages(t *testing.T) {
 		}
 		return err
 	})
-	if snapshot.Status != timeline.Succeeded {
+	if snapshot.Status != operation.Succeeded {
 		t.Fatalf("root status=%s", snapshot.Status)
 	}
-	if len(snapshot.Stages) != 0 {
-		t.Fatalf("transport stages leaked into business timeline: %+v", snapshot.Stages)
+	if len(snapshot.Operations) != 0 {
+		t.Fatalf("transport stages leaked into business timeline: %+v", snapshot.Operations)
 	}
 }
 
@@ -84,11 +82,11 @@ func TestModelCallTimeoutPreservesNetworkErrorPhase(t *testing.T) {
 		}
 		return err
 	})
-	if snapshot.Status != timeline.Canceled {
+	if snapshot.Status != operation.Canceled {
 		t.Fatalf("status=%s", snapshot.Status)
 	}
-	if len(snapshot.Stages) != 0 {
-		t.Fatalf("transport stages leaked: %+v", snapshot.Stages)
+	if len(snapshot.Operations) != 0 {
+		t.Fatalf("transport stages leaked: %+v", snapshot.Operations)
 	}
 }
 
@@ -109,11 +107,11 @@ func TestModelCallDoesNotRetryInsideProvider(t *testing.T) {
 		_, err := Call(ctx, client, agentgo.LLMRequest{Messages: []agentgo.Message{{Role: agentgo.RoleUser, Content: []agentgo.ContentBlock{agentgo.TextBlock("hi")}}}, Config: &agentgo.CallConfig{}})
 		return err
 	})
-	if snapshot.Status != timeline.Failed {
+	if snapshot.Status != operation.Failed {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
-	if calls.Load() != 1 || len(snapshot.Stages) != 0 {
-		t.Fatalf("calls=%d stages=%+v", calls.Load(), snapshot.Stages)
+	if calls.Load() != 1 || len(snapshot.Operations) != 0 {
+		t.Fatalf("calls=%d stages=%+v", calls.Load(), snapshot.Operations)
 	}
 }
 
@@ -137,7 +135,7 @@ func TestModelCallTimeoutPreservesResponseReadError(t *testing.T) {
 		}
 		return err
 	})
-	if snapshot.Status != timeline.Canceled || len(snapshot.Stages) != 0 {
+	if snapshot.Status != operation.Canceled || len(snapshot.Operations) != 0 {
 		t.Fatalf("snapshot=%+v", snapshot)
 	}
 }

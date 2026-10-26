@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness"
@@ -127,7 +127,7 @@ func (a *Runner) persistHypothesisReviewExecution(
 	if execution.ID == "" {
 		return
 	}
-	ctx := timeline.NewStageContext(a.session.Context(context.Background()), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID(execution.ID)})
+	ctx := operation.NewContext(a.session.Context(context.Background()), operation.Ref{ReviewID: a.session.SessionID, OperationID: operation.ID(execution.ID)})
 	a.session.WriteArtifactContext(ctx, "hypothesis_review_execution", map[string]any{
 		"execution_id":  execution.ID,
 		"hypothesis_id": input.Hypothesis.ID,

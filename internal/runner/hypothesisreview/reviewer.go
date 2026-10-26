@@ -99,7 +99,7 @@ func Review(
 		OnAccepted: config.OnAssessment,
 	}
 	execution, err := harness.NewExecution(harness.ExecutionSpec{
-		SessionCodecOptions: hypothesisCodecOptions(),
+		SessionCodecOptions: SessionCodecOptions(),
 		ChatModel:           config.ChatModel,
 		Model:               config.Model,
 		ReasoningEffort:     config.Task.ReasoningEffort,

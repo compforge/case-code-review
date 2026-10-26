@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 
+	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/viewer"
 )
 
@@ -36,7 +37,7 @@ func runViewer(args []string) error {
 	}
 
 	fmt.Printf("Open Code Review Viewer starting on %s\n", viewer.BrowserURL(opts.addr))
-	return viewer.StartServer(opts.addr)
+	return viewer.StartServer(opts.addr, runner.SessionCodecOptions()...)
 }
 
 func printViewerUsage() {

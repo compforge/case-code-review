@@ -11,8 +11,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/compforge/go-stdx/timeline"
-	"github.com/compforge/go-stdx/timeline/store"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // +case=`Tool detail joins a single Session/run/execution/attempt, prefers actual invocation input, and keeps missing results explicit`
@@ -23,23 +22,13 @@ func TestStageToolCall(t *testing.T) {
 	at := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
 	ref := agentsession.Ref{SessionID: "local", RunID: "run-1", ExecutionID: "same-call", Attempt: 2}
 	rawRef, _ := json.Marshal(ref)
-	stages := []timeline.Stage{
+	stages := []operation.Record{
 		{ID: "execution", Name: "execution", StartedAt: at, Attributes: map[string]json.RawMessage{"session_file": json.RawMessage(`"loop.jsonl"`)}},
 		{ID: "invoke", ParentID: "execution", Name: "tool.invoke", StartedAt: at, Attributes: map[string]json.RawMessage{"session_ref": rawRef}},
 	}
 	writeTimeline := func() {
 		t.Helper()
-		updates := make([]store.StageUpdate, len(stages))
-		for i, stage := range stages {
-			updates[i] = store.StageUpdate{Stage: stage, Revision: 1}
-		}
-		data, err := json.Marshal(map[string]any{"version": 1, "id": "review", "seq": 1, "at": at, "update": map[string]any{"Stages": updates}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(base+".timeline", append(data, '\n'), 0600); err != nil {
-			t.Fatal(err)
-		}
+		writeStageAgentFixture(t, base+".jsonl", stages)
 	}
 	writeTimeline()
 	if err := os.Mkdir(base+".sessions", 0700); err != nil {
@@ -156,12 +145,12 @@ func TestStageModelCall(t *testing.T) {
 	if err := os.CopyFS(root, os.DirFS("../../testdata/recording")); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(root, "review.timeline"))
+	data, err := os.ReadFile(filepath.Join(root, "review.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	data = []byte(strings.ReplaceAll(string(data), `"name":"model.attempt"`, `"name":"llm.request"`))
-	if err := os.WriteFile(filepath.Join(root, "review.timeline"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "review.jsonl"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	direct, err := loadStageCall(filepath.Join(root, "review.jsonl"), "run-1/model/model-1/2")

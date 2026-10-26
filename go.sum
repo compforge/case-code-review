@@ -46,6 +46,8 @@ github.com/clipperhouse/displaywidth v0.11.0 h1:lBc6kY44VFw+TDx4I8opi/EtL9m20WSE
 github.com/clipperhouse/displaywidth v0.11.0/go.mod h1:bkrFNkf81G8HyVqmKGxsPufD3JhNl3dSqnGhOoSD/o0=
 github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJv2v7Vk=
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
+github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55 h1:sETdyk45dMRUvtA8jJBMVC3xDXyn7FLRBPrNetaeD30=
+github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55/go.mod h1:ODgDYmIUG8v1UVOUL05VHtKM/L95UXFx3rVEwwnhYFQ=
 github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372 h1:7ZinV/Z6fUGbcwuIeqsyyZ6M8EECqbhefdcLYHiFVBk=
 github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372/go.mod h1:ndD12lEg2BJSizJNmhZYtPqBQxbg37VR/p7vwjsl7y0=
 github.com/compforge/codegraph v0.15.4-0.20261016022818-36dfad9f3724 h1:7I7eqZkS4TpvZ56Zri9rGlZs6oKkwmRtKNwFUC9QRtE=

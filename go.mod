@@ -7,6 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55
 	github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372
 	github.com/compforge/codegraph v0.15.4-0.20261016022818-36dfad9f3724
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3

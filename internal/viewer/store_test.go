@@ -22,14 +22,14 @@ func writeViewerSession(t *testing.T, root, repo, sessionID string, records ...s
 }
 
 func sessionStart(id string) string {
-	return `{"type":"session_start","sessionId":"` + id + `","schema_version":13,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`
+	return `{"type":"session_start","sessionId":"` + id + `","schema_version":14,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`
 }
 
 func TestDiscoverReposOnlyIncludesCurrentSchema(t *testing.T) {
 	root := t.TempDir()
 	repo := "example-repo"
 	writeViewerSession(t, root, repo, "old", `{"type":"session_start","schema_version":5,"biz_id":"pr:old"}`)
-	writeViewerSession(t, root, repo, "new", `{"type":"session_start","schema_version":13,"biz_id":"pr:new"}`)
+	writeViewerSession(t, root, repo, "new", `{"type":"session_start","schema_version":14,"biz_id":"pr:new"}`)
 	now := time.Now()
 	oldPath := filepath.Join(root, repo, "old.jsonl")
 	newPath := filepath.Join(root, repo, "new.jsonl")
@@ -60,7 +60,7 @@ func TestLoadSessionRejectsOldSchema(t *testing.T) {
 func TestPeekSessionLoadsCurrentSchemaSummary(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.jsonl")
 	transcript := strings.Join([]string{
-		`{"type":"session_start","schema_version":13,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`,
+		`{"type":"session_start","schema_version":14,"timestamp":"2026-08-02T00:00:00Z","model":"test-model"}`,
 		`{"type":"session_end","duration_seconds":2,"files_reviewed":["a.go","b.go"],"diff_files":5,"diff_insertions":30,"diff_deletions":6}`,
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(transcript), 0o600); err != nil {
@@ -70,7 +70,7 @@ func TestPeekSessionLoadsCurrentSchemaSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.SchemaVersion != 13 || !got.HasDiffStats || got.DiffFileCount != 5 || got.FileCount != 2 {
+	if got.SchemaVersion != 14 || !got.HasDiffStats || got.DiffFileCount != 5 || got.FileCount != 2 {
 		t.Fatalf("summary = %+v", got)
 	}
 }
@@ -95,7 +95,7 @@ func TestTimelinePageDoesNotReadNativeSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.RecordingWarnings) != 0 || view.Timeline == nil || view.Summary.Completion.Status != "partial" || view.Summary.Tokens == nil || view.Summary.Tokens.PromptTokens != 123 {
+	if len(view.RecordingWarnings) != 0 || view.Journal == nil || view.Summary.Completion.Status != "partial" || view.Summary.Tokens == nil || view.Summary.Tokens.PromptTokens != 123 {
 		t.Fatalf("timeline loaded body or lost business facts: %+v", view)
 	}
 	response := httptest.NewRecorder()

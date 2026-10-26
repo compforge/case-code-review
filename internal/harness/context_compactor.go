@@ -5,7 +5,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentcontext "github.com/compforge/agentgo/context"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 
 	"github.com/qiankunli/case-code-review/internal/harness/compactor"
@@ -30,20 +30,20 @@ func newContextCompactor(spec ExecutionSpec, model agentgo.ChatModel, window, re
 }
 
 func recordZoneCompaction(ctx context.Context, report compactor.Report) {
-	ref, ok := timeline.StageFromContext(ctx)
+	ref, ok := operation.FromContext(ctx)
 	if !ok {
 		return
 	}
-	_, stage := telemetry.BeginTimelineStage(ctx, "context.zones", timeline.WithParent(ref.StageID), timeline.WithStartTime(report.Started), timeline.WithAttributes(
-		timeline.Attribute{Key: "fixed", Value: report.Fixed},
-		timeline.Attribute{Key: "active", Value: report.Active},
-		timeline.Attribute{Key: "history", Value: report.History},
-		timeline.Attribute{Key: "tokens_before", Value: report.Before},
-		timeline.Attribute{Key: "tokens_target", Value: report.Target},
+	_, stage := telemetry.BeginOperation(ctx, "context.zones", operation.WithParent(ref.OperationID), operation.WithStartTime(report.Started), operation.WithAttributes(
+		operation.Attribute{Key: "fixed", Value: report.Fixed},
+		operation.Attribute{Key: "active", Value: report.Active},
+		operation.Attribute{Key: "history", Value: report.History},
+		operation.Attribute{Key: "tokens_before", Value: report.Before},
+		operation.Attribute{Key: "tokens_target", Value: report.Target},
 	))
-	telemetry.EndTimelineStage(ctx, stage, report.Err, timeline.WithEndTime(report.Started.Add(report.Duration)), timeline.WithEndAttributes(
-		timeline.Attribute{Key: "tokens_after", Value: report.After},
-		timeline.Attribute{Key: "strategies", Value: report.Stages},
-		timeline.Attribute{Key: "target_met", Value: report.After <= report.Target},
+	telemetry.EndOperation(ctx, stage, report.Err, operation.WithEndTime(report.Started.Add(report.Duration)), operation.WithEndAttributes(
+		operation.Attribute{Key: "tokens_after", Value: report.After},
+		operation.Attribute{Key: "strategies", Value: report.Stages},
+		operation.Attribute{Key: "target_met", Value: report.After <= report.Target},
 	))
 }

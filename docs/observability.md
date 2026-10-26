@@ -1,17 +1,35 @@
 # 可观测性
 
-CCR 按“先看业务运行情况，再看局部 loop 数据”组织观测。一次 Review 有一个业务 timeline，
-每个独立 R1/R2 loop 有一个 AgentGo Session。Session 的结构由框架定义，不随 CCR 的 Unit、Lane、
-Hypothesis 等业务概念变化；业务身份和父子阶段由 timeline 表达。
+CCR 用两个视角观察同一次执行：**SessionView 看一个 Agent Session 如何运行，JobView 看一个 Unit 如何经过 R1、R2 和 Trial 得到结果。** 两者使用 `agent-ledger/observation` 的 Node 模型，模型和工具正文来自原生 Session。
+
+存储只有两类 JSONL：
 
 ```text
-<review-id>.jsonl             Review 元数据、配置、业务产物和最终汇总
-<review-id>.timeline          一次 Review 的业务阶段图，JSONL 增量更新
+<review-id>.jsonl             Review 业务日志：元数据、Operation 状态、产物和终态
 <review-id>.sessions/
-  <local-file>.jsonl          AgentGo Session，保存模型与工具完整数据
+  <local-file>.jsonl          AgentGo 原生 Session：模型、工具、消息和恢复数据
 ```
 
-## 1. Review timeline 与局部 Session
+JobView 是读取时的投影，不再持久化另一份完整 View，也没有独立的 `.timeline` 文件。
+一个 Review 可有多个 Unit Job，一个持续运行的 Lane Session 也可参与多个 Job。
+
+### Agent 与 Job 的关系
+
+“任务式”和“持续式”描述 Agent 与 Job 的关系，不是两种 Session 数据结构。任务式 Agent 的一次
+Session 可能完成一个 Job；持续式 R2 Lane 则在同一个 Session 的不同 Run 中处理多个 Unit 的 Hypothesis。
+JobView 根据明确的 Unit 归属选择 Operation，再通过 Session/run/execution/attempt 四元组选择调用。
+不会把整个共享 Session 塞进每个 Job，也不把时间相邻解释成因果关系。
+
+Job 使用 `schema_version: "agent-ledger/job@1"`、`job.source: "ccr"` 和
+`job.id: "<review-id>/<unit-id>"`。业务 Operation 保留原 ID、父子关系和源头时间；导入的 ModelCall / ToolCall
+保留 `session.source: "agentgo"`、原 Session ID、Run ID 和原 Node ID。
+
+Goal 来自 `review_unit`，Result 包含 Unit 终态与相关 Hypothesis、Assessment、Trial、Finding 等业务证据。
+Unit debrief / 最终 Completion 决定完成状态；操作返回成功、Review 关闭或没有 Finding 都不能单独证明 Job 完成。
+模型或工具失败、仍运行的节点、缺失 Session、截断和损坏的记录均保留证据缺口。业务已经完成但观测不完整，
+仍分别展示业务状态和 Issues，不能用一个状态掩盖另一个。
+
+## 1. Review 业务日志与局部 Session
 
 `internal/recording.Review` 只管理业务元数据、产物、scope 计数和录制文件生命周期，
 不保留全局对话历史。Review 不支持恢复中断的整体执行；局部 loop 的 Session 能力归 AgentGo。
@@ -25,18 +43,18 @@ Harness 在 Execution 终态边界保存一次局部 AgentGo checkpoint，供加
 不按 turn 或定时保存完整状态，也不复制全局 Snapshot。辅助规划、定位等单次模型调用同样使用
 AgentGo Session 记录请求和结果。
 
-Timeline 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），并容纳构图、等待、HTTP 等非 loop 工作。
-调用 stage 的 `session_ref` 只有 `session_id`、`run_id`、`execution_id` 和 `attempt`；
-Execution stage 保存 scope、业务 outcome 和局部 Session 文件名。不能只用 provider tool call ID 关联，
+Operation 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），并记录 CCR 拥有的构图、等待等非 loop 工作。
+调用 Operation 的 `session_ref` 只有 `session_id`、`run_id`、`execution_id` 和 `attempt`；
+Execution Operation 保存 scope、业务 outcome 和局部 Session 文件名。不能只用 provider tool call ID 关联，
 因为不同 loop 和不同 Run 可以重复使用同一个 ID。
 
-Viewer 默认展示 timeline，Stage 弹框按 Session reference 读取对应调用正文。
-Go 的 `ReadReview(path)` 与 Python eval 在查询时重放 `.timeline` 更新，再按关联 ID 读取局部 Session。
+Viewer 展示 Review 时间线和 Unit Job 列表，按需读取选中 Job 或调用的 Session 正文。
+Go 的 `ReadJournal(path)` 只读取业务日志，`ReadJob(path, unitID)` 只打开选中 Unit 引用的 Session；
+`ReadReview(path)` 与 Python eval 为完整分析加载整轮证据。
 供 Viewer、stats、export、eval 使用的 `llm_request`/`llm_response`/`tool_result` 等对象是查询投影，
 不会再落盘成一份全局会话历史。业务 artifact、finding、debrief 仍保存在 Review 元数据文件。
 
-Review manifest 的 schema 为 **13**，旧版 schema 显式不兼容；AgentGo Session 和 timeline JSONL
-分别有自己的格式版本。读端接受完整前缀后的截断末行并显示缺口，完整行损坏不静默跳过。
+Review 业务日志的 schema 为 **14**，旧版 schema 显式不兼容；AgentGo Session 使用自己的格式版本。读端接受完整前缀后的截断末行并显示缺口，完整行损坏不静默跳过。
 局部 Session 缺失或损坏时保留可用 timeline，并标记记录不完整；不能将其解释成没有调用或已成功。
 写入失败报告 execution/session 身份，继续排空 loop 事件，不改变业务运行结果。
 
@@ -47,12 +65,12 @@ Session 与 timeline 都不替代 Forge comment、代码仓和业务事实源；
 
 ### 本地记录保留与清理
 
-CCR 默认保留最近 **7 天**的 Review，并将 `~/.casecodereview/sessions` 中 Review、timeline、局部 Session 与配套日志的
+CCR 默认保留最近 **7 天**的 Review，并将 `~/.casecodereview/sessions` 中 Review 业务日志、局部 Session 与配套日志的
 总量控制在 **5 GiB**。`review/scan` 创建录制前自动清理，录制期间每 10 分钟再次检查；
 help、preview、dry-run review 和 Viewer 等读取操作不会触发清理。
 
 淘汰单位是一整个 Review：先删除超期记录，容量仍超限时继续按修改时间从旧到新删除，
-同时删除同名 `.log`、`.timeline` 和 `.sessions/` 下所有局部 Session。JSONL 不截断、不丢弃开头，保留下来的会话仍可供 Viewer、stats、export 和 eval 完整读取。
+同时删除同名 `.log` 和 `.sessions/` 下所有局部 Session。JSONL 不截断、不丢弃开头，保留下来的会话仍可供 Viewer、stats、export 和 eval 完整读取。
 需要长期保留的评测样本应复制到独立数据目录，避免受本地历史保留策略影响。
 
 ```sh
@@ -113,9 +131,9 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 
 ### 整轮时间线
 
-Review 拥有一个 `go-stdx/timeline` ID，进程安装共用 Manager，各层通过根包入口记录。
-Context 只传播 timeline/stage ID，录制处显式指定 ParentID；repocli 使用同一 StageRef。
-Review 唯一负责整轮 Start/Finish；Runner 与 Harness 记录业务阶段和模型／工具调用边界。
+Review 拥有自己的 Operation journal；Context 只传播 Review/Operation ID，录制处显式指定 ParentID。
+`internal/recording/operation` 记录 CCR 自己的业务动作，不安装全局 Timeline Manager，也不接管上游库的内部 span。
+Review 负责 Start/Finish；Runner 与 Harness 记录业务阶段和模型／工具调用边界。
 
 ```text
 Review timeline
@@ -137,10 +155,10 @@ Review timeline
 `grouping` 提供整轮数量软上限、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法满足数量上限，
 所有目标仍进入评审。耗时读取对应 timeline stage。
 
-CCR 提供 `.timeline` 的 JSONL Store，接收 Manager 的 `Merge(Update)`：只追加变化的 operation/stage，
-相同内容不重复追加。Manager 定时发布变化；业务方只调用 Start/Begin/End/Finish，不读取 Snapshot。
-Review 结束后 Flush 等待最后一批更新，再 sync/close 文件、释放缓存和 Review lease。
-进程突然退出可能丢失尚未 Flush 的更新，不能补造缺失的结束状态。
+每次 Begin/End 把一个 Operation 的完整当前状态同步追加到 Review JSONL，与业务产物共用序号、写锁和错误边界。
+读端按 ID 折叠增量状态；不反复写入全量 Snapshot。并发动作只由 ParentID 建立关系，序号仅表示存储顺序。
+取消仍写入已知终态；写入失败后停止追加，避免在半条 JSON 后继续污染文件。Review 结束后释放运行时索引。
+进程中断前未观察到的结束事件仍保持缺失，不补造成功。
 
 模型调用是业务 Timeline 的观测边界，不录制 routing/provider/HTTP/连接池等传输子阶段。网络阶段仅在调用失败时进入错误诊断。Viewer 默认展示实际 Prompt、Response、状态、耗时与 Session 记录的 token/cache 用量；金额 Cost 仅在 Session 有计费数据时展示，缺失不解释为零。原始协议字段折叠在详情中。
 
@@ -148,8 +166,8 @@ Timeline 不保存 prompt、response 或工具结果。Stage 的原生 `attribut
 框架调用 ID 以局部 Run 为命名空间，并带 Attempt；重试、收卷和连续 Lane 执行不会混淆。
 Middleware 把 stage 身份传入真实调用，Event.Timestamp 是源头时间，消费者延迟不算模型或工具耗时。
 
-JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，timeline 内的源码时间表示动作发生时间。源头区间应通过
-原生 `Stage.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为
+JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，Operation 的源头时间表示动作发生时间。源头区间应通过
+原生 `Operation.Duration` 解读，不能假设每条 stage 都带有显式 `elapsed_ns`。嵌套和并行区间不能相加作为
 整轮 wall-clock time；HTTP 等待首字节也不能直接解释为服务端排队。
 
 请求结果由请求调用方决定：fallback 成功可使请求成功，同时保留失败的 provider attempt。Review
@@ -158,7 +176,7 @@ stage 保留 running，Viewer 明确显示 incomplete；即使整轮已返回，
 已经收到的事实；AgentGo 取消时未投递的事件和进程异常退出造成的缺口不能推断成成功。
 
 Viewer 的 Run Timeline 展示共享起点、层级、重叠和终态，请求卡片只投影同一 Snapshot 的请求子树。
-ATIF export 将完整原生 Snapshot 放在根 trajectory 的 `extra.timeline`，不按请求复制多份记录。
+ATIF export 将完整原生 Snapshot 放在根 trajectory 的 `extra.operations`，不按请求复制多份记录。
 每个 Execution 单独投影为 subagent trajectory，并保留所属 scope，避免同一 Lane 的多次 loop 相互覆盖。
 Session schema 变更时同步 recorder、Viewer、export 和 fixture；历史文件需要分析时使用离线迁移。
 
@@ -174,7 +192,7 @@ Session JSONL 是本地执行事实源，不是对外发布协议。需要在长
 Viewer 读取业务 timeline 与关联的 AgentGo Session，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
 看到了什么、loop 如何推进、最终决策如何形成，以及哪里发生中断或空转。
 
-首页按开始时间倒序列出 Review timeline，Repository 作为筛选条件。打开一次 timeline 后查看 Stage 的时间、属性与错误；Stage 详情展示关联的 Session ID，并直接展示对应模型与工具调用记录。页面仅保留运行摘要、Timeline 与 Stage 详情，不再显示旧的 Review results and statistics 汇总区。
+首页按开始时间倒序列出 Review timeline，Repository 作为筛选条件。打开一次 timeline 后查看 Stage 的时间、属性与错误；Stage 详情展示关联的 Session ID，并直接展示对应模型与工具调用记录。页面同时列出 Unit Job；点击可查看跨 R1/R2/Trial 的 Operation 和原生调用，并通过同页的 JobView JSON 链接读取标准 Observation。
 Timeline 用准备、R1 / R2 loop、R3 裁决与 Unit pipeline 泳道展示共享时间轴上的执行区间。同一 loop 的多次执行保留空隙，并发区间保持重叠；子阶段依据记录的 ParentID 在所属泳道内逐层展开，turn 下的模型、工具与上下文操作保留真实层级；Unit pipeline 标注 unit_id，其时间包含下属评审阶段，不应与 R1/R2 耗时相加。点击 Stage 弹框展示时间、attributes、错误、子阶段与关联 Session，详情不参与泳道列宽。模型 Stage 弹框展示 Session 记录的 Request / Response（包含 reasoning、tool calls 与 usage），工具 Stage 展示实际参数与最终结果；两者均按需读取关联 Session，按 session/run/execution/attempt 完整身份匹配；正文不写回 Timeline，缺失输入或输出明确标注。
 未记录结束时间的阶段只显示起点标记和 incomplete，不向当前时间延长，也不补造耗时或成功状态。
 请求卡片复用同一展示方式，时间轴相对该请求起点。

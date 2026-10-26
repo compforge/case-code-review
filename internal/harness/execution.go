@@ -233,7 +233,7 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 	e.beginRun()
 	defer e.closeRun()
 	startedAt := time.Now()
-	ctx, timing := e.beginTimeline(ctx, startedAt)
+	ctx, timing := e.beginOperations(ctx, startedAt)
 	e.bindRun(timing)
 	config := agentgo.LoopConfig{
 		Model:                    e.model,
@@ -308,8 +308,8 @@ func (e *Execution) Run(ctx context.Context) (ExecutionResult, error) {
 }
 
 // consumeLoop keeps the Harness lifecycle open across the optional wrap-up
-// continuation. Failed physical calls remain in the Session and timeline.
-func (e *Execution) consumeLoop(events <-chan agentgo.Event, timing *executionTimeline, runID string) agentgo.Event {
+// continuation. Failed physical calls remain in the Session and operation.
+func (e *Execution) consumeLoop(events <-chan agentgo.Event, timing *executionOperations, runID string) agentgo.Event {
 	var end agentgo.Event
 	for event := range events {
 		if e.localRun != nil && e.recordingErr == nil {
@@ -754,7 +754,7 @@ func (e *Execution) recordingError(err error) {
 		return
 	}
 	e.recordingErr = err
-	telemetry.ReportTimelineError(fmt.Errorf("execution %s session: %w", e.id, err))
+	telemetry.ReportRecordingError(fmt.Errorf("execution %s session: %w", e.id, err))
 	if e.spec.Session != nil {
 		e.spec.Session.WriteArtifact("recording_gap", map[string]any{"execution_id": e.id, "error": err.Error()})
 	}
@@ -787,7 +787,7 @@ func (e *Execution) runID() string {
 	}
 	return e.id
 }
-func (e *Execution) bindRun(timing *executionTimeline) {
+func (e *Execution) bindRun(timing *executionOperations) {
 	if timing == nil {
 		return
 	}
