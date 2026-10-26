@@ -16,7 +16,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-quality-harness = { git = "https://github.com/compforge/quality-harness", subdirectory = "sdks/python", rev = "27c27fcecc0ef282dd5a4fd788afac2ab24bf081" }
+quality-harness = { git = "https://github.com/compforge/quality-harness", subdirectory = "sdks/python", rev = "10000a9f55638288c1ee356f47dad85dc54963bf" }
 spec-case = { git = "https://github.com/compforge/spec-case", subdirectory = "toolchains/python" }
 
 [tool.uv]

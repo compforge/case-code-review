@@ -4,8 +4,8 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "agent-ledger"
-version = "0.1.0"
-source = { git = "https://github.com/compforge/agent-ledger?subdirectory=python&rev=92c3ba83e5813151edbfafa10d3d24bec01a151f#92c3ba83e5813151edbfafa10d3d24bec01a151f" }
+version = "0.2.0"
+source = { git = "https://github.com/compforge/agent-ledger?subdirectory=python&rev=34cb6d2b20019145763238c746cbe76505295e77#34cb6d2b20019145763238c746cbe76505295e77" }
 dependencies = [
     { name = "pydantic" },
     { name = "rfc8785" },
@@ -64,7 +64,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=27c27fcecc0ef282dd5a4fd788afac2ab24bf081" },
+    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=10000a9f55638288c1ee356f47dad85dc54963bf" },
     { name = "spec-case", extras = ["model"], git = "https://github.com/compforge/spec-case?subdirectory=toolchains%2Fpython" },
 ]
 
@@ -104,12 +104,12 @@ wheels = [
 [[package]]
 name = "harness-common"
 version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=27c27fcecc0ef282dd5a4fd788afac2ab24bf081#27c27fcecc0ef282dd5a4fd788afac2ab24bf081" }
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
 
 [[package]]
 name = "harness-toolbox"
 version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=27c27fcecc0ef282dd5a4fd788afac2ab24bf081#27c27fcecc0ef282dd5a4fd788afac2ab24bf081" }
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
 dependencies = [
     { name = "harness-common" },
 ]
@@ -425,8 +425,8 @@ wheels = [
 
 [[package]]
 name = "quality-harness"
-version = "0.5.1"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=27c27fcecc0ef282dd5a4fd788afac2ab24bf081#27c27fcecc0ef282dd5a4fd788afac2ab24bf081" }
+version = "0.5.3"
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
 dependencies = [
     { name = "agent-ledger" },
     { name = "atif" },

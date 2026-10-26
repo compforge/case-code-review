@@ -278,7 +278,7 @@ class ATIFTrajectoryLoader:
             "format": "atif",
         }
         agent = root_meta.get("agent") or {}
-        return make_atif_trajectory(
+        trajectory = make_atif_trajectory(
             agent=Agent(
                 name=str(agent.get("name") or "case-code-review"),
                 version=str(agent.get("version") or "unknown"),
@@ -292,6 +292,24 @@ class ATIFTrajectoryLoader:
             generation=_generation_provenance(root_meta, steps),
             metadata=metadata,
         )
+        # +spec=Session identity comes from native call references, never Review or scope IDs
+        # +link=repo://eval/trajectory/README.md
+        session_ids = _native_session_ids(chain)
+        return trajectory.model_copy(update={
+            "session_id": session_ids[0] if len(session_ids) == 1 else None,
+        })
+
+
+def _native_session_ids(chain: dict[str, Any]) -> list[str]:
+    """Keep ambiguous or missing execution ownership out of Session observations."""
+    refs = []
+    for step in chain.get("steps") or []:
+        refs.append((step.get("extra") or {}).get("session_ref") or {})
+        refs.extend(
+            (result.get("extra") or {}).get("session_ref") or {}
+            for result in (step.get("observation") or {}).get("results") or []
+        )
+    return sorted({str(ref["session_id"]) for ref in refs if ref.get("session_id")})
 
 
 def _failure_from_value(value: Any) -> Failure | None:
