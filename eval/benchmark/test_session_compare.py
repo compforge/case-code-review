@@ -13,11 +13,11 @@ def artifact(kind, **data):
 
 
 def execution(outcome):
-    return {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{
+    return {"type": "operation", "review_id": "run", "operation": {
         "id": "exec", "name": "execution",
         "started_at": "2026-10-01T00:00:00Z", "finished_at": "2026-10-01T00:00:01Z",
         "attributes": {"outcome": outcome},
-    }]}}
+    }}
 
 
 def target(id="f", path="a.go", start=10, end=12, side="after", old_path=""):
@@ -76,7 +76,7 @@ class SessionComparisonTest(unittest.TestCase):
     def session(self, events=(), digest="same", closed=True, legacy=False, tail=""):
         self.count += 1
         path = Path(self.temp.name) / f"{self.count}.jsonl"
-        records = [{"type": "session_start", "schema_version": 13, "model": "test"}]
+        records = [{"type": "session_start", "schema_version": 14, "model": "test"}]
         if not legacy:
             records.append(artifact("review_input", version=1, repository="repo", change_digest=digest))
         records.extend(events)
@@ -204,11 +204,11 @@ class SessionComparisonTest(unittest.TestCase):
         self.assertIsNone(result["costs"]["duration_s"]["delta"])
 
     def test_costs_include_lane_and_unclosed_calls_without_debrief(self):
-        response = {"type": "llm_response", "uuid": "r", "stage_id": "r1", "scope_id": "l",
+        response = {"type": "llm_response", "uuid": "r", "operation_id": "r1", "scope_id": "l",
                     "usage": {"prompt_tokens": 20, "completion_tokens": 5, "cache_write_tokens": 2}}
-        session = self.session([*unit(), {"type": "llm_request", "stage_id": "r1"}, response, response,
-                                {"type": "llm_request", "stage_id": "unfinished"},
-                                {"type": "llm_error", "stage_id": "failed"}], closed=False)
+        session = self.session([*unit(), {"type": "llm_request", "operation_id": "r1"}, response, response,
+                                {"type": "llm_request", "operation_id": "unfinished"},
+                                {"type": "llm_error", "operation_id": "failed"}], closed=False)
         summary = session.summary()
         self.assertEqual(summary["units"], 1)
         self.assertEqual(summary["prompt_tokens"], 20)

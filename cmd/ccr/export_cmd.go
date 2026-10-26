@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 const atifSchemaVersion = "ATIF-v1.8"
@@ -89,10 +89,10 @@ type atifFinal struct {
 type exportEvent struct {
 	CallID                 string           `json:"call_id"`
 	SessionRef             map[string]any   `json:"session_ref"`
-	StageID                string           `json:"stage_id"`
+	OperationID            string           `json:"operation_id"`
 	RequestID              string           `json:"request_id"`
 	ToolCallID             string           `json:"tool_call_id"`
-	TimelineID             string           `json:"timeline_id"`
+	ReviewID               string           `json:"review_id"`
 	Type                   string           `json:"type"`
 	Timestamp              string           `json:"timestamp"`
 	SessionID              string           `json:"sessionId"`
@@ -256,7 +256,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 	if err != nil {
 		return nil, err
 	}
-	stages := transcript.StageIndex()
+	stages := transcript.OperationIndex()
 	for _, record := range transcript.Records {
 		raw, err := json.Marshal(record)
 		if err != nil {
@@ -266,7 +266,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return nil, err
 		}
-		if stage, ok := stages[timeline.StageID(e.StageID)]; ok {
+		if stage, ok := stages[operation.ID(e.OperationID)]; ok {
 			e.Timestamp = stage.StartedAt.Format(time.RFC3339Nano)
 			if !stage.FinishedAt.IsZero() {
 				e.DurationMS = float64(stage.Duration(time.Time{}).Milliseconds())
@@ -302,7 +302,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 		case "artifact":
 			reviewArtifacts = append(reviewArtifacts, map[string]any{
 				"kind": e.ArtifactKind,
-				"data": e.Data, "stage_id": e.StageID,
+				"data": e.Data, "operation_id": e.OperationID,
 			})
 		case "context_projected":
 			c := get(e)
@@ -343,10 +343,10 @@ func exportSession(path string) (*atifTrajectory, error) {
 					CachedTokens:     e.Usage.CacheReadTokens,
 					Extra:            map[string]any{"duration_ms": e.DurationMS},
 				},
-				Extra: map[string]any{"task_type": e.TaskType, "stage_id": e.StageID, "session_ref": e.SessionRef},
+				Extra: map[string]any{"task_type": e.TaskType, "operation_id": e.OperationID, "session_ref": e.SessionRef},
 			}
 
-			if stage, ok := stages[timeline.StageID(e.StageID)]; !ok || stage.FinishedAt.IsZero() {
+			if stage, ok := stages[operation.ID(e.OperationID)]; !ok || stage.FinishedAt.IsZero() {
 				delete(st.Metrics.Extra, "duration_ms")
 			}
 			var toolCalls []map[string]any
@@ -363,7 +363,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 			c.steps = append(c.steps, st)
 			id := e.CallID
 			if id == "" {
-				id = e.StageID
+				id = e.OperationID
 			}
 			c.requests[id] = st
 		case "tool_result":
@@ -383,7 +383,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 				res.Extra[key] = value
 			}
 			res.SourceCallID = e.ToolCallID
-			res.Extra["stage_id"] = e.StageID
+			res.Extra["operation_id"] = e.OperationID
 			res.Extra["session_ref"] = e.SessionRef
 			if owner.Observation == nil {
 				owner.Observation = &atifObs{}
@@ -393,8 +393,8 @@ func exportSession(path string) (*atifTrajectory, error) {
 		case "llm_error":
 			c := get(e)
 			c.stepID++
-			extra := map[string]any{"llm_error": e.Error, "stage_id": e.StageID, "session_ref": e.SessionRef}
-			if stage, ok := stages[timeline.StageID(e.StageID)]; ok && !stage.FinishedAt.IsZero() {
+			extra := map[string]any{"llm_error": e.Error, "operation_id": e.OperationID, "session_ref": e.SessionRef}
+			if stage, ok := stages[operation.ID(e.OperationID)]; ok && !stage.FinishedAt.IsZero() {
 				extra["duration_ms"] = e.DurationMS
 			}
 			if len(e.Failure) > 0 {
@@ -412,8 +412,8 @@ func exportSession(path string) (*atifTrajectory, error) {
 	if root.Extra == nil {
 		root.Extra = map[string]any{}
 	}
-	if transcript.Timeline.ID != "" {
-		root.Extra["timeline"] = transcript.Timeline
+	if transcript.Journal.ID != "" {
+		root.Extra["operations"] = transcript.Journal
 	}
 	root.Extra["cost"] = transcript.Costs()
 	if gaps := transcript.IncompleteReasons(); len(gaps) > 0 {

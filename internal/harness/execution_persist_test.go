@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -73,7 +73,7 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 	if len(facts) != 1 || facts[0]["outcome"] != string(OutcomeCompleted) {
 		t.Fatalf("execution facts: %+v", facts)
 	}
-	stages := transcript.StageIndex()
+	stages := transcript.OperationIndex()
 	seen := map[string]int{}
 	keptToolInvocations := false
 	for _, record := range transcript.Records {
@@ -87,8 +87,8 @@ func TestExecutionPersistsOneLifecycleAcrossModelAndToolRecords(t *testing.T) {
 		if record["execution_id"] != result.ID {
 			t.Fatal("lost execution identity", record)
 		}
-		id, _ := record["stage_id"].(string)
-		if _, ok := stages[timeline.StageID(id)]; !ok {
+		id, _ := record["operation_id"].(string)
+		if _, ok := stages[operation.ID(id)]; !ok {
 			t.Fatal("missing associated stage", record)
 		}
 		if _, ok := record["duration_ms"]; ok {

@@ -153,7 +153,7 @@ func collectSessions(root string) ([]retainedSession, error) {
 			path := filepath.Join(dir, file.Name())
 			entry := retainedSession{path: path, modified: info.ModTime(), size: info.Size()}
 			base := strings.TrimSuffix(path, ".jsonl")
-			children := []string{base + ".log", base + ".timeline"}
+			children := []string{base + ".log"}
 			loopDir := base + ".sessions"
 			loopInfo, e := os.Lstat(loopDir)
 			if e != nil && !errors.Is(e, os.ErrNotExist) {

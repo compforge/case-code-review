@@ -103,7 +103,7 @@
             const target = callContainer;
             target.textContent = 'Loading call details…';
             try {
-                const call = await loadCall(selected.stage_id, controller.signal);
+                const call = await loadCall(selected.operation_id, controller.signal);
                 if (controller.signal.aborted) return;
                 target.replaceChildren();
                 renderCall(target, call);
@@ -135,7 +135,7 @@
             if (item.error) detail.append(element('p', item.error, 'timeline-notice error'));
             const open = element('button', 'Open Default view', 'agent-default-link');
             open.type = 'button';
-            open.dataset.timelineStage = item.stage_id;
+            open.dataset.timelineStage = item.operation_id;
             detail.append(open);
             if (item.kind === 'model' || item.kind === 'tool') {
                 callContainer = element('div', undefined, 'stage-call');

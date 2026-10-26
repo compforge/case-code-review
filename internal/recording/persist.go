@@ -11,8 +11,8 @@ import (
 
 	"github.com/gofrs/flock"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // sessionSubDir is the subdirectory under ~/.casecodereview that holds session
@@ -21,9 +21,9 @@ import (
 var sessionSubDir = "sessions"
 
 // SchemaVersion stamps every session_start so readers consume one explicit
-// protocol instead of guessing old record semantics. v13 separates Review
-// metadata, incremental timeline updates and native AgentGo Sessions.
-const SchemaVersion = 13
+// protocol instead of guessing old record semantics. v14 combines Review
+// metadata and operation updates; native AgentGo Sessions own call bodies.
+const SchemaVersion = 14
 
 // evalTagEnv lets a run tag its transcript with the population it belongs to
 // (fixed regression corpus vs rolling production) — the two aren't comparable,
@@ -289,7 +289,7 @@ func (jw *jsonlWriter) WriteDebrief(ss *ReviewScope, d Debrief) string {
 		}
 	}
 	addScopeFields(rec, ss)
-	addStageFields(rec, jw.sessionID, timeline.StageID("operation:"+jw.sessionID))
+	addStageFields(rec, jw.sessionID, operation.ID("operation:"+jw.sessionID))
 	return jw.writeRecordLocked(rec)
 }
 
@@ -308,12 +308,12 @@ func (jw *jsonlWriter) WriteBoardPost(from string, turn, level int, paths, symbo
 		"symbols": symbols,
 		"text":    text,
 	}
-	addStageFields(rec, jw.sessionID, timeline.StageID("operation:"+jw.sessionID))
+	addStageFields(rec, jw.sessionID, operation.ID("operation:"+jw.sessionID))
 	jw.writeRecordLocked(rec)
 }
 
 // WriteFinding writes one delivered finding as a "finding" record (see Finding).
-func (jw *jsonlWriter) WriteFinding(f Finding, stageID timeline.StageID) string {
+func (jw *jsonlWriter) WriteFinding(f Finding, stageID operation.ID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
@@ -362,15 +362,15 @@ func (jw *jsonlWriter) WriteFinding(f Finding, stageID timeline.StageID) string 
 // WriteArtifact stores an opaque domain artifact under a stable envelope. The
 // payload schema belongs to the caller; session persistence only supplies run
 // identity, ordering, and timestamps.
-func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any, stageID timeline.StageID) string {
+func (jw *jsonlWriter) WriteArtifact(kind string, data map[string]any, stageID operation.ID) string {
 
 	jw.mu.Lock()
 	defer jw.mu.Unlock()
 	rec := map[string]any{
 		"type":          "artifact",
 		"artifact_kind": kind,
-		"stage_id":      stageID,
-		"timeline_id":   jw.sessionID,
+		"operation_id":  stageID,
+		"review_id":     jw.sessionID,
 		"data":          data,
 	}
 	return jw.writeRecordLocked(rec)

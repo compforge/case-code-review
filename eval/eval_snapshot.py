@@ -55,11 +55,8 @@ def artifacts_match(
 
 
 def review_sha256(path: Path) -> str:
-    """Freeze all review evidence, including native loop bodies and timeline."""
+    """Freeze all review evidence, including native Session bodies and business operations."""
     files = [("manifest", path)]
-    timeline = path.with_suffix(".timeline")
-    if timeline.is_file():
-        files.append(("timeline", timeline))
     files.extend((f"sessions/{local.name}", local)
                  for local in sorted(path.with_suffix(".sessions").glob("*.jsonl")))
     return canonical_sha256([{ "name": name, "sha256": file_sha256(file)}

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{.Unit}} — CCR Job</title><link rel="stylesheet" href="/static/style.css"></head>
+<body><main class="container">
+<nav class="breadcrumb"><a href="/r/{{.Repo}}/{{.Review}}">Review {{.Review}}</a> &rsaquo; Unit Job</nav>
+<h1>{{.Job.Name}}</h1><p><strong>{{.Job.Status}}</strong> · {{.Job.StartedAt}} → {{.Job.FinishedAt}}</p>
+<p>One Unit across discovery, hypothesis review and Trial. Session call identities remain unchanged; shared calls do not imply exclusive cost ownership.</p>
+<a href="?unit={{.Unit}}&amp;format=json">JobView JSON</a>
+{{range .Job.Issues}}<p class="timeline-notice">{{.}}</p>{{end}}
+<details><summary>Goal</summary><pre>{{prettyJSON .Job.Goal}}</pre></details>
+<details><summary>Business result and evidence</summary><pre>{{prettyJSON .Job.Result}}</pre></details>
+<section><h2>Operations and calls</h2>{{range .Job.Nodes}}{{template "job-node" .}}{{end}}</section>
+</main></body></html>
+{{define "job-node"}}<details open class="job-node"><summary><strong>{{.Kind}} · {{.Base.Name}}</strong> <code>{{.Base.Status}}</code></summary><small>{{.Base.StartedAt}} → {{.Base.FinishedAt}}{{with .Base.Session}} · Session {{.Source}}/{{.ID}}{{end}}</small><details><summary>Recorded details</summary><pre class="job-details">{{nodeDetails .}}</pre></details>{{range nodeChildren .}}{{template "job-node" .}}{{end}}</details>{{end}}

@@ -27,7 +27,7 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             session_path.write_text(
                 json.dumps(
                     {
-                        "type": "session_start", "schema_version": 13,
+                        "type": "session_start", "schema_version": 14,
                         "sessionId": "session-1",
                         "timestamp": "2026-08-20T10:00:00Z",
                         "cwd": str(root / "repo"),

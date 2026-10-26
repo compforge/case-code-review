@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
-	"github.com/qiankunli/case-code-review/internal/telemetry"
+
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -36,17 +36,17 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 	history.Finalize()
 	snapshot := readFinishedTimeline(t, history)
 	names := map[string]bool{}
-	for _, stage := range snapshot.Stages {
+	for _, stage := range snapshot.Operations {
 		names[stage.Name] = true
-		if stage.Status == timeline.Running {
+		if stage.Status == operation.Running {
 			t.Errorf("stage not finished: %+v", stage)
 		}
 	}
-	stages := map[timeline.StageID]string{}
-	for _, stage := range snapshot.Stages {
+	stages := map[operation.ID]string{}
+	for _, stage := range snapshot.Operations {
 		stages[stage.ID] = stage.Name
 	}
-	for _, stage := range snapshot.Stages {
+	for _, stage := range snapshot.Operations {
 		if stage.Name == "unit.grouping" && stages[stage.ParentID] != "unit.formation" {
 			t.Fatalf("grouping has wrong parent: %+v", stage)
 		}
@@ -68,9 +68,9 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 	foundStep, foundReport := false, false
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
 		var record struct {
-			Kind    string                     `json:"artifact_kind"`
-			StageID timeline.StageID           `json:"stage_id"`
-			Data    map[string]json.RawMessage `json:"data"`
+			Kind        string                     `json:"artifact_kind"`
+			OperationID operation.ID               `json:"operation_id"`
+			Data        map[string]json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(line, &record); err != nil {
 			t.Fatal(err)
@@ -85,8 +85,8 @@ func TestPipelineTimelineCoversFormationReviewAndTrial(t *testing.T) {
 			if err := json.Unmarshal(record.Data["step"], &step); err != nil {
 				t.Fatal(err)
 			}
-			if (step.Strategy != "local" && step.Strategy != "relations" && step.Strategy != "file") || step.Input != 1 || step.Output != 1 || stages[record.StageID] != "unit.grouping" {
-				t.Fatalf("step=%+v stage=%s", step, record.StageID)
+			if (step.Strategy != "local" && step.Strategy != "relations" && step.Strategy != "file") || step.Input != 1 || step.Output != 1 || stages[record.OperationID] != "unit.grouping" {
+				t.Fatalf("step=%+v stage=%s", step, record.OperationID)
 			}
 			foundStep = foundStep || step.Strategy == "local"
 		case "unit_formation":
@@ -116,21 +116,21 @@ func TestRunFinalizesTimelineOnDiffFailure(t *testing.T) {
 		t.Fatal("expected diff load failure")
 	}
 	snapshot := readFinishedTimeline(t, a.session)
-	if snapshot.Status != timeline.Failed || snapshot.FinishedAt.IsZero() {
+	if snapshot.Status != operation.Failed || snapshot.FinishedAt.IsZero() {
 		t.Fatalf("run=%+v", snapshot)
 	}
-	if len(snapshot.Stages) != 2 || snapshot.Stages[0].Name != "diff.load" || snapshot.Stages[0].Status != timeline.Failed || snapshot.Stages[1].Name != "diff.capture" || snapshot.Stages[1].Status != timeline.Failed || snapshot.Stages[1].ParentID != snapshot.Stages[0].ID {
-		t.Fatalf("stages=%+v", snapshot.Stages)
+	if len(snapshot.Operations) != 1 || snapshot.Operations[0].Name != "diff.load" || snapshot.Operations[0].Status != operation.Failed {
+		t.Fatalf("stages=%+v", snapshot.Operations)
 	}
 }
 
 func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	id := t.Name()
-	defer telemetry.ReleaseTimeline(id)
-	if err := timeline.Start(id, "review"); err != nil {
+	defer operation.Release(id)
+	if err := operation.Start(id, "review"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}))
+	ctx, cancel := context.WithCancel(operation.NewContext(context.Background(), operation.Ref{ReviewID: id}))
 	defer cancel()
 	units := []unit.Unit{testReviewUnit("u1", "a.go", "a.go::A"), testReviewUnit("u2", "b.go", "b.go::B")}
 	started := make(chan struct{}, 2)
@@ -167,13 +167,13 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	if len(started) != 0 {
 		t.Fatal("waiting review started after cancellation")
 	}
-	snapshot, err := timeline.Read(context.Background(), id, false)
+	snapshot, err := operation.Read(id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	queues, reviews := 0, 0
-	for _, stage := range snapshot.Stages {
-		if stage.Status == timeline.Running {
+	for _, stage := range snapshot.Operations {
+		if stage.Status == operation.Running {
 			t.Fatalf("pending stage after cancellation: %+v", stage)
 		}
 		if stage.Name == "lane.queue" {
@@ -181,7 +181,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 		}
 		if stage.Name == "review.hypothesis" {
 			reviews++
-			if stage.Status != timeline.Canceled {
+			if stage.Status != operation.Canceled {
 				t.Errorf("review status=%s", stage.Status)
 			}
 		}
@@ -191,7 +191,7 @@ func TestLaneTimelineCancelsWaitingWorkWithoutReview(t *testing.T) {
 	}
 }
 
-func readFinishedTimeline(t *testing.T, history *recording.Review) timeline.Snapshot {
+func readFinishedTimeline(t *testing.T, history *recording.Review) operation.Snapshot {
 	t.Helper()
 	path, err := history.TranscriptPath()
 	if err != nil {
@@ -206,7 +206,7 @@ func readFinishedTimeline(t *testing.T, history *recording.Review) timeline.Snap
 	if err != nil {
 		t.Fatal(err)
 	}
-	return transcript.Timeline
+	return transcript.Journal
 }
 
 func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {
@@ -235,9 +235,9 @@ func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {
 	}
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
 		var record struct {
-			Kind    string `json:"artifact_kind"`
-			StageID string `json:"stage_id"`
-			Data    struct {
+			Kind        string `json:"artifact_kind"`
+			OperationID string `json:"operation_id"`
+			Data        struct {
 				Step formation.GroupingStep `json:"step"`
 			} `json:"data"`
 		}
@@ -248,8 +248,8 @@ func TestGroupingUsesConfiguredCeilingAndPersistsStage(t *testing.T) {
 			continue
 		}
 		step := record.Data.Step
-		if record.StageID == "" || step.OutputUnits != 2 || a.grouping.MaxUnits != 1 || a.grouping.FinalUnits != 1 {
-			t.Fatalf("step=%+v stage=%s grouping=%+v", step, record.StageID, a.grouping)
+		if record.OperationID == "" || step.OutputUnits != 2 || a.grouping.MaxUnits != 1 || a.grouping.FinalUnits != 1 {
+			t.Fatalf("step=%+v stage=%s grouping=%+v", step, record.OperationID, a.grouping)
 		}
 		for _, grouped := range a.grouping.Steps {
 			if grouped.Strategy == "namespace" && grouped.OutputUnits == 1 && len(grouped.Merges) == 1 {

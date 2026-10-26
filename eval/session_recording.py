@@ -1,4 +1,4 @@
-"""Read the intact Session prefix and project native timeline execution facts."""
+"""Read the intact Session prefix and project CCR operation facts and native Session calls."""
 from __future__ import annotations
 
 import json
@@ -12,8 +12,7 @@ from pathlib import Path
 def _read_manifest(path: Path) -> tuple[list[dict], list[str]]:
     records: list[dict] = []
     gaps: list[str] = []
-    latest_snapshot = None
-    timeline_id = None
+    review_id = None
     with path.open("rb") as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
@@ -26,18 +25,14 @@ def _read_manifest(path: Path) -> tuple[list[dict], list[str]]:
                 kind = "truncated final record" if not line.endswith(b"\n") else "corrupt record"
                 gaps.append(f"line {number}: {kind}")
                 break
-            if record.get("type") == "timeline_snapshot":
-                snapshot = record.get("snapshot")
-                identity = record.get("timeline_id")
-                if not isinstance(snapshot, dict) or not identity or snapshot.get("id") != identity or timeline_id not in (None, identity):
-                    gaps.append(f"line {number}: inconsistent timeline ID")
+            if record.get("type") == "operation":
+                op = record.get("operation")
+                identity = record.get("review_id")
+                if not identity or review_id not in (None, identity) or not isinstance(op, dict) or not op.get("id"):
+                    gaps.append(f"line {number}: inconsistent review ID or invalid operation")
                     break
-                timeline_id = identity
-                latest_snapshot = record
-            else:
-                records.append(record)
-    if latest_snapshot is not None:
-        records.append(latest_snapshot)
+                review_id = identity
+            records.append(record)
     return records, gaps
 
 
@@ -57,33 +52,6 @@ def _jsonl(path: Path, gaps: list[str]) -> list[dict]:
                 gaps.append(f"{path.name}:{number}: corrupt record: {error}")
                 break
     return records
-
-
-def _timeline(path: Path, gaps: list[str]) -> dict | None:
-    if not path.exists():
-        return None
-    identity = None
-    operation = {}
-    stages = {}
-    for number, record in enumerate(_jsonl(path, gaps), 1):
-        if record.get("version") != 1 or record.get("seq") != number or not record.get("id") or identity not in (None, record["id"]):
-            gaps.append(f"{path.name}:{number}: invalid timeline envelope")
-            break
-        identity = record["id"]
-        update = record["update"]
-        if update.get("Operation"):
-            for key, value in update["Operation"].items():
-                if key in ("started_at", "finished_at") and (not value or value.startswith("0001-01-01")):
-                    continue
-                operation[key] = value
-        for stage in (update.get("Stages") or []) + (update.get("Completed") or []):
-            actor = json.dumps(stage.get("actor") or {}, sort_keys=True)
-            stages[(stage["id"], actor)] = stage
-    if not identity:
-        gaps.append(f"{path.name}: missing timeline")
-        return None
-    return {"type": "timeline_snapshot", "timeline_id": identity,
-            "snapshot": {**operation, "id": identity, "root_stage_id": f"operation:{identity}", "stages": list(stages.values())}}
 
 
 def _reference(ref: dict) -> tuple:
@@ -151,7 +119,7 @@ def _loop_records(path: Path, stages: dict, gaps: list[str]) -> list[dict]:
             visited.add(owner["id"])
             facts = {**owner.get("attributes", {}), **facts}
             owner = stages.get(owner.get("parent_id"))
-        facts.update(call_id="/".join(str(value or "") for value in _reference(ref)), session_ref=ref, session_file=path.name, stage_id=stage.get("id", ""), timestamp=record.get("timestamp"), uuid=f"{session_id}/{number}")
+        facts.update(call_id="/".join(str(value or "") for value in _reference(ref)), session_ref=ref, session_file=path.name, operation_id=stage.get("id", ""), timestamp=record.get("timestamp"), uuid=f"{session_id}/{number}")
         facts["taskType"] = facts.get("task_type")
         execution_id = facts.get("execution_id")
         kind = record["type"]
@@ -205,16 +173,13 @@ def _loop_records(path: Path, stages: dict, gaps: list[str]) -> list[dict]:
 def read_records(path: Path) -> tuple[list[dict], list[str]]:
     records, gaps = _read_manifest(path)
     start = next((r for r in records if r.get("type") == "session_start"), {})
-    if start.get("schema_version") != 13:
+    if start.get("schema_version") != 14:
         gaps.append(f"unsupported review schema: {start.get('schema_version')}")
         return [], gaps
-    snapshot = _timeline(path.with_suffix(".timeline"), gaps)
-    if snapshot:
-        records = [r for r in records if r.get("type") != "timeline_snapshot"] + [snapshot]
-    stages = timeline_stages(records)
+    stages = operation_index(records)
     loops = sorted(path.with_suffix(".sessions").glob("*.jsonl"))
-    if loops and not any(r.get("type") == "timeline_snapshot" for r in records):
-        gaps.append("missing review timeline")
+    if loops and not stages:
+        gaps.append("missing review operations")
     found = {loop.name for loop in loops}
     expected = {stage.get("attributes", {}).get("session_file") for stage in stages.values()}
     gaps.extend(f"missing local Session: {name}" for name in sorted(expected - found - {None, ""}))
@@ -228,25 +193,25 @@ def _finished(stage: dict) -> bool:
     return bool(end and not end.startswith("0001-01-01T00:00:00"))
 
 
-def timeline_stages(records: list[dict]) -> dict[str, dict]:
-    """Read the latest complete snapshot in the Session's append order."""
-    stages: dict[str, dict] = {}
-    timeline_id = None
+def operation_index(records: list[dict]) -> dict[str, dict]:
+    """Fold operation states in journal order; never infer parentage from order."""
+    operations: dict[str, dict] = {}
+    review_id = None
     for record in records:
-        if record.get("type") != "timeline_snapshot":
+        if record.get("type") != "operation":
             continue
-        snapshot = record["snapshot"]
-        identity = record["timeline_id"]
-        if not identity or snapshot["id"] != identity or timeline_id not in (None, identity):
-            raise ValueError("inconsistent timeline ID")
-        timeline_id = identity
-        stages = {stage["id"]: stage for stage in snapshot.get("stages", [])}
-    return stages
+        identity = record.get("review_id")
+        op = record.get("operation")
+        if not identity or review_id not in (None, identity) or not isinstance(op, dict) or not op.get("id"):
+            raise ValueError("inconsistent review ID or invalid operation")
+        review_id = identity
+        operations[op["id"]] = op
+    return operations
 
 
 def execution_facts(records: list[dict]) -> dict[str, dict]:
     """Outcome comes from completed execution stages, never generic success."""
-    stages = timeline_stages(records)
+    stages = operation_index(records)
     result = {}
     for identity, stage in stages.items():
         if stage.get("name") != "execution":
@@ -258,7 +223,7 @@ def execution_facts(records: list[dict]) -> dict[str, dict]:
             start = datetime.fromisoformat(stage["started_at"].replace("Z", "+00:00"))
             end = datetime.fromisoformat(stage["finished_at"].replace("Z", "+00:00"))
             facts["duration_ms"] = (stage.get("elapsed_ns") or (end - start).total_seconds() * 1e9) / 1e6
-        facts["stage_id"] = identity
+        facts["operation_id"] = identity
         result[identity] = facts
     return result
 
@@ -283,10 +248,10 @@ class Recording:
                 seen.add(identity)
             unique.append(record)
         for record in unique:
-            if record.get("type") == "session_start" and record.get("schema_version") != 13:
+            if record.get("type") == "session_start" and record.get("schema_version") != 14:
                 gaps.append(f"unsupported session schema: {record.get('schema_version')}")
         try:
-            timeline_stages(unique)
+            operation_index(unique)
         except (ValueError, TypeError, KeyError) as error:
             gaps.append(str(error))
         return cls(unique, gaps)
@@ -317,7 +282,7 @@ class Recording:
             kind = record.get("type")
             if kind not in ("llm_request", "llm_response", "llm_error"):
                 continue
-            identity = record.get("call_id") or record.get("stage_id") or record.get("uuid") or f"unassociated:{number}"
+            identity = record.get("call_id") or record.get("operation_id") or record.get("uuid") or f"unassociated:{number}"
             if identity not in calls or kind != "llm_request" or calls[identity]["type"] == "llm_request":
                 calls[identity] = record
         totals = Counter()

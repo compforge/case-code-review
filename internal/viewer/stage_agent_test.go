@@ -12,14 +12,14 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
-	"github.com/compforge/go-stdx/timeline/store"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
+
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 )
 
 // Stage boundaries are added to the shared Session fixture without inventing
 // events or changing its failed/successful attempt and cross-run identities.
-func stageAgentFixture(t *testing.T) (string, []timeline.Stage) {
+func stageAgentFixture(t *testing.T) (string, []operation.Record) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.CopyFS(root, os.DirFS("../../testdata/recording")); err != nil {
@@ -40,26 +40,26 @@ func stageAgentFixture(t *testing.T) (string, []timeline.Stage) {
 			stages[i].ParentID = "run-2/turn/1"
 		}
 	}
-	for i, execution := range []timeline.StageID{"execution-1", "execution-2"} {
-		turnID := []timeline.StageID{"run-1/turn/1", "run-2/turn/1"}[i]
-		stages = append(stages, timeline.Stage{ID: turnID, ParentID: execution, Name: "turn", StartedAt: at, FinishedAt: at.Add(10 * time.Second), Status: timeline.Succeeded, Attributes: map[string]json.RawMessage{"turn": json.RawMessage(`1`)}})
+	for i, execution := range []operation.ID{"execution-1", "execution-2"} {
+		turnID := []operation.ID{"run-1/turn/1", "run-2/turn/1"}[i]
+		stages = append(stages, operation.Record{ID: turnID, ParentID: execution, Name: "turn", StartedAt: at, FinishedAt: at.Add(10 * time.Second), Status: operation.Succeeded, Attributes: map[string]json.RawMessage{"turn": json.RawMessage(`1`)}})
 	}
 	writeStageAgentFixture(t, path, stages)
 	return path, stages
 }
 
-func writeStageAgentFixture(t *testing.T, path string, stages []timeline.Stage) {
+func writeStageAgentFixture(t *testing.T, path string, stages []operation.Record) {
 	t.Helper()
-	updates := make([]store.StageUpdate, len(stages))
-	for i, stage := range stages {
-		updates[i] = store.StageUpdate{Stage: stage, Revision: 2}
-	}
-	data, err := json.Marshal(map[string]any{"version": 1, "id": "review", "seq": 1, "at": stages[0].StartedAt.Add(10 * time.Second), "update": map[string]any{"Operation": map[string]any{"revision": 2, "operation": "review", "started_at": stages[0].StartedAt, "finished_at": stages[0].StartedAt.Add(10 * time.Second), "status": "succeeded"}, "Stages": updates}})
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".timeline", append(data, '\n'), 0600); err != nil {
-		t.Fatal(err)
+	defer file.Close()
+	encoder := json.NewEncoder(file)
+	for _, op := range stages {
+		if err := encoder.Encode(map[string]any{"type": "operation", "review_id": "review", "operation": op}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -98,9 +98,9 @@ func TestStageAgentProjection(t *testing.T) {
 	if turn := view.Turns[0]; turn.OffsetMS != 0 || turn.DurationMS == nil || *turn.DurationMS != 10000 {
 		t.Fatalf("wrong turn timing: %+v", turn)
 	}
-	calls := map[timeline.StageID]*agentItemView{}
+	calls := map[operation.ID]*agentItemView{}
 	for _, item := range view.Turns[0].Items {
-		calls[item.StageID] = item
+		calls[item.OperationID] = item
 	}
 	failed, success := calls["run-1/model/model-1/1"], calls["run-1/model/model-1/2"]
 	if failed == nil || failed.Usage != nil || failed.Error != "temporary provider failure" || success == nil || success.Usage == nil || success.Usage.Input != 100 || success.Attempt != 2 {
@@ -120,10 +120,10 @@ func TestStageAgentProjection(t *testing.T) {
 	}
 	var parentIndex, childIndex int
 	for i, item := range view.Turns[0].Items {
-		if item.StageID == success.StageID {
+		if item.OperationID == success.OperationID {
 			parentIndex = i
 		}
-		if item.StageID == tool.ID {
+		if item.OperationID == tool.ID {
 			childIndex = i
 		}
 	}
@@ -137,7 +137,7 @@ func TestStageAgentProjection(t *testing.T) {
 
 func TestStageAgentRepeatedTurnIndexAndMissingUsage(t *testing.T) {
 	path, stages := stageAgentFixture(t)
-	var turn, model timeline.Stage
+	var turn, model operation.Record
 	for _, stage := range stages {
 		if stage.ID == "run-2/turn/1" {
 			turn = stage
@@ -163,13 +163,13 @@ func TestStageAgentRepeatedTurnIndexAndMissingUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(view.Turns) != 2 || view.Turns[0].StageID == view.Turns[1].StageID {
+	if len(view.Turns) != 2 || view.Turns[0].OperationID == view.Turns[1].OperationID {
 		t.Fatalf("turns merged: %+v", view.Turns)
 	}
 	var missing *agentItemView
 	for _, turn := range view.Turns {
 		for _, item := range turn.Items {
-			if item.StageID == model.ID {
+			if item.OperationID == model.ID {
 				missing = item
 			}
 		}
@@ -219,7 +219,7 @@ func TestStageAgentEndpointAndAvailableViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	var html bytes.Buffer
-	if err := tmpl.Execute(&html, sessionPageData{Session: &ViewSession{Timeline: &timeline.Snapshot{Stages: stages}}}); err != nil {
+	if err := tmpl.Execute(&html, sessionPageData{Session: &ViewSession{Journal: &operation.Snapshot{Operations: stages}}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, stage := range stages {
@@ -283,7 +283,7 @@ func TestStageAgentSessionFailuresPreserveTree(t *testing.T) {
 				t.Fatalf("diagnostics must identify the Session without exposing local paths: %v", view.Warnings)
 			}
 			for _, item := range view.Turns[0].Items {
-				if item.StageID == "run-1/model/model-1/2" {
+				if item.OperationID == "run-1/model/model-1/2" {
 					if (item.Usage != nil) != tc.wantUsage || (item.Usage != nil && item.Usage.Input != 100) {
 						t.Fatalf("wrong retained usage: %+v", item)
 					}
@@ -307,18 +307,18 @@ func TestStageAgentSourceErrorDoesNotExposePath(t *testing.T) {
 
 // A large review can contain many stages unrelated to the selected loop.
 func BenchmarkAgentHierarchyManyTurns(b *testing.B) {
-	source := &stageSource{byID: map[timeline.StageID]timeline.Stage{}}
+	source := &stageSource{byID: map[operation.ID]operation.Record{}}
 	for i := 0; i < 20000; i++ {
-		stage := timeline.Stage{ID: timeline.StageID(fmt.Sprintf("stage-%d", i))}
+		stage := operation.Record{ID: operation.ID(fmt.Sprintf("stage-%d", i))}
 		source.rows = append(source.rows, stage)
 		source.byID[stage.ID] = stage
 	}
-	stageOrder := map[timeline.StageID]int{}
+	stageOrder := map[operation.ID]int{}
 	turns := make([][]*agentItemView, 100)
 	for i := range turns {
 		stageOrder[source.rows[i*2].ID] = i * 2
 		stageOrder[source.rows[i*2+1].ID] = i*2 + 1
-		turns[i] = []*agentItemView{{StageID: source.rows[i*2].ID}, {StageID: source.rows[i*2+1].ID}}
+		turns[i] = []*agentItemView{{OperationID: source.rows[i*2].ID}, {OperationID: source.rows[i*2+1].ID}}
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -386,7 +386,7 @@ func TestFailedModelPartialEvidenceInCallAndAgentViews(t *testing.T) {
 	found := false
 	for _, turn := range view.Turns {
 		for _, item := range turn.Items {
-			if item.StageID == "run-1/model/model-1/1" {
+			if item.OperationID == "run-1/model/model-1/1" {
 				found = true
 				if item.Error == "" || item.Usage == nil || item.Usage.Output != 9 {
 					t.Fatalf("item=%+v", item)

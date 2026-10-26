@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/compforge/go-stdx/uuid"
 	"github.com/qiankunli/case-code-review/internal/console"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // appendLocked owns the envelope and visibility boundary for every record,
-// including timeline snapshots. Sequence is storage order, not causality.
+// including operation updates. Sequence is storage order, not causality.
 func (jw *jsonlWriter) appendLocked(rec map[string]any) (string, error) {
 	if jw.closed {
 		return "", fmt.Errorf("session %s is closed", jw.sessionID)
@@ -45,8 +45,15 @@ func (jw *jsonlWriter) writeRecordLocked(rec map[string]any) string {
 	return id
 }
 
-func addStageFields(rec map[string]any, timelineID string, stageID timeline.StageID) {
+func addStageFields(rec map[string]any, reviewID string, stageID operation.ID) {
 	if stageID != "" {
-		rec["timeline_id"], rec["stage_id"] = timelineID, stageID
+		rec["review_id"], rec["operation_id"] = reviewID, stageID
 	}
+}
+
+func (jw *jsonlWriter) writeOperation(r operation.Record) error {
+	jw.mu.Lock()
+	defer jw.mu.Unlock()
+	_, err := jw.appendLocked(map[string]any{"type": "operation", "review_id": jw.sessionID, "operation": r})
+	return err
 }

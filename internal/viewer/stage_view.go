@@ -3,14 +3,13 @@ package viewer
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/timelinelog"
+	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // Stage views are Viewer projections. Recording producers never select UI tabs.
@@ -28,35 +27,30 @@ func (row timelineRow) Views() []stageView {
 }
 
 type stageSource struct {
-	rows []timeline.Stage
-	byID map[timeline.StageID]timeline.Stage
+	rows []operation.Record
+	byID map[operation.ID]operation.Record
 }
 
 func readStageSource(path string) (*stageSource, error) {
 	if _, err := readSessionStart(path); err != nil {
 		return nil, err
 	}
-	file, err := os.Open(strings.TrimSuffix(path, ".jsonl") + ".timeline")
+	transcript, err := recording.ReadJournal(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	doc, at, _, err := timelinelog.Read(file)
-	if err != nil {
-		return nil, err
-	}
-	source := &stageSource{rows: doc.Snapshot(at).Stages, byID: map[timeline.StageID]timeline.Stage{}}
+	source := &stageSource{rows: transcript.Journal.Operations, byID: transcript.OperationIndex()}
 	for _, stage := range source.rows {
 		source.byID[stage.ID] = stage
 	}
 	return source, nil
 }
 
-func (s *stageSource) sessionFile(stage timeline.Stage) (string, error) {
-	seen := map[timeline.StageID]bool{}
+func (s *stageSource) sessionFile(stage operation.Record) (string, error) {
+	seen := map[operation.ID]bool{}
 	for parent := stage; parent.ID != "" && !seen[parent.ID]; parent = s.byID[parent.ParentID] {
 		seen[parent.ID] = true
-		name, _ := timeline.AttributeValue[string](parent.Attributes, "session_file")
+		name, _ := operation.AttributeValue[string](parent.Attributes, "session_file")
 		if name == "" {
 			continue
 		}

@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 // Transcript keeps append-only content and the native stage projection together.
@@ -17,7 +17,7 @@ import (
 // adjacent JSONL entries. Runtime handles never cross the recording boundary.
 type Transcript struct {
 	Records       []map[string]any
-	Timeline      timeline.Snapshot
+	Journal       operation.Snapshot
 	TruncatedTail bool
 	Gaps          []string
 }
@@ -28,6 +28,7 @@ type Transcript struct {
 func ReadTranscript(r io.Reader) (*Transcript, error) {
 	t := &Transcript{}
 	reader := bufio.NewReader(r)
+	reviewID := ""
 	for lineNo := 1; ; lineNo++ {
 		line, err := reader.ReadBytes('\n')
 		if err != nil && err != io.EOF {
@@ -49,17 +50,20 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 			if record["type"] == "session_start" && record["schema_version"] != float64(SchemaVersion) {
 				return nil, fmt.Errorf("unsupported session schema %v; requires %d", record["schema_version"], SchemaVersion)
 			}
-			if record["type"] == "timeline_snapshot" {
-				raw, _ := json.Marshal(record["snapshot"])
-				var snapshot timeline.Snapshot
-				if e := json.Unmarshal(raw, &snapshot); e != nil {
-					return nil, fmt.Errorf("session line %d: %w", lineNo, e)
+			if record["type"] == "session_start" {
+				reviewID, _ = record["sessionId"].(string)
+			}
+			if record["type"] == "operation" {
+				raw, _ := json.Marshal(record["operation"])
+				var op operation.Record
+				if e := json.Unmarshal(raw, &op); e != nil || op.ID == "" {
+					return nil, fmt.Errorf("review line %d: invalid operation", lineNo)
 				}
-				id, _ := record["timeline_id"].(string)
-				if id == "" || snapshot.ID != id || (t.Timeline.ID != "" && t.Timeline.ID != id) {
-					return nil, fmt.Errorf("session line %d: inconsistent timeline ID", lineNo)
+				id, _ := record["review_id"].(string)
+				if id == "" || (reviewID != "" && reviewID != id) || (t.Journal.ID != "" && t.Journal.ID != id) {
+					return nil, fmt.Errorf("review line %d: inconsistent review ID", lineNo)
 				}
-				t.Timeline = snapshot
+				t.Journal.Apply(id, op)
 			} else {
 				t.Records = append(t.Records, record)
 			}
@@ -71,10 +75,10 @@ func ReadTranscript(r io.Reader) (*Transcript, error) {
 	return t, nil
 }
 
-// StageIndex is a read-only association index for content records and stages.
-func (t *Transcript) StageIndex() map[timeline.StageID]timeline.Stage {
-	stages := make(map[timeline.StageID]timeline.Stage, len(t.Timeline.Stages))
-	for _, stage := range t.Timeline.Stages {
+// OperationIndex is a read-only association index for content records and stages.
+func (t *Transcript) OperationIndex() map[operation.ID]operation.Record {
+	stages := make(map[operation.ID]operation.Record, len(t.Journal.Operations))
+	for _, stage := range t.Journal.Operations {
 		stages[stage.ID] = stage
 	}
 	return stages
@@ -84,7 +88,7 @@ func (t *Transcript) StageIndex() map[timeline.StageID]timeline.Stage {
 // it is never guessed from generic stage success or child completion.
 func (t *Transcript) ExecutionFacts() []map[string]any {
 	var records []map[string]any
-	for _, stage := range t.Timeline.Stages {
+	for _, stage := range t.Journal.Operations {
 		if stage.Name != "execution" {
 			continue
 		}
@@ -96,7 +100,7 @@ func (t *Transcript) ExecutionFacts() []map[string]any {
 			}
 			record[key] = value
 		}
-		record["stage_id"] = string(stage.ID)
+		record["operation_id"] = string(stage.ID)
 		record["taskType"] = record["task_type"]
 		if !stage.FinishedAt.IsZero() {
 			record["duration_ms"] = float64(stage.Duration(time.Time{}).Milliseconds())

@@ -10,8 +10,8 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/console"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 type stageCall struct {
@@ -29,7 +29,7 @@ type stageCall struct {
 }
 
 // +spec=`Stage details load only the referenced local Session and match all four reference fields; missing call data remains missing, never borrowed from another run or attempt`
-func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
+func loadStageCall(path string, id operation.ID) (*stageCall, error) {
 	source, err := readStageSource(path)
 	if err != nil {
 		return nil, err
@@ -49,7 +49,7 @@ func loadStageCall(path string, id timeline.StageID) (*stageCall, error) {
 	default:
 		return nil, fmt.Errorf("stage has no call content: %s", id)
 	}
-	call.Tool, _ = timeline.AttributeValue[string](stage.Attributes, "tool")
+	call.Tool, _ = operation.AttributeValue[string](stage.Attributes, "tool")
 	if json.Unmarshal(stage.Attributes["session_ref"], &call.Ref) != nil || call.Ref.SessionID == "" || call.Ref.RunID == "" || call.Ref.ExecutionID == "" || call.Ref.Attempt < 1 {
 		call.Warnings = append(call.Warnings, "No Session reference recorded for this call.")
 		return call, nil
@@ -135,7 +135,7 @@ func handleStageCall(w http.ResponseWriter, r *http.Request, root, repo, session
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
-	call, err := loadStageCall(filepath.Join(root, repo, sessionID+".jsonl"), timeline.StageID(r.URL.Query().Get("stage")))
+	call, err := loadStageCall(filepath.Join(root, repo, sessionID+".jsonl"), operation.ID(r.URL.Query().Get("stage")))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return

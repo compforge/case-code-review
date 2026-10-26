@@ -19,7 +19,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
-	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -66,16 +65,6 @@ func confirmed() *agentgo.LLMResponse {
 }
 func timeoutRunner(t *testing.T, client agentgo.ChatModel) (*Runner, *recording.Review) {
 	t.Helper()
-	// The manager workers and Session must share the synctest clock.
-	shutdownTimeline, err := telemetry.InitTimeline()
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := shutdownTimeline(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
 	repo := t.TempDir()
 	history := recording.New(repo, "main", "test", recording.SessionOptions{})
 	tpl := template.Template{
@@ -153,6 +142,30 @@ func TestUnitTimeoutLetsReview2UseUnusedDiscoveryTime(t *testing.T) {
 		}
 		if trialSeq == 0 || debriefSeq <= trialSeq {
 			t.Fatalf("Trial=%v debrief=%v", trialSeq, debriefSeq)
+		}
+
+		// One Unit Job includes both model loops and Trial, even before Review closes.
+		path, _ := history.TranscriptPath()
+		journal, err := recording.ReadJournal(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		jobs := journal.Jobs()
+		if len(jobs) != 1 {
+			t.Fatalf("jobs=%v", jobs)
+		}
+		job, err := recording.ReadJob(path, jobs[0].ID, SessionCodecOptions()...)
+		if err != nil || job.Status != "completed" || len(job.Issues) > 0 {
+			t.Fatalf("job status=%s issues=%v error=%v", job.Status, job.Issues, err)
+		}
+		raw, err := json.Marshal(job)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, fact := range []string{`"operation":"review.unit"`, `"operation":"review.hypothesis"`, `"operation":"trial.finalize"`, `"kind":"model_call"`, `"kind":"tool_call"`, `"type":"finding"`} {
+			if !strings.Contains(string(raw), fact) {
+				t.Fatalf("Unit Job missing %s", fact)
+			}
 		}
 	})
 }

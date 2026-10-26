@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -230,22 +230,22 @@ func TestExplorationRecoveryPersistsOneExecution(t *testing.T) {
 		t.Fatalf("records=%v", counts)
 	}
 	stageCounts := map[string]int{}
-	for _, stage := range transcript.Timeline.Stages {
+	for _, stage := range transcript.Journal.Operations {
 		stageCounts[stage.Name]++
-		if stage.Status == timeline.Running {
+		if stage.Status == operation.Running {
 			t.Errorf("unfinished stage: %+v", stage)
 		}
 	}
 	if stageCounts["turn"] != 2 || stageCounts["model.attempt"] != 2 {
 		t.Fatalf("colliding recovery stages: %v", stageCounts)
 	}
-	stages := transcript.StageIndex()
+	stages := transcript.OperationIndex()
 	for _, record := range transcript.Records {
 		if record["type"] != "context_projected" {
 			continue
 		}
-		id, _ := record["stage_id"].(string)
-		if stage, ok := stages[timeline.StageID(id)]; !ok || stage.Name != "model.attempt" {
+		id, _ := record["operation_id"].(string)
+		if stage, ok := stages[operation.ID(id)]; !ok || stage.Name != "model.attempt" {
 			t.Fatalf("projection lost attempt identity: %v", record)
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/compforge/agentgo/codec"
 	"github.com/qiankunli/case-code-review/internal/console"
 )
 
@@ -25,7 +26,7 @@ func BrowserURL(addr string) string {
 	return "http://" + addr
 }
 
-func StartServer(addr string) error {
+func StartServer(addr string, options ...codec.Option) error {
 	root, err := SessionsRoot()
 	if err != nil {
 		return fmt.Errorf("resolve sessions root: %w", err)
@@ -65,6 +66,10 @@ func StartServer(addr string) error {
 		handleStageAgent(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
 	})
 
+	mux.HandleFunc("GET /r/{repo}/{sessionID}/job", func(w http.ResponseWriter, r *http.Request) {
+		handleJob(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"), options...)
+	})
+
 	// Wrap the mux with a Host-header allowlist. Without this, any web page
 	// the user visits can DNS-rebind its origin to 127.0.0.1 and read the
 	// session JSONL exposed by this viewer (which contains LLM request bodies
@@ -95,6 +100,7 @@ func formatTime(t time.Time) string {
 
 func parseTemplate(name string) (*template.Template, error) {
 	funcMap := template.FuncMap{
+		"nodeChildren": nodeChildren, "nodeDetails": nodeDetails, "prettyJSON": prettyJSON,
 		"formatDuration": formatDuration,
 		"layoutTimeline": layoutTimeline,
 		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },

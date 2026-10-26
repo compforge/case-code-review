@@ -19,16 +19,6 @@ func run() int {
 	llm.InitEmbeddedLoader()
 
 	ctx := context.Background()
-	shutdownTimeline, err := telemetry.InitTimeline()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		return 1
-	}
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		telemetry.ReportTimelineError(shutdownTimeline(closeCtx))
-	}()
 	if telemetry.Init(ctx) {
 		defer telemetry.ShutdownWithTimeout(ctx, 5*time.Second)
 	}

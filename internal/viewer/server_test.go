@@ -21,8 +21,8 @@ func TestBrowserURL(t *testing.T) {
 
 func TestTimelineHomeListsReviewsAcrossRepositories(t *testing.T) {
 	root := t.TempDir()
-	writeViewerSession(t, root, "repo-a", "older", `{"type":"session_start","schema_version":13,"cwd":"/src/alpha","timestamp":"2026-10-16T10:00:00Z","biz_id":"change-old"}`)
-	writeViewerSession(t, root, "repo-b", "newer", `{"type":"session_start","schema_version":13,"cwd":"/src/beta","timestamp":"2026-10-16T11:00:00Z","biz_id":"change-new"}`)
+	writeViewerSession(t, root, "repo-a", "older", `{"type":"session_start","schema_version":14,"cwd":"/src/alpha","timestamp":"2026-10-16T10:00:00Z","biz_id":"change-old"}`)
+	writeViewerSession(t, root, "repo-b", "newer", `{"type":"session_start","schema_version":14,"cwd":"/src/beta","timestamp":"2026-10-16T11:00:00Z","biz_id":"change-new"}`)
 	response := httptest.NewRecorder()
 	handleRepos(response, httptest.NewRequest("GET", "/", nil), root)
 	body := response.Body.String()

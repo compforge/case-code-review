@@ -38,7 +38,7 @@ case-code-review/
     ├── language/   ★ CodeGraph 接入边界：向 repocli 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
     ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力。详见 `docs/harness.md`
-    ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 和业务 timeline
+    ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 与业务 Operation，按 Unit 投影 Observation JobView
     ├── llm/        模型连接配置、评审 token 预算与估算；协议和路由复用 AgentGo/litellm；作为稳定基础设施平铺
     ├── config/     模板 prompt、rule.json、tools 配置
     └── gitcmd · telemetry · viewer …   独立支撑能力
@@ -71,7 +71,8 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    所有模型调用统一通过 AgentGo ModelExecutor 消费 stream，使用 ChatModel、Message 与 CallConfig；领域消息通过 ToMessage 投影，CCR 不维护另一套模型消息 DTO。Session JSONL 必须记录实际 prompt、response、工具与完成状态；失败的 PartialMessage 与 usage 是诊断事实，不视为已提交消息。
-   Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；一次 Review 只有一个业务 timeline，Stage 通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制到 timeline。
+   Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；Review JSONL 同时保存业务产物与 Operation 状态，通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制。
+   一个 Unit 的 R1 → R2 → Trial 过程是一个 Observation JobView；共享 Lane Session 只提供明确关联的调用，不能整体归入每个 Unit。
    Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
 5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
    只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
@@ -83,7 +84,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 - 内核分层与依赖方向：Project 组织项目事实、Language 接入源码事实、Unit 汇总评审知识、Harness 执行——`docs/kernel.md`
 - Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
   与 HTML Viewer 可观测性——`docs/harness.md`
-- 可观测性：Review timeline 与关联的 AgentGo Session 是共同事实源，Viewer 用于单次运行诊断，eval/benchmark 用固定数据观察三个阶段的效果，eval/trajectory 回到原 Session，让 Detector、
+- 可观测性：Review 业务日志与关联的 AgentGo Session 是共同事实源，Viewer 用于单次运行诊断，eval/benchmark 用固定数据观察三个阶段的效果，eval/trajectory 回到原 Session，让 Detector、
   Verifier 与 Measurer 分别承担行为发现、契约判断和事实测量——`docs/observability.md`
 - spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/compforge/spec-case)
 - 项目知识：Repository / Component / FileRole 等结构知识、作者声明的 Biz Knowledge 及其投影——`docs/project.md`

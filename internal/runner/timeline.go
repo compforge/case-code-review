@@ -4,18 +4,18 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 func (a *Runner) observeGraphBuild(ctx context.Context, analyzer *language.Analyzer, version string) {
 	if analyzer == nil || a.session == nil {
 		return
 	}
-	ctx = timeline.NewStageContext(a.session.Context(ctx), timeline.StageRef{TimelineID: a.session.SessionID, StageID: timeline.StageID("operation:" + a.session.SessionID)})
+	ctx = operation.NewContext(a.session.Context(ctx), operation.Ref{ReviewID: a.session.SessionID, OperationID: operation.ID("operation:" + a.session.SessionID)})
 	analyzer.ObserveRepositoryBuild = func() func(*language.RepositoryIndex) {
-		stageCtx, finish := recording.Begin(a.session.Context(ctx), "codegraph.build", timeline.Attribute{Key: "version", Value: version})
+		stageCtx, finish := recording.Begin(a.session.Context(ctx), "codegraph.build", operation.Attribute{Key: "version", Value: version})
 		return func(index *language.RepositoryIndex) {
 			var err error
 			if len(index.Gaps) > 0 {

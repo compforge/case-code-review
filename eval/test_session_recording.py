@@ -5,26 +5,26 @@ import tempfile
 import unittest
 
 from eval.eval_snapshot import review_sha256
-from eval.session_recording import Recording, execution_facts, read_records, timeline_stages
+from eval.session_recording import Recording, execution_facts, read_records, operation_index
 
 
 class SessionRecordingTests(unittest.TestCase):
     def test_reader_retains_only_latest_snapshot_and_all_content(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.jsonl"
-            first = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{"id": "first"}]}}
-            latest = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [{"id": "latest"}]}}
-            header = {"type":"session_start","schema_version":13}
+            first = {"type": "operation", "review_id": "run", "operation": {"id": "exec", "status":"running"}}
+            latest = {"type": "operation", "review_id": "run", "operation": {"id": "exec", "status":"completed"}}
+            header = {"type":"session_start","schema_version":14}
             content = {"type": "llm_request", "seq": 2}
             path.write_text("\n".join(json.dumps(record) for record in [header, first, content, latest]) + "\n")
             records, gaps = read_records(path)
-            self.assertEqual(records, [header, content, latest])
+            self.assertEqual(records, [header, first, content, latest])
             self.assertEqual(gaps, [])
             with path.open("a") as stream:
-                stream.write(json.dumps({**latest, "timeline_id": "foreign"}) + "\n")
+                stream.write(json.dumps({**latest, "review_id": "foreign"}) + "\n")
             records, gaps = read_records(path)
-            self.assertEqual(records, [header, content, latest])
-            self.assertIn("inconsistent timeline ID", gaps[0])
+            self.assertEqual(records, [header, first, content, latest])
+            self.assertIn("inconsistent review ID", gaps[0])
 
     def test_snapshot_attributes_preserve_execution_outcome(self):
         for attributes in (
@@ -34,7 +34,7 @@ class SessionRecordingTests(unittest.TestCase):
                 stage = {"id": "exec", "name": "execution",
                          "started_at": "2026-10-01T00:00:00Z",
                          "finished_at": "2026-10-01T00:00:01Z", **attributes}
-                record = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [stage]}}
+                record = {"type": "operation", "review_id": "run", "operation": stage}
                 facts = execution_facts([record])["exec"]
                 self.assertEqual(facts["outcome"], "completed")
                 self.assertEqual(facts["duration_ms"], 1000)
@@ -46,23 +46,22 @@ class SessionRecordingTests(unittest.TestCase):
                  "started_at": "2026-10-01T00:00:00Z",
                  "finished_at": "0001-01-01T00:00:00Z",
                  "attributes": {"outcome": "completed"}}
-        begin = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [stage]}}
+        begin = {"type": "operation", "review_id": "run", "operation": stage}
         self.assertNotIn("outcome", execution_facts([begin])["exec"])
         end = {**stage, "finished_at": "2026-10-01T00:00:01Z"}
-        finish = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": [end]}}
+        finish = {"type": "operation", "review_id": "run", "operation": end}
         facts = execution_facts([begin, finish, finish])["exec"]
         self.assertEqual(facts["outcome"], "completed")
         self.assertEqual(facts["duration_ms"], 1000)
-        empty = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "run", "stages": []}}
-        self.assertEqual(timeline_stages([finish, empty]), {})
-        conflict = {"type": "timeline_snapshot", "timeline_id": "run", "snapshot": {"id": "other", "stages": [end]}}
+        self.assertEqual(operation_index([begin, finish])["exec"], end)
+        conflict = {**finish, "review_id": "other"}
         with self.assertRaises(ValueError):
             execution_facts([finish, conflict])
 
     def test_truncated_and_corrupt_records_keep_prefix_with_gap(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "session.jsonl"
-            prefix = json.dumps({"type": "session_start", "schema_version": 13}).encode() + b"\n"
+            prefix = json.dumps({"type": "session_start", "schema_version": 14}).encode() + b"\n"
             for tail, kind in [(b'{"type":', "truncated"), (b'"\xe4', "truncated"),
                                (b'{\n', "corrupt"), (b'null\n', "corrupt")]:
                 path.write_bytes(prefix + tail)
@@ -99,9 +98,9 @@ class NativeSessionTests(unittest.TestCase):
             source = Path(__file__).parents[1] / "testdata/recording"
             shutil.copytree(source, directory, dirs_exist_ok=True)
             path = Path(directory) / "review.jsonl"
-            path.with_suffix(".timeline").unlink()
+            path.write_text("".join(line for line in path.read_text().splitlines(keepends=True) if json.loads(line).get("type") != "operation"))
             recording = Recording.read(path)
-            self.assertIn("missing review timeline", recording.gaps)
+            self.assertIn("missing review operations", recording.gaps)
             costs = recording.costs()
             self.assertEqual((costs["rounds"], costs["error_calls"], costs["prompt_tokens"]), (3, 1, 240))
             calls = {r["call_id"] for r in recording.records if r["type"] == "llm_response"}
@@ -124,7 +123,7 @@ class NativeSessionTests(unittest.TestCase):
             loop.unlink()
             self.assertNotEqual(review_sha256(path), original)
             loop.write_bytes(content)
-            path.with_suffix(".timeline").unlink()
+            path.write_text("".join(line for line in path.read_text().splitlines(keepends=True) if json.loads(line).get("type") != "operation"))
             self.assertNotEqual(review_sha256(path), original)
 
     def test_failed_partial_message_retains_usage_without_becoming_success(self):

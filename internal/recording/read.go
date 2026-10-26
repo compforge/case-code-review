@@ -2,7 +2,6 @@ package recording
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,15 +10,14 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
-	"github.com/qiankunli/case-code-review/internal/timelinelog"
 )
 
-// ReadTimeline loads business records and stages without opening local Sessions.
+// ReadJournal loads business records and stages without opening local Sessions.
 // +spec=`Timeline navigation never reads model or tool bodies; full evidence requires an explicit ReadReview or referenced call query`
-func ReadTimeline(path string) (*Transcript, error) {
+func ReadJournal(path string) (*Transcript, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -29,29 +27,15 @@ func ReadTimeline(path string) (*Transcript, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := strings.TrimSuffix(path, ".jsonl")
-	file, err = os.Open(base + ".timeline")
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	if err == nil {
-		doc, at, torn, e := timelinelog.Read(file)
-		file.Close()
-		if e != nil {
-			return nil, e
-		}
-		t.Timeline = doc.Snapshot(at)
-		t.TruncatedTail = t.TruncatedTail || torn
-	}
-	if t.Timeline.ID == "" {
-		t.Gaps = append(t.Gaps, "missing review timeline")
+	if t.Journal.ID == "" {
+		t.Gaps = append(t.Gaps, "missing review operations")
 	}
 	return t, nil
 }
 
 // ReadReview joins native call bodies only for consumers requesting full evidence.
 func ReadReview(path string) (*Transcript, error) {
-	t, err := ReadTimeline(path)
+	t, err := ReadJournal(path)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +52,7 @@ func ReadReview(path string) (*Transcript, error) {
 		}
 	}
 	expected := map[string]bool{}
-	for _, stage := range t.Timeline.Stages {
+	for _, stage := range t.Journal.Operations {
 		var name string
 		if json.Unmarshal(stage.Attributes["session_file"], &name) == nil && name != "" {
 			expected[name] = true
@@ -96,10 +80,10 @@ func (t *Transcript) readLoop(path string) error {
 	if err != nil {
 		return err
 	}
-	index := t.StageIndex()
-	refs := map[string]timeline.Stage{}
-	owners := map[string]timeline.Stage{}
-	for _, stage := range t.Timeline.Stages {
+	index := t.OperationIndex()
+	refs := map[string]operation.Record{}
+	owners := map[string]operation.Record{}
+	for _, stage := range t.Journal.Operations {
 		var ref agentsession.Ref
 		if json.Unmarshal(stage.Attributes["session_ref"], &ref) != nil || ref.SessionID == "" {
 			continue
@@ -109,7 +93,7 @@ func (t *Transcript) readLoop(path string) error {
 			refs[refKey(ref)] = stage
 		}
 		owner := stage
-		visited := map[timeline.StageID]bool{}
+		visited := map[operation.ID]bool{}
 		for owner.Name != "execution" && index[owner.ParentID].ID != "" && !visited[owner.ID] {
 			visited[owner.ID] = true
 			owner = index[owner.ParentID]
@@ -145,7 +129,7 @@ func (t *Transcript) readLoop(path string) error {
 			owner = stage
 		}
 		facts := map[string]any{}
-		visited := map[timeline.StageID]bool{}
+		visited := map[operation.ID]bool{}
 		for owner.ID != "" && !visited[owner.ID] {
 			visited[owner.ID] = true
 			for key, raw := range owner.Attributes {
@@ -162,9 +146,9 @@ func (t *Transcript) readLoop(path string) error {
 		facts["session_ref"] = ref
 		facts["call_id"] = refKey(ref)
 		facts["session_file"] = filepath.Base(path)
-		facts["sessionId"] = t.Timeline.ID
-		facts["timeline_id"] = t.Timeline.ID
-		facts["stage_id"] = string(stage.ID)
+		facts["sessionId"] = t.Journal.ID
+		facts["review_id"] = t.Journal.ID
+		facts["operation_id"] = string(stage.ID)
 		facts["timestamp"] = record.Timestamp.Format("2006-01-02T15:04:05.999999999Z07:00")
 		facts["uuid"] = fmt.Sprintf("%s/%d", record.SessionID, record.Seq)
 		callKey := record.RunID + "/" + data.ToolID
@@ -305,5 +289,5 @@ func CallID(record map[string]any) string {
 	if id := textField(record, "call_id"); id != "" {
 		return id
 	}
-	return textField(record, "stage_id")
+	return textField(record, "operation_id")
 }

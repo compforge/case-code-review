@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/compforge/agentgo"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -28,7 +28,7 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			reviewCtx, finish := recording.Begin(ctx, "review.unit", timeline.Attribute{Key: "unit_id", Value: fmt.Sprint(i)})
+			reviewCtx, finish := recording.Begin(ctx, "review.unit", operation.Attribute{Key: "unit_id", Value: fmt.Sprint(i)})
 			client := &scriptedClient{responses: []*agentgo.LLMResponse{
 				toolCallResponseID("same-call", "inspect", `{}`, nil),
 				toolCallResponseID("same-done", "task_done", `{}`, nil),
@@ -75,24 +75,24 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := transcript.Timeline
-	byID := map[timeline.StageID]timeline.Stage{}
+	snapshot := transcript.Journal
+	byID := map[operation.ID]operation.Record{}
 	counts := map[string]int{}
-	for _, stage := range snapshot.Stages {
+	for _, stage := range snapshot.Operations {
 		byID[stage.ID] = stage
 		counts[stage.Name]++
-		if stage.Status == timeline.Running {
+		if stage.Status == operation.Running {
 			t.Errorf("unterminated stage: %+v", stage)
 		}
 	}
-	if snapshot.ID != history.SessionID || snapshot.Status != timeline.Succeeded {
+	if snapshot.ID != history.SessionID || snapshot.Status != operation.Succeeded {
 		t.Fatalf("run = %+v", snapshot)
 	}
 	if counts["execution"] != 2 || counts["model.attempt"] != 4 || counts["llm.request"] != 0 || counts["http.request"] != 0 {
 		t.Fatalf("stage counts = %v", counts)
 	}
-	for _, stage := range snapshot.Stages {
-		if stage.ParentID != "" && stage.ParentID != snapshot.RootStageID {
+	for _, stage := range snapshot.Operations {
+		if stage.ParentID != "" && stage.ParentID != snapshot.RootID {
 			if _, ok := byID[stage.ParentID]; !ok {
 				t.Errorf("orphan stage %+v", stage)
 			}
@@ -112,37 +112,37 @@ func TestSessionTimelineJoinsConcurrentExecutionsAndRequests(t *testing.T) {
 
 func TestExecutionTimelineUsesSourceTimeAndLeavesMissingEndIncomplete(t *testing.T) {
 	id := t.Name()
-	defer telemetry.ReleaseTimeline(id)
-	if err := timeline.Start(id, "review"); err != nil {
+	defer operation.Release(id)
+	if err := operation.Start(id, "review"); err != nil {
 		t.Fatal(err)
 	}
-	ctx, root := telemetry.BeginTimelineStage(timeline.NewStageContext(context.Background(), timeline.StageRef{TimelineID: id}), "execution", timeline.WithStageID("exec"))
-	r := &executionTimeline{ctx: ctx, timelineID: id, id: "exec", runID: "exec", root: root, stages: map[timeline.StageID]timeline.StageHandle{}, parents: map[string]timeline.StageID{}}
+	ctx, root := telemetry.BeginOperation(operation.NewContext(context.Background(), operation.Ref{ReviewID: id}), "execution", operation.WithID("exec"))
+	r := &executionOperations{ctx: ctx, reviewID: id, id: "exec", runID: "exec", root: root, stages: map[operation.ID]operation.Handle{}, parents: map[string]operation.ID{}}
 	start := time.Now().Add(-time.Second)
 	r.observe(agentgo.Event{Type: agentgo.EventTurnStart, TurnIndex: 1, Timestamp: start})
 	execution := agentgo.Execution{ID: "model-1", Kind: agentgo.ExecutionKindModel, TurnIndex: 1, Attempt: 1}
 	r.observe(agentgo.Event{Type: agentgo.EventModelExecStart, Execution: &execution, Timestamp: start})
 	r.observe(agentgo.Event{Type: agentgo.EventModelExecEnd, Execution: &execution, Timestamp: start.Add(20 * time.Millisecond)})
 	r.finish(ExecutionResult{State: OutcomeCompleted}, nil)
-	snapshot, err := timeline.Read(context.Background(), id, false)
+	snapshot, err := operation.Read(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, stage := range snapshot.Stages {
+	for _, stage := range snapshot.Operations {
 		switch stage.Name {
 		case "model.attempt":
 			if !stage.StartedAt.Equal(start) || stage.Duration(snapshot.CapturedAt) != 20*time.Millisecond {
 				t.Fatalf("used observer clock: %+v", stage)
 			}
 		case "turn":
-			if stage.Status != timeline.Running {
+			if stage.Status != operation.Running {
 				t.Fatal("invented missing turn completion")
 			}
 		case "execution":
 			if string(stage.Attributes["incomplete_stages"]) != "1" || string(stage.Attributes["outcome"]) != `"completed"` {
 				t.Fatalf("lost known outcome or incomplete children: %+v", stage.Attributes)
 			}
-			if stage.Status != timeline.Succeeded {
+			if stage.Status != operation.Succeeded {
 				t.Fatal("missing observations changed the known execution result")
 			}
 		}

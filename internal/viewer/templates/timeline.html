@@ -57,7 +57,6 @@
         <details class="stage-recording"><summary>Recording details</summary>
         <dl class="stage-identities"><dt>Stage ID</dt><dd><code>{{.ID}}</code></dd><dt>Parent ID</dt><dd><code>{{.ParentID}}</code></dd>
         {{if .MissingParent}}<dt>Recording</dt><dd>parent not recorded</dd>{{end}}
-        {{if .Code}}<dt>Code</dt><dd>{{.Code}}</dd>{{end}}
         {{if .SessionID}}<dt>Session ID:</dt><dd><code>{{.SessionID}}</code></dd>{{end}}</dl>
         {{if .Attributes}}<details class="stage-attributes"><summary>Attributes</summary><div class="timeline-attributes">{{range $key,$value := .Attributes}}<div><strong>{{$key}}:</strong> <code>{{printf "%s" $value}}</code></div>{{end}}</div></details>{{end}}
         </details>

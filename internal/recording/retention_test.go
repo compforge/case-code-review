@@ -270,7 +270,7 @@ func TestCleanupOwnsWholeReviewCollection(t *testing.T) {
 	if err := os.Mkdir(base+".sessions", 0700); err != nil {
 		t.Fatal(err)
 	}
-	children := []string{base + ".timeline", filepath.Join(base+".sessions", "r1.jsonl"), filepath.Join(base+".sessions", "r2.jsonl")}
+	children := []string{filepath.Join(base+".sessions", "r1.jsonl"), filepath.Join(base+".sessions", "r2.jsonl")}
 	for _, child := range children {
 		if err := os.WriteFile(child, []byte("data"), 0600); err != nil {
 			t.Fatal(err)

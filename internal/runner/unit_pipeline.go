@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
@@ -60,7 +60,7 @@ func (a *Runner) finishHypothesis(input hypothesisreview.ReviewInput, result hyp
 
 // +spec=`The Unit pipeline emits one terminal unit_incomplete warning after discovery, verification and Trial; phase executors return their outcome without duplicating it`
 func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitRun, gate *trial.Gate, releaseDiscovery func()) {
-	ctx, finish := recording.Begin(parent, "review.pipeline", timeline.Attribute{Key: "unit_id", Value: u.ID})
+	ctx, finish := recording.Begin(parent, "review.pipeline", operation.Attribute{Key: "unit_id", Value: u.ID})
 	run.budget = newUnitBudget(ctx, time.Duration(a.args.ConcurrentTaskTimeout)*time.Minute, a.args.Template.ReviewTimeBudget, a.features.Enabled(feature.HypothesisReview))
 	defer run.budget.close()
 	a.session.WriteArtifactContext(ctx, "unit_budget", map[string]any{
@@ -110,7 +110,7 @@ func (a *Runner) runUnitPipeline(parent context.Context, u unit.Unit, run *unitR
 			if len(deb.Unassessed) > 0 && deb.Outcome == harness.OutcomeCompleted {
 				deb.Outcome, deb.Reason = harness.OutcomeTruncated, "Review 2 has unassessed hypotheses"
 			}
-			trialCtx, finishTrial := recording.Begin(run.budget.ctx, "trial.finalize", timeline.Attribute{Key: "unit_id", Value: u.ID})
+			trialCtx, finishTrial := recording.Begin(run.budget.ctx, "trial.finalize", operation.Attribute{Key: "unit_id", Value: u.ID})
 			var findings []finding.Finding
 			var decisions []unit.TrialDecision
 			if a.features.Enabled(feature.HypothesisReview) {

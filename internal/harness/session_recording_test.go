@@ -8,8 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/compforge/agent-ledger/go/observation"
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
@@ -59,7 +61,7 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 		ref := r["session_ref"].(map[string]any)
 		sessions[ref["session_id"].(string)] = true
 		runs[ref["run_id"].(string)] = true
-		calls[r["stage_id"].(string)] = true
+		calls[r["operation_id"].(string)] = true
 	}
 	if len(sessions) != 1 || len(runs) != 2 || len(calls) != 2 {
 		t.Fatalf("sessions=%v runs=%v calls=%v", sessions, runs, calls)
@@ -80,7 +82,7 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := os.ReadFile(strings.TrimSuffix(path, ".jsonl") + ".timeline")
+	raw, _ := os.ReadFile(path)
 	if strings.Contains(string(raw), "private prompt body") || strings.Contains(string(raw), "first answer") {
 		t.Fatal("body duplicated into timeline")
 	}
@@ -95,7 +97,7 @@ func TestContinuationReusesNativeSessionAndReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(missing.Timeline.Stages) == 0 || len(missing.IncompleteReasons()) == 0 {
+	if len(missing.Journal.Operations) == 0 || len(missing.IncompleteReasons()) == 0 {
 		t.Fatal("missing Session hid timeline or appeared complete")
 	}
 }
@@ -119,7 +121,7 @@ func TestSessionCaptureFailureDoesNotAbortExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(transcript.Timeline.Stages) == 0 || len(transcript.IncompleteReasons()) == 0 {
+	if len(transcript.Journal.Operations) == 0 || len(transcript.IncompleteReasons()) == 0 {
 		t.Fatal("capture failure hid timeline or appeared complete")
 	}
 }
@@ -281,5 +283,58 @@ func TestLengthFactsAndReasoningUsageSurviveCCRRecording(t *testing.T) {
 	})
 	if err != nil || !settings || !recovery {
 		t.Fatalf("settings=%v recovery=%v error=%v", settings, recovery, err)
+	}
+}
+
+// +case=`Real Harness executions in a reused Lane Session produce separate Unit Jobs with one model call and one tool call each`
+func TestUnitJobsFromNativeHarnessRecords(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	review := recording.New(t.TempDir(), "main", "model", recording.SessionOptions{})
+	defer review.Finalize()
+	client := &scriptedClient{responses: []*agentgo.LLMResponse{toolCallResponse("task_done", `{}`, nil), toolCallResponse("task_done", `{}`, nil)}}
+	loop := &LoopSession{}
+	defer loop.Close()
+	for _, id := range []string{"u1", "u2"} {
+		ctx, finish := recording.Begin(review.Context(t.Context()), "review.pipeline", operation.Attribute{Key: "unit_id", Value: id})
+		result, err := runExecution(ctx, ExecutionSpec{LoopSession: loop, ChatModel: client, Messages: []agentgo.AgentMessage{msg.Text("user", "review "+id)}, ToolDefs: []llm.ToolDef{toolDef("task_done")}, Session: review, Scope: recording.Scope{ID: "lane-1", Kind: "lane"}, MaxTurns: 1})
+		if err != nil || result.State != OutcomeCompleted {
+			t.Fatalf("execution=%+v error=%v", result, err)
+		}
+		review.CloseScope(recording.Scope{ID: id, Kind: "unit"}, recording.Debrief{Outcome: "completed"})
+		finish(err)
+	}
+	review.Finalize()
+	path, _ := review.TranscriptPath()
+	var sessionID string
+	for _, id := range []string{"u1", "u2"} {
+		view, err := recording.ReadJob(path, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts := map[string]int{}
+		var visit func(observation.Nodes)
+		visit = func(nodes observation.Nodes) {
+			for _, n := range nodes {
+				counts[n.Kind()]++
+				switch n := n.(type) {
+				case *observation.Operation:
+					visit(n.Nodes)
+				case *observation.ModelCall, *observation.ToolCall:
+					if n.Base().Session == nil {
+						t.Fatal("native ownership missing")
+					}
+					if sessionID == "" {
+						sessionID = n.Base().Session.ID
+					}
+					if n.Base().Session.ID != sessionID {
+						t.Fatal("continuation did not reuse Session")
+					}
+				}
+			}
+		}
+		visit(view.Nodes)
+		if view.Status != "completed" || counts["model_call"] != 1 || counts["tool_call"] != 1 || len(view.Issues) > 0 {
+			t.Fatalf("job %s status=%s nodes=%v issues=%v", id, view.Status, counts, view.Issues)
+		}
 	}
 }

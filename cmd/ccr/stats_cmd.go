@@ -15,27 +15,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/compforge/go-stdx/timeline"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 	"github.com/qiankunli/case-code-review/internal/viewer"
 )
 
 // statsEvent is the lean read-side of the session JSONL records (persist.go writes
 // them as maps; only the fields stats aggregates over are decoded).
 type statsEvent struct {
-	StageID    string  `json:"stage_id"`
-	Type       string  `json:"type"`
-	Timestamp  string  `json:"timestamp"`
-	DurationMS float64 `json:"duration_ms"`
-	ScopeID    string  `json:"scope_id"`
-	FilePath   string  `json:"filePath"`
-	TaskType   string  `json:"taskType"`
-	ToolName   string  `json:"tool_name"`
-	OK         *bool   `json:"ok"`
-	Result     string  `json:"result"`
-	Model      string  `json:"model"`
-	GitBranch  string  `json:"gitBranch"`
-	Cwd        string  `json:"cwd"`
+	OperationID string  `json:"operation_id"`
+	Type        string  `json:"type"`
+	Timestamp   string  `json:"timestamp"`
+	DurationMS  float64 `json:"duration_ms"`
+	ScopeID     string  `json:"scope_id"`
+	FilePath    string  `json:"filePath"`
+	TaskType    string  `json:"taskType"`
+	ToolName    string  `json:"tool_name"`
+	OK          *bool   `json:"ok"`
+	Result      string  `json:"result"`
+	Model       string  `json:"model"`
+	GitBranch   string  `json:"gitBranch"`
+	Cwd         string  `json:"cwd"`
 }
 
 type toolStat struct {
@@ -193,7 +193,7 @@ func analyzeSession(path string) (*sessionStats, error) {
 	st.Cost = transcript.Costs()
 	st.RecordingGaps = transcript.IncompleteReasons()
 	st.RecordingIncomplete = len(st.RecordingGaps) > 0
-	stages := transcript.StageIndex()
+	stages := transcript.OperationIndex()
 	for _, record := range transcript.Records {
 		raw, err := json.Marshal(record)
 		if err != nil {
@@ -203,7 +203,7 @@ func analyzeSession(path string) (*sessionStats, error) {
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return nil, err
 		}
-		stage, hasTiming := stages[timeline.StageID(e.StageID)]
+		stage, hasTiming := stages[operation.ID(e.OperationID)]
 		hasTiming = hasTiming && !stage.FinishedAt.IsZero()
 		if hasTiming {
 			e.DurationMS = float64(stage.Duration(time.Time{}).Milliseconds())
@@ -257,8 +257,8 @@ func analyzeSession(path string) (*sessionStats, error) {
 	if !tsMin.IsZero() {
 		st.WallSec = tsMax.Sub(tsMin).Seconds()
 	}
-	if !transcript.Timeline.StartedAt.IsZero() && !transcript.Timeline.FinishedAt.IsZero() {
-		st.WallSec = transcript.Timeline.FinishedAt.Sub(transcript.Timeline.StartedAt).Seconds()
+	if !transcript.Journal.StartedAt.IsZero() && !transcript.Journal.FinishedAt.IsZero() {
+		st.WallSec = transcript.Journal.FinishedAt.Sub(transcript.Journal.StartedAt).Seconds()
 	}
 	sort.Float64s(llmDurs)
 	pick := func(q float64) float64 {

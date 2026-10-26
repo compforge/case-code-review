@@ -8,57 +8,51 @@ import (
 
 	"github.com/compforge/agentgo"
 	agentsession "github.com/compforge/agentgo/session"
-	"github.com/compforge/go-stdx/timeline"
+	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 )
 
-// Context carries only review timeline/stage identity.
+// Context carries only Review/Operation identity.
 // Existing parentage is preserved when it belongs to this Review.
 func (sh *Review) Context(ctx context.Context) context.Context {
 	if sh == nil {
 		return ctx
 	}
-	ref, ok := timeline.StageFromContext(ctx)
-	if !ok || ref.TimelineID != sh.SessionID {
-		ctx = timeline.NewStageContext(ctx, timeline.StageRef{TimelineID: sh.SessionID, StageID: ""})
+	ref, ok := operation.FromContext(ctx)
+	if !ok || ref.ReviewID != sh.SessionID {
+		ctx = operation.NewContext(ctx, operation.Ref{ReviewID: sh.SessionID, OperationID: ""})
 	}
 	return ctx
 }
 
-func (sh *Review) startTimeline() {
-	if sh.persist != nil {
-		path, err := sh.artifactPath(".timeline")
-		if err == nil {
-			err = telemetry.AttachTimeline(sh.SessionID, path)
-		}
-		telemetry.ReportTimelineError(err)
-	}
-	operation := "review"
+func (sh *Review) startOperations() {
+	name := "review"
 	if sh.ReviewMode == ReviewModeFullScan {
-		operation = "scan"
+		name = "scan"
 	}
-	if err := timeline.Start(sh.SessionID, operation); err != nil {
-		telemetry.ReportTimelineError(err)
-		return
+	var sink operation.Sink
+	if sh.persist != nil {
+		sink = sh.persist.writeOperation
 	}
+	telemetry.ReportRecordingError(operation.Start(sh.SessionID, name, sink))
 }
 
 // Begin records work with explicit parentage supplied by this Review adapter.
-func Begin(ctx context.Context, name string, attributes ...timeline.Attribute) (context.Context, func(error)) {
-	return BeginStage(ctx, name, timeline.WithAttributes(attributes...))
+func Begin(ctx context.Context, name string, attributes ...operation.Attribute) (context.Context, func(error)) {
+	return BeginOperation(ctx, name, operation.WithAttributes(attributes...))
 }
 
-func BeginStage(ctx context.Context, name string, opts ...timeline.StageOption) (context.Context, func(error)) {
-	ref, _ := timeline.StageFromContext(ctx)
-	opts = append([]timeline.StageOption{timeline.WithParent(ref.StageID)}, opts...)
-	ctx, stage := telemetry.BeginTimelineStage(ctx, name, opts...)
-	return ctx, func(err error) { telemetry.EndTimelineStage(ctx, stage, err) }
+func BeginOperation(ctx context.Context, name string, opts ...operation.Option) (context.Context, func(error)) {
+	ref, _ := operation.FromContext(ctx)
+	opts = append([]operation.Option{operation.WithParent(ref.OperationID)}, opts...)
+	ctx, stage := telemetry.BeginOperation(ctx, name, opts...)
+	return ctx, func(err error) { telemetry.EndOperation(ctx, stage, err) }
 }
 
 // Call records bodies in a local framework Session and references it from the
-// business timeline. Routing and HTTP instrumentation inherit this stage and timeline ID.
+// business journal. Transport phases remain model error diagnostics.
 func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, request agentgo.LLMRequest) (*agentgo.LLMResponse, error) {
 	if tr == nil {
 		return llm.Call(ctx, client, request)
@@ -78,8 +72,8 @@ func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, reques
 			return
 		}
 		captureErr = err
-		telemetry.ReportTimelineError(fmt.Errorf("scope %s auxiliary Session: %w", tr.scopeSession.ID, err))
-		tr.scopeSession.session.WriteArtifact("recording_gap", map[string]any{"scope_id": tr.scopeSession.ID, "stage_id": tr.StageID, "error": err.Error()})
+		telemetry.ReportRecordingError(fmt.Errorf("scope %s auxiliary Session: %w", tr.scopeSession.ID, err))
+		tr.scopeSession.session.WriteArtifact("recording_gap", map[string]any{"scope_id": tr.scopeSession.ID, "operation_id": tr.OperationID, "error": err.Error()})
 	}
 	local, path, err := tr.scopeSession.session.OpenLoop("")
 	var run *agentsession.Run
@@ -92,16 +86,16 @@ func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, reques
 		defer func() { reportCapture(run.Close()) }()
 	}
 	execution := agentgo.Execution{ID: "model-1", Kind: agentgo.ExecutionKindModel, Attempt: 1}
-	attributes := []timeline.Attribute{{Key: "execution_id", Value: tr.ExecutionID}, {Key: "task_type", Value: tr.Type}, {Key: "request_no", Value: tr.RequestNo}}
+	attributes := []operation.Attribute{{Key: "execution_id", Value: tr.ExecutionID}, {Key: "task_type", Value: tr.Type}, {Key: "request_no", Value: tr.RequestNo}}
 	if tr.scopeSession != nil {
-		attributes = append(attributes, timeline.Attribute{Key: "scope_id", Value: tr.scopeSession.ID}, timeline.Attribute{Key: "kind", Value: tr.scopeSession.Kind}, timeline.Attribute{Key: "scope", Value: tr.scopeSession.Scope}, timeline.Attribute{Key: "filePath", Value: tr.scopeSession.Path}, timeline.Attribute{Key: "paths", Value: tr.scopeSession.Paths})
+		attributes = append(attributes, operation.Attribute{Key: "scope_id", Value: tr.scopeSession.ID}, operation.Attribute{Key: "kind", Value: tr.scopeSession.Kind}, operation.Attribute{Key: "scope", Value: tr.scopeSession.Scope}, operation.Attribute{Key: "filePath", Value: tr.scopeSession.Path}, operation.Attribute{Key: "paths", Value: tr.scopeSession.Paths})
 	}
 	if run != nil {
-		attributes = append(attributes, timeline.Attribute{Key: "session_ref", Value: run.Ref(execution)}, timeline.Attribute{Key: "session_id", Value: local.ID()}, timeline.Attribute{Key: "session_file", Value: filepath.Base(path)})
+		attributes = append(attributes, operation.Attribute{Key: "session_ref", Value: run.Ref(execution)}, operation.Attribute{Key: "session_id", Value: local.ID()}, operation.Attribute{Key: "session_file", Value: filepath.Base(path)})
 	}
 	started := time.Now()
-	ref, _ := timeline.StageFromContext(ctx)
-	ctx, stage := telemetry.BeginTimelineStage(ctx, "llm.request", timeline.WithParent(ref.StageID), timeline.WithStageID(tr.StageID), timeline.WithStartTime(started), timeline.WithAttributes(attributes...))
+	ref, _ := operation.FromContext(ctx)
+	ctx, stage := telemetry.BeginOperation(ctx, "llm.request", operation.WithParent(ref.OperationID), operation.WithID(tr.OperationID), operation.WithStartTime(started), operation.WithAttributes(attributes...))
 	executor := agentgo.NewModelExecutor(agentgo.ModelExecutorConfig{Middlewares: []agentgo.ModelMiddleware{llm.ModelRequestMiddleware}, OnEvent: func(event agentgo.Event) {
 		if run != nil {
 			reportCapture(run.Record(event))
@@ -113,7 +107,7 @@ func (tr *TaskRecord) Call(ctx context.Context, client agentgo.ChatModel, reques
 	duration := finished.Sub(started)
 	tr.SetResult(response, err, duration)
 	// Export the terminal stage after its response/error, even on cancellation.
-	telemetry.EndTimelineStage(ctx, stage, err, timeline.WithEndTime(finished), timeline.WithEndAttributes(timeline.Attribute{Key: "failure", Value: llm.DescribeError(err)}))
+	telemetry.EndOperation(ctx, stage, err, operation.WithEndTime(finished), operation.WithEndAttributes(operation.Attribute{Key: "failure", Value: llm.DescribeError(err)}))
 	return response, err
 }
 
