@@ -19,6 +19,10 @@ class Issue:
     end_line: int = 0
     category: str = ""
     content: str = ""
+    trigger: str = ""
+    impact: str = ""
+    change_attribution: str = ""
+    uncertainty: str = ""
     existing_code: str = ""
     fingerprint: str = ""
     hypothesis_id: str = ""

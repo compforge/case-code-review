@@ -11,7 +11,7 @@ from harness_toolbox.llm import LLMClient
 from eval.benchmark.matching import Matcher, match_reference
 from eval.benchmark.report import write_report
 from eval.benchmark.stages import project
-from eval.eval_snapshot import review_sha256
+from eval.eval_snapshot import review_sha256, file_sha256
 
 
 def selection_reasons(result: dict) -> list[str]:
@@ -25,6 +25,8 @@ def selection_reasons(result: dict) -> list[str]:
         if reference["reference"]["label"] == "negative":
             if stages["review2"] is True:
                 reasons.add("negative_claim_supported")
+            elif stages["review1"] is True:
+                reasons.add("negative_claim_proposed")
             continue
         if stages["review1"] is False and result["complete"]:
             reasons.add("reference_not_discovered")
@@ -69,12 +71,48 @@ async def evaluate(run: dict, matcher: Matcher) -> dict:
     return result
 
 
-async def run_analysis(runs: Path, out: Path, matcher: Matcher) -> list[dict]:
+def load_runs(runs: Path, corpus: Path | None = None) -> list[dict]:
+    rows = [json.loads(line) for line in runs.read_text().splitlines() if line.strip()]
+    if corpus is None:
+        return rows
+    # A replay log alone does not freeze reference labels or the requested revisions.
+    plan = json.loads((runs.parent / "plan.json").read_text())
+    digest = file_sha256(corpus)
+    if plan.get("corpus_sha256") != digest:
+        raise ValueError("corpus changed since replay planning")
+    entries = {e["name"]: e for e in json.loads(corpus.read_text())["entries"]}
+    if len(entries) != len(json.loads(corpus.read_text())["entries"]):
+        raise ValueError("duplicate corpus case names")
+    recorded = {}
+    for row in rows:
+        sequence = row.get("sequence")
+        if type(sequence) is not int or not 0 <= sequence < len(plan["schedule"]):
+            raise ValueError("replay sequence outside frozen schedule")
+        if sequence in recorded:
+            raise ValueError("duplicate replay sequence")
+        recorded[sequence] = row
+    converted = []
+    for sequence, selected in enumerate(plan["schedule"]):
+        row = recorded.get(sequence, {"entry": selected["case"], "arm": selected["arm"],
+                                     "run": selected["repeat"], "sequence": sequence,
+                                     "error": "scheduled execution not recorded (pending or interrupted)"})
+        entry = entries[row["entry"]]
+        if (selected["case"], selected["arm"], selected["repeat"], selected["from"], selected["to"]) != (
+                row["entry"], row["arm"], row["run"], entry["from"], entry["to"]):
+            raise ValueError("replay row does not match frozen schedule")
+        converted.append({**row, "case": entry, "case_id": entry.get("case_id", entry["name"]),
+                          "dataset": "replay", "dataset_id": digest, "run_id": f"repeat-{row['run']}",
+                          "solve_state": "error" if row.get("error") else "ok"})
+    return converted
+
+
+async def run_analysis(runs: Path, out: Path, matcher: Matcher, *, corpus: Path | None = None) -> list[dict]:
+    inputs = load_runs(runs, corpus)
     out.mkdir(parents=True, exist_ok=True)
     results = []
     with (out / "results.jsonl").open("w") as all_rows, (out / "selected.jsonl").open("w") as selected:
-        for line in runs.read_text().splitlines():
-            result = await evaluate(json.loads(line), matcher)
+        for run in inputs:
+            result = await evaluate(run, matcher)
             encoded = json.dumps(result, ensure_ascii=False) + "\n"
             all_rows.write(encoded)
             if result["selection_reasons"]:
@@ -90,6 +128,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("runs", type=Path, help="runs.jsonl from benchmark.run")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--corpus", type=Path, help="interpret replay runs using its content-bound corpus and plan.json")
     parser.add_argument("--judge", action="store_true", help="Semantic matcher using EVAL_JUDGE_BASE/KEY/MODEL")
     parser.add_argument("--matches", type=Path, help="Explicit pair_id/matched/reason decisions override the judge")
     args = parser.parse_args()
@@ -97,7 +136,7 @@ def main() -> None:
     if client is not None and not client.ready():
         parser.error("--judge requires EVAL_JUDGE_BASE, EVAL_JUDGE_KEY and EVAL_JUDGE_MODEL")
     matcher = Matcher(args.out / "matches.jsonl", client=client, decisions=args.matches)
-    results = asyncio.run(run_analysis(args.runs, args.out, matcher))
+    results = asyncio.run(run_analysis(args.runs, args.out, matcher, corpus=args.corpus))
     print(f"cases={len(results)} selected={sum(bool(row['selection_reasons']) for row in results)} → {args.out}")
 
 
