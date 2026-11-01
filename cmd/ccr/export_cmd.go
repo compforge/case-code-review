@@ -17,6 +17,7 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/recording/operation"
+	"github.com/qiankunli/case-code-review/internal/runner"
 )
 
 const atifSchemaVersion = "ATIF-v1.8"
@@ -149,6 +150,7 @@ type exportMessage struct {
 
 func runExport(args []string) error {
 	format := "atif"
+	unitID := ""
 	pretty := false
 	var paths []string
 	for i := 0; i < len(args); i++ {
@@ -158,22 +160,34 @@ func runExport(args []string) error {
 				format = args[i+1]
 				i++
 			}
+		case "--unit":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return fmt.Errorf("--unit requires a Unit ID")
+			}
+			unitID = args[i+1]
+			i++
 		case "--pretty":
 			pretty = true
 		case "-h", "--help":
-			fmt.Println(`Usage: ccr export [recording.jsonl | dir]... [--format atif] [--pretty]
+			fmt.Println(`Usage: ccr export [recording.jsonl | dir]... [--format atif|job] [--unit ID] [--pretty]
 
 Convert session transcripts to ATIF (Agent Trajectory Interchange Format,
 Harbor RFC 0001): one root trajectory per session, one embedded subagent
 trajectory per review unit. Output is JSONL on stdout (one trajectory per
-session; --pretty indents). With no path, exports the most recent recording.`)
+session; --pretty indents). With no path, exports the most recent recording.
+Use --format job --unit ID to export the recorded Unit JobView across R1,
+R2 and Trial, with native model requests and evidence gaps. This is offline
+projection only; it does not rerun the review or judge its correctness.`)
 			return nil
 		default:
 			paths = append(paths, args[i])
 		}
 	}
-	if format != "atif" {
-		return fmt.Errorf("unsupported export format %q (supported: atif)", format)
+	if format != "atif" && format != "job" {
+		return fmt.Errorf("unsupported export format %q (supported: atif, job)", format)
+	}
+	if (format == "job") != (unitID != "") {
+		return fmt.Errorf("--format job requires --unit ID; --unit is only valid for job export")
 	}
 
 	files, err := resolveSessionFiles(paths)
@@ -188,6 +202,16 @@ session; --pretty indents). With no path, exports the most recent recording.`)
 		enc.SetIndent("", "  ")
 	}
 	for _, f := range files {
+		if format == "job" {
+			view, err := recording.ReadJob(f, unitID, runner.SessionCodecOptions()...)
+			if err != nil {
+				return fmt.Errorf("export Unit %s from %s: %w", unitID, f, err)
+			}
+			if err := enc.Encode(view); err != nil {
+				return err
+			}
+			continue
+		}
 		traj, err := exportSession(f)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ccr export: skip %s: %v\n", f, err)
