@@ -35,6 +35,65 @@ model/concurrency override、feature args，以及实际 Session 的 tool versio
 `REPORT.md` 与 `comparisons.json` 对每个相同 repeat index 的 base/candidate Session 做确定性对比。
 命令失败但已写出 Session 时，仍保留其中的 Finding、阶段记录和已落盘成本，不把失败样本当成空结果。
 
+## Prompt / 二进制的有界对照
+
+同一入口也支持每臂不同二进制，用于隔离嵌入式 prompt 等单一改动。两份二进制应使用相同
+模型、工具、预算和生成配置；代码/提示词差异由实验记录说明，二进制 hash 不能单独证明只改了一项。
+
+```bash
+uv run --project eval python -m eval.benchmark.replay <corpus.json> \
+  --arm baseline --arm candidate \
+  --arm-engine baseline=<baseline-binary> --arm-engine candidate=<candidate-binary> \
+  --runs 2 --concurrency 1 --timeout 10 \
+  --max-tokens-budget 1500000 --max-completion-tokens 8192 \
+  --max-total-tokens 6000000 --stop-after-errors 3 \
+  --out eval/data/runs/<experiment> --plan-only
+```
+
+`--plan-only` 固定 `plan.json`，包括 corpus 内容 hash、每臂二进制 hash、完整顺序、case 仓库和
+统一预算，不启动模型。确认计划后去掉该参数执行；已有计划逐项校验，不一致拒绝执行，不能重写既有计划。case 的 `repo` 优先于 `--repo`，运行与
+Session 查找使用同一规范路径；真实复合 corpus 可以包含多个仓库。已有 `runs.jsonl` 的输出目录
+不允许重跑覆盖，应使用新目录保存另一批执行。
+
+总 token 限制是**准入软预算**：已记录输入加输出达到限制后不再启动后续 review，当前 review
+可以超过它，未知、未完成或估算 usage，以及执行后找不到 Session 时，无法确认剩余预算，因此停止后续准入并保留明确的 cost unknown。每次 review 的 token 限制同样是 CCR 已有软限制。
+连续命令失败可以阻止后续准入；未执行项明确记录原因。运行期间二进制或用户配置变化会停止实验，
+已完成证据保留。每条已找到的 Session 另存整组内容 hash，实际模型/feature/预算仍以其原生记录为准。
+
+本轮 R1 恢复条件实验使用如下单条候选指令，插在 “Once a path is falsified ...” 前；它保留为
+实验配方，未启用到默认 prompt。重做实验时从同一 revision 先构建基线，再只加入该指令构建候选，
+保存两份 prompt 与构建来源，随后恢复工作区默认值。发现效果、完成度和成本必须一起比较。
+
+```text
+- Calibrate the duration and scope of the impact. Before asserting that a fault persists, always recurs, or can never recover, trace subsequent state transitions and check whether recovery prerequisites are reachable. Recovery may limit duration without undoing an earlier loss or side effect; retain such concrete defects. If persistence depends on an unchecked condition, state that condition in `uncertainty` rather than generalizing the consequence.
+```
+
+## 恢复条件的机制样本
+
+可生成五个匿名、可执行 oracle 验证的 before/after Git 样本：
+
+```bash
+uv run --project eval python -m eval.benchmark.recovery_cases eval/data/experiments/<new-name>
+```
+
+标签与 oracle 保存在各被评审仓库之外，不作为 review 的 background。样本覆盖后续恢复、恢复
+被破坏、未确认便记录完成、恢复前已产生不可撤销副作用、运行中新材料到达。negative 标注针对
+具体错误主张，不表示整个变更没有问题；例如 due-only 永久失效不成立，交替模式的重复执行仍可能成立。
+这些定向开发样本不构成 held-out 泛化验证，重复运行也不增加独立案例数。
+
+replay 的 comparison 只描述观测差异。效果匹配复用已有评价入口：
+
+```bash
+uv run --project eval python -m eval.benchmark.evaluate <run>/runs.jsonl \
+  --corpus <frozen-corpus.json> --out eval/data/reports/benchmark/<experiment>
+```
+
+`--corpus` 要求相邻 `plan.json` 的内容 hash 和逐行执行身份与语料一致；重复/越界 sequence 被拒绝，缺失计划格保留为 pending/interrupted unknown，不缩小比较分母。第一次运行生成待判定
+匹配，不调用 judge；可按已有 `--matches` 格式提供独立盲判，再生成 R1/R2/R3 分阶段结果。对
+已被 R2 否定的错误 R1 主张，`negative_claim_proposed` 仍会选入后续 trajectory 诊断。
+同时报告 positive 命中、negative 错误主张复现、未判定匹配、未完成运行和原始成本；不使用
+Finding 数量或“总是沉默”作为质量改善的证据。
+
 已有两份 Session 可直接离线比较，不调用模型：
 
 ```bash

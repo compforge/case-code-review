@@ -2,7 +2,7 @@
 """replay — 固定回归集重放：corpus × arms 矩阵跑 ccr review 并出对比报告。
 
 「同工作负载重放」的固化：corpus 是一组冻结的评审范围（merge 双亲），
-arm 是一组 feature gate 配置。趋势对比只能在固定 corpus 上做（生产 session
+arm 是一组 feature gate 配置或显式指定的二进制。趋势对比只能在固定 corpus 上做（生产 session
 的 diff 各不相同，不可比）；单项归因只能在同 corpus 的 arm 间做（gate 消融）。
 典型用途：为 feature gate 变更提供固定工作负载下的对照证据。
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -30,6 +31,7 @@ from pathlib import Path
 from eval.benchmark.session_compare import compare, markdown, read_session
 
 from eval.session_recording import find_session
+from eval.eval_snapshot import file_sha256, review_sha256
 
 RUN_TIMEOUT = 30 * 60
 
@@ -74,12 +76,19 @@ def run_ccr(
     tag: str,
     model: str | None = None,
     concurrency: int | None = None,
+    timeout_minutes: int | None = None,
+    max_tokens_budget: int | None = None,
+    max_completion_tokens: int | None = None,
 ) -> tuple[bool, str]:
     cmd = [ccr, "review", "--from", entry["from"], "--to", entry["to"], *feat_args]
     if model:
         cmd += ["--model", model]
     if concurrency:
         cmd += ["--concurrency", str(concurrency)]
+    for flag, value in (("timeout", timeout_minutes), ("max-tokens-budget", max_tokens_budget),
+                        ("max-completion-tokens", max_completion_tokens)):
+        if value is not None:
+            cmd += [f"--{flag}", str(value)]
     env = dict(os.environ, CCR_EVAL_TAG=tag)
     try:
         r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, timeout=RUN_TIMEOUT)
@@ -122,6 +131,14 @@ def main() -> int:
                     help='arm 配置 "name[:feat=v,feat=v]"，可重复；第一个 arm 是对比基线')
     ap.add_argument("--repo", default=".", help="被重放的仓库（默认 cwd）")
     ap.add_argument("--ccr", default="ccr", help="ccr 可执行文件（默认 PATH 里的 ccr）")
+    ap.add_argument("--arm-engine", action="append", default=[], metavar="NAME=PATH",
+                    help="per-arm executable override; binary content hashes are saved in plan.json")
+    ap.add_argument("--plan-only", action="store_true", help="freeze schedule and budgets without model calls")
+    ap.add_argument("--timeout", type=int, help="same per-Unit timeout in minutes for every arm")
+    ap.add_argument("--max-tokens-budget", type=int, help="same soft token cap per review")
+    ap.add_argument("--max-completion-tokens", type=int, help="same output cap per model response")
+    ap.add_argument("--max-total-tokens", type=int, help="stop admitting runs after this recorded input+output budget")
+    ap.add_argument("--stop-after-errors", type=int, default=0, help="stop admitting runs after consecutive command failures (0 disables)")
     ap.add_argument("--model", help="固定 review 模型；省略时使用 CCR 配置")
     ap.add_argument("--concurrency", type=int,
                     help="固定 CCR Unit 并发度；省略时使用 CCR 默认值")
@@ -143,24 +160,92 @@ def main() -> int:
     arms = [parse_arm(s) for s in args.arm]
     out_dir = Path(args.out) if args.out else Path.home() / ".casecodereview" / "replay" / str(int(time.time()))
     out_dir.mkdir(parents=True, exist_ok=True)
+    if (out_dir / "runs.jsonl").exists() and not args.plan_only:
+        ap.error("output already contains runs.jsonl; choose a new --out to preserve recorded runs")
+    names = [name for name, _ in arms]
+    if not entries or len(set(names)) != len(names) or any(not name for name in names):
+        ap.error("select nonempty cases and distinct nonempty arm names")
+    if len({e["name"] for e in entries}) != len(entries):
+        ap.error("corpus case names must be unique")
+    engines = dict.fromkeys(names, args.ccr)
+    for override in args.arm_engine:
+        name, separator, engine = override.partition("=")
+        if not separator or name not in engines or not engine:
+            ap.error("--arm-engine requires a selected NAME=PATH")
+        executable = shutil.which(engine)
+        if not executable:
+            ap.error(f"engine unavailable for {name}: {engine}")
+        engines[name] = str(Path(executable).resolve())
+    for field in ("timeout", "max_tokens_budget", "max_completion_tokens", "max_total_tokens"):
+        value = getattr(args, field)
+        if value is not None and value < 1:
+            ap.error(f"--{field.replace('_', '-')} must be positive")
+    if args.stop_after_errors < 0:
+        ap.error("--stop-after-errors must be nonnegative")
+    schedule = build_schedule(entries, arms, args.runs, args.schedule)
+    hashes = {name: file_sha256(Path(path)) for name, engine in engines.items()
+              if (path := shutil.which(engine))}
+    plan = {"corpus_sha256": file_sha256(Path(args.corpus)), "engines": engines,
+            "engine_sha256": hashes, "model_override": args.model, "concurrency": args.concurrency,
+            "timeout_minutes": args.timeout, "max_tokens_budget": args.max_tokens_budget,
+            "max_completion_tokens": args.max_completion_tokens, "max_total_tokens": args.max_total_tokens,
+            "stop_after_errors": args.stop_after_errors,
+            "schedule": [{"case": entry["name"], "repo": str(Path(entry.get("repo") or args.repo).resolve()),
+                          "from": entry["from"], "to": entry["to"], "arm": arm, "repeat": repeat,
+                          "feature_args": features} for entry, arm, features, repeat in schedule]}
+    config_path = Path.home() / ".casecodereview" / "config.json"
+    config_hash = file_sha256(config_path) if config_path.is_file() else None
+    plan["config_sha256"] = config_hash
+    plan_path = out_dir / "plan.json"
+    if plan_path.exists():
+        if json.loads(plan_path.read_text()) != plan:
+            ap.error("existing plan differs from requested inputs/configuration; choose a new --out")
+    else:
+        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+    if args.plan_only:
+        print(f"planned_reviews={len(schedule)} → {out_dir / 'plan.json'}")
+        return 0
 
     results: dict[tuple[str, str, int], dict] = {}
     with (out_dir / "runs.jsonl").open("w", encoding="utf-8") as runlog:
-        schedule = build_schedule(entries, arms, args.runs, args.schedule)
+        total_tokens, consecutive_errors = 0, 0
+        cost_unknown = False
         for sequence, (e, arm_name, feat_args, i) in enumerate(schedule):
+            repo = str(Path(e.get("repo") or args.repo).resolve())
+            engine = engines[arm_name]
+            budget_exhausted = ((args.max_total_tokens is not None and (total_tokens >= args.max_total_tokens or cost_unknown))
+                                or (args.stop_after_errors and consecutive_errors >= args.stop_after_errors))
+            if budget_exhausted:
+                error = ("not executed: cost unknown; remaining experiment budget cannot be established"
+                         if cost_unknown and args.max_total_tokens is not None
+                         else "not executed: experiment token/error budget exhausted")
+                results[(e["name"], arm_name, i)] = {"error": error}
+                runlog.write(json.dumps({"entry": e["name"], "arm": arm_name, "run": i,
+                                         "sequence": sequence, "error": error}) + "\n")
+                runlog.flush()
+                continue
+            if config_hash and file_sha256(config_path) != config_hash:
+                raise ValueError("CCR configuration changed after planning")
+            if arm_name in hashes and file_sha256(Path(shutil.which(engine))) != hashes[arm_name]:
+                raise ValueError(f"engine changed after planning: {arm_name}")
             tag = f"replay:{e['name']}:{arm_name}:{i}:{int(time.time())}"
             print(f"▶ {e['name']} × {arm_name} (run {i})", flush=True)
             ok, err = run_ccr(
-                args.ccr,
-                args.repo,
+                engine,
+                repo,
                 e,
                 feat_args,
                 tag,
                 model=args.model,
                 concurrency=args.concurrency,
+                timeout_minutes=args.timeout,
+                max_tokens_budget=args.max_tokens_budget,
+                max_completion_tokens=args.max_completion_tokens,
             )
-            sess = find_session(args.repo, tag)
+            consecutive_errors = 0 if ok else consecutive_errors + 1
+            sess = find_session(repo, tag)
             if sess is None:
+                cost_unknown = True
                 error = err or "session not found"
                 print(f"  ✗ {error}", flush=True)
                 results[(e["name"], arm_name, i)] = {"error": error}
@@ -179,6 +264,10 @@ def main() -> int:
                 continue
             r = collect(sess)
             r["session"] = str(sess)
+            r["session_sha256"] = review_sha256(sess)
+            r["engine_sha256"] = hashes.get(arm_name)
+            total_tokens += r.get("prompt_tokens", 0) + r.get("completion_tokens", 0)
+            cost_unknown |= any(r.get(key, 0) for key in ("unknown_usage", "pending_calls", "estimated_usage"))
             if not ok:
                 r["error"] = err or "review command failed"
             results[(e["name"], arm_name, i)] = r
