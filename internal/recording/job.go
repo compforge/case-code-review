@@ -132,6 +132,14 @@ func ReadJob(path, unitID string, options ...codec.Option) (observation.JobView,
 		return observation.JobView{}, fmt.Errorf("unit %s: missing review identity", unitID)
 	}
 	view := observation.JobView{SchemaVersion: observation.JobSchemaVersion, Job: observation.JobRef{Source: "ccr", ID: reviewID + "/" + unitID}, Name: unitID, Status: "running", Nodes: observation.Nodes{}, Attributes: map[string]any{"review_id": reviewID, "unit_id": unitID}, Issues: append([]string(nil), t.Gaps...)}
+	// A Review can remain open after this Unit completes. Capture failures are
+	// evidence issues; parent closure and running sibling work are not Job failures.
+	for _, record := range t.Records {
+		if record["type"] == "artifact" && record["artifact_kind"] == "recording_gap" {
+			data, _ := record["data"].(map[string]any)
+			view.Issues = append(view.Issues, "Review recording gap: "+textField(data, "error"))
+		}
+	}
 	view.Goal, _ = json.Marshal(map[string]any{"unit_id": unitID, "paths": unit.Paths})
 	switch unit.Outcome {
 	case "completed":

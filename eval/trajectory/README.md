@@ -16,6 +16,51 @@ Session 缺失、内容变化或导出失败逐项保留，命令返回非零。
 需要具体原因诊断时，把输出的 ATIF 交给下文 `trajectory_judge --labels ...`；已有的周轨迹运行继续使用
 `trajectory_diagnostics`。问题是否成立由效果标注判定，重复搜索、上下文丢失等原因由轨迹分析求证。
 
+## Good 的案例诊断与三个 View
+
+同一个 `selected.jsonl` 可只投影诊断证据，不执行 ATIF 评测或调用模型：
+
+```bash
+uv run --project eval python -m eval.trajectory.analyze_cases \
+  eval/data/runs/<collection>/selected.jsonl \
+  --out eval/data/reports/trajectory/<collection> \
+  --ccr <built-ccr-path> --views-only
+```
+
+每条选择记录需要 `case_id`、`session`、整组 `session_sha256` 和非空 `unit_ids`。
+hash 使用 `eval.eval_snapshot.review_sha256(Path(session))`，包括 Review 和关联 `.sessions/`；
+输入必须与固定快照相符，导出后再次核对内容身份。该模式需要支持 Job 导出的 CCR；
+旧二进制的导出错误会明确保留，不能回退成空的成功结果。
+
+CCR 的离线原语也可直接使用：
+
+```bash
+ccr export <review.jsonl> --format job --unit <unit-id> --pretty
+```
+
+它复用 `recording.ReadJob` 的业务归属与原生消息 codec，不从时间相邻推断 Lane 调用的归属。
+产物包括：
+
+- `cases.jsonl` / `cases.md`：内容快照、case 身份、视图入口和证据健康。
+- `views/*.job.json`：跨 R1、R2、Trial 的标准 JobView，保留目标、业务结果与完整原始请求/响应。
+- `views/*.session.json`：标准 SessionView 的 **Job 所属调用片段**，保留原生 Session/Node 身份；
+  `attributes.selection` 明确范围。这不是整个共享 Lane Session，分组顺序也不证明因果。
+- `views/*.context.json` / `*.context.md`：逐调用的请求组织，保留 message 顺序、role、实际 Markdown
+  标题及工具定义的位置。摘录明确标注显示截断；无标题的内容不推断语义章节，完整内容仍在 JobView。
+
+选择记录可附带 `diagnosis` 对象，由分析者保存判据及其来源、目标源码版本、预期与实际、
+偏离点、传播过程、根因假设、反证和下一项验证。该字段原样保留并注明来自分析者，不自动成为
+Finding、独立标签或 Verdict。业务 Assessment 也是待检查输出，不能用它证明自己的正确性。
+用 Job/Session/Node 身份、原生事件或 Review 序号连接诊断证据；外部源码参考保留版本和内容 hash。
+
+例如“持续失效”的假设，需要检查后续状态是否存在可达恢复路径，并用实际请求确认恢复代码
+是没有提供、被截断，还是已在输入中却未被结论考虑。最早可见的错误结论不自动等于根因；
+内部推理原因和修改收益需要进一步验证。
+
+录制失败、缺失请求和未观察到终态显式保留，不能解释成没有执行或评审失败；Unit 已完成也
+不能消除 Review/Session 证据缺口。`review_cost` 是整份 Review 的成本，不属于每个 Unit 的独占成本，
+跨 case 汇总必须按内容快照去重。Fast/Cheap 的变化和效果改善仍需相同工作负载的独立运行来验证。
+
 ## 生成带人工标注的 trajectory 样本
 
 规范化 finding 数据集含 `engine.session_id` 时，可以把本地 Session 轨迹与 forge comment label
