@@ -9,9 +9,9 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55
 	github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372
-	github.com/compforge/codegraph v0.15.4-0.20261016022818-36dfad9f3724
+	github.com/compforge/codegraph v0.15.4-0.20261102061709-8a972f603638
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
-	github.com/compforge/repocli/toolkit/go v0.0.0-20261016031051-6d6a8b2724f1
+	github.com/compforge/repocli/toolkit/go v0.0.0-20261102055313-74e97eb86eef
 	github.com/gofrs/flock v0.13.0
 	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/pkoukk/tiktoken-go v0.1.8

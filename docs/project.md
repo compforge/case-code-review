@@ -46,8 +46,8 @@ FileRole 不是互斥枚举，也不表示证据强度。`main.go` 可以是 `so
 | Go | `go.mod` | `.go` | `*_test.go` 为 test；CodeGraph 标记的 Go `main` / `init` 声明所在文件为 entrypoint；`go.sum` 为 lock；Component 根 `VERSION` 为 version |
 | TypeScript | `package.json` | `.ts/.tsx/.js/.jsx/.mjs/.cjs` | `*.test.*` / `*.spec.*` 为 test；`main.*` 为 entrypoint；`tsconfig*.json` 为 manifest；常见包管理器 lockfile 为 lock |
 
-Component 采用 repocli 的工程粒度：根项目下可有多个组件，非根 manifest 组件内的嵌套 manifest
-不自动形成新组件；Makefile-only 边界也由 repocli 提供。同目录多语言 manifest 共享一个工程身份，
+Component 采用 repocli 的工程粒度：native manifest 和 Makefile 发现组件边界，文件归属最具体的嵌套组件；
+CCR 不合并这些边界或把父组件的变化清单自动投影给子组件。同目录多语言 manifest 共享一个工程身份，
 Component 主要语言是元数据，文件角色按文件自身判断。未知文件可有明确归属，同时保留 unknown 角色。
 `CodeGraph.LockfileTag` 提供通用锁文件分类，CCR 不另维护锁文件名称列表。
 
@@ -74,10 +74,12 @@ Change ─▶ Component / FileRole
   Review，应由 formation / review policy 决定；
 - 用户显式 include 可以提升文件为 target；未被 Component 认领的文件继续使用全局扩展名与路径规则。
 
-CCR 组合 CodeGraph 内置规则与自身的 `TagRule` 扩展，通过 `DiffRequest.TagRules` 交给 repocli；
-repocli 在捕获 Change 时保存 Tags。CodeGraph 提供匹配机制，CCR 维护分类约定并选择评审范围。
-CCR 默认不为 generated、test_fixture、dependency、build_output、cache、minified、test、review_data、tooling
-材料启动独立评审。CCR 将选择策略通过
+CCR 组合 CodeGraph 内置规则与自身的 `review_data` 扩展，通过 `DiffRequest.TagRules` 交给 repocli；
+repocli 在捕获 Change 时保存 Tags。CodeGraph 维护通用材料分类，CCR 的 `material` 包统一提供 Diff、Scan 和源码图的规则集；CCR 单独选择评审范围。
+CCR 默认不为 generated、test_fixture、dependency、build_output、cache、minified、review_data、tooling
+材料启动独立评审。测试源码保留 `test` 标签且默认可评审；`test_fixture` 仍默认排除。
+分析准入与评审选择独立：显式 include 不移除标签，也不自动把材料加入源码图或赋予解析能力。
+CCR 将选择策略通过
 `repocli.UnitOptions.Exclude` 传入，repocli 在 Change 进入 Fragment / Unit 之前执行排除；
 原始 Diff 保留用于上下文，排除文件不生成 Fragment 或 Unit。Scan 使用同一套
 TagMatcher 分类规则和 CCR 排除策略。manifest 标签本身不排除文件，普通 manifest/lock 仍按 Component

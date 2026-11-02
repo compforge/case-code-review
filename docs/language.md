@@ -137,3 +137,9 @@ Go 版本；它不证明部署环境使用同一版本。缺少锁定版本、ch
 - [`kernel.md`](kernel.md) — Language 在 CCR Kernel 中的位置
 - [`unit-model.md`](unit-model.md) — 源码关系如何参与 Unit 与 Clue
 - [`harness.md`](harness.md) — 只读源码工具与执行边界
+
+材料分类统一使用 `internal/material.TagRules`，与 Diff/Scan 保持一致；分析准入由 Language 单独配置。
+测试源码可参与关系分析，repo-map 的定义排名仍可按 FileRole 选择生产代码。
+依赖、生成产物、fixture、构建产物、缓存、工具材料、minified 和 CCR review_data 默认不进入仓库图。
+显式评审 include 不修改该分析策略。输入缺口、格式不支持与预算诊断继续经 RepositoryIndex 的报告传播，
+缺少图关系不代表不存在关系；所有读取维持固定 snapshot 契约。

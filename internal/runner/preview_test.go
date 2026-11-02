@@ -3,8 +3,8 @@ package runner
 import (
 	"testing"
 
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -42,7 +42,7 @@ func TestWhyExcluded_BinaryFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -88,7 +88,7 @@ func TestWhyExcluded_UserExcludePattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -151,7 +151,7 @@ func TestWhyExcluded_ExtensionFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -169,18 +169,18 @@ func TestWhyExcluded_DefaultPathFilter(t *testing.T) {
 		expected ExcludeReason
 	}{
 		{
-			name: "test file excluded by default path",
+			name: "test file remains reviewable",
 			diff: change.Change{
 				NewPath: "foo_test.go",
 			},
-			expected: ExcludeDefaultPath,
+			expected: ExcludeNone,
 		},
 		{
-			name: "java test file excluded",
+			name: "java test file remains reviewable",
 			diff: change.Change{
 				NewPath: "src/test/java/com/example/FooTest.java",
 			},
-			expected: ExcludeDefaultPath,
+			expected: ExcludeNone,
 		},
 		{
 			name: "regular source file not excluded",
@@ -200,7 +200,7 @@ func TestWhyExcluded_DefaultPathFilter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %v, want %v", got, tt.expected)
@@ -237,11 +237,11 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 			expected: ExcludeNone,
 		},
 		{
-			name: "include pattern bypasses default-path exclusion for test files",
+			name: "include pattern bypasses default-path exclusion for generated files",
 			diff: change.Change{
-				NewPath: "src/foo/bar_test.go",
+				NewPath: "src/foo/bar.pb.go",
 			},
-			// IMPORTANT: Even though *_test.go is excluded by IsExcludedPath,
+			// IMPORTANT: Even though *.pb.go is excluded by IsExcludedPath,
 			// matching an include pattern returns ExcludeNone before that check.
 			expected: ExcludeNone,
 		},
@@ -281,19 +281,19 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 		},
 		// --- Default-path exclusion still applies to non-included files ---
 		{
-			name: "non-included test file excluded by default path",
+			name: "non-included test file remains reviewable",
 			diff: change.Change{
-				NewPath: "internal/handler_test.go",
+				NewPath: "internal/handler.pb.go",
 			},
 			// Does not match include patterns, falls through.
-			// IsExcludedPath matches *_test.go → ExcludeDefaultPath.
+			// Default policy matches *.pb.go → ExcludeDefaultPath.
 			expected: ExcludeDefaultPath,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -304,11 +304,11 @@ func TestWhyExcluded_UserIncludePattern(t *testing.T) {
 
 // TestWhyExcluded_IncludeBypassesDefaultPath verifies that a file matching
 // an include pattern is reviewed even when it would normally be excluded by
-// the default-path filter (e.g. test files, generated code patterns).
+// the default-path filter (e.g. generated code patterns).
 func TestWhyExcluded_IncludeBypassesDefaultPath(t *testing.T) {
 	agent := New(Args{
 		FileFilter: &rules.FileFilter{
-			Include: []string{"**/*_test.go"},
+			Include: []string{"**/*.pb.go"},
 		},
 	})
 
@@ -318,14 +318,14 @@ func TestWhyExcluded_IncludeBypassesDefaultPath(t *testing.T) {
 		expected ExcludeReason
 	}{
 		{
-			name: "test file explicitly included overrides default-path exclusion",
+			name: "generated file explicitly included overrides default-path exclusion",
 			diff: change.Change{
-				NewPath: "foo_test.go",
+				NewPath: "foo.pb.go",
 			},
 			expected: ExcludeNone,
 		},
 		{
-			name: "non-test file still reviewed via default checks",
+			name: "regular source file still reviewed via default checks",
 			diff: change.Change{
 				NewPath: "main.go",
 			},
@@ -335,7 +335,7 @@ func TestWhyExcluded_IncludeBypassesDefaultPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -384,7 +384,7 @@ func TestWhyExcluded_IncludeAndExcludeInteraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.whyExcluded(tt.diff)
 			if got != tt.expected {
 				t.Errorf("whyExcluded() = %q, want %q", got, tt.expected)
@@ -436,11 +436,11 @@ func TestShouldReview(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "test file should not be reviewed",
+			name: "test file should be reviewed",
 			diff: change.Change{
 				NewPath: "main_test.go",
 			},
-			expected: false,
+			expected: true,
 		},
 		{
 			name: "unsupported extension should not be reviewed",
@@ -453,7 +453,7 @@ func TestShouldReview(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.diff.Tags = allowedext.Classify(effectivePath(tt.diff))
+			tt.diff.Tags = material.Classify(effectivePath(tt.diff))
 			got := agent.shouldReview(tt.diff)
 			if got != tt.expected {
 				t.Errorf("shouldReview() = %v, want %v", got, tt.expected)

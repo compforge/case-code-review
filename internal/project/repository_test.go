@@ -107,7 +107,7 @@ func TestRepositoryClassifiesTypeScriptComponents(t *testing.T) {
 		{"server/app.py", "server", Python, FileRoles{RoleSource}},
 		{"server/tests/test_app.py", "server", Python, FileRoles{RoleSource, RoleTest}},
 		{"server/conftest.py", "server", Python, FileRoles{RoleSource, RoleTest}},
-		{"server/harness/runtime.py", "server", Python, FileRoles{RoleSource}},
+		{"server/harness/runtime.py", "server/harness", Python, FileRoles{RoleSource}},
 		{"src/index.ts", ".", TypeScript, FileRoles{RoleSource}},
 		{"src/cli/launcher.cjs", ".", TypeScript, FileRoles{RoleSource}},
 		{"packages/plugin/src/index.ts", "packages/plugin", TypeScript, FileRoles{RoleSource}},

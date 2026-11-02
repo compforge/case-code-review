@@ -10,6 +10,7 @@ import (
 
 	cg "github.com/compforge/codegraph"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
 )
 
@@ -158,7 +159,7 @@ func documentPath(path string) string { return strings.TrimPrefix(filepath.ToSla
 // Document navigation consumes a publication built from the shared extraction
 // cache; it never depends on the parser's intermediate outline representation.
 func documentGraph(ctx context.Context, facts cg.Facts) (*cg.Graph, error) {
-	builder, err := cg.NewBuilder("document", cg.Options{})
+	builder, err := cg.NewBuilder("document", cg.Options{TagRules: material.TagRules()})
 	if err != nil {
 		return nil, err
 	}

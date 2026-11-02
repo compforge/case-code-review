@@ -10,6 +10,7 @@ import (
 
 	cg "github.com/compforge/codegraph"
 	"github.com/compforge/repocli/toolkit/go"
+	"github.com/qiankunli/case-code-review/internal/material"
 )
 
 const (
@@ -85,13 +86,14 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	result, err := repocli.GraphFromSource(ctx, source, repocli.GraphOptions{
 		RetryOnBudget: true,
 		CodeGraph: cg.Options{
+			TagRules:         material.TagRules(),
 			MaxDocuments:     maxScanFiles,
 			MaxDocumentBytes: maxFileBytes,
 			MaxSourceBytes:   32 << 20,
 			ExtractionCache:  a.extractionCache,
 			Admission: &cg.AdmissionPolicy{ExcludedTags: []cg.Tag{
 				cg.DependencyTag, cg.TestFixtureTag, cg.GeneratedTag,
-				cg.ToolingTag, cg.CacheTag, cg.BuildOutputTag,
+				cg.ToolingTag, cg.CacheTag, cg.BuildOutputTag, cg.MinifiedTag, material.ReviewDataTag,
 			}},
 		},
 		Prioritize: priority,

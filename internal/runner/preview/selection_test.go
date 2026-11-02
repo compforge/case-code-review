@@ -4,13 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
+	"github.com/qiankunli/case-code-review/internal/material"
 )
 
 func TestSelectionUsesCapturedTagsAndCallerPrecedence(t *testing.T) {
 	for _, name := range []string{"a_test.go", "vendor/a.go", "bundle.MIN.js", "src/normal.go", "package.json", "odd.custom"} {
-		tags := allowedext.Classify(name)
+		tags := material.Classify(name)
 		include := &rules.FileFilter{Include: []string{strings.ToLower(name)}}
 		if Select(name, tags, false, include) != ExcludeNone {
 			t.Fatal("include did not override defaults", name)

@@ -2,7 +2,7 @@ package runner
 
 import (
 	"context"
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"strings"
 	"testing"
 
@@ -23,7 +23,7 @@ func TestArtifactSelectionMatchesPreviewAndRetainsRelatedDiffs(t *testing.T) {
 	registry.Register(diffReader)
 	a := &Runner{args: Args{RepoDir: repo, Tools: registry}}
 	for _, path := range paths {
-		a.changes = append(a.changes, change.Change{NewPath: path, Tags: allowedext.Classify(path), Diff: "diff for " + path})
+		a.changes = append(a.changes, change.Change{NewPath: path, Tags: material.Classify(path), Diff: "diff for " + path})
 	}
 	prepareSelectionFixture(t, a)
 	preview := a.buildPreview()
@@ -81,7 +81,7 @@ func TestArtifactSelectionHonorsUserOverrides(t *testing.T) {
 			}
 			a := &Runner{
 				args:    Args{RepoDir: repo, FileFilter: tt.filter},
-				changes: []change.Change{{NewPath: tt.path, Tags: allowedext.Classify(tt.path), IsBinary: tt.binary}},
+				changes: []change.Change{{NewPath: tt.path, Tags: material.Classify(tt.path), IsBinary: tt.binary}},
 			}
 			prepareSelectionFixture(t, a)
 			selection, _ := a.selectionFor(a.changes[0])
