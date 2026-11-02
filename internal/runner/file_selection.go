@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/console"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
@@ -49,7 +49,7 @@ func (a *Runner) prepareFileSelections(ctx context.Context) error {
 	}
 	for _, side := range []struct {
 		name   string
-		report repocli.InspectReport
+		report repokit.InspectReport
 	}{{"before", before}, {"after", after}} {
 		for _, diagnostic := range side.report.Diagnostics {
 			fmt.Fprintf(console.Err(), "[ccr] project layout %s snapshot %s: %s path=%q: %s\n", side.name, side.report.Snapshot, diagnostic.Code, diagnostic.Path, diagnostic.Message)

@@ -1,6 +1,6 @@
 package language
 
-import cg "github.com/compforge/codegraph"
+import cg "github.com/compforge/codegraph/pkg"
 
 // Connection is a graph-backed grouping candidate. Touched distinguishes an
 // occurrence on changed lines from a declaration's existing dependency.
@@ -15,6 +15,7 @@ type Connection struct {
 	Touched    bool            `json:"touched"`
 }
 
+// +spec=Changed source bindings identify touched semantic dependencies between retained declarations; navigation nodes are never dependency owners.
 func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span) []Connection {
 	if r == nil || r.Graph == nil {
 		return nil
@@ -62,15 +63,17 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 			}
 		}
 	}
+	ownerIDs := map[string]bool{}
 	for _, owner := range owners {
-		for _, e := range g.RelationsFrom(owner.NodeID, cg.Calls, cg.References, "reads", "writes", "uses_type", "captures", "uses_resource", cg.Extends, cg.Implements, cg.Aliases, cg.Exports) {
-			if e.Confidence.AtLeast(cg.Scoped) {
+		ownerIDs[owner.NodeID] = true
+		for _, e := range g.RelationsFrom(owner.NodeID) {
+			if (e.Kind.IsDependency() || e.Kind == cg.Exports) && e.Confidence.AtLeast(cg.Scoped) {
 				follow(e.Source, e.Target, e.Kind, e.Confidence, false)
 			}
 		}
 	}
 	for _, n := range g.Nodes() {
-		if !isSourceUse(n) || n.Location == nil || n.Location.Path != path {
+		if !n.Kind.IsOccurrence() || n.Location == nil || n.Location.Path != path {
 			continue
 		}
 		touched := false
@@ -83,9 +86,18 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 		if !touched {
 			continue
 		}
-		for _, e := range g.RelationsFrom(n.ID, cg.References, "binds_to") {
-			if e.Confidence.AtLeast(cg.Scoped) {
-				follow(n.ID, e.Target, e.Kind, e.Confidence, true)
+		kind := cg.RelationKind(n.ReferenceKind)
+		if !kind.IsDependency() {
+			continue
+		}
+		for _, owner := range g.RelationsFrom(n.ID, cg.OccursIn) {
+			if !ownerIDs[owner.Target] {
+				continue
+			}
+			for _, binding := range g.RelationsFrom(n.ID, cg.BindsTo) {
+				if binding.Confidence.AtLeast(cg.Scoped) {
+					follow(owner.Target, binding.Target, kind, binding.Confidence, true)
+				}
 			}
 		}
 	}
