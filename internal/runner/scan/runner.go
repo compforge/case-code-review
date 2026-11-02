@@ -12,7 +12,6 @@ import (
 
 	"github.com/compforge/agentgo"
 
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/config/rules"
 	"github.com/qiankunli/case-code-review/internal/config/template"
 	"github.com/qiankunli/case-code-review/internal/console"
@@ -21,6 +20,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"github.com/qiankunli/case-code-review/internal/recording"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/preview"
@@ -370,7 +370,7 @@ func (a *Runner) selectPath(path string) bool {
 
 // whyExcluded mirrors runner.whyExcluded but for scan Item inputs.
 func (a *Runner) whyExcluded(it Item) preview.ExcludeReason {
-	return preview.Select(it.Path, allowedext.Classify(it.Path), it.IsBinary, a.args.FileFilter)
+	return preview.Select(it.Path, material.Classify(it.Path), it.IsBinary, a.args.FileFilter)
 }
 
 func extFromPath(path string) string {

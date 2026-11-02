@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/compforge/repocli/toolkit/go"
-	allowedext "github.com/qiankunli/case-code-review/internal/config/allowlist"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -157,7 +157,7 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	} else if p.mode == ModeCommit {
 		target = p.commit
 	}
-	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: allowedext.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target, MaxFiles: p.MaxFiles, MaxSnapshotBytes: p.MaxSnapshotBytes})
+	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: material.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target, MaxFiles: p.MaxFiles, MaxSnapshotBytes: p.MaxSnapshotBytes})
 	if err != nil {
 		return nil, err
 	}

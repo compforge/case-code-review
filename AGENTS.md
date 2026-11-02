@@ -35,6 +35,7 @@ case-code-review/
 └── internal/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
     ├── project/    Repository、repocli 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
+    ├── material/   共享材料分类入口：继承 CodeGraph 通用规则，仅追加 CCR 领域标签，供 Diff、Scan 与图共同使用
     ├── language/   ★ CodeGraph 接入边界：向 repocli 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
     ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力。详见 `docs/harness.md`
@@ -61,7 +62,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 ## 关键约定
 
 1. **Knowledge owner 唯一**：Project Knowledge 消费 repocli 的 Repository / Component，消费通用文件角色并提供评审投影和
-   `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有代码图与关系绑定，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
+   `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有通用材料分类、代码图与关系绑定，Material 追加 CCR 标签，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
 2. **Unit 以相关改动为边界**：repocli 拥有 Fragment 分类与 Unit 组装，按同一声明、包含、调用、import、同文件、namespace 逐步聚合；明确关系不因数量达到上限而停止归并。CCR 提供评审数量软上限、token 预算并适配 Clue 与运行状态。

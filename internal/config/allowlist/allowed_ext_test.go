@@ -2,6 +2,7 @@ package allowedext
 
 import (
 	cg "github.com/compforge/codegraph"
+	"github.com/qiankunli/case-code-review/internal/material"
 	"testing"
 )
 
@@ -43,50 +44,50 @@ func TestIsExcludedPath(t *testing.T) {
 		want bool
 	}{
 		// Go test files
-		{"go test in subdir", "foo/bar_test.go", true},
-		{"go test at root", "bar_test.go", true},
-		{"go test deeply nested", "a/b/c/d_test.go", true},
+		{"go test in subdir", "foo/bar_test.go", false},
+		{"go test at root", "bar_test.go", false},
+		{"go test deeply nested", "a/b/c/d_test.go", false},
 		{"go non-test file", "foo/bar.go", false},
 		{"go file with test in name", "foo/testutil.go", false},
 
 		// Java test directory
-		{"java test dir", "src/test/java/com/example/FooTest.java", true},
+		{"java test dir", "src/test/java/com/example/FooTest.java", false},
 		{"java main dir", "src/main/java/com/example/Foo.java", false},
 
 		// Java *Test.java pattern
-		{"java Test suffix", "com/example/FooTest.java", true},
-		{"java Tests suffix", "com/example/FooTests.java", true},
+		{"java Test suffix", "com/example/FooTest.java", false},
+		{"java Tests suffix", "com/example/FooTests.java", false},
 		{"java non-test", "com/example/Foo.java", false},
 
 		// Kotlin test directory
-		{"kotlin test dir", "src/test/kotlin/FooTest.kt", true},
+		{"kotlin test dir", "src/test/kotlin/FooTest.kt", false},
 		{"kotlin main dir", "src/main/kotlin/Foo.kt", false},
 
 		// JS/TS test files
-		{"js test file", "src/utils.test.js", true},
-		{"tsx test file", "src/Component.test.tsx", true},
-		{"ts spec file", "src/utils.spec.ts", true},
-		{"jsx spec file", "src/App.spec.jsx", true},
+		{"js test file", "src/utils.test.js", false},
+		{"tsx test file", "src/Component.test.tsx", false},
+		{"ts spec file", "src/utils.spec.ts", false},
+		{"jsx spec file", "src/App.spec.jsx", false},
 		{"ts non-test", "src/utils.ts", false},
 
 		// __tests__ directory
-		{"__tests__ dir", "src/__tests__/foo.js", true},
-		{"__tests__ nested", "packages/ui/__tests__/Button.test.tsx", true},
+		{"__tests__ dir", "src/__tests__/foo.js", false},
+		{"__tests__ nested", "packages/ui/__tests__/Button.test.tsx", false},
 
 		// Python test files
-		{"python test file", "tests/test_utils.py", false}, // pattern is *_test.py, not test_*.py
-		{"python _test suffix", "app/handler_test.py", true},
-		{"python test dir", "test/unit/handler_test.py", true},
-		{"python tests dir", "tests/unit/handler_test.py", true},
+		{"python test file", "tests/test_utils.py", false},
+		{"python _test suffix", "app/handler_test.py", false},
+		{"python test dir", "test/unit/handler_test.py", false},
+		{"python tests dir", "tests/unit/handler_test.py", false},
 		{"python non-test", "app/handler.py", false},
 
 		// Ruby spec files
-		{"ruby spec file", "app/models/user_spec.rb", true},
-		{"ruby spec dir", "spec/models/user_spec.rb", true},
+		{"ruby spec file", "app/models/user_spec.rb", false},
+		{"ruby spec dir", "spec/models/user_spec.rb", false},
 		{"ruby non-spec", "app/models/user.rb", false},
 
 		// Rust test files
-		{"rust test file", "src/parser_test.rs", true},
+		{"rust test file", "src/parser_test.rs", false},
 		{"rust non-test", "src/parser.rs", false},
 
 		// ccr's own config dir — not reviewable
@@ -98,7 +99,7 @@ func TestIsExcludedPath(t *testing.T) {
 		// HarmonyOS oh_modules and test files
 		{"oh_modules root", "oh_modules/some_lib/index.ets", true},
 		{"oh_modules nested", "entry/oh_modules/lib/index.ets", true},
-		{"ets test file", "entry/src/test/Component.test.ets", true},
+		{"ets test file", "entry/src/test/Component.test.ets", false},
 		{"ets non-test", "entry/src/main/Component.ets", false},
 
 		// Generated code, dependencies and build output are default review exclusions.
@@ -134,12 +135,12 @@ func TestIsExcludedPath(t *testing.T) {
 		{"trace html report", "doctor-trace.html", false},
 
 		// Case insensitive
-		{"case insensitive go", "Foo/Bar_Test.go", true},
-		{"case insensitive java", "com/FooTEST.java", true}, // lowercase → "com/footest.java" matches "**/*test.java"
+		{"case insensitive go", "Foo/Bar_Test.go", false},
+		{"case insensitive java", "com/FooTEST.java", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsExcludedPath(tt.path); got != tt.want {
+			if got := IsExcluded(material.Classify(tt.path)); got != tt.want {
 				t.Errorf("IsExcludedPath(%q) = %v, want %v", tt.path, got, tt.want)
 			}
 		})
@@ -152,16 +153,16 @@ func TestDefaultTagPolicy(t *testing.T) {
 			t.Fatalf("tag not excluded: %s", tag)
 		}
 	}
-	if IsExcluded([]cg.Tag{cg.ManifestTag, "custom"}) {
+	if IsExcluded([]cg.Tag{cg.ManifestTag, cg.TestTag, "custom"}) {
 		t.Fatal("nonexcluded tag became policy")
 	}
 	for _, path := range []string{"api.pb.go", "api.gen.go", "api.generated.ts", "kitex_gen/api.go", "fixtures/a.py", "testdata/a.go", "snapshots/a.js", "pkg/vendor/a.go", "pkg/node_modules/a.js", "dist/a.js", ".next/a.js", ".cache/a.py", "__pycache__/a.py", "app.min.js", "app.min.css"} {
-		if !IsExcludedPath(path) {
+		if !IsExcluded(material.Classify(path)) {
 			t.Fatalf("scan path not excluded: %s", path)
 		}
 	}
 	for _, path := range []string{"go.mod", "go.sum", "package.json", "package-lock.json", "pyproject.toml", "uv.lock", "app.go", "page.html"} {
-		if IsExcludedPath(path) {
+		if IsExcluded(material.Classify(path)) {
 			t.Fatalf("source or metadata excluded: %s", path)
 		}
 	}

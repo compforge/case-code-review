@@ -329,7 +329,7 @@ func prepareSelectionFixture(t *testing.T, a *Runner) {
 	}
 }
 
-// +case:id=engineering_component_context,desc=`Nested manifests and mixed language files share repocli ownership`,expect=`Review context follows engineering roots while file roles retain their own language semantics`
+// +case:id=engineering_component_context,desc=`Nested manifests establish repocli ownership`,expect=`Review context follows engineering roots while file roles retain their own language semantics`
 func TestProjectContextUsesEngineeringComponent(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"server/pyproject.toml", "server/web/package.json", "server/web/main.ts", "other/go.mod", "other/main.go"} {
@@ -338,13 +338,18 @@ func TestProjectContextUsesEngineeringComponent(t *testing.T) {
 	a := &Runner{args: Args{RepoDir: root}, changes: []change.Change{{NewPath: "server/pyproject.toml"}, {NewPath: "server/web/main.ts"}, {NewPath: "other/main.go"}}}
 	prepareSelectionFixture(t, a)
 	selection := a.fileSelections["server/web/main.ts"]
-	if selection.Component.Root != "server" || selection.Component.Kind != project.Python || !selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
+	if selection.Component.Root != "server/web" || selection.Component.Kind != project.TypeScript || !selection.Roles.Has(project.RoleSource) || !selection.Roles.Has(project.RoleEntrypoint) {
 		t.Fatalf("selection: %+v", selection)
 	}
 	finder := componentFinder{selections: a.fileSelections, clues: a.componentClues}
 	clues := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "server/web/main.ts"}}})
-	if len(clues) != 2 {
-		t.Fatalf("missing parent manifest or file role clue: %+v", clues)
+	if len(clues) != 1 {
+		t.Fatalf("nested component should retain only its file role clue: %+v", clues)
+	}
+	for _, clue := range clues {
+		if clue.Ref == "server/pyproject.toml" {
+			t.Fatal("parent manifest crossed nested component boundary", clue)
+		}
 	}
 	other := finder.Find(unit.Unit{Fragments: []unit.Fragment{{Path: "other/main.go"}}})
 	for _, clue := range other {

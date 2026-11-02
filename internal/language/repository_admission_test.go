@@ -15,7 +15,7 @@ import (
 // +case:id=review_material_admission,desc=`Dependencies and fixtures are not Git ignored`,expect=`Explicit CCR exclusions keep them outside graph material budgets`
 func TestRepositoryUsesExplicitMaterialExclusions(t *testing.T) {
 	root := t.TempDir()
-	for _, name := range []string{"keep.go", "vendor/bad.go", "node_modules/bad.go", "testdata/bad.go", ".codex/bad.go", ".cache/bad.go", "dist/bad.go", "bad.gen.go"} {
+	for _, name := range []string{"keep.go", "vendor/bad.go", "node_modules/bad.go", "testdata/bad.go", ".codex/bad.go", ".cache/bad.go", "dist/bad.go", "bad.gen.go", "schema.capnp.go", "api.pb.gw.go", ".casecodereview/bad.go", "target/bad.go", ".venv/bad.py", "bundle.min.js"} {
 		file := filepath.Join(root, name)
 		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
 			t.Fatal(err)
