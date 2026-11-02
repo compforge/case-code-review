@@ -63,11 +63,13 @@ func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 	// Ranking may use weaker graph candidates; only CodeGraph resolves endpoints.
 	counts := map[edge]int{}
 	for _, relation := range ex.Graph.Relations() {
-		if relation.Kind != cg.References && relation.Kind != cg.Calls {
+		switch relation.Kind {
+		case cg.References, cg.Calls, "reads", "writes", "uses_type", "captures", "uses_resource":
+		default:
 			continue
 		}
 		source, ok := ex.Graph.Node(relation.Source)
-		if !ok || source.Kind == cg.Reference {
+		if !ok || source.Kind == cg.Reference || source.ReferenceKind != "" {
 			continue
 		}
 		target, ok := ex.Graph.Node(relation.Target)

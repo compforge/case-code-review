@@ -40,7 +40,7 @@ func projectAnalysis(source Source, graph *cg.Graph) Analysis {
 				imp.Path = imp.From + "." + b.ImportedName
 			}
 			a.Imports = append(a.Imports, imp)
-		case cg.Reference:
+		case cg.Reference, "CallSite", "ReadSite", "WriteSite", "TypeUse", "CaptureSite", "ResourceUse", "DecoratorUse":
 			switch node.ReferenceKind {
 			case cg.DecoratorReference:
 				if len(graph.RelationsFrom(node.ID, cg.Decorates)) > 0 {
@@ -110,7 +110,7 @@ func locationSpan(loc cg.Location) Span {
 
 // ReviewSymbolID translates a graph declaration to the contract/Unit join key.
 func ReviewSymbolID(node cg.Node) string {
-	if node.Location == nil || node.QualifiedName == "" || node.Kind == cg.Reference || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentNodeKind {
+	if node.Location == nil || node.QualifiedName == "" || isSourceUse(node) || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentNodeKind {
 		return ""
 	}
 	return SymbolID(node.Location.Path, "", node.QualifiedName)
@@ -127,3 +127,7 @@ func reviewDefinition(path string, node cg.Node) (Definition, bool) {
 	}
 	return Definition{SymbolID: SymbolID(path, "", node.QualifiedName), Name: node.QualifiedName, Owner: owner, Kind: kind, Span: locationSpan(*node.Location), Signature: displaySignature(node.Signature)}, true
 }
+
+// isSourceUse accepts both the legacy and concrete occurrence vocabulary while
+// the dependency release is rolled out. ReferenceKind belongs only to source uses.
+func isSourceUse(n cg.Node) bool { return n.Kind == cg.Reference || n.ReferenceKind != "" }

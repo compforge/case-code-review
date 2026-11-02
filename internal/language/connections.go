@@ -63,14 +63,14 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 		}
 	}
 	for _, owner := range owners {
-		for _, e := range g.RelationsFrom(owner.NodeID, cg.Calls, cg.References, cg.Extends, cg.Implements, cg.Aliases, cg.Exports) {
+		for _, e := range g.RelationsFrom(owner.NodeID, cg.Calls, cg.References, "reads", "writes", "uses_type", "captures", "uses_resource", cg.Extends, cg.Implements, cg.Aliases, cg.Exports) {
 			if e.Confidence.AtLeast(cg.Scoped) {
 				follow(e.Source, e.Target, e.Kind, e.Confidence, false)
 			}
 		}
 	}
 	for _, n := range g.Nodes() {
-		if n.Kind != cg.Reference || n.Location == nil || n.Location.Path != path {
+		if !isSourceUse(n) || n.Location == nil || n.Location.Path != path {
 			continue
 		}
 		touched := false
@@ -83,7 +83,7 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 		if !touched {
 			continue
 		}
-		for _, e := range g.RelationsFrom(n.ID, cg.References) {
+		for _, e := range g.RelationsFrom(n.ID, cg.References, "binds_to") {
 			if e.Confidence.AtLeast(cg.Scoped) {
 				follow(n.ID, e.Target, e.Kind, e.Confidence, true)
 			}

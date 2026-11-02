@@ -143,3 +143,7 @@ Go 版本；它不证明部署环境使用同一版本。缺少锁定版本、ch
 依赖、生成产物、fixture、构建产物、缓存、工具材料、minified 和 CCR review_data 默认不进入仓库图。
 显式评审 include 不修改该分析策略。输入缺口、格式不支持与预算诊断继续经 RepositoryIndex 的报告传播，
 缺少图关系不代表不存在关系；所有读取维持固定 snapshot 契约。
+
+CodeGraph 的具体 occurrence 通过 `binds_to` 导航；`occurs_in` 保留源码归属。
+Connections 与上下文排序覆盖 calls、reads、writes、uses_type、captures、uses_resource。
+适配层暂兼容旧 Reference / references，保持已发布依赖和新版图的接入；不会将 BindsTo 重复计入声明依赖。

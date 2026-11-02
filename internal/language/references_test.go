@@ -75,7 +75,7 @@ func TestOwnersUseCrossFileReceiverMembership(t *testing.T) {
 func referenceCount(index *RepositoryIndex, path, name string) int {
 	count := 0
 	for _, n := range index.Graph.Nodes() {
-		if n.Kind == cg.Reference && n.ReferenceKind == cg.SymbolReference && n.Location.Path == path && n.Name == name {
+		if isSourceUse(n) && (n.ReferenceKind == cg.SymbolReference || n.ReferenceKind == "reads" || n.ReferenceKind == cg.CallReference) && n.Location.Path == path && n.Name == name {
 			count++
 		}
 	}
