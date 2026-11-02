@@ -2,7 +2,7 @@ package unit
 
 import (
 	"context"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 	"strings"
@@ -10,7 +10,7 @@ import (
 
 // BindFragments adds review identities to repository-owned fragments. It never
 // reparses a diff or changes ownership/grouping; bindings serve Clue queries only.
-func BindFragments(ctx context.Context, fs []repocli.Fragment, changes []change.Change, repoDir string, after, before *language.Analyzer) ([]Fragment, error) {
+func BindFragments(ctx context.Context, fs []repokit.Fragment, changes []change.Change, repoDir string, after, before *language.Analyzer) ([]Fragment, error) {
 	if after == nil {
 		after = language.NewAnalyzer(repoDir)
 	}
@@ -64,7 +64,7 @@ func BindFragments(ctx context.Context, fs []repocli.Fragment, changes []change.
 	return out, nil
 }
 
-func bindElements(elements []repocli.SourceElement, anchors []language.Anchor) []language.Anchor {
+func bindElements(elements []repokit.SourceElement, anchors []language.Anchor) []language.Anchor {
 	var out []language.Anchor
 	seen := map[string]bool{}
 	for _, e := range elements {
@@ -85,17 +85,17 @@ func bindElements(elements []repocli.SourceElement, anchors []language.Anchor) [
 }
 
 // RepositoryFragment projects manually supplied targets as well as native splits.
-func (f Fragment) RepositoryFragment() repocli.Fragment {
+func (f Fragment) RepositoryFragment() repokit.Fragment {
 	if f.Source != nil {
 		return *f.Source
 	}
-	convert := func(as []language.Anchor) []repocli.SourceElement {
-		var out []repocli.SourceElement
+	convert := func(as []language.Anchor) []repokit.SourceElement {
+		var out []repokit.SourceElement
 		for _, a := range as {
 			name, _ := language.SymbolName(a.SymbolID)
-			out = append(out, repocli.SourceElement{Path: a.Path, Name: name, Kind: repocli.ElementKind(strings.ToLower(string(a.Kind))), Span: repocli.SourceSpan{Start: a.Span.Start, End: a.Span.End}, StartByte: a.StartByte, EndByte: a.EndByte})
+			out = append(out, repokit.SourceElement{Path: a.Path, Name: name, Kind: repokit.ElementKind(strings.ToLower(string(a.Kind))), Span: repokit.SourceSpan{Start: a.Span.Start, End: a.Span.End}, StartByte: a.StartByte, EndByte: a.EndByte})
 		}
 		return out
 	}
-	return repocli.Fragment{Path: f.Path, OldPath: f.OldPath, Before: convert(f.Before), After: convert(f.After), Gaps: f.Gaps, Diff: f.Diff, Status: f.Status, Insertions: f.Insertions, Deletions: f.Deletions}
+	return repokit.Fragment{Path: f.Path, OldPath: f.OldPath, Before: convert(f.Before), After: convert(f.After), Gaps: f.Gaps, Diff: f.Diff, Status: f.Status, Insertions: f.Insertions, Deletions: f.Deletions}
 }

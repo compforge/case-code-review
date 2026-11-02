@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 	"github.com/qiankunli/case-code-review/internal/material"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
@@ -37,12 +37,12 @@ type Provider struct {
 	// Commit mode parameter
 	commit string // single commit hash/ref
 
-	// MaxFiles is the caller-owned snapshot file budget; zero uses repocli defaults.
+	// MaxFiles is the caller-owned snapshot file budget; zero uses RepoKit defaults.
 	MaxFiles         int
 	MaxSnapshotBytes int64
 
 	Before, After *sourceview.Snapshot
-	Diff          repocli.DiffReport
+	Diff          repokit.DiffReport
 
 	base      string
 	baseKnown bool
@@ -157,7 +157,7 @@ func (p *Provider) GetDiff(ctx context.Context) ([]change.Change, error) {
 	} else if p.mode == ModeCommit {
 		target = p.commit
 	}
-	captured, err := repocli.Diff(ctx, repocli.DiffRequest{TagRules: material.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target, MaxFiles: p.MaxFiles, MaxSnapshotBytes: p.MaxSnapshotBytes})
+	captured, err := repokit.Diff(ctx, repokit.DiffRequest{TagRules: material.TagRules(), Repository: p.repoDir, Base: base, EmptyBase: base == "", Head: target, MaxFiles: p.MaxFiles, MaxSnapshotBytes: p.MaxSnapshotBytes})
 	if err != nil {
 		return nil, err
 	}

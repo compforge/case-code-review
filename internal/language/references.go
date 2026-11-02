@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	cg "github.com/compforge/codegraph"
+	cg "github.com/compforge/codegraph/pkg"
 )
 
 // Reference is a review projection of a graph-proven use. SymbolID identifies a
@@ -62,7 +62,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 	var out []Reference
 	seen := map[Reference]bool{}
 	for _, use := range r.Graph.Nodes() {
-		if use.Kind != cg.Reference || use.Location == nil || use.Location.Path != path {
+		if !use.Kind.IsOccurrence() || use.Location == nil || use.Location.Path != path {
 			continue
 		}
 		selected := false
@@ -76,7 +76,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 			continue
 		}
 		queue := []string{}
-		for _, e := range r.Graph.RelationsFrom(use.ID, cg.References) {
+		for _, e := range r.Graph.RelationsFrom(use.ID, cg.BindsTo) {
 			if e.Confidence.AtLeast(cg.Scoped) {
 				queue = append(queue, e.Target)
 			}
@@ -142,7 +142,7 @@ func (r *RepositoryIndex) UsesOf(symbol string) []cg.Node {
 			continue
 		}
 		visited[id] = true
-		for _, e := range r.Graph.RelationsTo(id, cg.Aliases, cg.References) {
+		for _, e := range r.Graph.RelationsTo(id, cg.Aliases, cg.BindsTo) {
 			if !e.Confidence.AtLeast(cg.Scoped) {
 				continue
 			}
@@ -152,7 +152,7 @@ func (r *RepositoryIndex) UsesOf(symbol string) []cg.Node {
 			}
 			if e.Kind == cg.Aliases {
 				queue = append(queue, n.ID)
-			} else if n.Kind == cg.Reference && n.Location != nil {
+			} else if n.Kind.IsOccurrence() && n.Location != nil {
 				uses[n.ID] = n
 			}
 		}

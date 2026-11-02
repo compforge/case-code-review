@@ -3,8 +3,6 @@ package sourcecontext
 import (
 	"math"
 	"sort"
-
-	cg "github.com/compforge/codegraph"
 )
 
 // Ranking = the aider repo-map kernel, reshaped for review: build a
@@ -63,11 +61,11 @@ func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 	// Ranking may use weaker graph candidates; only CodeGraph resolves endpoints.
 	counts := map[edge]int{}
 	for _, relation := range ex.Graph.Relations() {
-		if relation.Kind != cg.References && relation.Kind != cg.Calls {
+		if !relation.Kind.IsDependency() {
 			continue
 		}
 		source, ok := ex.Graph.Node(relation.Source)
-		if !ok || source.Kind == cg.Reference {
+		if !ok || source.Kind.IsOccurrence() {
 			continue
 		}
 		target, ok := ex.Graph.Node(relation.Target)

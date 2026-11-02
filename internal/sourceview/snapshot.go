@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/gitcmd"
 )
 
@@ -44,10 +44,10 @@ type Snapshot struct {
 	once          sync.Once
 	entries       []Entry
 	entriesErr    error
-	captured      *repocli.DiffReport
+	captured      *repokit.DiffReport
 	before        bool
 	graphTreeOnce sync.Once
-	graphTree     *repocli.SourceTree
+	graphTree     *repokit.SourceTree
 	graphTreeErr  error
 }
 
@@ -58,10 +58,10 @@ func New(repoDir, ref, id string, overlay map[string]File, runner *gitcmd.Runner
 	return &Snapshot{RepoDir: repoDir, Ref: ref, ID: id, overlay: maps.Clone(overlay), git: runner}
 }
 
-// NewCaptured shares repocli's captured bytes with tools, graph and contracts.
+// NewCaptured shares RepoKit's captured bytes with tools, graph and contracts.
 // Search uses an immutable Git baseline plus captured changes, avoiding copying
 // every unchanged repository file to temporary storage on each tool call.
-func NewCaptured(d repocli.DiffReport, before bool) *Snapshot {
+func NewCaptured(d repokit.DiffReport, before bool) *Snapshot {
 	ref, id := d.Head, d.AfterSnapshot
 	if before {
 		ref, id = d.Base, d.BeforeSnapshot
@@ -174,14 +174,14 @@ func (s *Snapshot) Entries(ctx context.Context) ([]Entry, error) {
 	return s.entries, s.entriesErr
 }
 
-// SnapshotID, ReadDirectory and ReadSource expose one captured view to repocli.
+// SnapshotID, ReadDirectory and ReadSource expose one captured view to repokit.
 func (s *Snapshot) SnapshotID() string { return s.ID }
 
 // +spec=`Directory enumeration never recaptures source bytes or opens the live checkout`
 // +link=repo://docs/language.md
-func (s *Snapshot) ReadDirectory(ctx context.Context, name string) (repocli.SourceDirectory, error) {
+func (s *Snapshot) ReadDirectory(ctx context.Context, name string) (repokit.SourceDirectory, error) {
 	if err := ctx.Err(); err != nil {
-		return repocli.SourceDirectory{}, err
+		return repokit.SourceDirectory{}, err
 	}
 	s.graphTreeOnce.Do(func() {
 		entries, err := s.Entries(ctx)
@@ -189,14 +189,14 @@ func (s *Snapshot) ReadDirectory(ctx context.Context, name string) (repocli.Sour
 			s.graphTreeErr = err
 			return
 		}
-		files := make([]repocli.SourceFile, 0, len(entries))
+		files := make([]repokit.SourceFile, 0, len(entries))
 		for _, entry := range entries {
-			files = append(files, repocli.SourceFile{Path: entry.Path, Size: entry.Size})
+			files = append(files, repokit.SourceFile{Path: entry.Path, Size: entry.Size})
 		}
-		s.graphTree, s.graphTreeErr = repocli.NewSourceTree(files)
+		s.graphTree, s.graphTreeErr = repokit.NewSourceTree(files)
 	})
 	if s.graphTreeErr != nil {
-		return repocli.SourceDirectory{}, s.graphTreeErr
+		return repokit.SourceDirectory{}, s.graphTreeErr
 	}
 	return s.graphTree.ReadDirectory(ctx, name)
 }

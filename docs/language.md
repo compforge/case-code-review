@@ -8,7 +8,7 @@ CCR 通过独立项目 [CodeGraph](https://github.com/compforge/codegraph) 分�
 
 ```text
 review snapshot ─▶ Document ─▶ CodeGraph
-                                  ├─ declarations / imports / references
+                                  ├─ declarations / imports / semantic dependencies / occurrences
                                   └─ symbol graph + diagnostics
                                            ↓
                              Language 的身份与展示适配
@@ -30,13 +30,13 @@ Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后
 构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
 ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
-RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 repocli 的
+RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 RepoKit 的
 `GraphFromSource`，由它枚举和选择材料、应用该快照的 ignore 规则并构图。`go.mod` 作为 Document
 交给 CodeGraph 提取模块身份，CCR 不再单独解析 module path 或扫描文件系统。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；过大的文件不参与分析。
 
-仓库构图通过 repocli 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
-工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repocli 执行。
+仓库构图通过 RepoKit 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
+工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 RepoKit 执行。
 CCR 显式排除 dependency、test_fixture、generated、tooling、cache 和 build_output 标签，
 并用 review 支持的格式选择 Document；`IsSourceMaterial` 只作为格式识别，不承担排除策略。
 
@@ -50,13 +50,13 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
 另记录输入加载缺口。Session 的 `codegraph` / `codegraph_before` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
 不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。源码量相同也可能产生不同的图密度；
-CCR 显式开启 repocli 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
+CCR 显式开启 RepoKit 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
 
 ### 评审身份与源码范围
 
 源码关联使用 `(snapshot, node_id)`：Fragment 保留定位得到的节点，self、owner、caller/callee 和 usage
 沿同一 publication 的节点与关系读取，文档不经名称查回。`path::qualifiedName` 用于展示、spec 和历史反馈的
-地址匹配；只有目录地址能唯一绑定声明时才关联作者契约。同名声明可以分别保留图事实，缺失节点不能靠名称补猜。Reference、Import、Export
+地址匹配；只有目录地址能唯一绑定声明时才关联作者契约。同名声明可以分别保留图事实，缺失节点不能靠名称补猜。Occurrence、Import、Export
 是源码项，不能转换为声明 join key。owner 沿 contains 优先、encloses 补充查找，支持跨文件 Go
 接收者；qualified name 的分隔符只用于身份展示，不证明归属。
 
@@ -86,9 +86,9 @@ Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败
 不同用途承担不同的错误成本：
 
 - Repo map 对 CodeGraph 关系做按 diff 个性化的排序，可以使用低置信候选；它只是后续阅读的提示。
-- caller/callee 契约消费声明间的 `Exact/Scoped` calls；Unit 分组也使用 references、extends、implements、aliases、exports。repo map 使用声明关系，
-  排除 Reference 发出的源码位置边，避免把两个粒度重复计数。
-- used 契约按 diff 对应版本的增加行或删除行定位 Reference，沿 references 与 aliases 读取声明或显式导入绑定；
+- caller/callee 契约消费声明间的 `Exact/Scoped` calls；Unit 分组由 RepoKit 消费细分依赖。repo map 使用 CodeGraph 的 `IsDependency()`
+  关系，保留读写、类型、捕获、资源、别名与继承语义，排除 occurrence 和 `binds_to` 导航，避免重复计数。
+- used 契约按 diff 对应版本的增加行或删除行定位具体 occurrence，沿 `binds_to` 与 `aliases` 读取声明或显式导入绑定；
   usage 反向遍历同一链路，并按源码行去重。必要环节均须达到 `Scoped`，不按裸名字匹配 catalog。
 - 删除行只在旧侧快照中绑定；没有 hunk 坐标的内部 Fragment 只可使用已知声明范围。
   未解析使用仍在图中，但不作为确定的契约或邻接关系。
@@ -143,3 +143,9 @@ Go 版本；它不证明部署环境使用同一版本。缺少锁定版本、ch
 依赖、生成产物、fixture、构建产物、缓存、工具材料、minified 和 CCR review_data 默认不进入仓库图。
 显式评审 include 不修改该分析策略。输入缺口、格式不支持与预算诊断继续经 RepositoryIndex 的报告传播，
 缺少图关系不代表不存在关系；所有读取维持固定 snapshot 契约。
+
+CodeGraph 的具体 occurrence 通过 `binds_to` 导航；`occurs_in` 保留源码归属。
+Connections 与上下文排序覆盖 calls、reads、writes、uses_type、captures、uses_resource。
+CCR 固定已合并的 CodeGraph 与 RepoKit 模块版本，直接消费公共语义模型，不保留旧 Reference / references 回退。
+`NodeKind.IsOccurrence()` 判定发生点；`RelationKind.IsDependency()` 判定依赖。Connections 将发生点绑定还原为
+所属声明的语义依赖并标记 touched，不把 BindsTo 或 occurrence ID 当作声明关系。

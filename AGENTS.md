@@ -34,10 +34,10 @@ case-code-review/
 ├── eval/           benchmark 效果分析 → 原 Session 的 trajectory 分析；共享环境和事实读取，入口见 `eval/README.md`
 └── internal/
     ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
-    ├── project/    Repository、repocli 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
+    ├── project/    Repository、RepoKit 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
     ├── material/   共享材料分类入口：继承 CodeGraph 通用规则，仅追加 CCR 领域标签，供 Diff、Scan 与图共同使用
-    ├── language/   ★ CodeGraph 接入边界：向 repocli 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
-    ├── unit/       ★ 接入 repocli 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
+    ├── language/   ★ CodeGraph 接入边界：向 RepoKit 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
+    ├── unit/       ★ 接入 RepoKit 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力。详见 `docs/harness.md`
     ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 与业务 Operation，按 Unit 投影 Observation JobView
     ├── llm/        模型连接配置、评审 token 预算与估算；协议和路由复用 AgentGo/litellm；作为稳定基础设施平铺
@@ -48,26 +48,26 @@ case-code-review/
 **主链路**：
 
 ```
-repocli.Diff ─▶ captured Change ─Component/FileRole─▶ FormUnits ─▶ RepoUnit ─▶ review Unit
+repokit.Diff ─▶ captured Change ─Component/FileRole─▶ FormUnits ─▶ RepoUnit ─▶ review Unit
                                       └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
     ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis
     ─Lane─▶ Hypothesis Review ─▶ Assessment ─Trial (Review 3)─▶ Finding
 full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
 ```
 
-Source 调用 repocli.Diff 捕获变更与前后源码；Formation 调用 repocli.FormUnits 并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
+Source 调用 repokit.Diff 捕获变更与前后源码；Formation 调用 repokit.FormUnits 并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
 Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结果以及 Hypothesis、Assessment 与 Trial decision。Runner
 把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有这些评审领域状态。
 
 ## 关键约定
 
-1. **Knowledge owner 唯一**：Project Knowledge 消费 repocli 的 Repository / Component，消费通用文件角色并提供评审投影和
-   `spec / case / link / rule / doc` 等 Biz Knowledge；repocli 拥有变更拆分与组装，CodeGraph 拥有通用材料分类、代码图与关系绑定，Material 追加 CCR 标签，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
+1. **Knowledge owner 唯一**：Project Knowledge 消费 RepoKit 的 Repository / Component，消费通用文件角色并提供评审投影和
+   `spec / case / link / rule / doc` 等 Biz Knowledge；RepoKit 拥有变更拆分与组装，CodeGraph 拥有通用材料分类、代码图与关系绑定，Material 追加 CCR 标签，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
    Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
    阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 以相关改动为边界**：repocli 拥有 Fragment 分类与 Unit 组装，按同一声明、包含、调用、import、同文件、namespace 逐步聚合；明确关系不因数量达到上限而停止归并。CCR 提供评审数量软上限、token 预算并适配 Clue 与运行状态。
+2. **Unit 以相关改动为边界**：RepoKit 拥有 Fragment 分类与 Unit 组装，按同一声明、包含、调用、import、同文件、namespace 逐步聚合；明确关系不因数量达到上限而停止归并。CCR 提供评审数量软上限、token 预算并适配 Clue 与运行状态。
    Fragment 编辑身份唯一，Unit 可共享 import 引用；合并后去重。缺少图关系或预算不足时保留目标并报告边界，不能强行满足数量目标。
-   通用理念见 [repocli Unit 文档](https://github.com/compforge/repocli/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
+   通用理念见 [RepoKit Unit 文档](https://github.com/compforge/repokit/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
 3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
    规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；

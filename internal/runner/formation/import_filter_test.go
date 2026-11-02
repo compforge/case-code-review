@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
 
@@ -44,7 +44,7 @@ func TestSkipFinalImportOnlyUnits(t *testing.T) {
 func TestUnknownUnitsRemainReviewable(t *testing.T) {
 	changes := []change.Change{addedFile("data.txt", "unclassified content\n")}
 	us, err := Form(Config{Changes: changes})
-	if err != nil || len(us) != 1 || !us[0].Repo.Counts.Only(repocli.ElementUnknown) {
+	if err != nil || len(us) != 1 || !us[0].Repo.Counts.Only(repokit.ElementUnknown) {
 		t.Fatalf("units=%+v err=%v", us, err)
 	}
 	assertCoverage(t, changes, us)
@@ -53,13 +53,13 @@ func TestUnknownUnitsRemainReviewable(t *testing.T) {
 func TestImportCountEqualsTotalCount(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		counts repocli.ElementCounts
+		counts repokit.ElementCounts
 		want   bool
 	}{
-		{"empty", repocli.ElementCounts{}, true},
-		{"zero", repocli.ElementCounts{After: map[repocli.ElementKind]int{repocli.ElementUnknown: 0}}, true},
-		{"import", repocli.ElementCounts{Before: map[repocli.ElementKind]int{repocli.ElementImport: 1}, After: map[repocli.ElementKind]int{repocli.ElementImport: 2}}, true},
-		{"unknown", repocli.ElementCounts{Before: map[repocli.ElementKind]int{repocli.ElementUnknown: 1}, After: map[repocli.ElementKind]int{repocli.ElementImport: 1}}, false},
+		{"empty", repokit.ElementCounts{}, true},
+		{"zero", repokit.ElementCounts{After: map[repokit.ElementKind]int{repokit.ElementUnknown: 0}}, true},
+		{"import", repokit.ElementCounts{Before: map[repokit.ElementKind]int{repokit.ElementImport: 1}, After: map[repokit.ElementKind]int{repokit.ElementImport: 2}}, true},
+		{"unknown", repokit.ElementCounts{Before: map[repokit.ElementKind]int{repokit.ElementUnknown: 1}, After: map[repokit.ElementKind]int{repokit.ElementImport: 1}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := onlyImportElements(tc.counts); got != tc.want {
