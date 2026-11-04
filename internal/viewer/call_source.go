@@ -12,26 +12,12 @@ import (
 	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
-// Stage views are Viewer projections. Recording producers never select UI tabs.
-type stageView struct{ ID, Label string }
-
-func (row timelineRow) Views() []stageView {
-	views := []stageView{{"default", "Default"}}
-	switch row.Name {
-	case "model.attempt", "llm.request":
-		views = append(views, stageView{"model", "Model"})
-	case "execution":
-		views = append(views, stageView{"agent", "Agent"})
-	}
-	return views
-}
-
-type stageSource struct {
+type callSource struct {
 	rows []operation.Record
 	byID map[operation.ID]operation.Record
 }
 
-func readStageSource(path string) (*stageSource, error) {
+func readCallSource(path string) (*callSource, error) {
 	if _, err := readSessionStart(path); err != nil {
 		return nil, err
 	}
@@ -39,14 +25,14 @@ func readStageSource(path string) (*stageSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	source := &stageSource{rows: transcript.Journal.Operations, byID: transcript.OperationIndex()}
+	source := &callSource{rows: transcript.Journal.Operations, byID: transcript.OperationIndex()}
 	for _, stage := range source.rows {
 		source.byID[stage.ID] = stage
 	}
 	return source, nil
 }
 
-func (s *stageSource) sessionFile(stage operation.Record) (string, error) {
+func (s *callSource) sessionFile(stage operation.Record) (string, error) {
 	seen := map[operation.ID]bool{}
 	for parent := stage; parent.ID != "" && !seen[parent.ID]; parent = s.byID[parent.ParentID] {
 		seen[parent.ID] = true

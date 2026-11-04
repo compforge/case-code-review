@@ -190,7 +190,7 @@ ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图�
 不向 AgentGo 添加排序配置；摘要继续使用 AgentGo 的模型执行与 ContextSummary 契约。结果满足预算和工具配对约束后才交给 Engine 提交，保护区自身
 超限时明确报告预算不足；摘要失败不提交半成品。显式溢出恢复同样受保护区和窗口预算约束。
 
-`context.zones` timeline stage 记录每区消息数、估算 token、执行策略、目标与结果，包括未达标的尝试；
+`context.zones` Operation 记录每区消息数、估算 token、执行策略、目标与结果，包括未达标的尝试；
 整体提交结果仍通过 AgentGo 的 `context_compacted` 事件记录。这里的 token 是上下文估算，实际调用
 成本继续以模型 usage 为准。
 
@@ -205,7 +205,7 @@ Harness 提供 token、tool round、deadline 等预算机制，并通过 AgentGo
 探索中的每次模型请求（含上下文摘要）通过子 context 继承请求开始时的探索 deadline；
 更短的调用方硬期限优先。动态期限更新影响后续请求，不追溯修改在途请求。仅当探索子请求到期、
 调用方 context 仍有效时，Harness 使用 AgentGo 已提交的状态续跑一次收卷；保留已消耗的轮数、
-上下文和已接受的结果，不重新获得预算。两次 Loop 使用不同的 timeline 请求命名空间，
+上下文和已接受的结果，不重新获得预算。两次 Loop 使用不同的 Operation 请求命名空间，
 同一个 Harness Execution 只发布一次终态。普通 provider 超时、用户取消和硬截止不触发该恢复。
 已进入收卷的请求沿用调用方的取消信号与硬期限。
 调用方可以提供固定或动态的探索截止时间；显式探索边界拥有
@@ -294,16 +294,19 @@ Operation 状态同步追加到 Review JSONL，与业务产物共用存储；不
 查询时按 ID 连接 Operation 和局部 Session，提供 Viewer、stats、export、eval 需要的内容视图。
 同名 tool call 在不同 Session/Run 内互不冲突，缺失记录保持 incomplete，不补造成功或零成本。
 一个 Unit 的业务过程投影为 `agent-ledger/observation.JobView`；持续式 Lane Session 只贡献属于该 Unit 的调用。
-详见[整轮时间线](observability.md#整轮时间线)。
+详见 [Review Operation journal](observability.md#review-operation-journal)。
 
 ### 4.2 HTML Viewer 是诊断投影
 
-Viewer 从 Timeline 列表进入一次 Review，以共享时钟的泳道展示 Unit、R1/R2 loop 与 Trial。
-模型调用以一个 Stage 表达，点击弹框查看 Session 中的真实 Prompt、Response、token/cache 用量、
-已记录的金额 cost，以及 Stage 状态与耗时。工具调用在弹框中展示实际 input/output。
-调用正文按完整 Session reference 关联；原始 JSON 与记录身份默认折叠，不再另设 Scope/Execution 页面。
-网络阶段仅用于失败诊断，不成为业务 Timeline 的子阶段。缺少记录或 usage 必须明确显示未知，
-不能把缺失视为零成本，也不能把 0 Finding 当作完整评审的证明。
+Viewer 从 Review 列表进入 Job / Session / Context 并列工作区，默认 Job。
+Job 展示 Unit 的 R1 Hypothesis、R2 Assessment 和 Trial / Finding；Session 保留完整的原生 agent loop，
+整个连续 R2 Lane 共用一个 Session，多次 Execution 在其中分段；Context 展示选中模型调用实际接收的
+消息和 tools，按需比较前一个请求。三种 View 是事实的渲染层，不改变运行或持久化模型。
+
+调用正文按完整 Session reference 与 native node ID 关联并按需读取；原始 JSON 默认折叠。
+Operation 保留业务动作与关联，Timeline、Stage 弹框及仅覆盖单次 Execution 的 Agent 页已移除。
+缺少记录或 usage 明确显示未知，批量工具子项错误与外层完成分开展示，0 Finding 不代表完整评审。
+页面行为与查询边界见 [Viewer 工作区](observability.md#2-viewerreview-工作区与三种-view)。
 
 ### 4.3 展示层不反向定义协议
 
@@ -325,7 +328,7 @@ Harness 变更至少验证：
 - 工具结果与触发它的 model request 正确关联；
 - budget/deadline/terminal action 产生正确 completion 状态；
 - recorder 能在错误和 partial execution 下写出可读取 JSONL；
-- Viewer 的 overview 与 timeline 均由同一批事件推导，不出现统计和逐轮记录矛盾；
+- Viewer 的 Job / Session / Context 均由同一批事实投影，不出现统计和逐轮记录矛盾；
 - Harness 包保持不依赖 Runner、Unit 和评审领域。
 
 ## References

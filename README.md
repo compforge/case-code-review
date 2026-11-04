@@ -107,7 +107,7 @@ ccr review --dry-run --format json
 ccr viewer                      # sessions, token/time/tool totals, prompts and decisions
 ```
 
-Session JSONL preserves the actual messages, model responses, tool calls, artifacts, warnings, and completion state. The Viewer turns that trace into run-level statistics and per-loop timelines for diagnosing quality, cost, and incomplete reviews.
+Session JSONL preserves the actual messages, model responses, tool calls, artifacts, warnings, and completion state. The Viewer presents a Review workspace with Job, Session and Context views: follow business decisions, inspect a continuous agent Session, and compare actual model requests. Execution status, recording gaps and quality verdicts remain distinct.
 
 Local session recordings rotate automatically during review/scan: 7 days and 5 GiB by default, with active and recently written sessions protected. Use `ccr clean --dry-run` to preview cleanup; see [retention settings](docs/observability.md#本地记录保留与清理) for configuration and legacy unfinished recordings. Copy evaluation samples outside the session store for long-term retention.
 

@@ -101,7 +101,7 @@ ccr review --dry-run --format json
 ccr viewer                      # session、token/time/tool 总览、prompt 与决策轨迹
 ```
 
-Session JSONL 持久化真实 message、模型回复、工具调用、阶段产物、warning 和完成状态；Viewer 将它们组织成 run 级统计和每个 loop 的时间线，用于分析效果、成本与未完成评审。
+Session JSONL 持久化真实 message、模型回复、工具调用、阶段产物、warning 和完成状态；Viewer 提供 Review 工作区及 Job / Session / Context 三种 View，分别查看业务判断、连续 agent 执行和实际模型输入，区分执行状态、录制缺口与质量评价。
 
 本地 Session 默认按 7 天、5 GiB 自动淘汰，review/scan 录制期间持续检查，并保护运行中和最近写入的会话。用 `ccr clean --dry-run` 预览；配置和旧版未完成记录的处理见[保留与清理](docs/observability.md#本地记录保留与清理)。需要长期保存的评测样本应复制到 Session 目录之外。
 

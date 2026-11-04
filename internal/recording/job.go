@@ -105,6 +105,16 @@ func stamp(t time.Time) string {
 // +spec=`One Unit is one Job; generic operation success and zero Findings never establish business completion`
 // +link=component://docs/observability.md
 func ReadJob(path, unitID string, options ...codec.Option) (observation.JobView, error) {
+	return readJob(path, unitID, true, options...)
+}
+
+// ReadJobSummary keeps the same business membership and operation references as
+// ReadJob without loading native prompt or response bodies.
+func ReadJobSummary(path, unitID string) (observation.JobView, error) {
+	return readJob(path, unitID, false)
+}
+
+func readJob(path, unitID string, withCalls bool, options ...codec.Option) (observation.JobView, error) {
 	t, err := ReadJournal(path)
 	if err != nil {
 		return observation.JobView{}, err
@@ -223,8 +233,10 @@ func ReadJob(path, unitID string, options ...codec.Option) (observation.JobView,
 		}
 	}
 	view.Result, _ = json.Marshal(map[string]any{"unit": unit, "records": evidence})
-	if err := loadJobCalls(path, index, ordered, selected, &view, options...); err != nil {
-		return view, err
+	if withCalls {
+		if err := loadJobCalls(path, index, ordered, selected, &view, options...); err != nil {
+			return view, err
+		}
 	}
 	inspection, err := view.Inspect()
 	if err != nil {
