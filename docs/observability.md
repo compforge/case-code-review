@@ -217,6 +217,8 @@ Session 以紧凑调用行展示摘要、耗时、input/output/cache 与重试 A
 工具完成不代表批量子查询都成功。`search_code` 复用工具自身的 batch/outcome parser，分别呈现 hits、
 no_matches、scope_empty、scope_unknown、error、incomplete；无结果、作用域为空和读取失败不得混为一类。
 Compaction 事件、失败调用和未观察到结果的调用保留可见；点事件不补造执行耗时。
+Run 级事件关联到所有调用共同所属的 Execution；Execution、Unit 或 Hypothesis 归属缺失或冲突时
+保留未知，不选择某个模型或工具调用充当 Run 的 owner。
 
 Context 首先展示消息 outline，展开时渲染具体内容块。可以比较同一 Session 的前一个模型请求，按完整
 消息精确匹配并保留重复次数，分别展示 retained、added/changed、removed/replaced 及 tool schema 变化。
@@ -227,7 +229,7 @@ Context 首先展示消息 outline，展开时渲染具体内容块。可以比�
 
 - Review 首屏只读取业务 journal 和 Session 关联索引，不读取原生 prompt/response。
 - `/job?unit=<id>` 使用 `recording.ReadJobSummary`，与标准 JobView 共用业务 membership 和 Operation
-  投影，但不加载调用正文。`/job?unit=<id>&format=json` 保留完整标准 JobView 导出。
+  投影，始终校验完整的 Session 引用、文件名及重复 owner，但不加载调用正文。`/job?unit=<id>&format=json` 保留完整标准 JobView 导出。
 - `/session?session=<native-id>` 使用 AgentLedger 原生 SessionView reader，读取完整原生 Session 后
   返回调用摘要与显式业务关联；未关联的文件不能由 URL 任意读取。
 - `/session?session=<native-id>&node=<native-node-id>` 才返回所选节点正文；原生 record attributes

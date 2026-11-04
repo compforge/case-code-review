@@ -233,8 +233,9 @@ func readJob(path, unitID string, withCalls bool, options ...codec.Option) (obse
 		}
 	}
 	view.Result, _ = json.Marshal(map[string]any{"unit": unit, "records": evidence})
+	refs, files := collectJobCalls(index, ordered, &view)
 	if withCalls {
-		if err := loadJobCalls(path, index, ordered, selected, &view, options...); err != nil {
+		if err := loadJobCalls(path, refs, files, selected, &view, options...); err != nil {
 			return view, err
 		}
 	}
@@ -247,7 +248,9 @@ func readJob(path, unitID string, withCalls bool, options ...codec.Option) (obse
 }
 func parseStamp(s string) time.Time { t, _ := time.Parse(time.RFC3339Nano, s); return t }
 
-func loadJobCalls(path string, index map[operation.ID]operation.Record, ordered []operation.ID, nodes map[operation.ID]*observation.Operation, view *observation.JobView, options ...codec.Option) error {
+// +spec=`Job summaries and full observations report the same invalid or ambiguous native references without reading call bodies`
+// +link=component://docs/observability.md
+func collectJobCalls(index map[operation.ID]operation.Record, ordered []operation.ID, view *observation.JobView) (map[string]operation.ID, map[string]bool) {
 	// One content owner per native call. Queue and invocation timing records keep
 	// their business position but never duplicate the call body or its usage.
 	refs := map[string]operation.ID{}
@@ -258,7 +261,7 @@ func loadJobCalls(path string, index map[operation.ID]operation.Record, ordered 
 			continue
 		}
 		var ref agentsession.Ref
-		if json.Unmarshal(op.Attributes["session_ref"], &ref) != nil || ref.SessionID == "" {
+		if json.Unmarshal(op.Attributes["session_ref"], &ref) != nil || ref.SessionID == "" || ref.RunID == "" || ref.ExecutionID == "" || ref.Attempt < 1 {
 			view.Issues = append(view.Issues, "missing Session reference: "+string(id))
 			continue
 		}
@@ -275,6 +278,10 @@ func loadJobCalls(path string, index map[operation.ID]operation.Record, ordered 
 		refs[key] = id
 		files[name] = true
 	}
+	return refs, files
+}
+
+func loadJobCalls(path string, refs map[string]operation.ID, files map[string]bool, nodes map[operation.ID]*observation.Operation, view *observation.JobView, options ...codec.Option) error {
 	messageCodec, err := msg.Codec(options...)
 	if err != nil {
 		return err

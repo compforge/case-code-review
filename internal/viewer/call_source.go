@@ -48,6 +48,17 @@ func (s *callSource) sessionFile(stage operation.Record) (string, error) {
 	return "", nil
 }
 
+func (s *callSource) enclosingExecution(call operation.Record) operation.Record {
+	seen := map[operation.ID]bool{}
+	for parent := call; parent.ID != "" && !seen[parent.ID]; parent = s.byID[parent.ParentID] {
+		seen[parent.ID] = true
+		if parent.Name == "execution" {
+			return parent
+		}
+	}
+	return operation.Record{}
+}
+
 // Native failed messages remain inspection evidence even when replay excludes them.
 func recordedModelMessage(raw json.RawMessage) (*agentgo.Message, error) {
 	codec, err := msg.Codec()

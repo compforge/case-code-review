@@ -164,3 +164,63 @@ func TestJobSummaryDoesNotReadNativeBodies(t *testing.T) {
 		t.Fatalf("wrong membership: %s", raw)
 	}
 }
+
+// +case=`Metadata-only Job queries expose missing, incomplete and ambiguous call references without opening native Sessions`
+func TestJobSummaryValidatesReferencesWithoutBodies(t *testing.T) {
+	cases := []struct {
+		name, want string
+		change     func(*operation.Record)
+	}{
+		{"missing reference", "missing Session reference", func(op *operation.Record) { delete(op.Attributes, "session_ref") }},
+		{"incomplete reference", "missing Session reference", func(op *operation.Record) {
+			op.Attributes["session_ref"] = json.RawMessage(`{"session_id":"session-1"}`)
+		}},
+		{"unsafe file", "invalid or missing Session file", func(op *operation.Record) { op.Attributes["session_file"] = json.RawMessage(`"../outside.jsonl"`) }},
+		{"duplicate owner", "multiple operation owners for call", func(op *operation.Record) { op.ID = "duplicate-call-owner" }},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			path := jobFixture(t)
+			tr, err := ReadJournal(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := tr.OperationIndex()["run-1/model/model-1/1"]
+			tt.change(&op)
+			file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.NewEncoder(file).Encode(map[string]any{"type": "operation", "review_id": "review", "operation": op}); err != nil {
+				t.Fatal(err)
+			}
+			file.Close()
+			summary, err := ReadJobSummary(path, "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			full, err := ReadJob(path, "u1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			has := func(issues []string) bool {
+				for _, issue := range issues {
+					if strings.HasPrefix(issue, tt.want) {
+						return true
+					}
+				}
+				return false
+			}
+			if !has(summary.Issues) || !has(full.Issues) || summary.Status != "completed" || len(callNodes(summary.Nodes)) != 0 {
+				t.Fatalf("summary=%+v full issues=%v", summary, full.Issues)
+			}
+			if err := os.WriteFile(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", "loop.jsonl"), []byte("invalid body\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			again, err := ReadJobSummary(path, "u1")
+			if err != nil || strings.Join(again.Issues, "\n") != strings.Join(summary.Issues, "\n") {
+				t.Fatalf("body loading changed metadata diagnostics: %+v %v", again, err)
+			}
+		})
+	}
+}

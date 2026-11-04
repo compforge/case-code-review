@@ -177,3 +177,133 @@ func TestNativeCallBodies(t *testing.T) {
 		t.Fatal(second)
 	}
 }
+
+// +case=`Run point events keep the enclosing Execution identity across projections; calls retain their own operation identity`
+func TestRunEventsBelongToExecution(t *testing.T) {
+	entry, view, source, err := readNativeSession("../../testdata/recording/review.jsonl", "session-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first []byte
+	for attempt := 0; attempt < 8; attempt++ {
+		page := summarizeSession(entry, view, source)
+		points := 0
+		for _, item := range page.Items {
+			if item.Ref.RunID == "" {
+				continue
+			}
+			if item.Kind == "operation" {
+				points++
+				want := operation.ID("execution-1")
+				if item.Ref.RunID == "run-2" {
+					want = "execution-2"
+				}
+				if item.OperationID != want || item.ExecutionID != string(want) {
+					t.Fatalf("point event borrowed call identity: %+v", item)
+				}
+			} else if item.OperationID == "execution-1" || item.OperationID == "execution-2" {
+				t.Fatalf("call lost its own identity: %+v", item)
+			}
+		}
+		if points == 0 {
+			t.Fatal("fixture has no Run point events")
+		}
+		raw, err := json.Marshal(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first == nil {
+			first = raw
+		} else if string(first) != string(raw) {
+			t.Fatal("same Session produced different summaries")
+		}
+	}
+}
+
+// +case=`Conflicting or missing business ancestry leaves Run ownership unknown, even if child execution_id strings agree`
+func TestRunEventsKeepAmbiguousOwnershipUnknown(t *testing.T) {
+	for _, scenario := range []string{"different Execution", "missing Execution", "conflicting Unit", "conflicting Hypothesis"} {
+		t.Run(scenario, func(t *testing.T) {
+			entry, view, source, err := readNativeSession("../../testdata/recording/review.jsonl", "session-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "missing Execution" {
+				delete(source.byID, "execution-1")
+			} else {
+				for i, op := range source.rows {
+					if op.ID != "run-1/model/model-1/1" {
+						continue
+					}
+					switch scenario {
+					case "different Execution":
+						op.ParentID = "execution-2"
+					case "conflicting Unit":
+						op.Attributes["unit_id"] = json.RawMessage(`"conflicting-unit"`)
+					case "conflicting Hypothesis":
+						op.Attributes["hypothesis_id"] = json.RawMessage(`"conflicting-hypothesis"`)
+					}
+					source.rows[i] = op
+					source.byID[op.ID] = op
+				}
+			}
+			page := summarizeSession(entry, view, source)
+			for _, item := range page.Items {
+				if item.Kind == "operation" && item.Ref.RunID == "run-1" && (item.OperationID != "" || item.ExecutionID != "" || item.Unit != "" || item.Hypothesis != "") {
+					t.Fatalf("invented Run owner: %+v", item)
+				}
+			}
+		})
+	}
+}
+
+// +case=`Journal-controlled Session filenames cannot escape the local Session directory or select a non-JSONL file`
+func TestNativeSessionRejectsUnsafeRecordedFilename(t *testing.T) {
+	for _, filename := range []string{"../outside.jsonl", "nested/../../outside.jsonl", "absolute", "loop.txt"} {
+		t.Run(filename, func(t *testing.T) {
+			root, repo := t.TempDir(), "repo"
+			dir := filepath.Join(root, repo)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.CopyFS(dir, os.DirFS("../../testdata/recording")); err != nil {
+				t.Fatal(err)
+			}
+			// A valid Session outside the directory proves the guard is exercised before
+			// the reader could parse and return an otherwise legitimate body.
+			data, err := os.ReadFile(filepath.Join(dir, "review.sessions", "loop.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(dir, "outside.jsonl")
+			if err := os.WriteFile(outside, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			name := filename
+			if filename == "absolute" {
+				name = outside
+			}
+			if filename == "loop.txt" {
+				if err := os.WriteFile(filepath.Join(dir, "review.sessions", name), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			path := filepath.Join(dir, "review.jsonl")
+			source, err := readCallSource(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			op := source.byID["execution-1"]
+			op.Attributes["session_file"], _ = json.Marshal(name)
+			writeOperationFixture(t, path, []operation.Record{op})
+			if _, _, _, err := readNativeSession(path, "session-1"); err == nil {
+				t.Fatal("accepted unsafe recorded filename")
+			}
+			res := httptest.NewRecorder()
+			handleNativeSession(res, httptest.NewRequest("GET", "/session?session=session-1", nil), root, repo, "review")
+			if res.Code != 404 || strings.Contains(res.Body.String(), "inspect caller") || strings.Contains(res.Body.String(), outside) {
+				t.Fatalf("unsafe response: %d %s", res.Code, res.Body.String())
+			}
+		})
+	}
+}
