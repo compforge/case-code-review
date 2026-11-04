@@ -2,10 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/compforge/agentgo"
+	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/recording"
 )
 
 func TestExportSessionATIF(t *testing.T) {
@@ -197,5 +204,62 @@ func TestExportContentProjectionGap(t *testing.T) {
 	message, issues := rawToMessage(raw)
 	if message != "" || len(issues) != 1 {
 		t.Fatalf("message=%v issues=%v", message, issues)
+	}
+}
+
+// +case=Anthropic cache reads and writes survive provider decoding, recording and ATIF export without omission or double counting
+func TestExportAnthropicCacheUsage(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, `data: {"type":"message_start","message":{"id":"msg-cache","type":"message","role":"assistant","model":"test","content":[],"stop_reason":null,"usage":{"input_tokens":2,"cache_read_input_tokens":3,"cache_creation_input_tokens":4,"output_tokens":0}}}
+
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}
+
+data: {"type":"content_block_stop","index":0}
+
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}
+
+data: {"type":"message_stop"}
+
+`)
+	}))
+	defer server.Close()
+	review := recording.New(t.TempDir(), "main", "test", recording.SessionOptions{})
+	defer review.Finalize()
+	scope := review.GetOrCreateScope(recording.Scope{ID: "unit", Kind: "unit"})
+	model := llm.NewModel(llm.ResolvedEndpoint{Protocol: "anthropic", URL: server.URL, Model: "test", Token: "test-token"})
+	response, err := llm.Call(t.Context(), scope.RecordingModel(model, recording.PlanTask), agentgo.LLMRequest{Messages: []agentgo.Message{agentgo.UserMsg("review")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := response.Message.Usage
+	if usage == nil || usage.Input != 5 || usage.CacheWrite != 4 || usage.CacheRead != 3 || usage.Output != 1 {
+		t.Fatalf("pinned provider usage = %+v", usage)
+	}
+	review.Finalize()
+	path, err := review.TranscriptPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transcript, err := recording.ReadReview(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := transcript.Costs().Total.Tokens.PromptTokens; got != 9 {
+		t.Fatalf("recorded prompt tokens = %d, want 9", got)
+	}
+	trajectories, err := exportSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(trajectories) != 1 {
+		t.Fatalf("trajectories = %d, want 1", len(trajectories))
+	}
+	totals := trajectories[0].FinalMetrics
+	if totals.TotalPromptTokens != 9 || totals.TotalCompletionTokens != 1 || totals.TotalCachedTokens != 3 {
+		t.Fatalf("exported usage = %+v", totals)
 	}
 }

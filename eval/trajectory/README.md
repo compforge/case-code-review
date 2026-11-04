@@ -158,6 +158,10 @@ Review ID 与 Unit/Lane ID 保存在 `extra.review_id` / `extra.scope_id`，用�
 工具结果按实际 request 与 tool-call ID 关联；未匹配结果保留为 `llm_call_count=0` 的 observation，
 不虚构模型调用。原始请求和响应块保留在 step `extra`，无法完整投影的内容显式记录缺口。
 模型重试及失败的 partial response / usage 均保留；未知 usage 不写成零，缓存 token 是输入 token 的子集。
+当前锁定 AgentGo 的 `Input` 包含缓存读取、不含缓存写入，因此标准 `prompt_tokens = Input + CacheWrite`。
+Execution 缺失结束耗时时，按归属保留已观测 step 耗时，并以 `execution_duration_incomplete` 标记下界；
+完整 Execution 不再叠加其 step 耗时。`result_bytes` 仅测量结果内容的 UTF-8 字节，多模态结果测量记录的
+content JSON（不下载媒体），不包含调用参数、ID 或其他元数据。
 CCR 的工具测量直接读取原生 call/result 和明确的 `ok`，不会把同一模型响应中的多个工具算成一次，
 也不会把无状态的结果解释为成功。待执行的工具提议不计入已执行工具数。
 

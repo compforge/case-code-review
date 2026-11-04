@@ -45,5 +45,9 @@ git ls-files eval/data
 git ls-files --others --exclude-standard eval/data
 ```
 
+跨语言 ATIF 契约测试会用仓库 `go.mod` 指定的 Go 工具链运行当前源码的 exporter；
+缺少 `go` 时仅跳过该测试类，其余 Python 测试照常执行。提交 exporter 改动前必须在有 Go 的环境运行，
+并确认该类没有 skipped；构建、运行超时和契约失败不会转为跳过。
+
 后两个命令应没有输出。入口统一使用 `python -m eval.<模块>`，避免依赖隐式 `sys.path`。
 可观测性职责与设计见 [observability](../docs/observability.md)。

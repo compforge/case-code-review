@@ -37,7 +37,7 @@ func TestWriteDebrief(t *testing.T) {
 	ss := sh.GetOrCreateScope(sc)
 	mk := func(taskType TaskType, toolName string) {
 		rec := ss.AppendTaskRecord(taskType, nil)
-		response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{}, StopReason: agentgo.StopReasonStop, Usage: &agentgo.Usage{Input: 100, Output: 10, CacheRead: 40}}}
+		response := &agentgo.LLMResponse{Message: agentgo.Message{Role: agentgo.RoleAssistant, Content: []agentgo.ContentBlock{}, StopReason: agentgo.StopReasonStop, Usage: &agentgo.Usage{Input: 100, Output: 10, CacheRead: 40, CacheWrite: 20}}}
 
 		if toolName != "" {
 			response.Message.Content = append(response.Message.Content, agentgo.ToolCallBlock(agentgo.ToolCall{Name: toolName}))
@@ -105,7 +105,7 @@ func TestWriteDebrief(t *testing.T) {
 		t.Fatalf("tool_calls off: %v", tools)
 	}
 	tokens := deb["tokens"].(map[string]any)
-	if tokens["prompt_tokens"].(float64) != 300 || tokens["cache_read_tokens"].(float64) != 120 {
+	if tokens["prompt_tokens"].(float64) != 360 || tokens["cache_read_tokens"].(float64) != 120 {
 		t.Fatalf("tokens off: %v", tokens)
 	}
 	if deb["duration_ms"].(float64) != 6000 {

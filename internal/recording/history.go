@@ -459,8 +459,8 @@ func (tr *TaskRecord) setResponse(resp *agentgo.LLMResponse, duration time.Durat
 
 	var promptTokens, completionTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens int
 	if resp.Message.Usage != nil {
-		// AgentGo/litellm Input already includes cache reads and writes.
-		promptTokens = resp.Message.Usage.Input
+		// Pinned AgentGo excludes cache writes from Input; cache reads are already included.
+		promptTokens = resp.Message.Usage.Input + resp.Message.Usage.CacheWrite
 		completionTokens = resp.Message.Usage.Output
 		reasoningTokens = resp.Message.Usage.Reasoning
 		cacheReadTokens = resp.Message.Usage.CacheRead

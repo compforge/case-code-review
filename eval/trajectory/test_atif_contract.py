@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -23,6 +24,7 @@ from eval.trajectory.ccr_trajectory import review_stage, ToolFailureVerifier
 from eval.trajectory.trajectory_judge import objective_analysis
 
 
+@unittest.skipUnless(shutil.which("go"), "Go is required for the live exporter contract test")
 class ATIFContractTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -87,7 +89,7 @@ class ATIFContractTest(unittest.TestCase):
         unit = next(
             item for item in self.trajectories if item.session_id == "r1-session"
         )
-        self.assertEqual(unit.final_metrics.total_prompt_tokens, 107)
+        self.assertEqual(unit.final_metrics.total_prompt_tokens, 128)
         self.assertEqual(unit.final_metrics.total_completion_tokens, 12)
         self.assertEqual(unit.final_metrics.total_cached_tokens, 32)
         self.assertEqual(
@@ -96,7 +98,7 @@ class ATIFContractTest(unittest.TestCase):
         partial = next(step for step in unit.steps if (step.extra or {}).get("partial"))
         self.assertEqual(content_text(partial.message), "partial answer")
         self.assertEqual(partial.reasoning_content, "partial reasoning")
-        self.assertEqual(partial.metrics.prompt_tokens, 7)
+        self.assertEqual(partial.metrics.prompt_tokens, 8)
         dataset = TrajectoryDataset(
             dataset_id="r1-r2", version="test", trajectories=tuple(self.trajectories)
         )

@@ -75,7 +75,6 @@ class ATIFTrajectoryLoader:
                     for item in executions
                     if item.get("outcome") != "completed"
                 )
-            extension["metadata"] = {**extension.get("metadata", {}), **metadata}
             extension["generation"] = _generation_provenance(
                 {**metadata, "agent": trajectory.agent.model_dump(exclude_none=True)},
                 trajectory.steps,
@@ -83,6 +82,7 @@ class ATIFTrajectoryLoader:
             execution = _execution_result(metadata, trajectory.steps)
             if execution:
                 extension["execution"] = execution.to_dict()
+            extension["metadata"] = {**extension.get("metadata", {}), **metadata}
             trajectory.extra = {**extra, "quality_harness": extension}
         return trajectories
 
@@ -238,17 +238,41 @@ def _execution_result(
         )
     return ExecutionResult(
         outcome=outcome,
-        duration_ms=sum(
-            float(item.get("duration_ms") or 0)
-            for item in metadata.get("executions", [])
-        )
-        if metadata.get("executions")
-        else float(
-            metadata.get("execution_duration_ms")
-            or sum(step_duration_ms(step) for step in steps)
-        ),
+        duration_ms=_execution_duration(metadata, steps),
         failure=failure,
     )
+
+
+# +spec=Missing execution timing is not zero; observed steps supplement only executions without authoritative duration
+# +link=repo://eval/trajectory/README.md
+def _execution_duration(metadata: dict[str, Any], steps: list[Step]) -> float:
+    executions = metadata.get("executions") or []
+    observed = sum(step_duration_ms(step) for step in steps)
+    if not executions:
+        if metadata.get("execution_duration_ms") is not None:
+            return float(metadata["execution_duration_ms"])
+        metadata["execution_duration_incomplete"] = True
+        return observed
+
+    complete = [item for item in executions if item.get("duration_ms") is not None]
+    missing = [item for item in executions if item.get("duration_ms") is None]
+    duration = sum(float(item["duration_ms"]) for item in complete)
+    if not missing:
+        return duration
+    metadata["execution_duration_incomplete"] = True
+    if not complete:
+        # With no authoritative execution interval, step timing is the available lower bound.
+        return observed
+    missing_ids = {
+        item.get("execution_id") for item in missing if item.get("execution_id")
+    }
+    duration += sum(
+        step_duration_ms(step)
+        for step in steps
+        if (step.extra or {}).get("execution_id") in missing_ids
+    )
+    # Unattributed steps may overlap complete executions. Keep a lower bound rather than add them twice.
+    return max(duration, observed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,16 +339,9 @@ class CCRToolUsageMeasurer:
             "failed_tool_call_count": failed,
             "status_reported_call_count": len(known),
             "result_bytes": sum(
-                len(
-                    json.dumps(
-                        [
-                            result.model_dump(exclude_none=True)
-                            for result in call.results
-                        ],
-                        ensure_ascii=False,
-                    ).encode()
-                )
+                _content_bytes(result.content)
                 for call in calls
+                for result in call.results
             ),
         }
         if known:
@@ -336,3 +353,20 @@ class CCRToolUsageMeasurer:
             explanation=f"Observed {len(calls)} tool executions; {len(known)} reported status.",
             step_ids=tuple(dict.fromkeys(str(call.step.step_id) for call in calls)),
         )
+
+
+# +spec=Result bytes measure content only; request arguments, IDs and result metadata never contribute
+# +link=repo://eval/trajectory/README.md
+def _content_bytes(content: str | list[ContentPart] | None) -> int:
+    if isinstance(content, str):
+        return len(content.encode("utf-8"))
+    if content is None:
+        return 0
+    # Media references are measured as recorded JSON, without fetching external payloads.
+    return len(
+        json.dumps(
+            [part.model_dump(exclude_none=True) for part in content],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
