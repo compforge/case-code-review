@@ -1,4 +1,5 @@
 from __future__ import annotations
+from eval.trajectory.fixtures import session_jsonl
 
 import json
 import tempfile
@@ -53,10 +54,10 @@ class BuildTrajectoryDatasetTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            atif = json.dumps(
+            atif = session_jsonl(
                 {
                     "session_id": "session-1",
-                    "subagent_trajectories": [
+                    "sessions": [
                         {"trajectory_id": "unit-1", "steps": []},
                         {"trajectory_id": "hypothesis_review:lane-1", "steps": []},
                     ],
@@ -74,15 +75,15 @@ class BuildTrajectoryDatasetTest(unittest.TestCase):
             self.assertEqual(
                 annotation["trajectory_ids"],
                 [
-                    "session-1/unit-1",
-                    "session-1/hypothesis_review:lane-1",
+                    "unit-1",
+                    "hypothesis_review:lane-1",
                 ],
             )
             self.assertEqual(annotation["annotation_id"], "sample-1")
             self.assertEqual(len(dataset["trajectories"]), 2)
             self.assertEqual(
                 dataset["trajectories"][0]["trajectory_id"],
-                "session-1/unit-1",
+                "unit-1",
             )
             self.assertEqual(
                 dataset["trajectories"][0]["extra"]["quality_harness"]["metadata"]["ccr_scope_id"],

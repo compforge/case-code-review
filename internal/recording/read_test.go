@@ -16,7 +16,7 @@ func TestReadNativeSessionFixture(t *testing.T) {
 		t.Fatal(gaps)
 	}
 	costs := transcript.Costs().Total
-	if costs.Calls != 3 || costs.Errors != 1 || costs.Tokens.PromptTokens != 240 || costs.Tokens.CompletionTokens != 20 {
+	if costs.Calls != 3 || costs.Errors != 1 || costs.Tokens.PromptTokens != 200 || costs.Tokens.CompletionTokens != 20 {
 		t.Fatalf("costs=%+v", costs)
 	}
 	calls := map[string]string{}
@@ -59,7 +59,7 @@ func TestReadSessionWithoutTimeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	costs := transcript.Costs()
-	if costs.Total.Calls != 3 || costs.Total.Errors != 1 || costs.Total.Tokens.PromptTokens != 240 || costs.Unattributed.Calls != 3 {
+	if costs.Total.Calls != 3 || costs.Total.Errors != 1 || costs.Total.Tokens.PromptTokens != 200 || costs.Unattributed.Calls != 3 {
 		t.Fatalf("costs=%+v", costs)
 	}
 	if len(transcript.IncompleteReasons()) == 0 {

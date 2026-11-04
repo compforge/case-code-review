@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/qiankunli/case-code-review/internal/recording/operation"
 )
 
 func TestExportSessionATIF(t *testing.T) {
@@ -31,11 +29,12 @@ func TestExportSessionATIF(t *testing.T) {
 	if err := os.WriteFile(f, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	traj, err := exportSession(f)
+	trajectories, err := exportSession(f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if traj.SchemaVersion != atifSchemaVersion || traj.SessionID != "s1" || traj.Agent.ModelName != "m1" {
+	traj := trajectories[0]
+	if traj.SchemaVersion != atifSchemaVersion || traj.SessionID != "" || traj.Extra["review_id"] != "s1" || traj.Agent.ModelName != "m1" {
 		t.Fatalf("root header: %+v", traj)
 	}
 	if traj.Extra["branch"] != "b" || traj.Extra["diff_from"] != "origin/main" {
@@ -45,14 +44,10 @@ func TestExportSessionATIF(t *testing.T) {
 		traj.Extra["eval_tag"] != "replay:test" || traj.Extra["biz_id"] != "github:org/repo#148" {
 		t.Fatalf("engine identity missing: agent=%+v extra=%v", traj.Agent, traj.Extra)
 	}
-	artifacts, ok := traj.Extra["review_artifacts"].([]map[string]any)
-	if !ok || len(artifacts) != 1 || artifacts[0]["kind"] != "review_hypothesis" {
-		t.Fatalf("review artifacts missing: %v", traj.Extra["review_artifacts"])
+	if len(trajectories) != 1 {
+		t.Fatalf("want one trajectory, got %d", len(trajectories))
 	}
-	if len(traj.Subagents) != 1 {
-		t.Fatalf("want 1 subagent trajectory, got %d", len(traj.Subagents))
-	}
-	sub := traj.Subagents[0]
+	sub := traj
 	if sub.TrajectoryID != "exec-1" || sub.Extra["file_path"] != "a.go" {
 		t.Fatalf("sub header: %+v", sub)
 	}
@@ -64,8 +59,9 @@ func TestExportSessionATIF(t *testing.T) {
 	if !ok || len(projections) != 1 || projections[0]["projection_no"] != 1 {
 		t.Fatalf("context projections missing: %v", sub.Extra["context_projections"])
 	}
-	if sub.Extra["execution_outcome"] != "completed" || sub.Extra["execution_id"] != "exec-1" || sub.Extra["execution_turns"] != 2 {
-		t.Fatalf("execution terminal fact missing: %v", sub.Extra)
+	executions := sub.Extra["executions"].([]map[string]any)
+	if len(executions) != 1 || executions[0]["outcome"] != "completed" || executions[0]["execution_id"] != "exec-1" || executions[0]["turns"] != 2 {
+		t.Fatalf("executions=%v", executions)
 	}
 	outlineAttempts, ok := sub.Extra["initial_outline_attempts"].([]map[string]any)
 	if !ok || len(outlineAttempts) != 1 || outlineAttempts[0]["outcome"] != "admitted" {
@@ -91,7 +87,7 @@ func TestExportSessionATIF(t *testing.T) {
 		t.Fatalf("arguments not decoded: %v", st.ToolCalls[0].Arguments)
 	}
 	if st.Observation == nil || len(st.Observation.Results) != 1 ||
-		st.Observation.Results[0].SourceCallID != "c1" || !strings.Contains(st.Observation.Results[0].Content, "1|package a") {
+		st.Observation.Results[0].SourceCallID != "c1" || !strings.Contains(st.Observation.Results[0].Content.(string), "1|package a") {
 		t.Fatalf("observation pairing: %+v", st.Observation)
 	}
 	if st.Observation.Results[0].Extra["cache_status"] != "hit" {
@@ -138,7 +134,7 @@ func TestExportSessionPreservesLLMFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	step := trajectory.Subagents[0].Steps[0]
+	step := trajectory[0].Steps[0]
 	failure, ok := step.Extra["failure"].(map[string]any)
 	if !ok || failure["phase"] != "routing" || failure["code"] != "routing_budget_exhausted" {
 		t.Fatalf("exported failure = %+v", step.Extra["failure"])
@@ -162,14 +158,44 @@ func TestExportSessionKeepsUnfinishedRequestTimeline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := trajectory.Extra["operations"].(operation.Snapshot)
-	if len(doc.Operations) != 1 || doc.Operations[0].Status != operation.Running {
-		t.Fatalf("document=%+v", doc)
+	if len(trajectory) != 1 || len(trajectory[0].Steps) != 0 {
+		t.Fatalf("invented model steps: %+v", trajectory)
+	}
+	pending := trajectory[0].Extra["pending_requests"].([]map[string]any)
+	if len(pending) != 1 || pending[0]["request_id"] != "request-3" {
+		t.Fatalf("pending=%v", pending)
 	}
 	if _, err := json.Marshal(trajectory); err != nil {
 		t.Fatal(err)
 	}
-	if trajectory.FinalMetrics.TotalSteps != 0 {
-		t.Fatalf("timeline invented model steps: %+v", trajectory.FinalMetrics)
+	if trajectory[0].FinalMetrics.TotalSteps != 0 {
+		t.Fatalf("timeline invented model steps: %+v", trajectory[0].FinalMetrics)
+	}
+}
+
+// +case=An unassigned tool result remains an observation without an invented model call
+func TestExportUnassignedToolOutcome(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review.jsonl")
+	text := `{"type":"session_start","sessionId":"review","schema_version":14}
+{"type":"tool_result","scope_id":"unit","execution_id":"exec","session_ref":{"session_id":"native"},"request_id":"missing","tool_call_id":"orphan","tool_name":"read_files","result":"evidence","ok":false}
+`
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	trajectories, err := exportSession(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := trajectories[0].Steps[0]
+	if *step.LLMCallCount != 0 || step.Metrics != nil || len(step.ToolCalls) != 0 || step.Observation.Results[0].SourceCallID != "orphan" || step.Observation.Results[0].Content != "evidence" {
+		t.Fatalf("step=%+v", step)
+	}
+}
+
+func TestExportContentProjectionGap(t *testing.T) {
+	raw := json.RawMessage(`[{"type":"image","image":{"url":"https://example.test/no-type"}}]`)
+	message, issues := rawToMessage(raw)
+	if message != "" || len(issues) != 1 {
+		t.Fatalf("message=%v issues=%v", message, issues)
 	}
 }

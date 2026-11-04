@@ -1,4 +1,5 @@
 from __future__ import annotations
+from eval.trajectory.fixtures import session_jsonl
 
 from agent_ledger.observation import SessionView, ToolCall
 from trajectory_harness.model import trajectory_recording_id
@@ -62,13 +63,14 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            atif = json.dumps(
+            atif = session_jsonl(
                 {
                     "session_id": "session-1",
-                    "subagent_trajectories": [
+                    "sessions": [
                         {
-                            "trajectory_id": "unit-1",
-                            "extra": {"scope_kind": "unit"},
+                            "trajectory_id": "native-session-1",
+ "session_id": "agent-session-1",
+                            "extra": {"scope_kind": "unit", "scope_id": "unit-1"},
                             "steps": [
                                 {
                                     "step_id": str(index),
@@ -122,7 +124,7 @@ class CCRTrajectoryReportTest(unittest.TestCase):
             self.assertEqual(view.schema_version, "agent-ledger/session@1")
             self.assertEqual(view.session.id, "agent-session-1")
             self.assertEqual(
-                view.attributes["atif_trajectories"]["session-1/unit-1"]["extra"]
+                view.attributes["atif_trajectories"]["native-session-1"]["extra"]
                 ["quality_harness"]["recording"]["id"],
                 "session-1",
             )
@@ -150,7 +152,7 @@ class CCRTrajectoryReportTest(unittest.TestCase):
                 "session-1",
             )
             self.assertEqual(
-                result.artifact.run.target_for("session-1/unit-1"),
+                result.artifact.run.target_for("native-session-1"),
                 "review1",
             )
             self.assertEqual(

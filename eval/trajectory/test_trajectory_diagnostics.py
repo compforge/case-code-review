@@ -337,15 +337,11 @@ def _context_steps(prefix: str, count: int) -> tuple[Step, ...]:
             step_id=f"{prefix}:context:{index}",
             parent_step_id=None,
             operation="context",
+ source="user",
             name="prompt",
             start_ms=0,
             duration_ms=0,
-            output_messages=(
-                {
-                    "role": "user",
-                    "parts": [{"type": "text", "content": "context " + "x" * 900}],
-                },
-            ),
+            message="context " + "x" * 900,
         )
         for index in range(count)
     )

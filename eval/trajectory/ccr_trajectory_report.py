@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from eval.trajectory.atif import CCRToolUsageMeasurer
 from eval.trajectory.build_trajectory_dataset import CCRTrajectoryDatasetBuilder
 from eval.trajectory.ccr_source import CCRSessionSource
 from eval.trajectory.ccr_trajectory import detectors_for_stage, verifiers_for_stage, review_stage
@@ -29,7 +30,6 @@ from trajectory_harness import (
     TrajectoryHarnessResult,
     TrajectoryReportBuilder,
     TrajectoryRunArtifact,
-    ToolUsageMeasurer,
 )
 from eval.weekly_window import WeekWindow, default_dataset_paths
 
@@ -41,7 +41,7 @@ class CCRTrajectoryAnalysisRunner(TrajectoryAnalysisRunner):
         super().__init__(
             measurers=(
                 ModelUsageMeasurer(),
-                ToolUsageMeasurer(),
+                CCRToolUsageMeasurer(),
                 ContextUsageMeasurer(),
             )
         )

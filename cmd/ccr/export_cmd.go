@@ -1,17 +1,14 @@
 package main
 
-// `ccr export` — convert session JSONL transcripts into ATIF (Agent Trajectory
-// Interchange Format, Harbor RFC 0001), the interchange format SFT/RL/eval and
-// trajectory-mining tooling consume. One review session becomes one root
-// Trajectory; each unit's sequential chain becomes a subagent trajectory, so the
-// per-unit review loops stay separately minable. The session JSONL remains the
-// source of truth — this is a lossless-enough projection, with ccr-specific
-// leftovers (durations, tool ok flags, task types) tucked into `extra`.
+// ccr export projects native AgentGo Sessions into ATIF. A Review links R1
+// Sessions and R2 Lane Sessions through JobView; it is not an agent Session.
 
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,14 +22,13 @@ const atifSchemaVersion = "ATIF-v1.8"
 // ── ATIF shapes (field names per the RFC; omitempty keeps output lean) ────────
 
 type atifTrajectory struct {
-	SchemaVersion string           `json:"schema_version"`
-	SessionID     string           `json:"session_id,omitempty"`
-	TrajectoryID  string           `json:"trajectory_id,omitempty"`
-	Agent         atifAgent        `json:"agent"`
-	Steps         []*atifStep      `json:"steps"`
-	FinalMetrics  *atifFinal       `json:"final_metrics,omitempty"`
-	Extra         map[string]any   `json:"extra,omitempty"`
-	Subagents     []atifTrajectory `json:"subagent_trajectories,omitempty"`
+	SchemaVersion string         `json:"schema_version"`
+	SessionID     string         `json:"session_id,omitempty"`
+	TrajectoryID  string         `json:"trajectory_id,omitempty"`
+	Agent         atifAgent      `json:"agent"`
+	Steps         []*atifStep    `json:"steps"`
+	FinalMetrics  *atifFinal     `json:"final_metrics,omitempty"`
+	Extra         map[string]any `json:"extra,omitempty"`
 }
 
 type atifAgent struct {
@@ -51,7 +47,8 @@ type atifStep struct {
 	ToolCalls        []atifToolCall `json:"tool_calls,omitempty"`
 	Observation      *atifObs       `json:"observation,omitempty"`
 	Metrics          *atifMetrics   `json:"metrics,omitempty"`
-	LLMCallCount     int            `json:"llm_call_count,omitempty"`
+	LLMCallCount     *int           `json:"llm_call_count,omitempty"`
+	IsCopiedContext  bool           `json:"is_copied_context,omitempty"`
 	Extra            map[string]any `json:"extra,omitempty"`
 }
 
@@ -67,14 +64,14 @@ type atifObs struct {
 
 type atifObsResult struct {
 	SourceCallID string         `json:"source_call_id,omitempty"`
-	Content      string         `json:"content"`
+	Content      any            `json:"content"`
 	Extra        map[string]any `json:"extra,omitempty"`
 }
 
 type atifMetrics struct {
-	PromptTokens     int            `json:"prompt_tokens,omitempty"`
-	CompletionTokens int            `json:"completion_tokens,omitempty"`
-	CachedTokens     int            `json:"cached_tokens,omitempty"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompletionTokens int            `json:"completion_tokens"`
+	CachedTokens     int            `json:"cached_tokens"`
 	Extra            map[string]any `json:"extra,omitempty"`
 }
 
@@ -126,11 +123,15 @@ type exportEvent struct {
 	InitialOutlineAttempts []map[string]any `json:"initial_outline_attempts"`
 	RequestNo              int              `json:"request_no"`
 	Messages               []exportMessage  `json:"messages"`
+	Tools                  json.RawMessage  `json:"tools"`
+	ModelCall              json.RawMessage  `json:"model_call"`
 	Content                string           `json:"content"`
+	ContentParts           json.RawMessage  `json:"content_parts"`
+	UsageSource            string           `json:"usage_source"`
 	Reasoning              string           `json:"reasoning"`
 	ToolCalls              json.RawMessage  `json:"tool_calls"`
 	DurationMS             float64          `json:"duration_ms"`
-	Usage                  struct {
+	Usage                  *struct {
 		PromptTokens     int `json:"prompt_tokens"`
 		CompletionTokens int `json:"completion_tokens"`
 		CacheReadTokens  int `json:"cache_read_tokens"`
@@ -144,8 +145,9 @@ type exportEvent struct {
 }
 
 type exportMessage struct {
-	Role    string          `json:"role"`
-	Content json.RawMessage `json:"content"`
+	Role      string          `json:"role"`
+	Content   json.RawMessage `json:"content"`
+	Timestamp string          `json:"timestamp,omitempty"`
 }
 
 func runExport(args []string) error {
@@ -172,9 +174,9 @@ func runExport(args []string) error {
 			fmt.Println(`Usage: ccr export [recording.jsonl | dir]... [--format atif|job] [--unit ID] [--pretty]
 
 Convert session transcripts to ATIF (Agent Trajectory Interchange Format,
-Harbor RFC 0001): one root trajectory per session, one embedded subagent
-trajectory per review unit. Output is JSONL on stdout (one trajectory per
-session; --pretty indents). With no path, exports the most recent recording.
+Harbor RFC 0001): one trajectory per native agent Session. R1 Sessions and
+R2 Lane Sessions are separate documents; a Lane includes its consecutive loops.
+Output is JSONL on stdout (one trajectory per Session; --pretty indents). With no path, exports the most recent recording.
 Use --format job --unit ID to export the recorded Unit JobView across R1,
 R2 and Trial, with native model requests and evidence gaps. This is offline
 projection only; it does not rerun the review or judge its correctness.`)
@@ -212,19 +214,20 @@ projection only; it does not rerun the review or judge its correctness.`)
 			}
 			continue
 		}
-		traj, err := exportSession(f)
+		trajectories, err := exportSession(f)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ccr export: skip %s: %v\n", f, err)
-			continue
+			return fmt.Errorf("export %s: %w", f, err)
 		}
-		if err := enc.Encode(traj); err != nil {
-			return err
+		for _, trajectory := range trajectories {
+			if err := enc.Encode(trajectory); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-func exportSession(path string) (*atifTrajectory, error) {
+func exportSession(path string) ([]atifTrajectory, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -236,17 +239,20 @@ func exportSession(path string) (*atifTrajectory, error) {
 		Agent:         atifAgent{Name: "case-code-review", Version: "unknown"},
 		Steps:         []*atifStep{},
 	}
-	var reviewArtifacts []map[string]any
-	// Each execution becomes a trajectory; auxiliary calls use their scope.
-	// A Lane may run several independent loops, so its final loop cannot stand
-	// in for the outcomes or context of earlier loops.
+	sessionByExecution := map[string]string{}
+	// +spec=One native Session forms one Trajectory; execution boundaries remain metadata within a Lane
+	// +link=repo://eval/trajectory/README.md
 	type chain struct {
 		steps         []*atifStep
 		requests      map[string]*atifStep
+		prompts       map[string]exportEvent
 		extra         map[string]any
 		total         atifFinal
 		stepID        int
 		sawFirst      bool
+		contextCounts map[string]int
+		sessionID     string
+		executions    []map[string]any
 		sawProjection bool
 	}
 	chains := map[string]*chain{}
@@ -258,9 +264,16 @@ func exportSession(path string) (*atifTrajectory, error) {
 		if id == "" {
 			id = e.ScopeID
 		}
+		sessionID, _ := e.SessionRef["session_id"].(string)
+		if sessionID == "" {
+			sessionID = sessionByExecution[e.ExecutionID]
+		}
+		if sessionID != "" {
+			id = sessionID
+		}
 		c := chains[id]
 		if c == nil {
-			c = &chain{extra: map[string]any{"scope_id": e.ScopeID}, requests: map[string]*atifStep{}}
+			c = &chain{sessionID: sessionID, steps: []*atifStep{}, contextCounts: map[string]int{}, extra: map[string]any{"scope_id": e.ScopeID}, requests: map[string]*atifStep{}, prompts: map[string]exportEvent{}}
 			if e.FilePath != "" {
 				c.extra["file_path"] = e.FilePath
 			}
@@ -281,6 +294,15 @@ func exportSession(path string) (*atifTrajectory, error) {
 		return nil, err
 	}
 	stages := transcript.OperationIndex()
+	for _, stage := range stages {
+		var executionID, sessionID string
+		_ = json.Unmarshal(stage.Attributes["execution_id"], &executionID)
+		_ = json.Unmarshal(stage.Attributes["session_id"], &sessionID)
+		if executionID != "" && sessionID != "" {
+			sessionByExecution[executionID] = sessionID
+		}
+	}
+
 	for _, record := range transcript.Records {
 		raw, err := json.Marshal(record)
 		if err != nil {
@@ -301,7 +323,7 @@ func exportSession(path string) (*atifTrajectory, error) {
 			root.SessionID = e.SessionID
 			root.Agent.ModelName = e.Model
 			root.Extra = map[string]any{
-				"repo": e.Cwd, "branch": e.GitBranch, "review_mode": e.ReviewMode,
+				"review_id": e.SessionID, "repo": e.Cwd, "branch": e.GitBranch, "review_mode": e.ReviewMode,
 				"diff_from": e.DiffFrom, "diff_to": e.DiffTo,
 			}
 			if e.ToolVersion != "" {
@@ -323,17 +345,12 @@ func exportSession(path string) (*atifTrajectory, error) {
 			if e.BizID != "" {
 				root.Extra["biz_id"] = e.BizID
 			}
-		case "artifact":
-			reviewArtifacts = append(reviewArtifacts, map[string]any{
-				"kind": e.ArtifactKind,
-				"data": e.Data, "operation_id": e.OperationID,
-			})
 		case "context_projected":
 			c := get(e)
 			projections, _ := c.extra["context_projections"].([]map[string]any)
 			c.extra["context_projections"] = append(projections, map[string]any{
-				"projection_no": e.ProjectionNo,
-				"items":         e.Items,
+				"projection_no": e.ProjectionNo, "execution_id": e.ExecutionID,
+				"items": e.Items,
 			})
 			if !c.sawProjection {
 				c.sawProjection = true
@@ -341,38 +358,75 @@ func exportSession(path string) (*atifTrajectory, error) {
 			}
 		case "llm_request":
 			c := get(e)
-			// Only the chain's FIRST request seeds steps: later requests replay the
-			// same conversation cumulatively (prior messages + tool results already
-			// captured as steps/observations here).
-			if !c.sawFirst {
-				c.sawFirst = true
-				for _, m := range e.Messages {
-					c.stepID++
-					c.steps = append(c.steps, &atifStep{
-						StepID: c.stepID, Timestamp: e.Timestamp,
-						Source: atifSource(m.Role), Message: rawToMessage(m.Content),
-					})
-				}
+			requestID := e.CallID
+			if requestID == "" {
+				requestID = e.OperationID
 			}
-		case "llm_response":
+			c.prompts[requestID] = e
+			// +spec=Repeated prompts do not duplicate trajectory steps; newly appended user messages remain visible
+			occurrences := map[string]int{}
+			for _, m := range e.Messages {
+				raw, _ := json.Marshal(m)
+				key := string(raw)
+				occurrences[key]++
+				if occurrences[key] <= c.contextCounts[key] {
+					continue
+				}
+				c.contextCounts[key] = occurrences[key]
+				if c.sawFirst && m.Role != "system" && m.Role != "user" {
+					continue
+				}
+				c.stepID++
+				message, issues := rawToMessage(m.Content)
+				extra := map[string]any{"execution_id": e.ExecutionID, "request_message": m}
+				if len(issues) > 0 {
+					extra["content_projection_issues"] = issues
+				}
+				c.steps = append(c.steps, &atifStep{StepID: c.stepID, Timestamp: e.Timestamp,
+					Source: atifSource(m.Role), Message: message,
+					IsCopiedContext: m.Role == "assistant" || m.Role == "tool", LLMCallCount: intPointer(0),
+					Extra: extra,
+				})
+			}
+			c.sawFirst = true
+
+		case "llm_response", "llm_error":
 			c := get(e)
 			c.stepID++
 			st := &atifStep{
 				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent",
 				Message: e.Content, ReasoningContent: e.Reasoning,
-				ModelName: e.Model, LLMCallCount: 1,
-				Metrics: &atifMetrics{
-					PromptTokens:     e.Usage.PromptTokens,
-					CompletionTokens: e.Usage.CompletionTokens,
-					CachedTokens:     e.Usage.CacheReadTokens,
-					Extra:            map[string]any{"duration_ms": e.DurationMS},
-				},
-				Extra: map[string]any{"task_type": e.TaskType, "operation_id": e.OperationID, "session_ref": e.SessionRef},
+				ModelName: e.Model, LLMCallCount: intPointer(1),
+				Extra: map[string]any{"task_type": e.TaskType, "execution_id": e.ExecutionID, "operation_id": e.OperationID, "session_ref": e.SessionRef},
 			}
 
-			if stage, ok := stages[operation.ID(e.OperationID)]; !ok || stage.FinishedAt.IsZero() {
-				delete(st.Metrics.Extra, "duration_ms")
+			if len(e.ContentParts) > 0 {
+				var issues []string
+				st.Message, issues = rawToMessage(e.ContentParts)
+				if len(issues) > 0 {
+					st.Extra["content_projection_issues"] = issues
+				}
 			}
+			if e.Type == "llm_error" {
+				st.Extra["llm_error"] = e.Error
+				st.Extra["partial"] = true
+			}
+			if len(e.Failure) > 0 {
+				st.Extra["failure"] = e.Failure
+			}
+			if e.UsageSource == "missing" {
+				st.Extra["usage_source"] = "missing"
+			}
+			if stage, ok := stages[operation.ID(e.OperationID)]; ok && !stage.FinishedAt.IsZero() {
+				st.Extra["duration_ms"] = e.DurationMS
+			}
+			if e.Usage != nil {
+				st.Metrics = &atifMetrics{PromptTokens: e.Usage.PromptTokens, CompletionTokens: e.Usage.CompletionTokens, CachedTokens: e.Usage.CacheReadTokens}
+				c.total.TotalPromptTokens += st.Metrics.PromptTokens
+				c.total.TotalCompletionTokens += st.Metrics.CompletionTokens
+				c.total.TotalCachedTokens += st.Metrics.CachedTokens
+			}
+
 			var toolCalls []map[string]any
 			_ = json.Unmarshal(e.ToolCalls, &toolCalls)
 			for _, tc := range toolCalls {
@@ -381,20 +435,40 @@ func exportSession(path string) (*atifTrajectory, error) {
 					ToolCallID: id, FunctionName: name, Arguments: argsObj,
 				})
 			}
-			c.total.TotalPromptTokens += e.Usage.PromptTokens
-			c.total.TotalCompletionTokens += e.Usage.CompletionTokens
-			c.total.TotalCachedTokens += e.Usage.CacheReadTokens
 			c.steps = append(c.steps, st)
 			id := e.CallID
 			if id == "" {
 				id = e.OperationID
 			}
 			c.requests[id] = st
+			if request, ok := c.prompts[id]; ok {
+				st.Extra["request_messages"] = request.Messages
+				if len(request.Tools) > 0 {
+					st.Extra["request_tools"] = request.Tools
+				}
+				if len(request.ModelCall) > 0 {
+					st.Extra["request_model_call"] = request.ModelCall
+				}
+			}
+			if len(e.ContentParts) > 0 {
+				st.Extra["response_content"] = e.ContentParts
+			}
 		case "tool_result":
 			c := get(e)
 			owner := c.requests[e.RequestID]
-			if owner == nil {
-				continue // tool result with no owning agent step — drop, not invent
+			matched := false
+			if owner != nil {
+				for _, call := range owner.ToolCalls {
+					if call.ToolCallID == e.ToolCallID {
+						matched = true
+					}
+				}
+			}
+			if owner == nil || !matched {
+				// Preserve unassigned outcomes without inventing a model or tool call.
+				c.stepID++
+				owner = &atifStep{StepID: c.stepID, Source: "agent", Message: "", LLMCallCount: intPointer(0), Extra: map[string]any{"unassigned_observation": true, "execution_id": e.ExecutionID}}
+				c.steps = append(c.steps, owner)
 			}
 			res := atifObsResult{
 				Content: e.Result,
@@ -409,25 +483,15 @@ func exportSession(path string) (*atifTrajectory, error) {
 			res.SourceCallID = e.ToolCallID
 			res.Extra["operation_id"] = e.OperationID
 			res.Extra["session_ref"] = e.SessionRef
+			res.Extra["execution_id"] = e.ExecutionID
+			if stage, ok := stages[operation.ID(e.OperationID)]; ok && !stage.FinishedAt.IsZero() {
+				res.Extra["duration_ms"] = e.DurationMS
+			}
 			if owner.Observation == nil {
 				owner.Observation = &atifObs{}
 			}
 			owner.Observation.Results = append(owner.Observation.Results, res)
 
-		case "llm_error":
-			c := get(e)
-			c.stepID++
-			extra := map[string]any{"llm_error": e.Error, "operation_id": e.OperationID, "session_ref": e.SessionRef}
-			if stage, ok := stages[operation.ID(e.OperationID)]; ok && !stage.FinishedAt.IsZero() {
-				extra["duration_ms"] = e.DurationMS
-			}
-			if len(e.Failure) > 0 {
-				extra["failure"] = e.Failure
-			}
-			c.steps = append(c.steps, &atifStep{
-				StepID: c.stepID, Timestamp: e.Timestamp, Source: "agent", Message: "",
-				Extra: extra,
-			})
 		case "debrief":
 			debriefs[e.ScopeID] = e
 		}
@@ -436,10 +500,6 @@ func exportSession(path string) (*atifTrajectory, error) {
 	if root.Extra == nil {
 		root.Extra = map[string]any{}
 	}
-	if transcript.Journal.ID != "" {
-		root.Extra["operations"] = transcript.Journal
-	}
-	root.Extra["cost"] = transcript.Costs()
 	if gaps := transcript.IncompleteReasons(); len(gaps) > 0 {
 		root.Extra["recording_incomplete"] = strings.Join(gaps, "; ")
 	}
@@ -450,52 +510,53 @@ func exportSession(path string) (*atifTrajectory, error) {
 			return nil, err
 		}
 		c := get(e)
-		c.extra["execution_outcome"] = e.Outcome
-		if e.ExecutionID != "" {
-			c.extra["execution_id"] = e.ExecutionID
-		}
-		if e.Reason != "" {
-			c.extra["execution_reason"] = e.Reason
-		}
-		if e.Turns > 0 {
-			c.extra["execution_turns"] = e.Turns
-		}
+		execution := map[string]any{"execution_id": e.ExecutionID, "outcome": e.Outcome, "reason": e.Reason, "turns": e.Turns}
 		if duration, ok := fact["duration_ms"]; ok {
-			c.extra["execution_duration_ms"] = duration
+			execution["duration_ms"] = duration
 		}
+		c.executions = append(c.executions, execution)
+
 	}
 
-	if len(reviewArtifacts) > 0 {
-		if root.Extra == nil {
-			root.Extra = map[string]any{}
-		}
-		root.Extra["review_artifacts"] = reviewArtifacts
-	}
-
-	rootFinal := atifFinal{}
+	trajectories := make([]atifTrajectory, 0, len(order))
 	for _, id := range order {
 		c := chains[id]
 		if debrief, ok := debriefs[c.extra["scope_id"].(string)]; ok && len(debrief.InitialOutlineAttempts) > 0 {
 			c.extra["initial_outline_attempts"] = debrief.InitialOutlineAttempts
 		}
 		c.total.TotalSteps = len(c.steps)
+		extra := maps.Clone(root.Extra)
+		maps.Copy(extra, c.extra)
+		extra["executions"] = c.executions
+		// A request without a terminal event is evidence, not a completed LLM step.
+		pending := []map[string]any{}
+		for _, requestID := range slices.Sorted(maps.Keys(c.prompts)) {
+			if c.requests[requestID] != nil {
+				continue
+			}
+			request := c.prompts[requestID]
+			pending = append(pending, map[string]any{"request_id": requestID, "execution_id": request.ExecutionID, "session_ref": request.SessionRef, "timestamp": request.Timestamp, "messages": request.Messages})
+		}
+		if len(pending) > 0 {
+			extra["pending_requests"] = pending
+		}
+
+		if c.sessionID == "" {
+			extra["session_identity_missing"] = true
+		}
+
 		sub := atifTrajectory{
 			SchemaVersion: atifSchemaVersion,
 			TrajectoryID:  id,
-			SessionID:     root.SessionID,
+			SessionID:     c.sessionID,
 			Agent:         root.Agent,
 			Steps:         c.steps,
 			FinalMetrics:  &c.total,
-			Extra:         c.extra,
+			Extra:         extra,
 		}
-		root.Subagents = append(root.Subagents, sub)
-		rootFinal.TotalPromptTokens += c.total.TotalPromptTokens
-		rootFinal.TotalCompletionTokens += c.total.TotalCompletionTokens
-		rootFinal.TotalCachedTokens += c.total.TotalCachedTokens
-		rootFinal.TotalSteps += c.total.TotalSteps
+		trajectories = append(trajectories, sub)
 	}
-	root.FinalMetrics = &rootFinal
-	return root, nil
+	return trajectories, nil
 }
 
 // atifSource maps an OpenAI-style role onto ATIF's step source vocabulary.
@@ -508,19 +569,58 @@ func atifSource(role string) string {
 	}
 }
 
-// rawToMessage keeps a plain string message as a string; anything richer
-// (multimodal content parts) passes through as-is.
-func rawToMessage(raw json.RawMessage) any {
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+// rawToMessage maps native content blocks to ATIF content. Reasoning and calls
+// have their own standard fields; the full request/response remains in extra.
+func rawToMessage(raw json.RawMessage) (any, []string) {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text, nil
 	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err == nil {
-		return v
+	var blocks []map[string]any
+	if json.Unmarshal(raw, &blocks) != nil {
+		return "", []string{"content is not a string or content block list"}
 	}
-	return string(raw)
+	parts := []map[string]any{}
+	var issues []string
+	for _, block := range blocks {
+		switch block["type"] {
+		case "text":
+			text, _ := block["text"].(string)
+			parts = append(parts, map[string]any{"type": "text", "text": text})
+		case "image":
+			if source, ok := block["source"].(map[string]any); ok {
+				parts = append(parts, map[string]any{"type": "image", "source": source})
+				continue
+			}
+			image, _ := block["image"].(map[string]any)
+			media, _ := image["mime_type"].(string)
+			path, _ := image["url"].(string)
+			if data, _ := image["data"].(string); data != "" {
+				path = "data:" + media + ";base64," + data
+			}
+			if media != "" && path != "" {
+				parts = append(parts, map[string]any{"type": "image", "source": map[string]any{"media_type": media, "path": path}})
+			} else {
+				issues = append(issues, "image MIME type or path is missing")
+			}
+		case "audio":
+			if source, ok := block["source"].(map[string]any); ok {
+				parts = append(parts, map[string]any{"type": "audio", "source": source})
+			} else {
+				issues = append(issues, "audio source is missing")
+			}
+		case "thinking", "toolCall": // Represented separately or retained as copied context.
+		default:
+			issues = append(issues, fmt.Sprintf("unmapped content type %v", block["type"]))
+		}
+	}
+	if len(parts) == 0 {
+		return "", issues
+	}
+	return parts, issues
 }
+
+func intPointer(value int) *int { return &value }
 
 // parseRawToolCall unwraps one recorded tool call into ATIF fields. Sessions
 // record the flat shape {id, name, arguments}; the OpenAI-nested shape

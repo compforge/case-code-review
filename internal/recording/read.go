@@ -194,6 +194,7 @@ func (t *Transcript) readLoop(path string) error {
 			}
 			m, _ := message.ToMessage()
 			facts["content"] = m.TextContent()
+			facts["content_parts"] = m.Content
 			facts["reasoning"] = m.ThinkingContent()
 			facts["stop_reason"] = m.StopReason
 			facts["model"] = m.Metadata["model"]
@@ -201,7 +202,7 @@ func (t *Transcript) readLoop(path string) error {
 			if u := m.Usage; u != nil {
 				facts["model"] = u.Model
 				facts["usage_source"] = "reported"
-				facts["usage"] = TokenUsage{PromptTokens: u.Input + u.CacheWrite, CompletionTokens: u.Output, ReasoningTokens: u.Reasoning, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite}
+				facts["usage"] = TokenUsage{PromptTokens: u.Input, CompletionTokens: u.Output, ReasoningTokens: u.Reasoning, CacheReadTokens: u.CacheRead, CacheWriteTokens: u.CacheWrite}
 			}
 			toolCalls := []map[string]any{}
 			for _, call := range m.ToolCalls() {

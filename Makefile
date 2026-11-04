@@ -12,7 +12,7 @@ TEST_FILES  ?=
 # Impact selection may include Python eval tests; this target owns only Go.
 # Go tests compile at package scope, so selected Go files select their packages.
 GO_TEST_FILES := $(filter %.go,$(TEST_FILES))
-TEST_PACKAGES ?= $(if $(strip $(TEST_FILES)),$(sort $(foreach file,$(GO_TEST_FILES),./$(patsubst %/,%,$(dir $(patsubst ./%,%,$(file)))))),./...)
+TEST_PACKAGES ?= $(if $(strip $(TEST_FILES)),$(sort $(foreach test_file,$(GO_TEST_FILES),./$(patsubst %/,%,$(dir $(patsubst ./%,%,$(test_file)))))),./...)
 
 # Version info — VERSION is the release source of truth; commits identify the
 # exact build within that release line.

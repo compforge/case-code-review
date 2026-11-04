@@ -72,8 +72,8 @@ class CCRTrajectoryDatasetBuilder(TrajectoryDatasetBuilder):
         }
         dataset_trajectories = []
         for trajectory in trajectories:
-            scope_id = trajectory.trajectory_id
-            dataset_id = f"{trajectory_recording_id(trajectory)}/{scope_id}"
+            scope_id = str(trajectory_metadata(trajectory).get("scope_id") or trajectory.trajectory_id)
+            dataset_id = trajectory.trajectory_id
             trajectory_ids_by_recording[trajectory_recording_id(trajectory)][scope_id] = dataset_id
             dataset_trajectories.append(
                 trajectory.model_copy(update={

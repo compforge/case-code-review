@@ -54,19 +54,19 @@ func TestExportExecutionAndToolIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(trajectory.Subagents) != 2 || trajectory.Extra["recording_incomplete"] == nil {
+	if len(trajectory) != 2 || trajectory[0].Extra["recording_incomplete"] == nil {
 		t.Fatalf("projection=%+v", trajectory)
 	}
-	for i, sub := range trajectory.Subagents {
+	for i, sub := range trajectory {
 		id := []string{"e1", "e2"}[i]
-		if sub.TrajectoryID != id || sub.Extra["scope_id"] != "lane" || sub.Extra["execution_outcome"] != []string{"completed", "timeout"}[i] {
+		if sub.TrajectoryID != id || sub.Extra["scope_id"] != "lane" || sub.Extra["executions"].([]map[string]any)[0]["outcome"] != []string{"completed", "timeout"}[i] {
 			t.Fatalf("execution was overwritten: %+v", sub)
 		}
 		if len(sub.Steps) != 2 || sub.Steps[0].Message != id {
 			t.Fatalf("lost own prompt: %+v", sub.Steps)
 		}
 		step := sub.Steps[1]
-		if _, ok := step.Metrics.Extra["duration_ms"]; ok {
+		if _, ok := step.Extra["duration_ms"]; ok {
 			t.Fatal("missing request end became measured duration")
 		}
 		if len(step.Observation.Results) != 2 {
