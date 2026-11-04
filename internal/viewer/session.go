@@ -49,6 +49,45 @@ func attr(attrs map[string]json.RawMessage, key string) string {
 	return value
 }
 
+func unitIdentity(a map[string]json.RawMessage) string {
+	if id := attr(a, "unit_id"); id != "" {
+		return id
+	}
+	if id := attr(a, "origin_unit"); id != "" {
+		return id
+	}
+	if attr(a, "kind") == "unit" {
+		return attr(a, "scope_id")
+	}
+	return ""
+}
+
+// +spec=`Run-level events bind to a common enclosing Execution, never a representative call; missing or conflicting Execution, Unit or Hypothesis ownership remains unknown`
+// +link=component://docs/observability.md
+func runExecutionOwners(source *callSource, calls map[agentsession.Ref]operation.Record) map[string]operation.Record {
+	result := map[string]operation.Record{}
+	ambiguous := map[string]bool{}
+	for ref, call := range calls {
+		if ref.RunID == "" {
+			continue
+		}
+		owner := source.enclosingExecution(call)
+		callAttrs, ownerAttrs := attributes(source, call), attributes(source, owner)
+		if owner.ID == "" || unitIdentity(callAttrs) != unitIdentity(ownerAttrs) || attr(callAttrs, "hypothesis_id") != attr(ownerAttrs, "hypothesis_id") {
+			ambiguous[ref.RunID] = true
+			continue
+		}
+		if previous, ok := result[ref.RunID]; ok && previous.ID != owner.ID {
+			ambiguous[ref.RunID] = true
+		}
+		result[ref.RunID] = owner
+	}
+	for run := range ambiguous {
+		delete(result, run)
+	}
+	return result
+}
+
 // Session membership comes from native references, never from overlapping timestamps.
 // +spec=`A continuous Lane has one Session entry; Execution boundaries annotate it without splitting its identity`
 // +link=component://docs/observability.md
@@ -91,13 +130,7 @@ func sessionCatalog(source *callSource) ([]nativeSession, error) {
 		} else if attr(a, "task_type") == "main_task" {
 			entry.Role = "R1"
 		}
-		unit := attr(a, "unit_id")
-		if unit == "" {
-			unit = attr(a, "origin_unit")
-		}
-		if unit == "" && attr(a, "kind") == "unit" {
-			unit = attr(a, "scope_id")
-		}
+		unit := unitIdentity(a)
 		if unit != "" {
 			found := false
 			for _, u := range entry.Units {
@@ -193,19 +226,7 @@ func summarizeSession(entry nativeSession, view observation.SessionView, source 
 			owners[ref] = op
 		}
 	}
-	// Run-level point events inherit a business Execution only when all explicit
-	// call references in that Run agree. Shared or missing ownership stays unknown.
-	runOwners := map[string]operation.Record{}
-	ambiguous := map[string]bool{}
-	for ref, op := range owners {
-		a := attributes(source, op)
-		execution := attr(a, "execution_id")
-		old := runOwners[ref.RunID]
-		if old.ID != "" && attr(attributes(source, old), "execution_id") != execution {
-			ambiguous[ref.RunID] = true
-		}
-		runOwners[ref.RunID] = op
-	}
+	runOwners := runExecutionOwners(source, owners)
 	modelByTool := map[string]string{}
 	for _, node := range view.Nodes {
 		model, ok := node.(*observation.ModelCall)
@@ -236,19 +257,13 @@ func summarizeSession(entry nativeSession, view observation.SessionView, source 
 		_ = json.Unmarshal(raw, &execution)
 		item.Ref = agentsession.Ref{SessionID: entry.ID, RunID: base.RunID, ExecutionID: execution.ID, Attempt: execution.Attempt}
 		owner := owners[item.Ref]
-		if owner.ID == "" && !ambiguous[base.RunID] && kind == "operation" {
+		if owner.ID == "" && kind == "operation" {
 			owner = runOwners[base.RunID]
 		}
 		a := attributes(source, owner)
 		item.OperationID = owner.ID
 		item.ExecutionID = attr(a, "execution_id")
-		item.Unit = attr(a, "unit_id")
-		if item.Unit == "" {
-			item.Unit = attr(a, "origin_unit")
-		}
-		if item.Unit == "" && attr(a, "kind") == "unit" {
-			item.Unit = attr(a, "scope_id")
-		}
+		item.Unit = unitIdentity(a)
 		item.Hypothesis = attr(a, "hypothesis_id")
 		var response *common.CallResponse
 		switch n := node.(type) {
