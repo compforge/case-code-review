@@ -35,14 +35,14 @@ wheels = [
 
 [[package]]
 name = "atif"
-version = "1.7.0"
+version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/14/b0629cab0a86470c31d530498fc39c65a8385eaf95f4f39dbcde695284c5/atif-1.7.0.tar.gz", hash = "sha256:668cf3d4592a2147e62a4c2fc3663faacb3217a1627b395a1e0f354076f79d3f", size = 9613, upload-time = "2026-05-16T05:23:02.163Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/80/25/88f175844855543a26cf9d7812df1ea0ca7ccdb6ec965c8f13a8daa248cc/atif-1.8.0.tar.gz", hash = "sha256:f5b07100f9bf93d035f0b6103e6dbd7f0a90d9308eaaf610044ddd8cd3e50858", size = 10031, upload-time = "2026-10-11T19:50:55.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/97/cddb7c5cebe218534563533600eacc57beaace90ee85c435126214f5b18b/atif-1.7.0-py3-none-any.whl", hash = "sha256:7bb0c09a6d94ff5a73f6253a2aeb101d41d0724cfd0cdb8d96541ac4f2b7ab6c", size = 12346, upload-time = "2026-05-16T05:23:00.825Z" },
+    { url = "https://files.pythonhosted.org/packages/88/37/0326a9f875b0acbd4d065a93e26ec7cbb5c148375221051f83b5847e812e/atif-1.8.0-py3-none-any.whl", hash = "sha256:b002ade91e50a5925e6f540adc0f5f5cdc6afdd806efc6282b69f03d461958cc", size = 12832, upload-time = "2026-10-11T19:50:54.702Z" },
 ]
 
 [[package]]
@@ -64,7 +64,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=10000a9f55638288c1ee356f47dad85dc54963bf" },
+    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" },
     { name = "spec-case", extras = ["model"], git = "https://github.com/compforge/spec-case?subdirectory=toolchains%2Fpython" },
 ]
 
@@ -103,13 +103,13 @@ wheels = [
 
 [[package]]
 name = "harness-common"
-version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
+version = "0.6.2"
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
 
 [[package]]
 name = "harness-toolbox"
 version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
 dependencies = [
     { name = "harness-common" },
 ]
@@ -425,8 +425,8 @@ wheels = [
 
 [[package]]
 name = "quality-harness"
-version = "0.5.3"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=10000a9f55638288c1ee356f47dad85dc54963bf#10000a9f55638288c1ee356f47dad85dc54963bf" }
+version = "0.6.0"
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
 dependencies = [
     { name = "agent-ledger" },
     { name = "atif" },

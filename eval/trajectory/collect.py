@@ -79,7 +79,7 @@ def session_branch(path: Path) -> str:
         return "unknown"
 
 
-def export_atif(session: Path, out: Path) -> dict | None:
+def export_atif(session: Path, out: Path) -> list[dict] | None:
     r = subprocess.run(["ccr", "export", "--format", "atif", str(session)],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -87,13 +87,11 @@ def export_atif(session: Path, out: Path) -> dict | None:
               file=sys.stderr)
         return None
     out.write_text(r.stdout, encoding="utf-8")
-    line = r.stdout.splitlines()[0] if r.stdout.strip() else "{}"
-    return json.loads(line)
+    return [json.loads(line) for line in r.stdout.splitlines() if line.strip()]
 
 
-def summarize(branch: str, traj: dict, md: list[str], comments: dict) -> None:
-    subs = traj.get("subagent_trajectories") or []
-    fm = traj.get("final_metrics") or {}
+def summarize(branch: str, subs: list[dict], md: list[str], comments: dict) -> None:
+    fm = {key: sum((item.get("final_metrics") or {}).get(key, 0) for item in subs) for key in ("total_prompt_tokens", "total_completion_tokens")}
     units = [scope for scope in subs if (scope.get("extra") or {}).get("scope_kind") == "unit"]
     lanes = [scope for scope in subs if (scope.get("extra") or {}).get("scope_kind") == "lane"]
     other = [scope for scope in subs if scope not in units and scope not in lanes]
@@ -160,7 +158,7 @@ def main() -> int:
         traj = export_atif(sess, atif)
         if traj is None:
             continue
-        scopes = len(traj.get("subagent_trajectories") or [])
+        scopes = len(traj)
         n_scopes += scopes
         print(f"  ✓ {branch} ({sess.stem[:8]}) scopes={scopes} → {atif.name}")
         summarize(branch, traj, md, comments)

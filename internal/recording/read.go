@@ -194,6 +194,7 @@ func (t *Transcript) readLoop(path string) error {
 			}
 			m, _ := message.ToMessage()
 			facts["content"] = m.TextContent()
+			facts["content_parts"] = m.Content
 			facts["reasoning"] = m.ThinkingContent()
 			facts["stop_reason"] = m.StopReason
 			facts["model"] = m.Metadata["model"]

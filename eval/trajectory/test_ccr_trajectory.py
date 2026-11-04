@@ -1,3 +1,5 @@
+from eval.trajectory.atif import tool_observations
+from eval.trajectory.fixtures import session_jsonl
 import json
 import unittest
 
@@ -31,7 +33,6 @@ from eval.trajectory.ccr_trajectory import (
     search_then_read_stats,
 )
 from trajectory_harness.model import (
-    step_attributes,
     step_failure,
     step_operation,
     step_status,
@@ -44,29 +45,14 @@ from eval.trajectory.trajectory_judge import main_deductions, objective_analysis
 
 
 class CCRTrajectoryTest(unittest.TestCase):
-    def test_session_identity_uses_only_unambiguous_native_references(self):
-        for refs, expected in (
-            (("native-a", "native-a"), "native-a"),
-            (("native-a", "native-b"), None),
-            (("", ""), None),
-        ):
-            with self.subTest(refs=refs):
-                raw = {
-                    "session_id": "review-id",
-                    "subagent_trajectories": [{
-                        "trajectory_id": "unit-id",
-                        "session_id": "review-id",
-                        "steps": [{
-                            "source": "agent",
-                            "message": "recorded response",
-                            "extra": {"session_ref": {"session_id": ref}},
-                        } for ref in refs],
-                    }],
-                }
-                trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
-                self.assertEqual(trajectory.session_id, expected)
-                self.assertEqual(trajectory.trajectory_id, "unit-id")
-                self.assertEqual(trajectory_metadata(trajectory)["session_id"], "review-id")
+    def test_session_identity_comes_from_standard_field(self):
+        raw = {"schema_version": "ATIF-v1.8", "trajectory_id": "native-session",
+               "session_id": "native-session", "agent": {"name": "ccr", "version": "test"},
+               "extra": {"review_id": "review-id"}, "steps": []}
+        trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
+        self.assertEqual(trajectory.session_id, "native-session")
+        self.assertEqual(trajectory.trajectory_id, "native-session")
+        self.assertEqual(trajectory_metadata(trajectory)["review_id"], "review-id")
 
     def test_atif_roundtrip_preserves_identity_calls_and_evidence(self):
         payload = self.trajectory.to_json_dict()
@@ -75,7 +61,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             ATIFTrajectoryLoader().loads(json.dumps(payload))[0].to_json_dict(),
             payload,
         )
-        self.assertEqual(restored.schema_version, "ATIF-v1.7")
+        self.assertEqual(restored.schema_version, "ATIF-v1.8")
         self.assertEqual(restored.agent.name, "case-code-review")
         self.assertEqual(restored.agent.version, "v1.2.3")
         self.assertNotIn("metadata", payload)
@@ -85,8 +71,8 @@ class CCRTrajectoryTest(unittest.TestCase):
             list(range(1, len(restored.steps) + 1)),
         )
         tools = [step for step in restored.steps if step.tool_calls]
-        self.assertEqual(len(tools), 4)
-        self.assertTrue(all(step.llm_call_count == 0 for step in tools))
+        self.assertEqual(len(tools), 1)
+        self.assertTrue(all(step.llm_call_count == 1 for step in tools))
         for step in tools:
             self.assertEqual(
                 step.tool_calls[0].tool_call_id,
@@ -107,7 +93,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_standard_token_metrics_do_not_count_tool_steps_as_model_calls(self):
         raw = {
             "session_id": "metrics-session",
-            "subagent_trajectories": [{
+            "sessions": [{
                 "trajectory_id": "unit-metrics",
                 "extra": {"scope_kind": "unit", "execution_outcome": "completed"},
                 "steps": [{
@@ -122,7 +108,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }],
             }],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(raw))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(raw))[0]
         restored = Trajectory.model_validate(trajectory.to_json_dict())
         self.assertEqual(restored.steps[0].metrics.prompt_tokens, 100)
         values = objective_analysis(restored)["model_usage"]["measurements"]
@@ -143,7 +129,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "branch": "feature",
                 "features": {"callchain": True},
             },
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-1",
                     "steps": [
@@ -245,7 +231,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        self.trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        self.trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
     def test_projects_atif_and_runs_harness_verifiers(self):
         detection = detect(
@@ -268,7 +254,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         )
 
-        self.assertEqual(trajectory_metadata(self.trajectory)["session_id"], "s1")
+        self.assertEqual(trajectory_metadata(self.trajectory)["review_id"], "s1")
         self.assertEqual(trajectory_metadata(self.trajectory)["file_path"], "a.go")
         self.assertEqual(
             trajectory_generation(self.trajectory),
@@ -287,18 +273,12 @@ class CCRTrajectoryTest(unittest.TestCase):
             step for step in self.trajectory.steps if step_operation(step) == "inference"
         )
         self.assertEqual(
-            step_attributes(inference)["reasoning_content"],
+            inference.reasoning_content,
             "The changed path needs more evidence.",
         )
-        self.assertEqual(
-            [step_operation(step) for step in self.trajectory.steps].count("execute_tool"), 4
-        )
-        failed_tool = next(
-            step
-            for step in self.trajectory.steps
-            if step_operation(step) == "execute_tool" and step_status(step) == "error"
-        )
-        self.assertEqual(step_failure(failed_tool).key, "tool.execute.execution_error")
+        self.assertEqual(len(tool_observations(self.trajectory)), 4)
+        failed_tool = next(item for item in tool_observations(self.trajectory) if item.failed)
+        self.assertEqual(failed_tool.call.function_name, "search_code")
         self.assertEqual(detection.results[0].findings[0].code, "repeated_tool_call")
         self.assertTrue(detection.results[0].findings[0].hypotheses)
         self.assertEqual(detection.results[1].findings[0].code, "adjacent_file_reads")
@@ -379,7 +359,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "covered_lines": 160,
                 "total_lines": 200,
                 "overlap_rate": 0.8,
-                "overlapping_steps": ["4", "5"],
+                "overlapping_steps": ["3"],
             },
         )
         self.assertEqual(
@@ -414,7 +394,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_model_usage_preserves_cache_read_tokens(self):
         root = {
             "session_id": "usage",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-usage",
                     "steps": [
@@ -424,7 +404,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                             "metrics": {
                                 "prompt_tokens": 100,
                                 "completion_tokens": 10,
-                                "cache_read_tokens": 80,
+                                "cached_tokens": 80,
                             },
                         }
                     ],
@@ -432,7 +412,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         }
 
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
         usage = objective_analysis(trajectory)["model_usage"]["measurements"]
 
         self.assertEqual(usage["total_tokens"], 110)
@@ -443,7 +423,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_review2_uses_assessment_completion_instead_of_task_done(self):
         root = {
             "session_id": "s2",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "hypothesis_review:lane-1",
                     "extra": {"scope_kind": "lane"},
@@ -473,7 +453,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertEqual(review_stage(trajectory), REVIEW2)
         self.assertEqual(AssessmentCompletionVerifier().verify(trajectory).score, 1)
@@ -501,7 +481,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_failed_empty_arguments_are_grouped_by_tool_and_model(self):
         root = {
             "session_id": "empty-args",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-empty-args",
                     "extra": {"scope_kind": "unit"},
@@ -552,7 +532,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertEqual(
             empty_tool_argument_stats(trajectory),
@@ -560,7 +540,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "count": 1,
                 "by_tool": {"read_files": 1},
                 "by_model": {"model-a": 1},
-                "step_ids": ["2"],
+                "step_ids": ["1"],
             },
         )
 
@@ -594,7 +574,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             steps.append(raw)
         root = {
             "session_id": "lane-efficiency",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "lane-1",
                     "extra": {"scope_kind": "lane"},
@@ -602,7 +582,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         rounds = RoundEfficiencyVerifier().verify(trajectory)
         duration = DurationEfficiencyVerifier().verify(trajectory)
@@ -653,7 +633,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_file_read_coverage_scores_overlapping_ranges(self):
         root = {
             "session_id": "s3",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-3",
                     "extra": {"scope_kind": "unit"},
@@ -698,12 +678,12 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         result = FileReadCoverageVerifier().verify(trajectory)
 
         self.assertEqual(result.score, 0.746)
-        self.assertEqual(result.step_ids, ("3",))
+        self.assertEqual(result.step_ids, ("1",))
         self.assertEqual(
             adjacent_file_read_stats(trajectory),
             {
@@ -713,7 +693,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "cross_turn_mergeable_range_count": 0,
                 "same_turn_mergeable_range_count": 1,
                 "same_call_mergeable_range_count": 0,
-                "adjacent_step_ids": ["3"],
+                "adjacent_step_ids": ["1"],
             },
         )
         adjacency = AdjacentFileReadsDetector().detect(trajectory)
@@ -722,13 +702,13 @@ class CCRTrajectoryTest(unittest.TestCase):
         self.assertEqual(batching.findings[0].code, "unbatched_same_turn_reads")
         self.assertEqual(
             same_turn_file_read_batching(trajectory)["step_ids"],
-            ["2", "3"],
+            ["1"],
         )
 
     def test_prompt_overlap_classifies_context_short_circuits(self):
         root = {
             "session_id": "s4",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-4",
                     "extra": {"scope_kind": "unit"},
@@ -765,7 +745,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         overlap = prompt_file_read_overlap(trajectory)
 
@@ -783,7 +763,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         )
         root = {
             "session_id": "batch",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-batch",
                     "extra": {"scope_kind": "unit"},
@@ -821,7 +801,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertEqual(repeated_file_reads(trajectory), {})
         self.assertEqual(
@@ -855,7 +835,7 @@ class CCRTrajectoryTest(unittest.TestCase):
         )
         root = {
             "session_id": "search-batch",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-search-batch",
                     "extra": {"scope_kind": "unit"},
@@ -900,7 +880,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertEqual(
             code_search_stats(trajectory),
@@ -929,12 +909,12 @@ class CCRTrajectoryTest(unittest.TestCase):
         )
         evaluation = SearchScopeVerifier().verify(trajectory)
         self.assertEqual(evaluation.score, 0.75)
-        self.assertEqual(evaluation.step_ids, ("2",))
+        self.assertEqual(evaluation.step_ids, ("1",))
 
     def test_symbol_context_tracks_outcome_lines_and_follow_up(self):
         root = {
             "session_id": "search-symbol-context",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-search-symbol-context",
                     "extra": {"scope_kind": "unit"},
@@ -1005,7 +985,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
         searches = code_search_stats(trajectory)
         self.assertEqual(searches["context_projections"], 1)
         self.assertEqual(searches["symbol_context_attempts"], 1)
@@ -1024,7 +1004,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_search_then_read_links_only_later_ranges_covering_hits(self):
         root = {
             "session_id": "search-then-read",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-search-then-read",
                     "extra": {"scope_kind": "unit"},
@@ -1106,7 +1086,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 }
             ],
         }
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertEqual(
             search_then_read_stats(trajectory),
@@ -1136,7 +1116,7 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "symbol_expanded_within_span_follow_up_read_rate": None,
                 "symbol_expanded_extending_follow_up_read_request_count": 0,
                 "symbol_expanded_extending_follow_up_read_rate": None,
-                "step_ids": ["2", "4"],
+                "step_ids": ["1", "2"],
             },
         )
         detection = SearchThenReadDetector().detect(trajectory)
@@ -1145,7 +1125,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_llm_failure_is_projected_with_transport_progress(self):
         root = {
             "session_id": "llm-timeout",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-timeout",
                     "extra": {
@@ -1175,7 +1155,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         }
 
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
         step = trajectory.steps[0]
         self.assertEqual(step_status(step), "error")
         self.assertIsNotNone(step_failure(step))
@@ -1206,7 +1186,7 @@ class CCRTrajectoryTest(unittest.TestCase):
     def test_workflow_timeout_is_a_structured_execution_failure(self):
         root = {
             "session_id": "workflow-timeout",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-timeout",
                     "extra": {
@@ -1219,7 +1199,7 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         }
 
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
         self.assertIsNotNone(trajectory_execution(trajectory))
         self.assertEqual(trajectory_execution(trajectory).outcome, "timeout")
@@ -1235,10 +1215,10 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         )
 
-    def test_legacy_routing_timeout_text_uses_failure_taxonomy(self):
+    def test_unstructured_error_does_not_invent_failure_phase(self):
         root = {
             "session_id": "legacy-timeout",
-            "subagent_trajectories": [
+            "sessions": [
                 {
                     "trajectory_id": "unit-timeout",
                     "extra": {"execution_outcome": "llm_error"},
@@ -1258,13 +1238,10 @@ class CCRTrajectoryTest(unittest.TestCase):
             ],
         }
 
-        trajectory = ATIFTrajectoryLoader().loads(json.dumps(root))[0]
+        trajectory = ATIFTrajectoryLoader().loads(session_jsonl(root))[0]
 
-        self.assertEqual(step_failure(trajectory.steps[0]).key, "llm.routing.timeout")
-        self.assertEqual(
-            trajectory_execution(trajectory).failure.key,
-            "llm.routing.timeout",
-        )
+        self.assertIsNone(step_failure(trajectory.steps[0]))
+        self.assertEqual(trajectory_execution(trajectory).failure.key, "llm.unknown.unknown")
 
 
 if __name__ == "__main__":

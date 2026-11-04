@@ -42,6 +42,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from eval.trajectory.atif import CCRToolUsageMeasurer
+from eval.trajectory.atif import tool_observations
 from eval.trajectory.ccr_trajectory import (
     ATIFTrajectoryLoader,
     REVIEW1,
@@ -64,15 +66,10 @@ from eval.trajectory.ccr_trajectory import (
     tool_frequencies,
 )
 from trajectory_harness.model import (
-    step_attributes,
     step_duration_ms,
     step_failure,
     step_id as trajectory_step_id,
-    step_input_messages,
-    step_name,
     step_operation,
-    step_output_messages,
-    step_status,
     trajectory_execution,
     trajectory_metadata,
 )
@@ -87,7 +84,6 @@ from trajectory_harness import (
     detect,
     verify,
     measure,
-    ToolUsageMeasurer,
 )
 
 TAXONOMY = [
@@ -137,7 +133,7 @@ _STAGE_DETECTORS = {
 }
 _MEASURERS = (
     ModelUsageMeasurer(),
-    ToolUsageMeasurer(),
+    CCRToolUsageMeasurer(),
     ContextUsageMeasurer(),
 )
 
@@ -202,15 +198,15 @@ def _build_objective_analysis(
         if result.measurer_id == "model_usage"
     )
     tool_fails = [
-        {"tool": step_name(step), "error": _tool_result(step)[:120]}
-        for step in trajectory.steps
-        if step_operation(step) == "execute_tool" and step_status(step) == "error"
+        {"tool": observation.call.function_name, "error": observation.text[:120]}
+        for observation in tool_observations(trajectory)
+        if observation.failed
     ]
     failures = []
     for step in trajectory.steps:
         if step_failure(step) is None:
             continue
-        raw = step_attributes(step).get("failure") or {}
+        raw = (step.extra or {}).get("failure") or {}
         details = raw.get("attributes") or {}
         failures.append(
             {
@@ -324,56 +320,19 @@ def chain_digest(trajectory: Trajectory, analysis: dict) -> str:
         f"metadata={json.dumps(trajectory_metadata(trajectory), ensure_ascii=False)}"
     ]
     for step in trajectory.steps:
-        head = f"#{trajectory_step_id(step)} [{step_operation(step)}]"
-        if step_operation(step) == "context":
-            lines.append(f"{head} {_message_text(step_output_messages(step))[:_TRUNC]}")
-            continue
-        if step_operation(step) == "inference":
-            lines.append(
-                f"{head} ({int(step_duration_ms(step) / 1000)}s) "
-                f"{_message_text(step_output_messages(step))[:_TRUNC]}"
-            )
-            continue
-        if step_operation(step) == "execute_tool":
-            ok = " FAILED" if step_status(step) == "error" else ""
-            lines.append(
-                f"{head} {step_name(step)}{ok}({_tool_arguments(step)[:200]}) "
-                f"-> {_tool_result(step)[:_TRUNC]}"
-            )
+        head = f"#{step.step_id} [{step.source}]"
+        message = step.message if isinstance(step.message, str) else json.dumps([part.model_dump(exclude_none=True) for part in step.message], ensure_ascii=False)
+        lines.append(f"{head} ({int(step_duration_ms(step) / 1000)}s) {message[:_TRUNC]}")
+        if step.reasoning_content:
+            lines.append(f"{head} reasoning: {step.reasoning_content[:_TRUNC]}")
+        for call in step.tool_calls or ():
+            lines.append(f"{head} call {call.tool_call_id} {call.function_name}({json.dumps(call.arguments, ensure_ascii=False)[:200]})")
+        for result in step.observation.results if step.observation else ():
+            content = result.content if isinstance(result.content, str) else json.dumps([part.model_dump(exclude_none=True) for part in result.content or ()], ensure_ascii=False)
+            status = " FAILED" if (result.extra or {}).get("ok") is False else ""
+            lines.append(f"{head} result {result.source_call_id}{status}: {content[:_TRUNC]}")
     lines.append(f"objective analysis: {json.dumps(analysis, ensure_ascii=False)}")
     return "\n".join(lines)
-
-
-def _parts(messages: tuple[dict, ...]):
-    for message in messages:
-        yield from message.get("parts") or []
-
-
-def _message_text(messages: tuple[dict, ...]) -> str:
-    return "\n".join(
-        str(part.get("content") or "")
-        for part in _parts(messages)
-        if part.get("type") == "text"
-    )
-
-
-def _tool_arguments(step) -> str:
-    for part in _parts(step_input_messages(step)):
-        if part.get("type") == "tool_call":
-            return json.dumps(part.get("arguments"), ensure_ascii=False)
-    return "{}"
-
-
-def _tool_result(step) -> str:
-    for part in _parts(step_output_messages(step)):
-        if part.get("type") == "tool_call_response":
-            value = part.get("response")
-            return (
-                value
-                if isinstance(value, str)
-                else json.dumps(value, ensure_ascii=False)
-            )
-    return ""
 
 
 def load_llm(model_override: str | None):
@@ -484,7 +443,7 @@ def main() -> int:
     judged = 0
     sessions = {}
     for trajectory in trajectories:
-        session_id = str(trajectory_metadata(trajectory).get("session_id") or "?")
+        session_id = str(trajectory.session_id or "?")
         sessions.setdefault(session_id, []).append(trajectory)
 
     for session_id, session_trajectories in sessions.items():

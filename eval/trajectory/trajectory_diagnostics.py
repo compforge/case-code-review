@@ -378,7 +378,7 @@ def _evidence_step_indexes(candidate: DiagnosticCandidate) -> tuple[int, ...]:
         if 0 <= index < len(steps)
     }
     selected.update(
-        index for index, step in enumerate(steps) if step_operation(step) == "context"
+        index for index, step in enumerate(steps) if step.source in {"user", "system"}
     )
     selected.update(range(max(0, len(steps) - TERMINAL_EVIDENCE_STEPS), len(steps)))
     return tuple(sorted(selected))

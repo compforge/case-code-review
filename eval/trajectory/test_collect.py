@@ -18,8 +18,7 @@ class CollectSummaryTest(unittest.TestCase):
             self.assertTrue(session_complete(session))
 
     def test_separates_review1_units_and_review2_lanes(self):
-        trajectory = {
-            "subagent_trajectories": [
+        trajectory = [
                 {
                     "trajectory_id": "unit-1",
                     "extra": {"scope_kind": "unit", "file_path": "a.go"},
@@ -30,8 +29,7 @@ class CollectSummaryTest(unittest.TestCase):
                     "extra": {"scope_kind": "lane", "file_path": "0.667"},
                     "steps": [],
                 },
-            ]
-        }
+        ]
         markdown = []
 
         summarize("feature", trajectory, markdown, {})

@@ -32,15 +32,19 @@ R1 / R2 loop 记录，同一份执行事实再支持观察与改进两条路径�
   待优化样本 → 证据归因 → 优化 → 新执行与同任务、同评价标准的对照复评。低分 bad case 是
   入口之一，高成本成功、偶发失败和人在视图中发现的问题也值得调查；信号不自动证明原因。
 
-本轮首先完成 **CCR 的 R1 / R2 loop 数据转为 ATIF v1.8 Trajectory**，不兼容历史导出格式。
-验收关注：
+**CCR 按原生 Agent Session 导出 ATIF v1.8 Trajectory**，不兼容历史导出格式。
+一个 R1 agent loop 的 Session 对应一条 Trajectory；一个 R2 Lane 的连续对话共用一个 Session /
+Trajectory，其中可包含处理多个 Hypothesis 的 Execution。Review / Unit 通过 JobView 关联它们，
+不把 Execution 当作子 agent，也不把 Review ID 当作 Agent Session ID。
+
+转换契约：
 
 1. 保留真实 turn、message、reasoning、tool call/result 和 usage，优先使用 ATIF 标准字段；
    CCR 业务身份与标准未覆盖的执行事实进入有明确归属的扩展，不为工具调用补造新的 turn。
 2. trajectory、原生 Session、业务 Unit/Lane 和执行身份分别保存并明确关联；共享调用不重复归属成本。
 3. 用真实导出样例验证标准模型校验、持久化和读取，拒绝不支持的格式，不能把解析失败当作空轨迹。
 
-这三项是转换接入的完成条件，不代表优化收益已经验证。后续评价结果独立引用轨迹与 step 证据，
+这些契约由原生 R1/R2 fixture 的跨语言回归验证，不代表优化收益已经验证。后续评价结果独立引用轨迹与 step 证据，
 保留各维度的规则版本、分数、缺失与不适用状态。实践案例应同时留存原始样本、诊断与反证、
 改动版本、对照执行和复评结果；重算旧轨迹的分数只能验证评价器变化，不能证明运行机制改善。
 
@@ -110,8 +114,7 @@ CCRSessionSource.select/fetch
 ```
 
 `CCRSessionSource` 是 CCR 对 `trajectory_harness.RecordingSource` 的领域实现：它只发现已关闭的
-`~/.casecodereview/sessions` 记录并通过 `ccr export --format atif` 读取原始 ATIF；ATIF 格式投影仍由
-Loader 负责，人工 label 则由 CCR 的 `TrajectoryDatasetBuilder` 子类组合，不进入 Source。可用
+`~/.casecodereview/sessions` 记录并通过 `ccr export --format atif` 读取原始 ATIF；ATIF 字段投影由 Go exporter 负责，Loader 只校验标准格式并补充非标准评估元数据，人工 label 则由 CCR 的 `TrajectoryDatasetBuilder` 子类组合，不进入 Source。可用
 `--repo` 限定仓库，`--labels` 重复指定输入文件。
 
 默认生成：
@@ -146,10 +149,21 @@ Trajectory Run，再从同一持久化结果投影 Markdown，不会另行执行
 模型调用、工具执行和来源证据。`trajectory_harness` 从同一 Dataset 导出这些快照；离线
 `rerender` 使用已有 Dataset / Run 更新快照，不重跑采集、模型或评测。
 
-Review ID 与 Unit/Lane ID 继续用于业务归属；Agent Session 身份只取原生 `session_ref.session_id`。
-同一 Session 的多条轨迹合并为一个视图。缺少引用，或一个 scope 涉及多个 Session 时，
-轨迹进入索引的 `unassigned_trajectories`，不会借用 Review / Unit ID 伪造 Session。
-ATIF 继续保存这些业务轨迹，跨 Session 的任务视角后续由 JobView 承接。
+Review ID 与 Unit/Lane ID 保存在 `extra.review_id` / `extra.scope_id`，用于业务归属。
+`trajectory_id` 和 `session_id` 使用真实 AgentGo Session ID；Dataset 保存原 ID，不改写成业务 scope ID。
+同一 Lane 的多个 Execution 保存在 `extra.executions`，每个模型调用也带自己的 Execution 与原生调用引用。
+缺失 Session 身份的片段显式标记 `session_identity_missing`，进入 `unassigned_trajectories`，不借用业务 ID。
+
+`message` / `reasoning_content` / `tool_calls` / `observation.results` / `metrics` 使用标准字段。
+工具结果按实际 request 与 tool-call ID 关联；未匹配结果保留为 `llm_call_count=0` 的 observation，
+不虚构模型调用。原始请求和响应块保留在 step `extra`，无法完整投影的内容显式记录缺口。
+模型重试及失败的 partial response / usage 均保留；未知 usage 不写成零，缓存 token 是输入 token 的子集。
+当前锁定 AgentGo 的 `Input` 包含缓存读取、不含缓存写入，因此标准 `prompt_tokens = Input + CacheWrite`。
+Execution 缺失结束耗时时，按归属保留已观测 step 耗时，并以 `execution_duration_incomplete` 标记下界；
+完整 Execution 不再叠加其 step 耗时。`result_bytes` 仅测量结果内容的 UTF-8 字节，多模态结果测量记录的
+content JSON（不下载媒体），不包含调用参数、ID 或其他元数据。
+CCR 的工具测量直接读取原生 call/result 和明确的 `ok`，不会把同一模型响应中的多个工具算成一次，
+也不会把无状态的结果解释为成功。待执行的工具提议不计入已执行工具数。
 
 从索引选出一个 Session 文件后，可通过已发布的 renderer 离线查看：
 
