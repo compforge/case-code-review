@@ -112,8 +112,8 @@ func readSessionStart(path string) (SessionSummary, error) {
 		return SessionSummary{}, fmt.Errorf("unsupported session schema %d", version)
 	}
 	summary := SessionSummary{
-		SchemaVersion: version,
-		CWD:           stringValue(record["cwd"]), GitBranch: stringValue(record["gitBranch"]),
+		SchemaVersion: version, Version: stringValue(record["tool_version"]), Head: stringValue(record["git_head"]),
+		CWD: stringValue(record["cwd"]), GitBranch: stringValue(record["gitBranch"]),
 		Model: stringValue(record["model"]), ReviewMode: stringValue(record["reviewMode"]),
 		DiffFrom: stringValue(record["diffFrom"]), DiffTo: stringValue(record["diffTo"]),
 		DiffCommit: stringValue(record["diffCommit"]), BizID: stringValue(record["biz_id"]),
@@ -126,6 +126,10 @@ func readSessionStart(path string) (SessionSummary, error) {
 
 // SessionSummary is built from session_start and session_end records.
 type SessionSummary struct {
+	Version        string
+	Head           string
+	Findings       int
+	Gaps           int
 	Completion     recording.Completion
 	Tokens         *recording.TokenUsage
 	SchemaVersion  int
@@ -197,6 +201,17 @@ func peekSession(path string) (SessionSummary, error) {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		lastLine = append([]byte(nil), line...)
+		var record map[string]any
+		if json.Unmarshal(line, &record) == nil {
+			if record["type"] == "finding" {
+				summary.Findings++
+			}
+			if record["artifact_kind"] == "recording_gap" {
+				summary.Gaps++
+			}
+		} else {
+			summary.Gaps++
+		}
 	}
 
 	if len(lastLine) > 0 {
@@ -242,19 +257,26 @@ func peekSession(path string) (SessionSummary, error) {
 	return summary, scanner.Err()
 }
 
-// ViewSession is the lightweight business Timeline page projection.
-// Model and tool bodies belong to the selected Stage view.
+// ViewSession is the Review workspace index; native bodies are loaded on demand.
+type jobCount struct {
+	Hypotheses int
+	Findings   int
+}
+
 type ViewSession struct {
+	Sessions          []nativeSession
 	Jobs              []recording.UnitResult
 	RecordingWarnings []string
-	Journal           *operation.Snapshot
+	Journal           *operation.Snapshot `json:"-"`
+	Operations        []operation.Record
+	JobCounts         map[string]jobCount
 	Summary           SessionSummary
 	CompletionLabel   string
 	Findings          int
 }
 
 // LoadSession projects business records and the operation. Call contents are
-// loaded by the selected Stage view, never by page navigation.
+// loaded by the selected call view, never by page navigation.
 func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	path := filepath.Join(root, encodedRepo, sessionID+".jsonl")
 	summary, err := peekSession(path)
@@ -274,9 +296,33 @@ func LoadSession(root, encodedRepo, sessionID string) (*ViewSession, error) {
 	if transcript.TruncatedTail {
 		vs.RecordingWarnings = append(vs.RecordingWarnings, "Recording has an incomplete final line.")
 	}
+	catalog, err := sessionCatalog(&callSource{rows: transcript.Journal.Operations, byID: transcript.OperationIndex()})
+	if err != nil {
+		vs.RecordingWarnings = append(vs.RecordingWarnings, err.Error())
+	} else {
+		vs.Sessions = catalog
+	}
 	vs.CompletionLabel = completionLabel(summary.Completion)
+	vs.JobCounts = map[string]jobCount{}
+	for _, op := range transcript.Journal.Operations {
+		if op.ParentID == "" || op.ParentID == transcript.Journal.RootID || op.Name == "review.prepare" || op.Name == "review.formation" {
+			op.Attributes = nil
+			vs.Operations = append(vs.Operations, op)
+		}
+	}
 	for _, record := range transcript.Records {
+		if record["artifact_kind"] == "review_hypothesis" {
+			data, _ := record["data"].(map[string]any)
+			id := stringValue(data["origin_unit"])
+			count := vs.JobCounts[id]
+			count.Hypotheses++
+			vs.JobCounts[id] = count
+		}
 		if record["type"] == "finding" {
+			id := stringValue(record["origin_unit"])
+			count := vs.JobCounts[id]
+			count.Findings++
+			vs.JobCounts[id] = count
 			vs.Findings++
 		}
 		if record["type"] == "artifact" && record["artifact_kind"] == "recording_gap" {

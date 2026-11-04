@@ -48,20 +48,20 @@ Operation 从业务视角组织 Review → Unit/Lane → R1/R2/Trial（R3），�
 Execution Operation 保存 scope、业务 outcome 和局部 Session 文件名。不能只用 provider tool call ID 关联，
 因为不同 loop 和不同 Run 可以重复使用同一个 ID。
 
-Viewer 展示 Review 时间线和 Unit Job 列表，按需读取选中 Job 或调用的 Session 正文。
+Viewer 展示 Review 工作区，按需读取选中 Session 或调用的正文；Job 首屏只读取业务事实。
 Go 的 `ReadJournal(path)` 只读取业务日志，`ReadJob(path, unitID)` 只打开选中 Unit 引用的 Session；
 `ReadReview(path)` 与 Python eval 为完整分析加载整轮证据。
 供 Viewer、stats、export、eval 使用的 `llm_request`/`llm_response`/`tool_result` 等对象是查询投影，
 不会再落盘成一份全局会话历史。业务 artifact、finding、debrief 仍保存在 Review 元数据文件。
 
 Review 业务日志的 schema 为 **14**，旧版 schema 显式不兼容；AgentGo Session 使用自己的格式版本。读端接受完整前缀后的截断末行并显示缺口，完整行损坏不静默跳过。
-局部 Session 缺失或损坏时保留可用 timeline，并标记记录不完整；不能将其解释成没有调用或已成功。
+局部 Session 缺失或损坏时保留可用业务日志，并标记记录不完整；不能将其解释成没有调用或已成功。
 写入失败报告 execution/session 身份，继续排空 loop 事件，不改变业务运行结果。
 
 Scope 是业务工作范围，Execution 是一次 Harness 执行；它可能包含收卷续接的多个框架 Run。
 Stage 保存源头起止时间与完成状态。多个 Unit 或 Lane 并发时，duration 不可相加作为 Review wall-clock。
 成本从实际请求/响应按调用身份计算，缺失 usage 保持 unknown，不依赖 debrief 是否生成。
-Session 与 timeline 都不替代 Forge comment、代码仓和业务事实源；本地正文不自动上传。
+Session 与业务日志都不替代 Forge comment、代码仓和业务事实源；本地正文不自动上传。
 
 ### 本地记录保留与清理
 
@@ -97,9 +97,9 @@ ccr clean --test-sessions                   # 独立清理测试录制目录
 
 `ccr stats <session.jsonl> --format json` 从共同 Review reader 输出整轮成本和各 Stage 的成本。
 每个模型调用按原生 Session reference 计一次，再通过对应 Stage 的父子关系归入所属 Execution、Unit/Lane 和评审阶段。
-Timeline 尚未落盘时，request/response 仍通过原生调用身份关联；成本列为未归属，并显示录制缺口。
+Operation 尚未落盘时，request/response 仍通过原生调用身份关联；成本列为未归属，并显示录制缺口。
 成本读取实际请求及响应记录，Review 2、辅助调用和没有 debrief 的中断运行都参与统计。
-Viewer 的全局统计与阶段成本表、ATIF 的 `extra.cost` 提供同一投影，eval 的 comparison/replay 使用相同的请求身份与 usage 口径。
+Viewer 的 Review 总量与 Session 调用统计保留相同的 usage 口径；eval 的 comparison/replay 使用相同的请求身份，ATIF 的 metrics 保持完整 Session 边界。
 
 时间同时展示阶段经过时长和扣除直接子阶段区间并集后的自身时长，避免并行子任务相加超过父阶段。
 自身时长包含尚未细分的编排或等待，不能直接解释为 CPU 时间。未结束阶段截至最后一条观测计算下界，
@@ -129,14 +129,14 @@ Unit debrief 完成探索，并不代表其全部 Hypothesis 已完成复核；e
 `eval/benchmark/session_compare.py` 可离线消费两份原始 Session，包括没有完成 ATIF export 的异常运行。
 比较结果是实验观测，不代替人工真值标签；使用方式及匹配限制见 `eval/README.md`。
 
-### 整轮时间线
+### Review Operation journal
 
 Review 拥有自己的 Operation journal；Context 只传播 Review/Operation ID，录制处显式指定 ParentID。
 `internal/recording/operation` 记录 CCR 自己的业务动作，不安装全局 Timeline Manager，也不接管上游库的内部 span。
 Review 负责 Start/Finish；Runner 与 Harness 记录业务阶段和模型／工具调用边界。
 
 ```text
-Review timeline
+Review operations
   ├─ diff.load / project.select / codegraph.build / unit.formation
   ├─ unit.queue → review.unit → execution → turn
   │                              ├─ context.project / context.recover_overflow
@@ -153,16 +153,16 @@ Review timeline
 `unit_grouping` artifact 通过 Stage ID 关联每个归拢阶段，保留输入／输出组数、namespace 合并依据（snapshot、Node ID 与 CodeGraph 原生证明路径）、
 预算阻止的候选数量与缺少共同 namespace 的组数。`unit_formation.grouping` 和 dry-run JSON 的
 `grouping` 提供整轮数量软上限、策略步骤与 `limit_exceeded`；超限表示当前事实与预算下无法满足数量上限，
-所有目标仍进入评审。耗时读取对应 timeline stage。
+所有目标仍进入评审。耗时读取对应 Operation。
 
 每次 Begin/End 把一个 Operation 的完整当前状态同步追加到 Review JSONL，与业务产物共用序号、写锁和错误边界。
 读端按 ID 折叠增量状态；不反复写入全量 Snapshot。并发动作只由 ParentID 建立关系，序号仅表示存储顺序。
 取消仍写入已知终态；写入失败后停止追加，避免在半条 JSON 后继续污染文件。Review 结束后释放运行时索引。
 进程中断前未观察到的结束事件仍保持缺失，不补造成功。
 
-模型调用是业务 Timeline 的观测边界，不录制 routing/provider/HTTP/连接池等传输子阶段。网络阶段仅在调用失败时进入错误诊断。Viewer 默认展示实际 Prompt、Response、状态、耗时与 Session 记录的 token/cache 用量；金额 Cost 仅在 Session 有计费数据时展示，缺失不解释为零。原始协议字段折叠在详情中。
+模型调用是业务 Operation 的观测边界，不录制 routing/provider/HTTP/连接池等传输子阶段。网络阶段仅在调用失败时进入错误诊断。Viewer 默认展示实际 Prompt、Response、状态、耗时与 Session 记录的 token/cache 用量；金额 Cost 仅在 Session 有计费数据时展示，缺失不解释为零。原始协议字段折叠在详情中。
 
-Timeline 不保存 prompt、response 或工具结果。Stage 的原生 `attributes` 保存业务身份和 Session reference。
+Operation 不保存 prompt、response 或工具结果。Stage 的原生 `attributes` 保存业务身份和 Session reference。
 框架调用 ID 以局部 Run 为命名空间，并带 Attempt；重试、收卷和连续 Lane 执行不会混淆。
 Middleware 把 stage 身份传入真实调用，Event.Timestamp 是源头时间，消费者延迟不算模型或工具耗时。
 
@@ -175,9 +175,8 @@ JSONL 的 `elapsed_ms` 仍表示记录落盘顺序，Operation 的源头时间�
 stage 保留 running，Viewer 明确显示 incomplete；即使整轮已返回，也不补造子阶段成功。取消后尽力刷新
 已经收到的事实；AgentGo 取消时未投递的事件和进程异常退出造成的缺口不能推断成成功。
 
-Viewer 的 Run Timeline 展示共享起点、层级、重叠和终态，请求卡片只投影同一 Snapshot 的请求子树。
-ATIF export 将完整原生 Snapshot 放在根 trajectory 的 `extra.operations`，不按请求复制多份记录。
-每个 Execution 单独投影为 subagent trajectory，并保留所属 scope，避免同一 Lane 的多次 loop 相互覆盖。
+Viewer 按 Unit Job 和完整原生 Session 展示同一批操作与调用。ATIF 每个原生 Session 一条 Trajectory，
+连续 Lane 的多次 Execution 保留在同一条 Trajectory 内；业务 Operation 不决定新的 Session 边界。
 Session schema 变更时同步 recorder、Viewer、export 和 fixture；历史文件需要分析时使用离线迁移。
 
 ### 流式交付不是 Session tail
@@ -187,31 +186,60 @@ Session JSONL 是本地执行事实源，不是对外发布协议。需要在长
 行号定位、身份标记和 Session 持久化完成后出现，`run_finished` 携带与普通 JSON 模式相同的最终结果。
 调用方不应 tail Session 文件推断交付，因为其中还包含未通过 Trial 的中间事实和可能变化的内部记录。
 
-## 2. Viewer：单次运行的人工诊断
+## 2. Viewer：Review 工作区与三种 View
 
-Viewer 读取业务 timeline 与关联的 AgentGo Session，把事件组织成人容易检查的页面，主要回答：一次 review 花费在哪里、模型
-看到了什么、loop 如何推进、最终决策如何形成，以及哪里发生中断或空转。
+Viewer 是只读渲染层。Review 业务日志、原生 AgentGo Session 是事实源；查看页面不执行评审、
+采集 Forge 标注或运行评价。Trajectory 是标准化的执行记录，Session View 是对执行过程的渲染；
+Job View 按业务关联组合多个 Session 的片段，Context View 展示某次模型调用实际收到的消息。
 
-首页按开始时间倒序列出 Review timeline，Repository 作为筛选条件。打开一次 timeline 后查看 Stage 的时间、属性与错误；Stage 详情展示关联的 Session ID，并直接展示对应模型与工具调用记录。页面同时列出 Unit Job；点击可查看跨 R1/R2/Trial 的 Operation 和原生调用，并通过同页的 JobView JSON 链接读取标准 Observation。
-Timeline 用准备、R1 / R2 loop、R3 裁决与 Unit pipeline 泳道展示共享时间轴上的执行区间。同一 loop 的多次执行保留空隙，并发区间保持重叠；子阶段依据记录的 ParentID 在所属泳道内逐层展开，turn 下的模型、工具与上下文操作保留真实层级；Unit pipeline 标注 unit_id，其时间包含下属评审阶段，不应与 R1/R2 耗时相加。点击 Stage 弹框展示时间、attributes、错误、子阶段与关联 Session，详情不参与泳道列宽。模型 Stage 弹框展示 Session 记录的 Request / Response（包含 reasoning、tool calls 与 usage），工具 Stage 展示实际参数与最终结果；两者均按需读取关联 Session，按 session/run/execution/attempt 完整身份匹配；正文不写回 Timeline，缺失输入或输出明确标注。
-未记录结束时间的阶段只显示起点标记和 incomplete，不向当前时间延长，也不补造耗时或成功状态。
-请求卡片复用同一展示方式，时间轴相对该请求起点。
+首页按开始时间倒序展示 Review，支持 Repository、日期（CST）与 completion 筛选，同时展示
+版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区默认打开 Job，Job / Session /
+Context 是并列入口；URL 保留 Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
+分享与浏览器前进后退。Refresh 重新读取当前快照。Timeline 与 Stage 弹框不再是页面概念。
 
-Viewer 不再提供独立的 Scope / Execution 详情页；分析从 Timeline 进入具体 Stage，Session ID 保留为记录关联身份。
+| View | 观测对象 | 展示与下钻 |
+|---|---|---|
+| Job | 一个 Unit 的业务执行 | Hypothesis → Assessment 四轴及理由 → Trial → Finding；Operation 原始事实折叠，关联调用下钻到 Session / Context |
+| Session | 一个完整原生 Session | R1 一个 loop 一个 Session；整个 R2 Lane 连续对话共用一个 Session，多次 Execution 分段展示；辅助调用单独标识 |
+| Context | 某一次实际模型 request | 保留 role、消息与内容块顺序，展开消息正文、tool schemas 和 call configuration；当前 response 单独展示 |
 
-每次 `llm_request` 直接投影为一个 **Prompt Snapshot**，展示那一轮实际发送给 provider 的完整消息，
-而不是由上一轮 response 和 tool result 反推 conversation。`context_compacted` 则按发生顺序插入同一条
-Conversation，直接展示次数、原因和前后比例；相邻 snapshot 的 token/message delta 只保留为辅助诊断值。
+Job 的 Execution outcome、Assessment、Trial delivery 与 Human Verdict 是不同事实。没有录制人工
+标注时显示 unknown；本地 Finding 和 Trial.delivered 不证明 Forge comment 已发布。证据 receipt
+按 tool_call_id 在该 Unit 关联的 R1 与完整 Lane Session 中定位；多个 Session 匹配时列出候选，
+不按阶段或时间猜关联，也不把整个共享 Lane 归到每个 Unit。
 
-Viewer 可以增加简单、确定、便于人发现问题的数据统计，例如重复读取、context 与 `read_files` 路径重合、
-空搜索和未完成 Execution 数。这些数据是诊断线索，不是效果分数。Viewer 不负责实验编排，不回写
-Session 或 Trial 结果，也不能因为“0 Finding”就把 partial run 展示为 clean。
+Session 以紧凑调用行展示摘要、耗时、input/output/cache 与重试 Attempt，使用小条形图比较 context
+大小，不按 token 数撑大卡片。录制顺序保留并行调用事实；按耗时或 context 排序时明确是诊断排序。
+从 Job 下钻时高亮对应 Execution，默认仍显示完整 Session，也可以显式筛选该 Execution 片段。
+成本摘要始终属于完整 Session，每个原生调用仅计数一次。input 为原生 Input + CacheWrite，cache read
+是 input 的子集；缺失 usage/duration 独立计数，不当作零。累计模型时间不等于 Review wall time。
 
-Viewer 只消费当前 Session schema。协议变化时应同步 recorder、fixture 和投影，不为旧记录叠加字段猜测、
-终态推断或页面兼容分支；历史分析需要时由一次性的离线迁移完成。
+工具完成不代表批量子查询都成功。`search_code` 复用工具自身的 batch/outcome parser，分别呈现 hits、
+no_matches、scope_empty、scope_unknown、error、incomplete；无结果、作用域为空和读取失败不得混为一类。
+Compaction 事件、失败调用和未观察到结果的调用保留可见；点事件不补造执行耗时。
 
-单次运行容易受 diff、模型路由、缓存、网络和上下文差异影响。Viewer 更像显微镜：适合发现问题、查看
-prompt 和形成改进假设，不适合凭少量 session 断言整体效果提升。
+Context 首先展示消息 outline，展开时渲染具体内容块。可以比较同一 Session 的前一个模型请求，按完整
+消息精确匹配并保留重复次数，分别展示 retained、added/changed、removed/replaced 及 tool schema 变化。
+未匹配的替换显示为删除和增加，不声称语义等价；有录制 compaction 时提供对应事件入口。重复消息是
+可复核的观察，不是质量 Verdict。消息 JSON UTF-8 bytes 与 provider token 计费分开标注。
+
+### 查询与加载边界
+
+- Review 首屏只读取业务 journal 和 Session 关联索引，不读取原生 prompt/response。
+- `/job?unit=<id>` 使用 `recording.ReadJobSummary`，与标准 JobView 共用业务 membership 和 Operation
+  投影，但不加载调用正文。`/job?unit=<id>&format=json` 保留完整标准 JobView 导出。
+- `/session?session=<native-id>` 使用 AgentLedger 原生 SessionView reader，读取完整原生 Session 后
+  返回调用摘要与显式业务关联；未关联的文件不能由 URL 任意读取。
+- `/session?session=<native-id>&node=<native-node-id>` 才返回所选节点正文；原生 record attributes
+  中重复的正文不会再次序列化。Context 的相邻请求也只在点击比较后加载。
+- Session 缺失、损坏或尾行截断时保留可读取的 prefix 和诊断，不影响 Review / Job 首屏。
+  打开页面只做读取；共享 Host allowlist 继续防止 DNS rebinding 读取本地录制。
+
+Viewer 只消费当前 schema，不叠加历史字段猜测。单次运行受 diff、模型、缓存、网络与上下文影响；
+这里用于发现问题和形成改进假设。质量、速度、成本的效果结论仍需 eval 在固定样本上对照验证。
+
+前端为 Go embed 的原生 ES modules，无 npm 运行时依赖。`make test` 同时执行 Go tests 与 Node.js
+内置 runner 的 Context 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Context。
 
 ## 3. eval：效果与轨迹闭环
 
@@ -295,18 +323,6 @@ eval 的标签协议、数据边界、数据集构建、Trajectory 诊断、固�
 - [`hypothesis_review.md`](hypothesis_review.md)——Review 2 的 Assessment、Lane 与 Trial gate
 
 
-### Stage views
-
-Stage 详情共享同一 Stage 身份、状态和时间，使用明确的视图投影：所有 Stage 提供 Default，
-模型调用额外提供 Model，Loop execution 额外提供 Agent。Default 展示阶段事实和子阶段；Model
-按完整 Session/run/execution/attempt 身份读取 Request、Response 和 usage；Agent 按真实 Turn
-父子关系组织调用摘要，沿用 Default 的树遍历与逐级缩进。左侧为可折叠执行树，右侧展示选中节点详情，模型 Request/Response 与工具 Input/Output 按需加载，不离开 Agent 视图。重试独立显示，缺失 usage 不记为零。
-多个 run 重启 Turn 编号时仍按不同的 Turn Stage 区分。模型节点高度使用同一 Loop 内记录的 total_tokens 线性刻度（48px 最小高度 + 最多 96px 增量），宽度随树深度缩进；未知 usage 明确标注。Turn/Tool 保持紧凑高度，不重复计入父子 token。
-详情保留输入、输出、缓存和 total 数值，缓存不再次累加。
-
-视图只在读取时投影，不写入 Timeline 或 Session。Agent 接口只返回摘要，调用正文在点击后按需读取。关联 Session 读取失败时保留阶段树和已读取的 usage，并显示文件/记录级诊断；事件内容解码失败只跳过对应记录，无法继续解析的 JSONL 保留已读部分，其余 usage 保持未知。
-在弹框内下钻后返回会恢复原视图与滚动位置；切换视图不改变观测范围，也不重新执行 review。
-
 ## Review completion and on-demand views
 
 The Unit pipeline owns the terminal result of each admitted Unit, including
@@ -316,8 +332,8 @@ CLI, Viewer and eval consume this same result. Warnings explain individual
 failures; their names and counts do not determine completion. Budget-skipped or
 unfinished Units make coverage partial, even when useful Findings were delivered.
 
-The Timeline page reads business records and stages. Final token totals come from
-bounded call accounting in the manifest; before finalization, the page leaves
-those totals pending. Model and Tool views load the referenced local Session,
-and Agent view loads the Sessions referenced by the selected loop. Corrupt call
-bodies are diagnosed in those views without preventing Timeline navigation.
+The Review workspace reads business records and explicit native Session references. Final token totals
+come from the manifest; before finalization they remain pending. Job summaries never read native
+call bodies. Session View reads the selected continuous Session, while Context loads one actual
+request and optionally its predecessor. Missing call evidence remains visible without blocking
+business navigation.

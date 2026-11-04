@@ -24,59 +24,21 @@ func handleJob(w http.ResponseWriter, r *http.Request, root, repo, review string
 		http.Error(w, "unit is required", http.StatusBadRequest)
 		return
 	}
-	job, err := recording.ReadJob(filepath.Join(root, repo, review+".jsonl"), unit, options...)
+	path := filepath.Join(root, repo, review+".jsonl")
+	var job observation.JobView
+	var err error
+	if r.URL.Query().Get("format") == "json" {
+		job, err = recording.ReadJob(path, unit, options...)
+	} else {
+		job, err = recording.ReadJobSummary(path, unit)
+	}
 	if err != nil {
 		fmt.Fprintf(console.Err(), "[viewer] job repo=%s review=%s unit=%s: %v\n", repo, review, unit, err)
 		http.Error(w, "Job observation unavailable", http.StatusNotFound)
 		return
 	}
-	if r.URL.Query().Get("format") == "json" {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(job)
-		return
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(job); err != nil {
+		fmt.Fprintf(console.Err(), "[viewer] job response unit=%s: %v\n", unit, err)
 	}
-	tmpl, err := parseTemplate("job.html")
-	if err != nil {
-		http.Error(w, "template error", 500)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err = tmpl.Execute(w, map[string]any{"Job": job, "Repo": repo, "Review": review, "Unit": unit}); err != nil {
-		fmt.Fprintf(console.Err(), "[viewer] render job %s: %v\n", unit, err)
-	}
-}
-func nodeChildren(n any) observation.Nodes {
-	switch n := n.(type) {
-	case *observation.Operation:
-		return n.Nodes
-	case *observation.Turn:
-		return n.Nodes
-	default:
-		return nil
-	}
-}
-func nodeDetails(n any) string {
-	// Child bodies render recursively; don't repeat the entire subtree in every panel.
-	switch n := n.(type) {
-	case *observation.Operation:
-		copy := *n
-		copy.Nodes = nil
-		return prettyJSON(copy)
-	case *observation.Turn:
-		copy := *n
-		copy.Nodes = nil
-		return prettyJSON(copy)
-	default:
-		return prettyJSON(n)
-	}
-}
-func prettyJSON(v any) string {
-	if b, ok := v.(json.RawMessage); ok {
-		var decoded any
-		if json.Unmarshal(b, &decoded) == nil {
-			v = decoded
-		}
-	}
-	b, _ := json.MarshalIndent(v, "", "  ")
-	return string(b)
 }

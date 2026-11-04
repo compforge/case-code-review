@@ -46,6 +46,7 @@ install: build
 	@echo "installed $(BINARY_NAME) $(VERSION) -> $(INSTALL_DIR)/$(BINARY_NAME)"
 
 test:
+	@if [ -z "$(strip $(TEST_FILES))" ] || [ -n "$(filter internal/viewer/% ./internal/viewer/%,$(TEST_FILES))" ]; then node --test internal/viewer/static/*.test.mjs; fi
 ifneq ($(strip $(TEST_PACKAGES)),)
 	LC_ALL=C $(GO) test -v -race -count=1 $(TEST_PACKAGES)
 else

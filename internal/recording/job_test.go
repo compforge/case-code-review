@@ -144,3 +144,23 @@ func TestJobInventoryIncludesAdmittedUnitsWithoutExecution(t *testing.T) {
 		t.Fatal(jobs)
 	}
 }
+
+// +case=`Job summaries preserve Unit membership and completion without opening corrupt native Session files`
+func TestJobSummaryDoesNotReadNativeBodies(t *testing.T) {
+	path := jobFixture(t)
+	full, err := ReadJob(path, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(strings.TrimSuffix(path, ".jsonl")+".sessions", "loop.jsonl"), []byte("invalid\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := ReadJobSummary(path, "u1")
+	if err != nil || summary.Job != full.Job || summary.Status != full.Status || len(summary.Issues) != 0 || len(callNodes(summary.Nodes)) != 0 || string(summary.Result) != string(full.Result) {
+		t.Fatalf("summary: %+v error=%v", summary, err)
+	}
+	raw, _ := json.Marshal(summary.Nodes)
+	if strings.Contains(string(raw), "run-2") || !strings.Contains(string(raw), "run-1") {
+		t.Fatalf("wrong membership: %s", raw)
+	}
+}

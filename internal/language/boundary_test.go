@@ -1,8 +1,12 @@
 package language
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -13,17 +17,6 @@ import (
 func TestParserDependenciesStayInsideLanguage(t *testing.T) {
 	root := filepath.Clean("..")
 	languageRoot := filepath.Join(root, "language") + string(filepath.Separator)
-	forbidden := []string{
-		`"go/ast"`,
-		`"go/parser"`,
-		`"go/token"`,
-		`"go/types"`,
-		`"golang.org/x/tools/go/packages"`,
-		`"github.com/odvcencio/gotreesitter`,
-		`"github.com/tree-sitter/`,
-		`"python3"`,
-		`"node"`,
-	}
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return err
@@ -35,15 +28,102 @@ func TestParserDependenciesStayInsideLanguage(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, dependency := range forbidden {
-			if strings.Contains(string(content), dependency) {
-				t.Errorf("%s uses parser dependency %s outside internal/language", path, dependency)
-			}
+		violations, err := parserDependencies(content)
+		if err != nil {
+			return err
+		}
+		for _, dependency := range violations {
+			t.Errorf("%s uses parser dependency %s outside internal/language", path, dependency)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Check dependency syntax rather than arbitrary strings: an observation "node"
+// field does not invoke Node.js, and a documentation example is not an import.
+func parserDependencies(content []byte) ([]string, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), "", content, 0)
+	if err != nil {
+		return nil, err
+	}
+	forbidden := []string{"go/ast", "go/parser", "go/token", "go/types", "golang.org/x/tools/go/packages", "github.com/odvcencio/gotreesitter", "github.com/tree-sitter/"}
+	var result []string
+	execName := ""
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return nil, err
+		}
+		for _, dependency := range forbidden {
+			if path == dependency || strings.HasPrefix(path, dependency+"/") || strings.HasSuffix(dependency, "/") && strings.HasPrefix(path, dependency) {
+				result = append(result, path)
+			}
+		}
+		if path == "os/exec" {
+			execName = "exec"
+			if spec.Name != nil {
+				execName = spec.Name.Name
+			}
+		}
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || execName == "" {
+			return true
+		}
+		name := ""
+		if selector, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if owner, ok := selector.X.(*ast.Ident); ok && owner.Name == execName {
+				name = selector.Sel.Name
+			}
+		}
+		if execName == "." {
+			if ident, ok := call.Fun.(*ast.Ident); ok {
+				name = ident.Name
+			}
+		}
+		index := 0
+		switch name {
+		case "Command":
+		case "CommandContext":
+			index = 1
+		default:
+			return true
+		}
+		if len(call.Args) <= index {
+			return true
+		}
+		if literal, ok := call.Args[index].(*ast.BasicLit); ok && literal.Kind == token.STRING {
+			program, _ := strconv.Unquote(literal.Value)
+			if filepath.Base(program) == "node" || filepath.Base(program) == "python3" {
+				result = append(result, program)
+			}
+		}
+		return true
+	})
+	return result, nil
+}
+
+func TestParserDependencyDetection(t *testing.T) {
+	for _, tt := range []struct {
+		name, source string
+		count        int
+	}{
+		{"JSON field", `package consumer;var value=map[string]any{"node":"python3"}`, 0},
+		{"parser import", `package consumer;import "go/parser"`, 1},
+		{"aliased subprocess", `package consumer;import process "os/exec";func run(){process.Command("node","parse.js")}`, 1},
+		{"context subprocess", `package consumer;import "os/exec";func run(){exec.CommandContext(ctx,"/usr/bin/python3","parse.py")}`, 1},
+		{"other program argument", `package consumer;import "os/exec";func run(){exec.Command("echo","node")}`, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parserDependencies([]byte(tt.source))
+			if err != nil || len(got) != tt.count {
+				t.Fatalf("dependencies=%v error=%v", got, err)
+			}
+		})
 	}
 }
 

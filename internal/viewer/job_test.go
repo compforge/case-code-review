@@ -17,7 +17,7 @@ func TestJobPageAndCanonicalJSON(t *testing.T) {
 		`{"type":"debrief","kind":"unit","scope_id":"u1","outcome":"completed"}`)
 	page := httptest.NewRecorder()
 	handleJob(page, httptest.NewRequest("GET", "/job?unit=u1", nil), root, "repo", "review")
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Unit Job") || strings.Contains(page.Body.String(), "<script>alert(1)</script>") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "review/u1") || strings.Contains(page.Body.String(), "<script>alert(1)</script>") {
 		t.Fatalf("page: %d %s", page.Code, page.Body.String())
 	}
 	response := httptest.NewRecorder()

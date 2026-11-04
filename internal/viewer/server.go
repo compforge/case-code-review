@@ -58,12 +58,9 @@ func StartServer(addr string, options ...codec.Option) error {
 		}
 		handleSession(w, r, root, repo, sid)
 	})
-	mux.HandleFunc("GET /r/{repo}/{sessionID}/call", func(w http.ResponseWriter, r *http.Request) {
-		handleStageCall(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
-	})
 
-	mux.HandleFunc("GET /r/{repo}/{sessionID}/agent", func(w http.ResponseWriter, r *http.Request) {
-		handleStageAgent(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
+	mux.HandleFunc("GET /r/{repo}/{sessionID}/session", func(w http.ResponseWriter, r *http.Request) {
+		handleNativeSession(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"), options...)
 	})
 
 	mux.HandleFunc("GET /r/{repo}/{sessionID}/job", func(w http.ResponseWriter, r *http.Request) {
@@ -100,10 +97,7 @@ func formatTime(t time.Time) string {
 
 func parseTemplate(name string) (*template.Template, error) {
 	funcMap := template.FuncMap{
-		"nodeChildren": nodeChildren, "nodeDetails": nodeDetails, "prettyJSON": prettyJSON,
 		"formatDuration": formatDuration,
-		"layoutTimeline": layoutTimeline,
-		"formatMillis":   func(ms int64) string { return formatDuration(float64(ms) / 1000) },
 		"formatInt":      formatInt,
 		"formatTime":     formatTime,
 		"truncate":       truncateText,
@@ -117,14 +111,14 @@ func parseTemplate(name string) (*template.Template, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tmpl.ParseFS(assets, "templates/timeline.html")
+	return tmpl, nil
 }
 
 func truncateText(n int, s string) string {
-	if len(s) <= n {
+	if len([]rune(s)) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string([]rune(s)[:n]) + "…"
 }
 
 func renderTemplate(w http.ResponseWriter, name string, data any) {

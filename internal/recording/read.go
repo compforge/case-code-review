@@ -16,7 +16,7 @@ import (
 )
 
 // ReadJournal loads business records and stages without opening local Sessions.
-// +spec=`Timeline navigation never reads model or tool bodies; full evidence requires an explicit ReadReview or referenced call query`
+// +spec=`Review navigation never reads model or tool bodies; full evidence requires an explicit ReadReview or referenced call query`
 func ReadJournal(path string) (*Transcript, error) {
 	file, err := os.Open(path)
 	if err != nil {

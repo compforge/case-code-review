@@ -75,9 +75,9 @@ func TestPeekSessionLoadsCurrentSchemaSummary(t *testing.T) {
 	}
 }
 
-// +case=`Timeline navigation survives corrupt Session bodies; only the selected call/Agent view reads those bodies`
-func TestTimelinePageDoesNotReadNativeSessions(t *testing.T) {
-	path, _ := stageAgentFixture(t)
+// +case=`Review navigation survives corrupt Session bodies; only the selected Session query reads those bodies`
+func TestReviewPageDoesNotReadNativeSessions(t *testing.T) {
+	path, _ := operationFixture(t)
 	dir := filepath.Dir(path)
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
@@ -96,18 +96,18 @@ func TestTimelinePageDoesNotReadNativeSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(view.RecordingWarnings) != 0 || view.Journal == nil || view.Summary.Completion.Status != "partial" || view.Summary.Tokens == nil || view.Summary.Tokens.PromptTokens != 123 {
-		t.Fatalf("timeline loaded body or lost business facts: %+v", view)
+		t.Fatalf("journal loaded body or lost business facts: %+v", view)
 	}
 	response := httptest.NewRecorder()
 	handleSession(response, httptest.NewRequest("GET", "/", nil), filepath.Dir(dir), filepath.Base(dir), "review")
 	if response.Code != 200 || !strings.Contains(response.Body.String(), "Partial — not a clean verdict") || !strings.Contains(response.Body.String(), "123 prompt tokens") {
-		t.Fatalf("timeline response: %d %s", response.Code, response.Body.String())
+		t.Fatalf("journal response: %d %s", response.Code, response.Body.String())
 	}
-	agent, err := loadStageAgent(path, "execution-1")
+	_, agent, _, err := readNativeSession(path, "session-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(agent.Warnings) == 0 {
-		t.Fatal("Agent view failed to report the corrupt evidence it actually read")
+	if len(agent.Issues) == 0 {
+		t.Fatal("Session view failed to report the corrupt evidence it actually read")
 	}
 }
