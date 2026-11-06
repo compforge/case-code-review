@@ -49,15 +49,9 @@ export async function renderContext(parent, page, state, signal) {
   parent.append(el('div', 'CONTEXT VIEW', 'eyebrow'), el('h2', 'What the model actually received'), el('p', 'Ordered request messages and tool schemas. Response is separate from historical assistant messages. Sizes below are serialized UTF-8 bytes, not billed tokens.', 'muted'));
   const calls = page.items.filter(i => i.kind === 'model_call');
   if (!calls.length) { parent.append(el('p', 'No model calls recorded in this Session.', 'empty')); return; }
-  const requested = state.params.get('node'); const selected = requested ? calls.find(i => i.id === requested) : calls[0];
-  state.selectDefault('node',selected?.id);
-  const nav = el('div', null, 'filters');
-  const picker = el('select'); picker.setAttribute('aria-label', 'Model request');
-  for (const [i, call] of calls.entries()) { const o = el('option', `#${i + 1} · ${call.status} · ${call.summary?.slice(0, 90) || call.id}`); o.value = call.id; o.selected = call === selected; picker.append(o); }
-  picker.onchange = () => { const a = link('', { view: 'context', session: page.session.id, node: picker.value }, state); parent.append(a); a.click(); a.remove(); };
-  nav.append(picker); parent.append(nav);
-  if (!selected) { parent.append(el('p', 'Selected model call is not present in this Session. Choose a recorded request.', 'notice')); return; }
-  nav.append(link('Session →', { view: 'session', session: page.session.id, node: selected.id }, state));
+  const selected = calls.find(i => i.id === state.params.get('node'));
+  if (!selected) { parent.append(el('p', 'Selected model call is not present in this Session. Choose a recorded model call from Session View.', 'notice')); return; }
+  parent.append(el('code', page.session.id), link('Locate call in Session →', { view: 'session', session: page.session.id, node: selected.id }, state));
   const loading = el('p', 'Loading this request…', 'loading'); parent.append(loading);
   const current = await state.call(page.session.id, selected.id);
   if (signal.aborted) return; loading.remove(); notices(parent, current.issues);
@@ -74,10 +68,10 @@ export async function renderContext(parent, page, state, signal) {
       const old = previous.node.request?.input;
       if (!Array.isArray(old?.messages)) { compare.append(el('p', 'Previous request not recorded; differences are unknown.', 'notice')); return; }
       const diff = compareMessages(old.messages, messages);
-      compare.append(el('p', `${diff.retained.length} retained exactly · ${diff.added.length} added / changed · ${diff.removed.length} removed / replaced`), el('p', encode(old.tools) === encode(request.tools) ? 'Tool schemas unchanged.' : 'Tool schemas changed.'), link('Open previous Context →', { view: 'context', session: page.session.id, node: selected.previous }, state));
+      compare.append(el('p', `${diff.retained.length} retained exactly · ${diff.added.length} added / changed · ${diff.removed.length} removed / replaced`), el('p', encode(old.tools) === encode(request.tools) ? 'Tool schemas unchanged.' : 'Tool schemas changed.'), link('Open previous Context →', { session: page.session.id, node: selected.previous, context: '1' }, state));
       const changes = el('div', null, 'diff-columns');
       const added = el('section'); added.append(el('h4', 'Added / changed'));
-      for (const index of diff.added) added.append(button(`#${index + 1} · ${messages[index].role}`, () => { const row = document.getElementById(`message-${index}`); row.hidden = false; row.open = true; row.scrollIntoView({ block: 'center' }); }));
+      for (const index of diff.added) added.append(button(`#${index + 1} · ${messages[index].role}`, () => { const row = parent.querySelector(`#message-${index}`); row.hidden = false; row.open = true; row.scrollIntoView({ block: 'center' }); }));
       const removed = el('section'); removed.append(el('h4', 'Removed / replaced'));
       for (const index of diff.removed) removed.append(details(`Previous #${index + 1} · ${old.messages[index].role}`, old.messages[index]));
       changes.append(added, removed); compare.append(changes);

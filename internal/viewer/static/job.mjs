@@ -80,7 +80,7 @@ export function renderJob(parent, job, state) {
         const kind = op.name === 'tool.execution' ? 'tool_call' : 'model_call';
         const node = `call:${JSON.stringify([ref.run_id, kind, ref.execution_id, ref.attempt])}`;
         line.append(link('Session →', { view: 'session', session: ref.session_id, node, unit, execution: null }, state));
-        if (kind === 'model_call') line.append(link('Context →', { view: 'context', session: ref.session_id, node, unit }, state));
+        if (kind === 'model_call') line.append(link('Context →', { view: 'job', session: ref.session_id, node, unit, context: '1' }, state));
       }
       if (op.attributes?.error) line.append(el('p', op.attributes.error, 'notice'));
       line.append(details('Operation facts', op)); operations.append(line);
