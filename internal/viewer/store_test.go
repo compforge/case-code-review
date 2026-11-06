@@ -111,3 +111,32 @@ func TestReviewPageDoesNotReadNativeSessions(t *testing.T) {
 		t.Fatal("Session view failed to report the corrupt evidence it actually read")
 	}
 }
+
+// +case=`Global distinguishes a recorded zero wall time from missing terminal timing`
+func TestReviewDurationCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		end   string
+		known bool
+	}{
+		{"unfinished", "", false},
+		{"missing duration", `{"type":"session_end","completion":{"status":"completed"}}`, false},
+		{"zero duration", `{"type":"session_end","duration_seconds":0,"completion":{"status":"completed"}}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			records := []string{sessionStart("review")}
+			if tc.end != "" {
+				records = append(records, tc.end)
+			}
+			writeViewerSession(t, root, "repo", "review", records...)
+			summary, err := peekSession(filepath.Join(root, "repo", "review.jsonl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if summary.HasDuration != tc.known || summary.DurationSec != 0 {
+				t.Fatalf("duration = %+v", summary)
+			}
+		})
+	}
+}
