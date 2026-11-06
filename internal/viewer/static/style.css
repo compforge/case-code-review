@@ -139,3 +139,15 @@ details[open]>summary{color:var(--ink)}
 .event-row .call-preview:empty{display:none}
 
 .receipt{margin:10px 0;overflow-wrap:anywhere}.receipt>*{display:block}
+
+.workspace[data-view=global]{grid-template-columns:minmax(0,1fr)}
+.workspace[data-view=global] #content{border-left:0;max-width:1440px;width:100%;margin:auto}
+.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin:20px 0}
+.metric-card{padding:18px;border:1px solid var(--line);border-radius:8px;background:#f8faf7}
+.metric-card h3{font-size:12px;color:var(--muted);margin:0 0 12px}
+.metric-value{font-size:26px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+.metric-card p{font-size:12px;margin:10px 0 0}
+.context-detail>code{display:block;margin:12px 0}
+.context-detail>h2{font-size:20px}
+.context-detail .diff-columns{grid-template-columns:1fr}
+#detail.expanded .context-detail .diff-columns{grid-template-columns:1fr 1fr}

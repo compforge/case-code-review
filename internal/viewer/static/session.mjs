@@ -56,7 +56,6 @@ export function renderSession(parent, page, state, signal) {
       const result = await state.call(session.id, item.id);
       if (signal.aborted) return;
       const body = renderCallBody(result);
-      if (item.kind === 'model_call') body.prepend(link('Open Context View →', { view: 'context', session: session.id, node: item.id }, state));
       body.append(details('Native identity', { session: session.id, ref: item.ref, operation: item.operation_id }));
       state.detail(item.name, body);
     } catch (error) { if (!signal.aborted) state.detail('Evidence unavailable', el('p', error.message, 'notice')); }
@@ -75,9 +74,8 @@ export function renderSession(parent, page, state, signal) {
       }
       const row = el('article', null, `call-row ${item.kind==='operation' ? 'event-row' : ''} ${item.id === selected ? 'selected' : ''} ${focus && item.execution_id === focus ? 'focused' : ''}`);
       const main = el('div', null, 'call-main');
-      main.append(link(item.name, { view: 'session', session: session.id, node: item.id }, state)); if(item.kind!=='operation') main.append(badge(item.status));
-      if (item.kind === 'model_call') main.append(link('Context →', { view: 'context', session: session.id, node: item.id }, state));
-      if(item.model_call_id) main.append(link('Requesting model →',{view:'session',session:session.id,node:item.model_call_id,tool:null},state));
+      main.append(link(item.name, { view: 'session', session: session.id, node: item.id, context: item.kind === 'model_call' ? '1' : null }, state)); if(item.kind!=='operation') main.append(badge(item.status));
+      if(item.model_call_id) main.append(link('Requesting model →',{view:'session',session:session.id,node:item.model_call_id,tool:null,context:'1'},state));
       row.append(main, el('p', item.error || item.summary || item.tool_call_id || item.id, 'call-preview'), el('small', item.kind==='operation' ? item.started_at : meta(item)));
       if (item.kind === 'model_call') {
         row.append(el('small', `Input ${number(item.usage ? (item.usage.input_tokens ?? 0) + (item.usage.cache_write_input_tokens ?? 0) : null)} · output ${number(item.usage?.output_tokens)} · cache read ${number(item.usage?.cache_read_input_tokens)}`));
@@ -91,7 +89,7 @@ export function renderSession(parent, page, state, signal) {
     }
   };
   filter.oninput = draw; kind.onchange = draw; sort.onchange = draw; fragment.onchange = draw; draw();
-  if (selected) { const item = items.find(i => i.id === selected); if (item) show(item); else parent.prepend(el('p', 'Selected node is not present in this Session snapshot.', 'notice')); }
+  if (selected && state.params.get('context') !== '1') { const item = items.find(i => i.id === selected); if (item) show(item); else parent.prepend(el('p', 'Selected node is not present in this Session snapshot.', 'notice')); }
 }
 
 // Receipts can refer to R1 evidence or any earlier call in the shared Lane.

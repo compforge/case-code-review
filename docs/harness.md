@@ -298,10 +298,11 @@ Operation 状态同步追加到 Review JSONL，与业务产物共用存储；不
 
 ### 4.2 HTML Viewer 是诊断投影
 
-Viewer 从 Review 列表进入 Job / Session / Context 并列工作区，默认 Job。
-Job 展示 Unit 的 R1 Hypothesis、R2 Assessment 和 Trial / Finding；Session 保留完整的原生 agent loop，
-整个连续 R2 Lane 共用一个 Session，多次 Execution 在其中分段；Context 展示选中模型调用实际接收的
-消息和 tools，按需比较前一个请求。三种 View 是事实的渲染层，不改变运行或持久化模型。
+Viewer 从 Review 列表进入 Global / Job / Session 工作区，默认 Global，汇总当前 Review 的完成状态、
+Unit 分布、Token/cache 与耗时。Job 展示 Unit 的 R1 Hypothesis、R2 Assessment 和 Trial / Finding；
+Session 保留完整的原生 agent loop，整个连续 R2 Lane 共用一个 Session，多次 Execution 在其中分段。
+点击 Session 中的 model call 直接打开对应 Context View，展示实际接收的消息和 tools，按需比较前一个请求；它在 Job / Session
+内打开，不占顶层入口。这些视图只渲染事实，不改变运行或持久化模型。
 
 调用正文按完整 Session reference 与 native node ID 关联并按需读取；原始 JSON 默认折叠。
 Operation 保留业务动作与关联，Timeline、Stage 弹框及仅覆盖单次 Execution 的 Agent 页已移除。
@@ -328,7 +329,7 @@ Harness 变更至少验证：
 - 工具结果与触发它的 model request 正确关联；
 - budget/deadline/terminal action 产生正确 completion 状态；
 - recorder 能在错误和 partial execution 下写出可读取 JSONL；
-- Viewer 的 Job / Session / Context 均由同一批事实投影，不出现统计和逐轮记录矛盾；
+- Viewer 的 Global / Job / Session 与 Context 详情均由同一批事实投影，不出现统计和逐轮记录矛盾；
 - Harness 包保持不依赖 Runner、Unit 和评审领域。
 
 ## References

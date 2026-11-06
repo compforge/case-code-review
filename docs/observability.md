@@ -193,15 +193,23 @@ Viewer 是只读渲染层。Review 业务日志、原生 AgentGo Session 是事�
 Job View 按业务关联组合多个 Session 的片段，Context View 展示某次模型调用实际收到的消息。
 
 首页按开始时间倒序展示 Review，支持 Repository、日期（CST）与 completion 筛选，同时展示
-版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区默认打开 Job，Job / Session /
-Context 是并列入口；URL 保留 Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
+版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区按 Global / Job / Session 排列，默认
+打开 Global；Context 是某次 model call 的详情，在 Job 或 Session 内打开，不是并列入口。
+URL 保留父 View、Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
 分享与浏览器前进后退。Refresh 重新读取当前快照。Timeline 与 Stage 弹框不再是页面概念。
 
 | View | 观测对象 | 展示与下钻 |
 |---|---|---|
+| Global | 当前一次 Review | 完成状态、wall time、Unit outcome 分布、Hypothesis / Finding 数、Token/cache 与 Session / Execution 总数；只展示宏观汇总 |
 | Job | 一个 Unit 的业务执行 | Hypothesis → Assessment 四轴及理由 → Trial → Finding；Operation 原始事实折叠，关联调用下钻到 Session / Context |
 | Session | 一个完整原生 Session | R1 一个 loop 一个 Session；整个 R2 Lane 连续对话共用一个 Session，多次 Execution 分段展示；辅助调用单独标识 |
-| Context | 某一次实际模型 request | 保留 role、消息与内容块顺序，展开消息正文、tool schemas 和 call configuration；当前 response 单独展示 |
+
+Session 中点击 model call 直接打开对应 Context View 详情面板，Job 也可从关联调用打开，保留 role、消息与内容块顺序，展开消息正文、tool schemas
+和 call configuration；当前 response 单独展示。关闭详情仍留在原 Job / Session，可展开面板阅读长消息。
+Global 的范围是一次 Review，只展示汇总，不重复 Job、Session 或 Operation 明细。它使用 journal 与
+关联索引；共享 Lane 不按 Unit 重复计数，不读取原生正文。
+Token 使用 Review 最终记录的汇总并标明 estimated；没有最终汇总时显示 unknown，调用级覆盖需下钻
+Session。完成 Job 数排除仍有 unassessed hypotheses 的 Unit；缺失 wall time 与录制的零耗时分别展示。
 
 Job 的 Execution outcome、Assessment、Trial delivery 与 Human Verdict 是不同事实。没有录制人工
 标注时显示 unknown；本地 Finding 和 Trial.delivered 不证明 Forge comment 已发布。证据 receipt
@@ -227,7 +235,7 @@ Context 首先展示消息 outline，展开时渲染具体内容块。可以比�
 
 ### 查询与加载边界
 
-- Review 首屏只读取业务 journal 和 Session 关联索引，不读取原生 prompt/response。
+- Review / Global 首屏只读取业务 journal 和 Session 关联索引，不读取原生 prompt/response。
 - `/job?unit=<id>` 使用 `recording.ReadJobSummary`，与标准 JobView 共用业务 membership 和 Operation
   投影，始终校验完整的 Session 引用、文件名及重复 owner，但不加载调用正文。`/job?unit=<id>&format=json` 保留完整标准 JobView 导出。
 - `/session?session=<native-id>` 使用 AgentLedger 原生 SessionView reader，读取完整原生 Session 后
@@ -241,7 +249,7 @@ Viewer 只消费当前 schema，不叠加历史字段猜测。单次运行受 di
 这里用于发现问题和形成改进假设。质量、速度、成本的效果结论仍需 eval 在固定样本上对照验证。
 
 前端为 Go embed 的原生 ES modules，无 npm 运行时依赖。`make test` 同时执行 Go tests 与 Node.js
-内置 runner 的 Context 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Context。
+内置 runner 的概览、导航与 Context 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Context。
 
 ## 3. eval：效果与轨迹闭环
 

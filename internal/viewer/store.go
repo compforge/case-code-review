@@ -149,6 +149,7 @@ type SessionSummary struct {
 	DiffDeletions  int
 	HasDiffStats   bool
 	DurationSec    float64
+	HasDuration    bool
 	FileCount      int
 	LLMFailures    int
 }
@@ -225,6 +226,7 @@ func peekSession(path string) (SessionSummary, error) {
 				}
 				if dur, ok := rec["duration_seconds"].(float64); ok {
 					summary.DurationSec = dur
+					summary.HasDuration = true
 				}
 				if files, ok := rec["files_reviewed"].([]any); ok {
 					summary.FilesReviewed = make([]string, 0, len(files))
