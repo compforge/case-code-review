@@ -2,6 +2,8 @@ import { $, el, button, empty, notices, link } from './ui.mjs';
 import { renderJob } from './job.mjs';
 import { renderSession, findToolSessions } from './session.mjs';
 import { renderContext } from './context.mjs';
+import { renderGlobal } from './global.mjs';
+import { workspaceParams, workspaceURL } from './navigation.mjs';
 
 const review = JSON.parse($('review-data').textContent);
 const base = location.pathname.replace(/\/$/, '');
@@ -11,9 +13,7 @@ const state = {
   review,
   params: new URLSearchParams(location.search),
   url(changes) {
-    const p = new URLSearchParams(state.params);
-    for (const [key, value] of Object.entries(changes)) value ? p.set(key, value) : p.delete(key);
-    return `${base}?${p}`;
+    return workspaceURL(base, state.params, changes);
   },
   selectDefault(key,value) {
     if(value && !state.params.has(key)) {state.params.set(key,value);history.replaceState(null,'',`${base}?${state.params}`);}
@@ -35,7 +35,7 @@ const state = {
   detail(title, content) {
     const aside = $('detail'); aside.hidden = false;
     const toolbar = el('div', null, 'detail-toolbar');
-    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); }));
+    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); state.params.delete('context'); state.params.delete('node'); history.replaceState(null, '', state.url({})); }));
     aside.replaceChildren(toolbar, content);
   },
   isActive(signal) { return !signal.aborted; },
@@ -44,13 +44,18 @@ const state = {
 async function render() {
   active?.abort(); active = new AbortController();
   const signal = active.signal;
-  state.params = new URLSearchParams(location.search);
-  const view = ['job', 'session', 'context'].includes(state.params.get('view')) ? state.params.get('view') : 'job';
+  state.params = workspaceParams(location.search);
+  history.replaceState(null, '', `${base}?${state.params}`);
+  const view = state.params.get('view');
+  $('workspace').dataset.view = view;
+  $('navigation').hidden = view === 'global';
   document.querySelectorAll('[data-view]').forEach(a => { a.href = state.url({ view: a.dataset.view }); a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'); });
   $('navigation').replaceChildren(); $('content').replaceChildren(); $('detail').hidden = true;
   $('detail').classList.remove('expanded');
   try {
-    if (view === 'job') {
+    if (view === 'global') {
+      renderGlobal($('content'), review);
+    } else if (view === 'job') {
       const jobs = review.Jobs || [];
       $('navigation').append(el('h3', `Unit Jobs · ${jobs.length}`));
       const input = el('input'); input.placeholder = 'Filter paths or Unit ID'; input.setAttribute('aria-label', 'Filter Units'); $('navigation').append(input);
@@ -104,11 +109,27 @@ async function render() {
       const session = await state.session(id);
       if (signal.aborted) return;
       $('content').replaceChildren(); notices($('content'), session.issues);
-      if (view === 'session') renderSession($('content'), session, state, signal);
-      else await renderContext($('content'), session, state, signal);
+      renderSession($('content'), session, state, signal);
     }
+    if (view !== 'global' && state.params.get('context') === '1') await showContext(signal);
   } catch (error) {
     if (error.name !== 'AbortError' && !signal.aborted) { $('content').replaceChildren(el('h2', 'Evidence unavailable'), el('p', error.message, 'notice'), button('Retry', () => { cache.clear(); render(); })); }
+  }
+}
+
+async function showContext(signal) {
+  const body = el('div', null, 'context-detail');
+  state.detail('Context · Model call', body);
+  try {
+    const id = state.params.get('session');
+    if (!id || !state.params.get('node')) {
+      body.append(el('p', 'Select a model call from Job or Session to inspect its context.', 'notice'));
+      return;
+    }
+    const page = await state.session(id);
+    if (!signal.aborted) await renderContext(body, page, state, signal);
+  } catch (error) {
+    if (!signal.aborted) body.append(el('p', error.message, 'notice'));
   }
 }
 

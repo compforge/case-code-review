@@ -39,6 +39,10 @@ func TestWorkspaceTemplatesRender(t *testing.T) {
 				if !strings.Contains(out.String(), "github:org/repo#148") || !strings.Contains(out.String(), "Business decisions") {
 					t.Fatal("journal page lost review identity")
 				}
+				global, job, session := strings.Index(out.String(), `data-view="global"`), strings.Index(out.String(), `data-view="job"`), strings.Index(out.String(), `data-view="session"`)
+				if global < 0 || job <= global || session <= job || strings.Contains(out.String(), `data-view="context"`) {
+					t.Fatal("workspace must expose Global / Job / Session, with Context nested under a call")
+				}
 				if strings.Contains(out.String(), "Review results and statistics") || strings.Contains(out.String(), "Review Overview") {
 					t.Fatal("removed review summary remains")
 				}

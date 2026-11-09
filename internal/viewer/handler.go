@@ -32,7 +32,8 @@ type reviewListData struct {
 	Reviews      []reviewListEntry
 }
 
-// +spec=`Review navigation indexes business facts; Job, Session and Context are peer views with explicit native identity`
+// +spec=`Global summarizes one Review; Job and Session provide scoped views; Context describes a selected model call`
+// +link=component://docs/observability.md
 func handleReviewList(w http.ResponseWriter, r *http.Request, root, selectedRepo string) {
 	repos, err := DiscoverRepos(root)
 	if err != nil {
