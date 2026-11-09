@@ -8,7 +8,7 @@ CCR 通过独立项目 [CodeGraph](https://github.com/compforge/codegraph) 分�
 
 ```text
 review snapshot ─▶ Document ─▶ CodeGraph
-                                  ├─ declarations / imports / references
+                                  ├─ declarations / imports / semantic dependencies / occurrences
                                   └─ symbol graph + diagnostics
                                            ↓
                              Language 的身份与展示适配
@@ -38,7 +38,7 @@ RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读�
 的定义候选集；过大的文件不参与分析。
 
 仓库构图通过 RepoKit 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
-工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repokit 执行。
+工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 RepoKit 执行。
 CCR 显式排除 dependency、test_fixture、generated、tooling、cache 和 build_output 标签，
 并用 review 支持的格式选择 Document；`IsSourceMaterial` 只作为格式识别，不承担排除策略。
 
@@ -58,7 +58,7 @@ CCR 显式开启 RepoKit 的 `RetryOnBudget`：构图触发节点或关系预算
 
 源码关联使用 `(snapshot, node_id)`：Fragment 保留定位得到的节点，self、owner、caller/callee 和 usage
 沿同一 publication 的节点与关系读取，文档不经名称查回。`path::qualifiedName` 用于展示、spec 和历史反馈的
-地址匹配；只有目录地址能唯一绑定声明时才关联作者契约。同名声明可以分别保留图事实，缺失节点不能靠名称补猜。Reference、Import、Export
+地址匹配；只有目录地址能唯一绑定声明时才关联作者契约。同名声明可以分别保留图事实，缺失节点不能靠名称补猜。Occurrence、Import、Export
 是源码项，不能转换为声明 join key。owner 沿 contains 优先、encloses 补充查找，支持跨文件 Go
 接收者；qualified name 的分隔符只用于身份展示，不证明归属。
 
@@ -88,9 +88,9 @@ Outline 不能代替读取源码验证行为。上游拒绝输出或解析失败
 不同用途承担不同的错误成本：
 
 - Repo map 对 CodeGraph 关系做按 diff 个性化的排序，可以使用低置信候选；它只是后续阅读的提示。
-- caller/callee 契约消费声明间的 `Exact/Scoped` calls；Unit 分组也使用 references、extends、implements、aliases、exports。repo map 使用声明关系，
-  排除 Reference 发出的源码位置边，避免把两个粒度重复计数。
-- used 契约按 diff 对应版本的增加行或删除行定位 Reference，沿 references 与 aliases 读取声明或显式导入绑定；
+- caller/callee 契约消费声明间的 `Exact/Scoped` calls；Unit 分组由 RepoKit 消费具体依赖并提供分组证据，CCR 不另构一套连接。
+  Repo map 消费 `IsDependency()` 关系，保留读写、类型、捕获、资源、别名与继承语义；occurrence 和 `binds_to` 导航不重复计入排名。
+- used 契约按 diff 对应版本的增加行或删除行定位具体 occurrence，沿 `binds_to` 与 `aliases` 读取声明或显式导入绑定；
   usage 反向遍历同一链路，并按源码行去重。必要环节均须达到 `Scoped`，不按裸名字匹配 catalog。
 - 删除行只在旧侧快照中绑定；没有 hunk 坐标的内部 Fragment 只可使用已知声明范围。
   未解析使用仍在图中，但不作为确定的契约或邻接关系。
