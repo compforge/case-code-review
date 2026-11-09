@@ -3,7 +3,7 @@ package sourceview
 import (
 	"context"
 	"errors"
-	repocli "github.com/compforge/repocli/toolkit/go"
+	repokit "github.com/compforge/repokit/toolkit/go"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -53,7 +53,7 @@ func TestDiffSearchUsesCapturedUnchangedAndChangedFiles(t *testing.T) {
 	git("add", ".")
 	git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "base")
 	write("a.go", "package p\n// Captured\n")
-	d, err := repocli.Diff(context.Background(), repocli.DiffRequest{Repository: root})
+	d, err := repokit.Diff(context.Background(), repokit.DiffRequest{Repository: root})
 	if err != nil {
 		t.Fatal(err)
 	}

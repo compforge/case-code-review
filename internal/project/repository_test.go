@@ -2,7 +2,7 @@ package project
 
 import (
 	"context"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,7 +28,7 @@ func repositoryWith(t *testing.T, files ...string) *Repository {
 			t.Fatal(err)
 		}
 	}
-	report, err := repocli.Inspect(context.Background(), repocli.InputRequest{Repository: root})
+	report, err := repokit.Inspect(context.Background(), repokit.InputRequest{Repository: root})
 	if err != nil {
 		t.Fatal(err)
 	}

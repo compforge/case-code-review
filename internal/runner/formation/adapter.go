@@ -5,7 +5,7 @@ import (
 	"sort"
 
 	cg "github.com/compforge/codegraph"
-	repocli "github.com/compforge/repocli/toolkit/go"
+	repokit "github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
@@ -15,7 +15,7 @@ import (
 const DefaultGroupDiffTokens = 8000
 const maxGroupFiles = 5
 
-// CCR owns token accounting, review state, clues and Session output; repocli
+// CCR owns token accounting, review state, clues and Session output; repokit
 // owns Fragment/Unit grouping and graph-backed merge decisions.
 func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	ctx := config.Context
@@ -46,7 +46,7 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 	if config.MaxUnits > 0 {
 		maxUnits = min(maxUnits, config.MaxUnits)
 	}
-	result, err := repocli.FormUnits(ctx, input, repocli.UnitOptions{Exclude: config.Exclude, FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
+	result, err := repokit.FormUnits(ctx, input, repokit.UnitOptions{Exclude: config.Exclude, FileOnly: !config.CallChain, MaxUnits: maxUnits, MaxFiles: maxGroupFiles, MaxChangedLines: 300, MaxDiffSize: tokenLimit, DiffSize: llm.CountTokens})
 	if err != nil {
 		finish(err)
 		return nil, err
@@ -81,7 +81,7 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 			config.OnStep(ctx, step)
 		}
 	}
-	convert := func(es []repocli.FragmentRelation) []unit.GroupingEvidence {
+	convert := func(es []repokit.FragmentRelation) []unit.GroupingEvidence {
 		var out []unit.GroupingEvidence
 		for _, e := range es {
 			out = append(out, unit.GroupingEvidence{Before: e.Before, FromFragment: e.FromFragment, ToFragment: e.ToFragment, Link: language.Connection(e.Link)})
@@ -130,12 +130,12 @@ func formRepositoryUnits(config Config, tokenLimit int) ([]unit.Unit, error) {
 // Empty counts also qualify: review eligibility uses import count == total count.
 // WARNING: this is a scope policy, not proof of unchanged behavior. Side-effect
 // imports, initialization registration and dependency replacements can be skipped.
-func onlyImportElements(counts repocli.ElementCounts) bool {
+func onlyImportElements(counts repokit.ElementCounts) bool {
 	imports, total := 0, 0
-	for _, side := range []map[repocli.ElementKind]int{counts.Before, counts.After} {
+	for _, side := range []map[repokit.ElementKind]int{counts.Before, counts.After} {
 		for kind, count := range side {
 			total += count
-			if kind == repocli.ElementImport {
+			if kind == repokit.ElementImport {
 				imports += count
 			}
 		}

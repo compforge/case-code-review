@@ -4,7 +4,7 @@
 package unit
 
 import (
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
@@ -40,7 +40,7 @@ const (
 // the after-side review identity projection; before-side finders use Before.
 type Fragment struct {
 	// Source is the repository-owned target. Anchors below are CCR context bindings.
-	Source        *repocli.Fragment `json:"-"`
+	Source        *repokit.Fragment `json:"-"`
 	Path          string
 	OldPath       string
 	Before, After []language.Anchor
@@ -57,7 +57,7 @@ type Fragment struct {
 // per Unit. It groups Fragments and carries the Clues found for that scope.
 // change.Change is upstream of this (the Splitter consumes it) and does not flow
 // past the split.
-type RepoUnit = repocli.Unit
+type RepoUnit = repokit.Unit
 
 type Unit struct {
 	Repo RepoUnit

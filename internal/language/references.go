@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	cg "github.com/compforge/codegraph"
+	cgmodel "github.com/compforge/codegraph/pkg"
 )
 
 // Reference is a review projection of a graph-proven use. SymbolID identifies a
@@ -54,6 +55,9 @@ func (r *RepositoryIndex) Owners(id string) []string {
 // ReferencesAt selects source uses by captured coordinates. It never tokenizes
 // diff text or guesses endpoints from bare names. Alias traversal is bounded by
 // the publication's nodes; missing and cyclic bindings remain unresolved.
+//
+// +spec=`Source uses follow concrete occurrence binds_to and aliases; declaration dependencies are not additional usage sites`
+// +link=component://docs/language.md
 func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 	r := a.Repository()
 	if r.Graph == nil || len(spans) == 0 {
@@ -62,7 +66,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 	var out []Reference
 	seen := map[Reference]bool{}
 	for _, use := range r.Graph.Nodes() {
-		if use.Kind != cg.Reference || use.Location == nil || use.Location.Path != path {
+		if !use.Kind.IsOccurrence() || use.Location == nil || use.Location.Path != path {
 			continue
 		}
 		selected := false
@@ -76,7 +80,7 @@ func (a *Analyzer) ReferencesAt(path string, spans []Span) []Reference {
 			continue
 		}
 		queue := []string{}
-		for _, e := range r.Graph.RelationsFrom(use.ID, cg.References) {
+		for _, e := range r.Graph.RelationsFrom(use.ID, cgmodel.BindsTo) {
 			if e.Confidence.AtLeast(cg.Scoped) {
 				queue = append(queue, e.Target)
 			}
@@ -142,7 +146,7 @@ func (r *RepositoryIndex) UsesOf(symbol string) []cg.Node {
 			continue
 		}
 		visited[id] = true
-		for _, e := range r.Graph.RelationsTo(id, cg.Aliases, cg.References) {
+		for _, e := range r.Graph.RelationsTo(id, cg.Aliases, cgmodel.BindsTo) {
 			if !e.Confidence.AtLeast(cg.Scoped) {
 				continue
 			}
@@ -152,7 +156,7 @@ func (r *RepositoryIndex) UsesOf(symbol string) []cg.Node {
 			}
 			if e.Kind == cg.Aliases {
 				queue = append(queue, n.ID)
-			} else if n.Kind == cg.Reference && n.Location != nil {
+			} else if n.Kind.IsOccurrence() && n.Location != nil {
 				uses[n.ID] = n
 			}
 		}

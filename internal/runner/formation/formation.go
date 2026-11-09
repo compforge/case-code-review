@@ -1,5 +1,5 @@
 // Package formation turns captured changes and caller policy into Units consumed by
-// Unit Review. It delegates splitting/grouping to repocli and owns review Clue
+// Unit Review. It delegates splitting/grouping to repokit and owns review Clue
 // attachment; it does not execute an agent loop.
 package formation
 
@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/compforge/go-stdx/slicesx"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
@@ -26,7 +26,7 @@ type Config struct {
 	// Exclude must be pure: it is also consulted when counting selected files for grouping budgets.
 	Exclude         func(change.Change) bool
 	Changes         []change.Change
-	Diff            repocli.DiffReport
+	Diff            repokit.DiffReport
 	Finders         []unit.ClueFinder
 	CostlyFinders   []unit.ClueFinder
 	Analyzer        *language.Analyzer
@@ -35,7 +35,7 @@ type Config struct {
 	CallChain       bool
 }
 
-// Form delegates repository grouping to repocli before creating review Units.
+// Form delegates repository grouping to repokit before creating review Units.
 // Clues are gathered only after the final scope is known.
 //
 // +spec=`Each edit has one Fragment identity; review Units can share evidenced imports and preserve explicit grouping limits`

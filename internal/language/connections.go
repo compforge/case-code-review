@@ -1,6 +1,9 @@
 package language
 
-import cg "github.com/compforge/codegraph"
+import (
+	cg "github.com/compforge/codegraph"
+	cgmodel "github.com/compforge/codegraph/pkg"
+)
 
 // Connection is a graph-backed grouping candidate. Touched distinguishes an
 // occurrence on changed lines from a declaration's existing dependency.
@@ -63,14 +66,17 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 		}
 	}
 	for _, owner := range owners {
-		for _, e := range g.RelationsFrom(owner.NodeID, cg.Calls, cg.References, cg.Extends, cg.Implements, cg.Aliases, cg.Exports) {
+		for _, e := range g.RelationsFrom(owner.NodeID) {
+			if !e.Kind.IsDependency() && e.Kind != cg.Exports {
+				continue
+			}
 			if e.Confidence.AtLeast(cg.Scoped) {
 				follow(e.Source, e.Target, e.Kind, e.Confidence, false)
 			}
 		}
 	}
 	for _, n := range g.Nodes() {
-		if n.Kind != cg.Reference || n.Location == nil || n.Location.Path != path {
+		if !n.Kind.IsOccurrence() || n.Location == nil || n.Location.Path != path {
 			continue
 		}
 		touched := false
@@ -83,7 +89,7 @@ func (r *RepositoryIndex) Connections(owners []Anchor, path string, spans []Span
 		if !touched {
 			continue
 		}
-		for _, e := range g.RelationsFrom(n.ID, cg.References) {
+		for _, e := range g.RelationsFrom(n.ID, cgmodel.BindsTo) {
 			if e.Confidence.AtLeast(cg.Scoped) {
 				follow(n.ID, e.Target, e.Kind, e.Confidence, true)
 			}

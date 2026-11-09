@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 )
 
 // +case:id=review_material_admission,desc=`Dependencies and fixtures are not Git ignored`,expect=`Explicit CCR exclusions keep them outside graph material budgets`
@@ -43,7 +43,7 @@ func TestReviewGraphSourceEnumeratesOverlayDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	base, err := repocli.OpenGraphSource(ctx, repocli.InputRequest{Repository: root})
+	base, err := repokit.OpenGraphSource(ctx, repokit.InputRequest{Repository: root})
 	if err != nil {
 		t.Fatal(err)
 	}
