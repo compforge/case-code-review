@@ -205,7 +205,8 @@ URL 保留父 View、Unit、Hypothesis、原生 Session、Execution 与调用 ID
 | Session | 一个完整原生 Session | R1 一个 loop 一个 Session；整个 R2 Lane 连续对话共用一个 Session，多次 Execution 分段展示；辅助调用单独标识 |
 
 Session 中点击 model call 直接打开对应 Context View 详情面板，Job 也可从关联调用打开，保留 role、消息与内容块顺序，展开消息正文、tool schemas
-和 call configuration；当前 response 单独展示。关闭详情仍留在原 Job / Session，可展开面板阅读长消息。
+和 call configuration；当前 response 单独展示，并保留 Native identity 中的 Session reference 与 Operation ID。
+Context 由显式 URL 参数打开；关闭详情清除调用选择，刷新后保持关闭，仍留在原 Job / Session，可展开面板阅读长消息。
 Global 的范围是一次 Review，只展示汇总，不重复 Job、Session 或 Operation 明细。它使用 journal 与
 关联索引；共享 Lane 不按 Unit 重复计数，不读取原生正文。
 Token 使用 Review 最终记录的汇总并标明 estimated；没有最终汇总时显示 unknown，调用级覆盖需下钻

@@ -35,7 +35,7 @@ const state = {
   detail(title, content) {
     const aside = $('detail'); aside.hidden = false;
     const toolbar = el('div', null, 'detail-toolbar');
-    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); state.params.delete('context'); history.replaceState(null, '', state.url({})); }));
+    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); state.params.delete('context'); state.params.delete('node'); history.replaceState(null, '', state.url({})); }));
     aside.replaceChildren(toolbar, content);
   },
   isActive(signal) { return !signal.aborted; },
@@ -109,11 +109,6 @@ async function render() {
       const session = await state.session(id);
       if (signal.aborted) return;
       $('content').replaceChildren(); notices($('content'), session.issues);
-      // A selected model call opens its Context View, including existing call deep links.
-      if (session.items.some(item => item.id === state.params.get('node') && item.kind === 'model_call')) {
-        state.params.set('context', '1');
-        history.replaceState(null, '', state.url({}));
-      }
       renderSession($('content'), session, state, signal);
     }
     if (view !== 'global' && state.params.get('context') === '1') await showContext(signal);

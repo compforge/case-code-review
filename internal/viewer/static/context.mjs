@@ -45,13 +45,17 @@ function messageOutline(messages, container) {
   return duplicates.size;
 }
 
+/**
+ * @spec Context retains the selected call's native Session reference and Operation identity
+ * @see {@link component://docs/observability.md}
+ */
 export async function renderContext(parent, page, state, signal) {
   parent.append(el('div', 'CONTEXT VIEW', 'eyebrow'), el('h2', 'What the model actually received'), el('p', 'Ordered request messages and tool schemas. Response is separate from historical assistant messages. Sizes below are serialized UTF-8 bytes, not billed tokens.', 'muted'));
   const calls = page.items.filter(i => i.kind === 'model_call');
   if (!calls.length) { parent.append(el('p', 'No model calls recorded in this Session.', 'empty')); return; }
   const selected = calls.find(i => i.id === state.params.get('node'));
   if (!selected) { parent.append(el('p', 'Selected model call is not present in this Session. Choose a recorded model call from Session View.', 'notice')); return; }
-  parent.append(el('code', page.session.id), link('Locate call in Session →', { view: 'session', session: page.session.id, node: selected.id }, state));
+  parent.append(el('code', page.session.id), link('Locate call in Session →', { view: 'session', session: page.session.id, node: selected.id }, state), details('Native identity', { session: page.session.id, ref: selected.ref, operation: selected.operation_id }));
   const loading = el('p', 'Loading this request…', 'loading'); parent.append(loading);
   const current = await state.call(page.session.id, selected.id);
   if (signal.aborted) return; loading.remove(); notices(parent, current.issues);
