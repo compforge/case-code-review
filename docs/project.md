@@ -9,7 +9,7 @@ Project Knowledge 解释一份代码在当前项目里扮演什么角色，以�
 
 ```text
 Repository
-  ├─ Component（repocli 提供的工程边界）
+  ├─ Component（RepoKit 提供的工程边界）
   │    └─ File ─▶ FileRole[]
   │                 ├─ source / test
   │                 ├─ entrypoint / handler
@@ -21,7 +21,7 @@ Repository
 | 对象 | 语义 |
 |---|---|
 | `Repository` | 本次被评审的 Git snapshot，也是解析 Component 的入口 |
-| `Component` | repocli 从被评审快照识别的工程操作边界 |
+| `Component` | RepoKit 从被评审快照识别的工程操作边界 |
 | `FileRole` | 文件在所属 Component 中可组合的稳定职责 |
 | Authored Biz Knowledge | 作者声明的业务契约、场景、关系和说明，通过 Language 绑定到代码身份 |
 | Project Clue | Project 事实面向一个 Unit 的上下文投影，不是独立事实源 |
@@ -46,7 +46,7 @@ FileRole 不是互斥枚举，也不表示证据强度。`main.go` 可以是 `so
 | Go | `go.mod` | `.go` | `*_test.go` 为 test；CodeGraph 标记的 Go `main` / `init` 声明所在文件为 entrypoint；`go.sum` 为 lock；Component 根 `VERSION` 为 version |
 | TypeScript | `package.json` | `.ts/.tsx/.js/.jsx/.mjs/.cjs` | `*.test.*` / `*.spec.*` 为 test；`main.*` 为 entrypoint；`tsconfig*.json` 为 manifest；常见包管理器 lockfile 为 lock |
 
-Component 采用 repocli 的工程粒度：native manifest 和 Makefile 发现组件边界，文件归属最具体的嵌套组件；
+Component 采用 RepoKit 的工程粒度：native manifest 和 Makefile 发现组件边界，文件归属最具体的嵌套组件；
 CCR 不合并这些边界或把父组件的变化清单自动投影给子组件。同目录多语言 manifest 共享一个工程身份，
 Component 主要语言是元数据，文件角色按文件自身判断。未知文件可有明确归属，同时保留 unknown 角色。
 `CodeGraph.LockfileTag` 提供通用锁文件分类，CCR 不另维护锁文件名称列表。
@@ -74,13 +74,13 @@ Change ─▶ Component / FileRole
   Review，应由 formation / review policy 决定；
 - 用户显式 include 可以提升文件为 target；未被 Component 认领的文件继续使用全局扩展名与路径规则。
 
-CCR 组合 CodeGraph 内置规则与自身的 `review_data` 扩展，通过 `DiffRequest.TagRules` 交给 repocli；
-repocli 在捕获 Change 时保存 Tags。CodeGraph 维护通用材料分类，CCR 的 `material` 包统一提供 Diff、Scan 和源码图的规则集；CCR 单独选择评审范围。
+CCR 组合 CodeGraph 内置规则与自身的 `review_data` 扩展，通过 `DiffRequest.TagRules` 交给 RepoKit；
+RepoKit 在捕获 Change 时保存 Tags。CodeGraph 维护通用材料分类，CCR 的 `material` 包统一提供 Diff、Scan 和源码图的规则集；CCR 单独选择评审范围。
 CCR 默认不为 generated、test_fixture、dependency、build_output、cache、minified、review_data、tooling
 材料启动独立评审。测试源码保留 `test` 标签且默认可评审；`test_fixture` 仍默认排除。
 分析准入与评审选择独立：显式 include 不移除标签，也不自动把材料加入源码图或赋予解析能力。
 CCR 将选择策略通过
-`repocli.UnitOptions.Exclude` 传入，repocli 在 Change 进入 Fragment / Unit 之前执行排除；
+`repokit.UnitOptions.Exclude` 传入，RepoKit 在 Change 进入 Fragment / Unit 之前执行排除；
 原始 Diff 保留用于上下文，排除文件不生成 Fragment 或 Unit。Scan 使用同一套
 TagMatcher 分类规则和 CCR 排除策略。manifest 标签本身不排除文件，普通 manifest/lock 仍按 Component
 提供上下文；位于依赖或构建产物目录中的 manifest/lock 则受对应类别的排除策略约束。
@@ -105,7 +105,7 @@ DiffMap。用户显式 include/exclude 保留
 
 ### 2.3 用 Language 事实绑定和丰富项目语义
 
-源码事实、仓库角色和评审策略分别归属不同组件：CodeGraph 提供 decorator、call、symbol、span 和语言入口，repocli
+源码事实、仓库角色和评审策略分别归属不同组件：CodeGraph 提供 decorator、call、symbol、span 和语言入口，RepoKit
 据此提供仓库角色，CCR 解释角色对 Review 的意义。例如 Python 中已关联声明的 `app.get` 等 route
 decorator 可提供 `handler` 提示，`main.py` 中名为 `FastAPI` 的调用可提供 entrypoint 提示。
 这些是名称与结构约定，不证明实际绑定到某个框架；`routers/`、`routes.py`、`handlers/` 等路径名本身不提供 handler 提示。
@@ -128,7 +128,7 @@ Unit 负责当前行为范围，prompt 排版仍由各 Review 阶段决定。
 
 ### 3.2 工程 Component 是项目上下文边界
 
-Repository 可以包含多个语言和多个 Component。项目上下文按 repocli 的工程归属，只在明确 Component
+Repository 可以包含多个语言和多个 Component。项目上下文按 RepoKit 的工程归属，只在明确 Component
 内传播；Repository 级 README、docs 或规则未来可以作为 Repository Knowledge，但不能借“同仓”默认
 注入所有 Unit。
 
@@ -139,7 +139,7 @@ Repository 可以包含多个语言和多个 Component。项目上下文按 repo
 
 ### 3.4 工程发现与角色投影分别扩展
 
-新语言的工程发现与通用角色进入 repocli；语言声明和入口语义进入 CodeGraph；CCR 只补充角色到 Review 的投影。
+新语言的工程发现与通用角色进入 RepoKit；语言声明和入口语义进入 CodeGraph；CCR 只补充角色到 Review 的投影。
 跨仓测试覆盖 nested component、polyglot、unknown、role composition 及历史快照，Language 继续消费 CodeGraph 的解析结果。
 
 ## References

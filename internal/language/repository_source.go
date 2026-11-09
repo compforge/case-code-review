@@ -6,16 +6,16 @@ import (
 	"io/fs"
 	"sort"
 
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 )
 
 // reviewGraphSource overlays captured diff bytes when no shared Snapshot was
-// supplied. Material enumeration and reading remain repocli capabilities.
+// supplied. Material enumeration and reading remain repokit capabilities.
 type reviewGraphSource struct {
-	repocli.GraphSource
+	repokit.GraphSource
 	documents map[string]string
 	id        string
-	overlay   *repocli.SourceTree
+	overlay   *repokit.SourceTree
 }
 
 func (s reviewGraphSource) SnapshotID() string {
@@ -25,30 +25,30 @@ func (s reviewGraphSource) SnapshotID() string {
 	return s.GraphSource.SnapshotID()
 }
 
-func newReviewGraphSource(source repocli.GraphSource, documents map[string]string) (reviewGraphSource, error) {
-	files := make([]repocli.SourceFile, 0, len(documents))
+func newReviewGraphSource(source repokit.GraphSource, documents map[string]string) (reviewGraphSource, error) {
+	files := make([]repokit.SourceFile, 0, len(documents))
 	for name, data := range documents {
-		files = append(files, repocli.SourceFile{Path: name, Size: int64(len(data))})
+		files = append(files, repokit.SourceFile{Path: name, Size: int64(len(data))})
 	}
-	tree, err := repocli.NewSourceTree(files)
+	tree, err := repokit.NewSourceTree(files)
 	return reviewGraphSource{GraphSource: source, documents: documents, overlay: tree}, err
 }
 
-func (s reviewGraphSource) ReadDirectory(ctx context.Context, name string) (repocli.SourceDirectory, error) {
+func (s reviewGraphSource) ReadDirectory(ctx context.Context, name string) (repokit.SourceDirectory, error) {
 	base, err := s.GraphSource.ReadDirectory(ctx, name)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return repocli.SourceDirectory{}, err
+		return repokit.SourceDirectory{}, err
 	}
 	overlay, overlayErr := s.overlay.ReadDirectory(ctx, name)
 	if overlayErr != nil && !errors.Is(overlayErr, fs.ErrNotExist) {
-		return repocli.SourceDirectory{}, overlayErr
+		return repokit.SourceDirectory{}, overlayErr
 	}
 	if err != nil && overlayErr != nil {
-		return repocli.SourceDirectory{}, err
+		return repokit.SourceDirectory{}, err
 	}
 	dirs := map[string]bool{}
-	files := map[string]repocli.SourceFile{}
-	for _, d := range []repocli.SourceDirectory{base, overlay} {
+	files := map[string]repokit.SourceFile{}
+	for _, d := range []repokit.SourceDirectory{base, overlay} {
 		for _, child := range d.Directories {
 			dirs[child] = true
 		}
@@ -56,7 +56,7 @@ func (s reviewGraphSource) ReadDirectory(ctx context.Context, name string) (repo
 			files[file.Path] = file
 		}
 	}
-	var out repocli.SourceDirectory
+	var out repokit.SourceDirectory
 	for child := range dirs {
 		out.Directories = append(out.Directories, child)
 	}

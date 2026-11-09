@@ -3,12 +3,12 @@
 ## 1. 理念 / 概念
 
 CCR 的 Unit 是一次 run 的评审聚合根，围绕一组相关变更保存 Clue、实际读取的事实和各阶段结果。
-通用的 Change / Fragment / Unit 定义、关系强度及聚合规则由 repocli 维护，见
-[Fragment 与 Unit](https://github.com/compforge/repocli/blob/main/docs/units.md)。
+通用的 Change / Fragment / Unit 定义、关系强度及聚合规则由 RepoKit 维护，见
+[Fragment 与 Unit](https://github.com/compforge/repokit/blob/main/docs/units.md)。
 
-repocli 负责 `Diff → Fragment → Unit`，提供面向任意调用方的仓库事实与组合方法。
-CCR 先捕获 `Diff`，再向 `FormUnits` 的 `Exclude` 传入评审选择策略；repocli 在生成 Fragment / Unit 前排除对应 Change，图、契约和源码工具共用捕获版本。
-`RepoUnit` 是 `repocli.Unit` 的别名，评审 Unit 组合它与 Clue、预算和运行状态。
+RepoKit 负责 `Diff → Fragment → Unit`，提供面向任意调用方的仓库事实与组合方法。
+CCR 先捕获 `Diff`，再向 `FormUnits` 的 `Exclude` 传入评审选择策略；RepoKit 在生成 Fragment / Unit 前排除对应 Change，图、契约和源码工具共用捕获版本。
+`RepoUnit` 是 `repokit.Unit` 的别名，评审 Unit 组合它与 Clue、预算和运行状态。
 CodeGraph 提供组装时使用的代码关系与 namespace 证据。
 CCR 负责选择评审目标、提供 token 预算、将仓库 Unit 适配为评审 Unit，并在范围确定后加载上下文。
 共享 import 可以出现在多个评审 Unit 中，目标编辑在唯一 Fragment 目录中校验覆盖。
@@ -48,7 +48,7 @@ Project 分类完成后才进入 formation；Clue 在 Unit scope 最终确定后
 
 ### 2.2 接入仓库 Unit
 
-Formation 调用 repocli 的拆分与组装能力，复用当前 run 的前后版本图。库定义 Fragment 类型和
+Formation 调用 RepoKit 的拆分与组装能力，复用当前 run 的前后版本图。库定义 Fragment 类型和
 合并策略；Language 为这些源码范围关联 CCR 的图身份，供契约与邻域查询使用。
 
 CCR 提供 diff token 计量和合并预算，保留分阶段数量、namespace 证明、预算边界与解析缺口。
@@ -59,7 +59,7 @@ CCR 默认以进入 formation 的不同文件数作为数量软上限；`--max-u
 Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态仍由 CCR 管理。
 
 聚合完成后，CCR 跳过前后两侧 element counts 满足 `import count == total count` 的 Unit，包含空 counts；
-混有代码、unknown 或 whitespace 的 Unit 保留。repocli 的完整编辑覆盖不变，过滤数量记录在
+混有代码、unknown 或 whitespace 的 Unit 保留。RepoKit 的完整编辑覆盖不变，过滤数量记录在
 `skip_import_only` 步骤中，最终 Unit 数与超限标记以实际评审范围为准。
 
 > 警告：import-only 跳过是评审范围取舍，不代表行为不变。副作用导入、初始化注册以及依赖替换
@@ -128,7 +128,7 @@ ContextItems 和消息 token 估算；估算不包含工具 schema，也不是 p
 ### 3.1 稳定身份连接 diff、源码和契约
 
 路径和短函数名不足以跨文件、重命名和依赖建立关系。语言层提供稳定 `symbol-id`；作者声明的
-契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 的目标身份复用 repocli 的版本、源码范围与补丁身份，成员顺序不改变 Unit 身份。
+契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 的目标身份复用 RepoKit 的版本、源码范围与补丁身份，成员顺序不改变 Unit 身份。
 Clue 和历史反馈使用各自支持的身份连接，Forge 只剩文件锚点时
 才退化到 path。
 
@@ -179,7 +179,7 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 
 ## References
 
-- [repocli Fragment 与 Unit](https://github.com/compforge/repocli/blob/main/docs/units.md) — 通用变更模型、关系优先级与分阶段聚合
+- [RepoKit Fragment 与 Unit](https://github.com/compforge/repokit/blob/main/docs/units.md) — 通用变更模型、关系优先级与分阶段聚合
 
 - [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
 - [`project.md`](project.md) — Repository、Component、FileRole 与项目事实投影

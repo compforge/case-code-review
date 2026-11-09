@@ -4,12 +4,12 @@ import (
 	"sort"
 
 	cg "github.com/compforge/codegraph"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/language"
 )
 
-// FragmentID reuses repocli's identity; review context cannot change a target ID.
-func FragmentID(f Fragment) string { return repocli.FragmentID(f.RepositoryFragment()) }
+// FragmentID reuses repokit's identity; review context cannot change a target ID.
+func FragmentID(f Fragment) string { return repokit.FragmentID(f.RepositoryFragment()) }
 
 // NewRelatedUnit gives graph-grouped and file-coalesced Units collision-resistant
 // identities. Fragments keep their exact diffs; scope only describes the view.

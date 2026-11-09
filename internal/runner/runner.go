@@ -16,7 +16,7 @@ import (
 
 	"github.com/compforge/agentgo"
 	"github.com/compforge/go-stdx/slicesx"
-	repocli "github.com/compforge/repocli/toolkit/go"
+	repokit "github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/recording/operation"
 
 	"github.com/qiankunli/case-code-review/internal/config/rules"
@@ -105,7 +105,7 @@ type Args struct {
 	MaxConcurrency int
 	// MaxUnits tightens the selected-file count ceiling when positive; it never stops semantic merges.
 	MaxUnits int
-	// MaxFiles bounds repocli snapshot capture; zero uses its default.
+	// MaxFiles bounds repokit snapshot capture; zero uses its default.
 	MaxFiles         int
 	MaxSnapshotBytes int64
 
@@ -177,7 +177,7 @@ type Runner struct {
 	executor         *unitreview.Executor
 	// Splitting locates graph-owned edits; Formation groups them before any
 	// context lookup. Both finder sets run with their own per-Unit limits.
-	repositoryDiff repocli.DiffReport
+	repositoryDiff repokit.DiffReport
 	afterSource    *sourceview.Snapshot
 	beforeSource   *sourceview.Snapshot
 	finders        []unit.ClueFinder

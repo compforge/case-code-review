@@ -10,7 +10,7 @@ const (
 	JavaScript Kind = "javascript"
 )
 
-// Component projects one repocli engineering boundary inside a Repository.
+// Component projects one repokit engineering boundary inside a Repository.
 // Root is a slash-separated repository-relative directory; "." is the repo root.
 type Component struct {
 	Root string

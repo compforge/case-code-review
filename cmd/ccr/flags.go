@@ -161,8 +161,8 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringSliceVar(&opts.features, "feature", "toggle a feature gate: name=on|off (repeatable); run 'ccr review --help' for the list")
 	a.IntVar(&opts.maxTokensBudget, "max-tokens-budget", 0, "soft limit on reported input+output tokens across the run; stops new model calls (0 = unlimited)")
 	a.IntVar(&opts.maxCompletionTokens, "max-completion-tokens", 0, "single model response token cap (0 = template default)")
-	a.Int64Var(&opts.maxSnapshotBytes, "max-snapshot-bytes", 0, "snapshot source byte budget (0 = repocli default)")
-	a.IntVar(&opts.maxFiles, "max-files", 0, "snapshot file count budget (0 = repocli default)")
+	a.Int64Var(&opts.maxSnapshotBytes, "max-snapshot-bytes", 0, "snapshot source byte budget (0 = repokit default)")
+	a.IntVar(&opts.maxFiles, "max-files", 0, "snapshot file count budget (0 = repokit default)")
 	a.IntVar(&opts.maxUnits, "max-units", 0, "soft Unit count ceiling = min(selected-file count, value); 0 uses file count; best effort")
 	a.IntVar(&opts.concurrency, "concurrency", 8, "max concurrent file reviews")
 	a.IntVar(&opts.perFileTimeout, "timeout", 10, "per-Unit R1/R2/R3 total timeout in minutes, including queueing and wrap-up (0 = unlimited)")
@@ -297,7 +297,7 @@ Flags:
   --feature name=on|off   toggle a feature gate (repeatable); also config features:{} / CCR_FEATURES env
   --max-units int         soft Unit count ceiling = min(selected-file count, positive value); 0 uses file count
   --max-completion-tokens int  single model response cap (default 16384)
-  --max-files int         snapshot file count budget (0 = repocli default)
+  --max-files int         snapshot file count budget (0 = repokit default)
   --max-snapshot-bytes int snapshot source byte budget (0 = 128 MiB)
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)

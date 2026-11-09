@@ -156,3 +156,19 @@ func TestIsLikelySymbolName(t *testing.T) {
 		}
 	}
 }
+
+// +case:id=rank_semantic_reads,desc=`A cross-file value read has no call edge`,expect=`The referenced definition still enters the repository map ranking`
+// +link=component://docs/language.md
+func TestRankIncludesNonCallDependencies(t *testing.T) {
+	root := newRepo(t, map[string]string{
+		"model.go": "package p\nvar Shared = 1\n",
+		"use.go":   "package p\nfunc Use() int { return Shared }\n",
+	})
+	ranked := Rank(Scan(language.NewAnalyzer(root)), []string{"use.go"}, nil)
+	for _, symbol := range ranked {
+		if symbol.Def.SymbolID == "model.go::Shared" {
+			return
+		}
+	}
+	t.Fatalf("read dependency did not rank Shared: %+v", ranked)
+}

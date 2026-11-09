@@ -2,7 +2,7 @@ package runner
 
 import (
 	"context"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/sourceview"
 	"os"
 	"os/exec"
@@ -317,7 +317,7 @@ func prepareSelectionFixture(t *testing.T, a *Runner) {
 	if _, err := os.Stat(filepath.Join(a.args.RepoDir, ".git")); os.IsNotExist(err) {
 		runSelectionGit(t, a.args.RepoDir, "init", "-q")
 	}
-	d, err := repocli.Diff(context.Background(), repocli.DiffRequest{Repository: a.args.RepoDir, EmptyBase: true, Head: a.args.Commit})
+	d, err := repokit.Diff(context.Background(), repokit.DiffRequest{Repository: a.args.RepoDir, EmptyBase: true, Head: a.args.Commit})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func prepareSelectionFixture(t *testing.T, a *Runner) {
 	}
 }
 
-// +case:id=engineering_component_context,desc=`Nested manifests establish repocli ownership`,expect=`Review context follows engineering roots while file roles retain their own language semantics`
+// +case:id=engineering_component_context,desc=`Nested manifests establish repokit ownership`,expect=`Review context follows engineering roots while file roles retain their own language semantics`
 func TestProjectContextUsesEngineeringComponent(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"server/pyproject.toml", "server/web/package.json", "server/web/main.ts", "other/go.mod", "other/main.go"} {
@@ -371,7 +371,7 @@ func TestDeletedComponentUsesCapturedBaseLayout(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "old")); err != nil {
 		t.Fatal(err)
 	}
-	d, err := repocli.Diff(context.Background(), repocli.DiffRequest{Repository: root})
+	d, err := repokit.Diff(context.Background(), repokit.DiffRequest{Repository: root})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,8 +3,6 @@ package sourcecontext
 import (
 	"math"
 	"sort"
-
-	cg "github.com/compforge/codegraph"
 )
 
 // Ranking = the aider repo-map kernel, reshaped for review: build a
@@ -35,6 +33,8 @@ type edge struct {
 // drop out of the personalization vector; if none survive, PageRank falls
 // back to uniform teleport — a deliberately silent degradation: the map is
 // then merely less focused, never wrong.
+// +spec=`Ranking consumes semantic dependencies without counting occurrence bindings as additional edges`
+// +link=component://docs/language.md
 func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 	if ex == nil || len(ex.Defs) == 0 {
 		return nil
@@ -63,11 +63,11 @@ func Rank(ex *Extraction, seedFiles, seedIdents []string) []RankedSymbol {
 	// Ranking may use weaker graph candidates; only CodeGraph resolves endpoints.
 	counts := map[edge]int{}
 	for _, relation := range ex.Graph.Relations() {
-		if relation.Kind != cg.References && relation.Kind != cg.Calls {
+		if !relation.Kind.IsDependency() {
 			continue
 		}
 		source, ok := ex.Graph.Node(relation.Source)
-		if !ok || source.Kind == cg.Reference {
+		if !ok || source.Kind.IsOccurrence() {
 			continue
 		}
 		target, ok := ex.Graph.Node(relation.Target)

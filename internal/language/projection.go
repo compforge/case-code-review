@@ -4,7 +4,8 @@ import (
 	"strings"
 
 	cg "github.com/compforge/codegraph"
-	"github.com/compforge/repocli/toolkit/go"
+	cgmodel "github.com/compforge/codegraph/pkg"
+	"github.com/compforge/repokit/toolkit/go"
 )
 
 // projectAnalysis preserves CCR's symbol join keys and review presentation;
@@ -12,7 +13,7 @@ import (
 func projectAnalysis(source Source, graph *cg.Graph) Analysis {
 	path := documentPath(source.Path)
 	doc, _ := graph.Node(cg.DocumentID(path))
-	a := Analysis{Language: Language(doc.Language), Quality: QualitySyntax, FileRoles: repocli.SourceRoles(path, graph)}
+	a := Analysis{Language: Language(doc.Language), Quality: QualitySyntax, FileRoles: repokit.SourceRoles(path, graph)}
 	if len(graph.Report().Diagnostics) > 0 {
 		a.Quality = QualityPartial
 	}
@@ -40,7 +41,7 @@ func projectAnalysis(source Source, graph *cg.Graph) Analysis {
 				imp.Path = imp.From + "." + b.ImportedName
 			}
 			a.Imports = append(a.Imports, imp)
-		case cg.Reference:
+		case cgmodel.CallSite, cgmodel.TypeUse, cgmodel.DecoratorUse:
 			switch node.ReferenceKind {
 			case cg.DecoratorReference:
 				if len(graph.RelationsFrom(node.ID, cg.Decorates)) > 0 {
@@ -110,7 +111,7 @@ func locationSpan(loc cg.Location) Span {
 
 // ReviewSymbolID translates a graph declaration to the contract/Unit join key.
 func ReviewSymbolID(node cg.Node) string {
-	if node.Location == nil || node.QualifiedName == "" || node.Kind == cg.Reference || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentNodeKind {
+	if node.Location == nil || node.QualifiedName == "" || node.Kind.IsOccurrence() || node.Kind == cg.Import || node.Kind == cg.Export || node.Kind == cg.DocumentNodeKind {
 		return ""
 	}
 	return SymbolID(node.Location.Path, "", node.QualifiedName)

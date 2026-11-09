@@ -9,7 +9,7 @@ import (
 	"time"
 
 	cg "github.com/compforge/codegraph"
-	"github.com/compforge/repocli/toolkit/go"
+	"github.com/compforge/repokit/toolkit/go"
 	"github.com/qiankunli/case-code-review/internal/material"
 )
 
@@ -60,12 +60,12 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var source repocli.GraphSource
+	var source repokit.GraphSource
 	var err error
 	if a.snapshot != nil {
 		source = a.snapshot
 	} else {
-		source, err = repocli.OpenGraphSource(ctx, repocli.InputRequest{Repository: a.repoDir, Head: a.ref})
+		source, err = repokit.OpenGraphSource(ctx, repokit.InputRequest{Repository: a.repoDir, Head: a.ref})
 		if err == nil {
 			var view reviewGraphSource
 			view, err = newReviewGraphSource(source, a.documents)
@@ -83,7 +83,7 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 	for name := range a.documents {
 		priority = append(priority, name)
 	}
-	result, err := repocli.GraphFromSource(ctx, source, repocli.GraphOptions{
+	result, err := repokit.GraphFromSource(ctx, source, repokit.GraphOptions{
 		RetryOnBudget: true,
 		CodeGraph: cg.Options{
 			TagRules:         material.TagRules(),
@@ -98,7 +98,7 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		},
 		Prioritize: priority,
 		Select: func(name string, tags []cg.Tag) bool {
-			if !repocli.IsSourceMaterial(name) {
+			if !repokit.IsSourceMaterial(name) {
 				return false
 			}
 			if slices.Contains(tags, cg.ManifestTag) {
@@ -125,7 +125,7 @@ func (a *Analyzer) scanRepository() *RepositoryIndex {
 		// Project the publication once. Repository ranking does not need to construct
 		// a per-file outline or repeatedly scan the full graph's adjacency.
 		for _, node := range out.Graph.Nodes() {
-			if node.Location == nil || slices.Contains(repocli.SourceRoles(node.Location.Path, nil), "test") {
+			if node.Location == nil || slices.Contains(repokit.SourceRoles(node.Location.Path, nil), "test") {
 				continue
 			}
 			path := node.Location.Path

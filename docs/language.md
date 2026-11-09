@@ -27,16 +27,18 @@ review snapshot ─▶ Document ─▶ CodeGraph
 ### 单文件与仓库共用解析产物
 
 Analyzer 把明确的路径和内容交给 CodeGraph Extractor，并发布图后再生成评审视图。Facts 只在提取和
-构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。单文件导航与仓库图共享有界
+构图入口传递，消费侧以 Node + Relation 为唯一代码事实来源。源码使用按具体 occurrence kind 识别，
+通过 `binds_to` 与 `aliases` 导航到目标；`calls / reads / writes / uses_type / captures / uses_resource`
+等声明依赖用于相关性排序。发生点不成为独立评审目标，也不重复计入声明依赖。单文件导航与仓库图共享有界
 ExtractionCache，缓存按路径与内容区分版本。声明、导入、使用角色和文档均从图投影。
 
-RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 repocli 的
+RepositoryIndex 在一次 review 中延迟构建并共享。CCR 将同一只读快照和评审优先级交给 RepoKit 的
 `GraphFromSource`，由它枚举和选择材料、应用该快照的 ignore 规则并构图。`go.mod` 作为 Document
 交给 CodeGraph 提取模块身份，CCR 不再单独解析 module path 或扫描文件系统。测试源码可以提供 caller/usage 证据，但不进入 repo map
 的定义候选集；过大的文件不参与分析。
 
-仓库构图通过 repocli 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
-工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repocli 执行。
+仓库构图通过 RepoKit 的按目录 `GraphSource` 接口读取材料。捕获视图使用内存 `SourceTree`，
+工作目录及变更 overlay 按直接子项提供路径；目录准入与 Git ignore 在进入子目录前由 repokit 执行。
 CCR 显式排除 dependency、test_fixture、generated、tooling、cache 和 build_output 标签，
 并用 review 支持的格式选择 Document；`IsSourceMaterial` 只作为格式识别，不承担排除策略。
 
@@ -50,7 +52,7 @@ Git provider 固定比较基线与目标 commit，捕获改动文件的前后内
 读取、解析与构图受文件数、字节数和时间预算限制。CodeGraph 的 BuildReport 保留分析诊断，CCR
 另记录输入加载缺口。Session 的 `codegraph` / `codegraph_before` artifact 保存构建耗时、规模、诊断计数与有界样本，图不可用或局部覆盖
 不足时仍继续评审已有源码，不能把空关系解释成“没有调用者”。源码量相同也可能产生不同的图密度；
-CCR 显式开启 repocli 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
+CCR 显式开启 RepoKit 的 `RetryOnBudget`：构图触发节点或关系预算时，按既定优先级缩小输入并在原时限内重试，记录被省略的文档数量。严格消费者仍保留预算失败。
 
 ### 评审身份与源码范围
 
