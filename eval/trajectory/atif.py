@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -314,6 +315,8 @@ class CCRToolUsageMeasurer:
                 "neutral",
                 ("sum",),
             ),
+            MeasurementSpec("tool_duration_ms", "ms", "Cumulative recorded tool execution duration.", "lower_is_better", ("sum", "mean")),
+            MeasurementSpec("duration_reported_call_count", "count", "Tool executions with recorded duration.", "neutral", ("sum",)),
             MeasurementSpec(
                 "tool_failure_ratio",
                 "ratio",
@@ -344,6 +347,15 @@ class CCRToolUsageMeasurer:
                 for result in call.results
             ),
         }
+        durations = [
+            duration for call in calls if len(call.results) == 1
+            for duration in [(call.results[0].extra or {}).get("duration_ms")]
+            if isinstance(duration, (int, float)) and not isinstance(duration, bool)
+            and math.isfinite(duration) and duration >= 0
+        ]
+        values["duration_reported_call_count"] = len(durations)
+        if durations:
+            values["tool_duration_ms"] = sum(durations)
         if known:
             values["tool_failure_ratio"] = round(failed / len(known), 6)
         return MeasurementResult(

@@ -64,7 +64,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pyyaml", specifier = ">=6.0,<7.0" },
-    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" },
+    { name = "quality-harness", git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=5369b6b0051306c2e3fe84af8a4a6e95deaa891e" },
     { name = "spec-case", extras = ["model"], git = "https://github.com/compforge/spec-case?subdirectory=toolchains%2Fpython" },
 ]
 
@@ -103,13 +103,13 @@ wheels = [
 
 [[package]]
 name = "harness-common"
-version = "0.6.2"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
+version = "0.6.4"
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Fcommon&rev=5369b6b0051306c2e3fe84af8a4a6e95deaa891e#5369b6b0051306c2e3fe84af8a4a6e95deaa891e" }
 
 [[package]]
 name = "harness-toolbox"
 version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython%2Ftoolbox&rev=5369b6b0051306c2e3fe84af8a4a6e95deaa891e#5369b6b0051306c2e3fe84af8a4a6e95deaa891e" }
 dependencies = [
     { name = "harness-common" },
 ]
@@ -425,8 +425,8 @@ wheels = [
 
 [[package]]
 name = "quality-harness"
-version = "0.6.0"
-source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=02654e1b868d9429cbe04dd1cb7a8fe12cdc208c#02654e1b868d9429cbe04dd1cb7a8fe12cdc208c" }
+version = "0.6.1"
+source = { git = "https://github.com/compforge/quality-harness?subdirectory=sdks%2Fpython&rev=5369b6b0051306c2e3fe84af8a4a6e95deaa891e#5369b6b0051306c2e3fe84af8a4a6e95deaa891e" }
 dependencies = [
     { name = "agent-ledger" },
     { name = "atif" },

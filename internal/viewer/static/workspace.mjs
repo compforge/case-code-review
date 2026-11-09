@@ -54,7 +54,19 @@ async function render() {
   $('detail').classList.remove('expanded');
   try {
     if (view === 'global') {
-      renderGlobal($('content'), review);
+      $('content').append(el('p', 'Reading observed Session totals…', 'loading'));
+      const pages = [];
+      const sessions = [...new Map((review.Sessions || []).map(session => [session.id, session])).values()];
+      for (let i = 0; i < sessions.length; i += 4) {
+        pages.push(...await Promise.all(sessions.slice(i, i + 4).map(async session => {
+          try { return await state.session(session.id); }
+          catch (error) { if (signal.aborted) throw error; return { session, items: [], issues: [error.message] }; }
+        })));
+      }
+      const measurements = await state.get('measurements');
+      if (signal.aborted) return;
+      $('content').replaceChildren();
+      renderGlobal($('content'), review, pages, measurements);
     } else if (view === 'job') {
       const jobs = review.Jobs || [];
       $('navigation').append(el('h3', `Unit Jobs · ${jobs.length}`));
@@ -109,6 +121,8 @@ async function render() {
       const session = await state.session(id);
       if (signal.aborted) return;
       $('content').replaceChildren(); notices($('content'), session.issues);
+      session.measurements = await state.get('measurements');
+      if (signal.aborted) return;
       renderSession($('content'), session, state, signal);
     }
     if (view !== 'global' && state.params.get('context') === '1') await showContext(signal);
