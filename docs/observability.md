@@ -348,3 +348,29 @@ come from the manifest; before finalization they remain pending. Job summaries n
 call bodies. Session View reads the selected continuous Session, while Context loads one actual
 request and optionally its predecessor. Missing call evidence remains visible without blocking
 business navigation.
+
+### Viewer 的基本统计与 Measurements
+
+Global 与 Session 使用同一个原生调用统计函数，直接累计已记录的 model/tool call、
+input/output/cache token 和两类调用耗时；Global 按原生 Session ID 去重，共享 Lane 只计一次。
+Usage 和耗时分别显示已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
+Review 尚未 finalization 时也可读取这些已观察到的数据。
+
+Measurements 使用 quality-harness 的目录及 Session / Global 投影，计算在显式命令中执行：
+
+```sh
+make build
+uv run --project eval python -m eval.trajectory.measurement_views /path/to/review.jsonl --ccr ./dist/ccr
+```
+
+命令只执行已启用的 deterministic Measurer，复用 CCR 的 ATIF 导出与适配器，生成相邻的
+`review.measurements.json`。每个原生 Session 是一个 Trajectory；Global 只呈现聚合值。
+新增或扩展 Measurer 只需在 `CCRTrajectoryAnalysisRunner` 中启用并重新生成快照，Viewer 按目录
+渲染，不维护 measurement 白名单。Session 的证据引用保留在结果中。
+
+快照绑定 Review journal 及其 `.sessions/*.jsonl` 内容摘要；生成期间发生变化则保留原快照并报错。
+Viewer 只读快照，缺失、过期或损坏分别提示，打开或刷新页面不触发测量或模型调用。
+运行中的 Review 可随时查看基本统计，measurement 快照应在记录稳定后生成。
+
+Python 依赖按 Git SHA 固定，由 `uv sync --project eval` 安装，无需先发布 PyPI。
+Go Viewer 的代码更新需要重新构建 CLI；面向其他用户分发时再走 CCR 的发布流程。

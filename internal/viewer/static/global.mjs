@@ -1,3 +1,4 @@
+import { callStatistics, renderCallStatistics, renderMeasurements } from './measurements.mjs';
 import { el, badge, duration, number, field } from './ui.mjs';
 
 /**
@@ -26,7 +27,7 @@ function metric(parent, title, value, note) {
   parent.append(card);
 }
 
-export function renderGlobal(parent, review) {
+export function renderGlobal(parent, review, pages = [], measurements) {
   const overview = reviewOverview(review);
   const summary = review.Summary;
   parent.append(el('div', 'GLOBAL VIEW', 'eyebrow'), el('h2', 'Review overview'), el('p', 'One Review across all Unit Jobs and native Sessions.', 'muted'));
@@ -43,13 +44,6 @@ export function renderGlobal(parent, review) {
   field(parent, 'Review error', summary.Completion?.error);
   parent.append(el('p', 'Completion and Finding counts describe execution and delivery. They do not measure review accuracy or prove publication to the Forge.', 'muted'));
 
-  const usage = summary.Tokens;
-  parent.append(el('h3', 'Token usage'));
-  const costs = el('div', null, 'metric-grid');
-  metric(costs, 'Input tokens', number(usage?.prompt_tokens), 'Includes cache read and cache write');
-  metric(costs, 'Output tokens', number(usage?.completion_tokens), 'Recorded Review total');
-  metric(costs, 'Cache read', number(usage ? (usage.cache_read_tokens ?? 0) : null), 'Subset of input tokens');
-  metric(costs, 'Cache write', number(usage ? (usage.cache_write_tokens ?? 0) : null), 'Subset of input tokens');
-  parent.append(costs, el('p', usage ? `${usage.estimated ? 'Includes estimated usage.' : 'Recorded usage.'} Totals come from Review finalization; per-call coverage is not recorded here. Inspect a Session for call-level gaps.` : 'Review usage was not recorded. Inspect available Sessions for observed call usage.', 'muted'));
-
+  renderCallStatistics(parent, callStatistics(pages));
+  renderMeasurements(parent, measurements);
 }

@@ -334,3 +334,13 @@ LLMToolResult：Tool、ToolCallID、Arguments、Content）和 `ratio`（两种�
 它不调用模型，不证明实际 token 成本、评审质量或超时率改善；后者需要对齐输入的真实运行，
 并确认轨迹确实触发压缩，包含摘要调用成本和未完成的执行。
 
+
+### 给 CCR Viewer 生成 Measurements
+
+```sh
+uv run --project eval python -m eval.trajectory.measurement_views /path/to/review.jsonl --ccr ./dist/ccr
+```
+
+该命令为一个 Review 的全部原生 Sessions 执行确定性测量并输出相邻的 `.measurements.json`。
+Global 展示聚合值，Session 展示本 Session 的值和证据引用。生成时不运行 Detector、Verifier
+或 LLM；数据变化后重新生成。完整约定见 `docs/observability.md`。

@@ -297,6 +297,8 @@ class CCRTrajectoryTest(unittest.TestCase):
                 "model_call_count": 1,
                 "usage_reported_call_count": 0,
                 "usage_coverage_ratio": 0.0,
+                "duration_reported_call_count": 1,
+                "model_duration_ms": 1200.0,
             },
         )
         measurements = {

@@ -1,3 +1,4 @@
+import { callStatistics, renderCallStatistics, renderMeasurements } from './measurements.mjs';
 import { el, badge, duration, number, meta, button, link, details, field, notices } from './ui.mjs';
 
 export function renderCallBody(result) {
@@ -30,12 +31,8 @@ export function renderSession(parent, page, state, signal) {
   const { session, items } = page;
   parent.append(el('div', 'SESSION VIEW', 'eyebrow'), el('h2', session.role), el('code', session.id));
   const models = items.filter(i => i.kind === 'model_call');
-  const tools = items.filter(i => i.kind === 'tool_call');
-  const observed = models.filter(i => i.usage);
-  const sum = key => observed.reduce((n, i) => n + (i.usage[key] || 0), 0);
-  const stats = el('div', null, 'metrics');
-  const knownDuration = models.filter(i => i.duration_ms != null);
-  stats.append(el('span', `${models.length} model calls · ${tools.length} tools`), el('span', `${number(sum('input_tokens') + sum('cache_write_input_tokens'))} observed input · ${number(sum('output_tokens'))} output`), el('span', `${number(sum('cache_read_input_tokens'))} cache read (input subset)`), el('span', `${duration(knownDuration.reduce((n, i) => n + i.duration_ms, 0))} summed model time`), el('span', `${models.length - observed.length} usage unknown · ${models.length - knownDuration.length} durations unknown`)); parent.append(stats);
+  renderCallStatistics(parent, callStatistics([page]));
+  renderMeasurements(parent, page.measurements, session.id);
   const focus = state.params.get('execution');
   if (focus) parent.append(el('p', `Highlighted Execution ${focus}. Full Session remains visible; totals cover the full Session.`, 'notice'));
   const controls = el('div', null, 'filters');

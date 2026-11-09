@@ -63,6 +63,10 @@ func StartServer(addr string, options ...codec.Option) error {
 		handleNativeSession(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"), options...)
 	})
 
+	mux.HandleFunc("GET /r/{repo}/{sessionID}/measurements", func(w http.ResponseWriter, r *http.Request) {
+		handleMeasurements(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
+	})
+
 	mux.HandleFunc("GET /r/{repo}/{sessionID}/job", func(w http.ResponseWriter, r *http.Request) {
 		handleJob(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"), options...)
 	})
