@@ -53,7 +53,7 @@ export function renderCallStatistics(parent, stats) {
 export function renderMeasurements(parent, snapshot, sessionID) {
   parent.append(el('h3', 'Measurements'));
   if (snapshot?.status !== 'ready') {
-    const messages = { missing: 'No measurement snapshot has been generated.', stale: 'Measurements are out of date because the recording changed. Regenerate the snapshot.', error: 'Measurement snapshot could not be read.' };
+    const messages = { missing: 'Measurements are not available yet. Refresh to retry.', stale: 'Measurements are out of date because the recording changed during calculation. Refresh to calculate the latest snapshot.', error: 'Automatic measurement could not complete. Basic call statistics remain available; refresh to retry.' };
     parent.append(el('p', messages[snapshot?.status] || messages.missing, 'notice')); return;
   }
   const projection = snapshot.views;

@@ -63,7 +63,7 @@ async function render() {
           catch (error) { if (signal.aborted) throw error; return { session, items: [], issues: [error.message] }; }
         })));
       }
-      const measurements = await state.get('measurements');
+      const measurements = await state.get('measurements').catch(error => { if (signal.aborted) throw error; return { status: 'error' }; });
       if (signal.aborted) return;
       $('content').replaceChildren();
       renderGlobal($('content'), review, pages, measurements);
@@ -121,7 +121,7 @@ async function render() {
       const session = await state.session(id);
       if (signal.aborted) return;
       $('content').replaceChildren(); notices($('content'), session.issues);
-      session.measurements = await state.get('measurements');
+      session.measurements = await state.get('measurements').catch(error => { if (signal.aborted) throw error; return { status: 'error' }; });
       if (signal.aborted) return;
       renderSession($('content'), session, state, signal);
     }

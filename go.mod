@@ -11,6 +11,7 @@ require (
 	github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372
 	github.com/compforge/codegraph v0.15.4-0.20261109033530-9ad1ea207624
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
+	github.com/compforge/quality-harness/sdks/go/trajectory v0.0.0-20261109145402-249aeebcfcd8
 	github.com/compforge/repokit/toolkit/go v0.58.1-0.20261109081304-e987b702cfda
 	github.com/gofrs/flock v0.13.0
 	github.com/odvcencio/gotreesitter v0.57.0

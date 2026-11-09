@@ -32,6 +32,7 @@ func StartServer(addr string, options ...codec.Option) error {
 		return fmt.Errorf("resolve sessions root: %w", err)
 	}
 
+	measurements := newMeasurementService(options...)
 	mux := http.NewServeMux()
 
 	// Static assets (must be registered before "/" catch-all)
@@ -64,7 +65,7 @@ func StartServer(addr string, options ...codec.Option) error {
 	})
 
 	mux.HandleFunc("GET /r/{repo}/{sessionID}/measurements", func(w http.ResponseWriter, r *http.Request) {
-		handleMeasurements(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
+		measurements.handle(w, r, root, r.PathValue("repo"), r.PathValue("sessionID"))
 	})
 
 	mux.HandleFunc("GET /r/{repo}/{sessionID}/job", func(w http.ResponseWriter, r *http.Request) {
