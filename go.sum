@@ -56,6 +56,8 @@ github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3 h1:lgmN+jDedy8
 github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3/go.mod h1:Cp85zeX33t42YooXdNlm4NHTgV8j7362+HBxjbShcew=
 github.com/compforge/quality-harness/sdks/go v0.0.0-20261105122955-dd898d2b95fc h1:a6SqvSJv7325P04uqBMIMwE5IlwVJDftRhBHkCAf7Ls=
 github.com/compforge/quality-harness/sdks/go v0.0.0-20261105122955-dd898d2b95fc/go.mod h1:fUlWkQs2s6Z9vh7qaBow11j1wSDMCaFcMEhl++IOcWw=
+github.com/compforge/quality-harness/sdks/go/trajectory v0.0.0-20261109145402-249aeebcfcd8 h1:E3V0ME3B4mveqBQ8Y7DeUoThaFuu19YkIIwWWGLcHHE=
+github.com/compforge/quality-harness/sdks/go/trajectory v0.0.0-20261109145402-249aeebcfcd8/go.mod h1:8b5eNn2dI0/K42vTtxK/v41hv0eZN6fX0+oPEnwp12Y=
 github.com/compforge/repokit/toolkit/go v0.58.1-0.20261109081304-e987b702cfda h1:oZsc9CwZ47jEROYvtZoGKoTQ3Sesz06GzZWg0rOeVCg=
 github.com/compforge/repokit/toolkit/go v0.58.1-0.20261109081304-e987b702cfda/go.mod h1:jcmWbj1o05HQJYjwsUsdWpglJ/Q20qPZD4IbIsEno4k=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=

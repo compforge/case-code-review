@@ -335,12 +335,13 @@ LLMToolResult：Tool、ToolCallID、Arguments、Content）和 `ratio`（两种�
 并确认轨迹确实触发压缩，包含摘要调用成本和未完成的执行。
 
 
-### 给 CCR Viewer 生成 Measurements
+### 离线生成 Measurements
 
 ```sh
 uv run --project eval python -m eval.trajectory.measurement_views /path/to/review.jsonl --ccr ./dist/ccr
 ```
 
-该命令为一个 Review 的全部原生 Sessions 执行确定性测量并输出相邻的 `.measurements.json`。
+Viewer 已通过 Go Harness 自动计算，无需运行此命令。该命令保留为 Python 离线分析入口，
+为一个 Review 的全部原生 Sessions 执行确定性测量并输出相邻的 `.measurements.json`。
 Global 展示聚合值，Session 展示本 Session 的值和证据引用。生成时不运行 Detector、Verifier
 或 LLM；数据变化后重新生成。完整约定见 `docs/observability.md`。

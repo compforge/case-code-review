@@ -208,9 +208,8 @@ Session 中点击 model call 直接打开对应 Context View 详情面板，Job 
 和 call configuration；当前 response 单独展示，并保留 Native identity 中的 Session reference 与 Operation ID。
 Context 由显式 URL 参数打开；关闭详情清除调用选择，刷新后保持关闭，仍留在原 Job / Session，可展开面板阅读长消息。
 Global 的范围是一次 Review，只展示汇总，不重复 Job、Session 或 Operation 明细。它使用 journal 与
-关联索引；共享 Lane 不按 Unit 重复计数，不读取原生正文。
-Token 使用 Review 最终记录的汇总并标明 estimated；没有最终汇总时显示 unknown，调用级覆盖需下钻
-Session。完成 Job 数排除仍有 unassessed hypotheses 的 Unit；缺失 wall time 与录制的零耗时分别展示。
+关联索引；共享 Lane 不按 Unit 重复计数。基础成本从关联原生 Session 调用汇总，不依赖 Review
+finalization；缺失字段保留 coverage。完成 Job 数排除仍有 unassessed hypotheses 的 Unit；缺失 wall time 与录制的零耗时分别展示。
 
 Job 的 Execution outcome、Assessment、Trial delivery 与 Human Verdict 是不同事实。没有录制人工
 标注时显示 unknown；本地 Finding 和 Trial.delivered 不证明 Forge comment 已发布。证据 receipt
@@ -356,21 +355,21 @@ input/output/cache token 和两类调用耗时；Global 按原生 Session ID 去
 Usage 和耗时分别显示已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
 Review 尚未 finalization 时也可读取这些已观察到的数据。
 
-Measurements 使用 quality-harness 的目录及 Session / Global 投影，计算在显式命令中执行：
+Measurements 使用 quality-harness Go trajectory SDK 的目录与 Session / Global 投影。
+首次打开 Global 或 Session 时，Viewer 自动读取关联的原生 SessionView 并执行确定性 Measurer，
+不需要 Python、uv 或手工导出。Go SDK 直接消费共享调用事实，不通过子进程调用当前 CLI。
 
-```sh
-make build
-uv run --project eval python -m eval.trajectory.measurement_views /path/to/review.jsonl --ccr ./dist/ccr
-```
+每个原生 Session 只计算一次，共享 Lane 不按 Unit 复制。默认计算 model/tool usage，包括工具
+失败次数、状态覆盖、token 与累计耗时；新增 Go Measurer 在服务组装处注册后自动进入通用表格。
+Global 只呈现聚合值，Session 保留原生调用证据。Python 离线 eval 的 context/retry 等能力仍独立使用。
 
-命令只执行已启用的 deterministic Measurer，复用 CCR 的 ATIF 导出与适配器，生成相邻的
-`review.measurements.json`。每个原生 Session 是一个 Trajectory；Global 只呈现聚合值。
-新增或扩展 Measurer 只需在 `CCRTrajectoryAnalysisRunner` 中启用并重新生成快照，Viewer 按目录
-渲染，不维护 measurement 白名单。Session 的证据引用保留在结果中。
+结果保存在相邻的 `review.measurements.json`，缓存身份包含 Review journal 和原生 Session 文件内容
+摘要、Go Measurer 版本及投影契约版本。相同 Review 的并发请求合并，重启后复用磁盘结果；输入或
+算法版本变化后自动重算。计算期间记录继续变化时不发布不一致快照，页面提示刷新后重试。
 
-快照绑定 Review journal 及其 `.sessions/*.jsonl` 内容摘要；生成期间发生变化则保留原快照并报错。
-Viewer 只读快照，缺失、过期或损坏分别提示，打开或刷新页面不触发测量或模型调用。
-运行中的 Review 可随时查看基本统计，measurement 快照应在记录稳定后生成。
+测量沿 HTTP 请求 context 取消，并有两分钟上限。错误保留在日志与 measurement 状态中，不影响
+基础调用统计。Refresh 重新读取录制事实与测量结果，不触发模型调用、Detector 或 Verifier。
+Python 离线命令仍可用于分析，但其快照不满足 Go 引擎版本时，Viewer 会自动替换为当前 Go 测量。
 
-Python 依赖按 Git SHA 固定，由 `uv sync --project eval` 安装，无需先发布 PyPI。
-Go Viewer 的代码更新需要重新构建 CLI；面向其他用户分发时再走 CCR 的发布流程。
+CCR 通过 go.mod/go.sum 固定 Go trajectory module 的提交，构建不依赖本地 Go workspace。
+安装版只需 CCR 二进制，不附加 Python 运行时。
