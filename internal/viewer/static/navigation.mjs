@@ -1,6 +1,6 @@
 // Context belongs to an explicitly selected model call inside Job or Session.
 /**
- * @spec Session overview/full tabs survive reload; evidence links open Full Session; Context keeps its parent view and native call identity
+ * @spec Job and Session lists require explicit item selection; Session tabs survive reload; evidence links preserve native identity and open Full Session
  * @see {@link component://docs/observability.md}
  */
 export function workspaceParams(search) {
