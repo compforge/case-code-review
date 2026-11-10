@@ -194,7 +194,9 @@ Job View 按业务关联组合多个 Session 的片段，Context View 展示某�
 
 首页按开始时间倒序展示 Review，支持 Repository、日期（CST）与 completion 筛选，同时展示
 版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区在左侧菜单排列 Global / Job / Session，默认
-打开 Global；Job 和 Session 的对象列表位于同一侧栏。Context 是某次 model call 的详情，在 Job 或 Session 内打开，不是并列入口。
+打开 Global。Job / Session 使用“左侧导航、中间对象列表、右侧详情”三栏布局：进入 View 先展示列表，
+点击条目后才加载右侧详情，不自动选择第一项；URL 中已有明确选择时直接恢复详情。较窄窗口将导航移到顶部，
+手机上列表与详情上下排列。Context 是某次 model call 的详情抽屉，在 Job 或 Session 内打开，不增加第四栏，也不是并列入口。
 URL 保留父 View、Session tab、Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
 分享与浏览器前进后退。Refresh 重新读取当前快照。Timeline 与 Stage 弹框不再是页面概念。
 

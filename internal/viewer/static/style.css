@@ -55,21 +55,22 @@ td small{display:block;margin-top:5px}
 .view-menu a[aria-current=page]{color:var(--accent);background:var(--soft)}
 .view-menu a:hover{background:var(--soft);text-decoration:none}
 .session-tabs{margin:18px 0;border-bottom:1px solid var(--line)}
-.workspace{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:65vh;align-items:start}
-.workspace:has(#detail:not([hidden])){grid-template-columns:240px minmax(340px,1fr) minmax(360px,38%)}
+.workspace{display:grid;grid-template-columns:180px 280px minmax(0,1fr);min-height:65vh;align-items:start}
+.workspace[data-view=global]{grid-template-columns:180px minmax(0,1fr)}
 #navigation{padding:22px 14px;position:sticky;top:0;max-height:100vh;overflow:auto}
-#navigation h3{padding:0 8px;font-size:13px}
-#navigation input{width:100%;margin-bottom:12px}
+#selection{padding:22px 14px;position:sticky;top:0;max-height:100vh;min-height:65vh;min-width:0;overflow:auto;border-left:1px solid var(--line)}
+#selection h3{padding:0 8px;font-size:13px}
+#selection input{width:100%;margin-bottom:12px}
 .nav-item{display:block;padding:12px;border-radius:7px;border:1px solid transparent;overflow-wrap:anywhere;margin-bottom:5px;line-height:1.4}
 .nav-item small{display:block;margin-top:5px;font-size:11px}
 .nav-item.selected{background:var(--paper);border-color:#c0d5c9;box-shadow:0 2px 4px #19352708}
 .nav-item:hover{background:var(--soft);text-decoration:none}
 #content{padding:26px 30px;min-width:0;background:var(--paper);border-left:1px solid var(--line);min-height:65vh}
-#detail{position:sticky;top:0;height:100vh;overflow:auto;border-left:1px solid var(--line);padding:20px;background:#fcfdfb;min-width:0}
+#detail{position:fixed;inset:12px 12px 12px auto;width:min(680px,calc(100vw - 24px));overflow:auto;border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 60px #132e3530;z-index:3;padding:20px;background:#fcfdfb;min-width:0}
 .detail-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:20px}
 .detail-toolbar h3{flex:1;margin:0}
 .detail-toolbar button{padding:5px 9px;font-size:12px}
-#detail.expanded{position:fixed;inset:15px 20px 15px 280px;height:auto;z-index:5;box-shadow:0 10px 70px #132e3540;border:1px solid var(--line);border-radius:10px}
+#detail.expanded{inset:15px 20px;width:auto;z-index:5}
 .call-detail>code{display:block;margin:12px 0}
 .hypothesis{border:1px solid var(--line);border-radius:10px;padding:20px;margin:20px 0;scroll-margin-top:20px}
 .hypothesis.selected{border-color:var(--accent)}
@@ -95,7 +96,7 @@ details[open]>summary{color:var(--ink)}
 .call-row{position:relative;padding:12px 15px;margin:5px 0;border:1px solid var(--line);border-radius:7px;min-height:100px;display:grid;grid-template-columns:1fr auto;gap:4px 12px}
 .call-row.focused{border-left:4px solid #89b69b}
 .call-row.selected{background:var(--soft);border-color:var(--accent)}
-.call-main{display:flex;align-items:center;gap:10px;grid-column:1/-1}
+.call-main{display:flex;align-items:center;flex-wrap:wrap;gap:10px;grid-column:1/-1}
 .call-main>a:first-child{font-weight:600}
 .call-main>a:last-child:not(:first-child){margin-left:auto;font-size:12px}
 .call-preview{grid-column:1/-1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:0;color:var(--muted);font-size:12px;max-width:100%}
@@ -117,8 +118,12 @@ details[open]>summary{color:var(--ink)}
 .response-section{margin-top:30px;padding-top:22px;border-top:2px solid var(--line)}
 [hidden]{display:none!important}
 @media(max-width:1050px){
-.workspace,.workspace:has(#detail:not([hidden])){grid-template-columns:210px minmax(0,1fr)}
-#detail{position:fixed;inset:10px 10px 10px 220px;height:auto;box-shadow:0 8px 60px #132e3530;z-index:3;border:1px solid var(--line);border-radius:8px}
+.workspace{grid-template-columns:240px minmax(0,1fr)}
+.workspace[data-view=global]{grid-template-columns:minmax(0,1fr)}
+#navigation{grid-column:1/-1;position:static;max-height:none;border-bottom:1px solid var(--line);padding:10px 14px}
+.view-menu{flex-direction:row;margin:0}
+.view-menu a{flex:1}
+#selection{border-left:0}
 #detail.expanded{inset:10px}
 #content{padding:22px}
 .filters select{max-width:100%}
@@ -129,13 +134,11 @@ details[open]>summary{color:var(--ink)}
 .review-header{padding:20px 16px 0}
 .review-header h1{font-size:20px}
 .tabs a{padding:10px 18px}
-.workspace,.workspace:has(#detail:not([hidden])){display:block}
-#navigation{position:static;max-height:300px;border-bottom:1px solid var(--line)}
-.view-menu{flex-direction:row;margin-bottom:14px}
-.view-menu a{flex:1}
+.workspace{display:block}
+#selection{position:static;min-height:0;max-height:240px;border-bottom:1px solid var(--line)}
 .view-menu small{display:none}
 #content{padding:20px 16px}
-#detail{inset:8px}
+#detail,#detail.expanded{inset:8px;width:auto}
 .diff-columns{display:block}
 .call-row{grid-template-columns:1fr}
 .call-row small{grid-column:1/-1}
