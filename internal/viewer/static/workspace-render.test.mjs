@@ -24,7 +24,7 @@ const settle = async () => { await new Promise(resolve => setImmediate(resolve))
  * @see {@link component://docs/observability.md}
  */
 test('model call details preserve evidence and explicit navigation state', async t => {
-  const elements = Object.fromEntries(['review-data', 'detail', 'workspace', 'navigation', 'content', 'refresh'].map(id => [id, new Element('div')]));
+  const elements = Object.fromEntries(['review-data', 'detail', 'workspace', 'navigation', 'selection', 'content', 'refresh'].map(id => [id, new Element('div')]));
   const item = { id: 'call-1', kind: 'model_call', name: 'Model call', status: 'completed', ref: { run_id: 'run-1', attempt: 1 }, operation_id: 'operation-1' };
   const session = { id: 's1', role: 'unit-review', units: ['u1'], executions: [] };
   const call = { kind: 'model_call', node: { id: item.id, status: 'completed', request: { input: { messages: [], tools: [] } }, response: { output: { content: [] } } } };
@@ -41,7 +41,11 @@ test('model call details preserve evidence and explicit navigation state', async
   globalThis.location = { pathname: '/r/repo/review', search: '?view=session&session=s1&unit=u1&node=call-1&context=1', href: 'http://localhost/r/repo/review', origin: 'http://localhost' };
   globalThis.history = { replaceState: (_, __, url) => navigate(url), pushState: (_, __, url) => navigate(url) };
   globalThis.window = { addEventListener: (name, fn) => { events[name] = fn; } };
-  globalThis.fetch = async url => ({ ok: true, json: async () => new URL(url, location.href).searchParams.has('node') ? call : { session, items: [item] } });
+  const requests = [];
+  globalThis.fetch = async url => {
+    requests.push(url);
+    return { ok: true, json: async () => new URL(url, location.href).searchParams.has('node') ? call : { session, items: [item] } };
+  };
   await import('./workspace.mjs');
   await settle();
   const openURL = async url => { navigate(url); await events.popstate(); await settle(); };
@@ -51,6 +55,38 @@ test('model call details preserve evidence and explicit navigation state', async
     identity.open = true; identity.listeners.toggle();
     assert.deepEqual(JSON.parse(identity.children[1].textContent), { session: session.id, ref: item.ref, operation: item.operation_id });
   };
+
+  await t.test('Session tabs separate the overview and full list without fetching measurements', async () => {
+    await openURL('?view=session&session=s1');
+    const text = () => descendants(elements.content).map(node => node.textContent);
+    assert.ok(text().includes('Overview'));
+    assert.ok(text().includes('Full Session'));
+    assert.ok(text().includes('Observed call statistics'));
+    assert.equal(text().includes('Input tokens'), false);
+    assert.equal(text().includes('Measurements'), false);
+    assert.equal(descendants(elements.content).some(node => node.className === 'call-list'), false);
+    const full = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === 'Full Session');
+    documentEvents.click({ target: full, button: 0, preventDefault() {} });
+    await settle();
+    assert.equal(new URLSearchParams(location.search).get('tab'), 'full');
+    assert.ok(descendants(elements.content).some(node => node.className === 'call-list'));
+    assert.equal(text().includes('Observed call statistics'), false);
+    assert.equal(requests.some(url => url.includes('/measurements')), false);
+    const overview = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === 'Overview');
+    await openURL('?view=session&session=s1&execution=e1&node=call-1&context=1');
+    const back = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === 'Overview');
+    documentEvents.click({ target: back, button: 0, preventDefault() {} });
+    await settle();
+    const params = new URLSearchParams(location.search);
+    assert.equal(params.get('tab'), 'overview');
+    for (const key of ['node', 'execution', 'context']) assert.equal(params.has(key), false);
+    assert.equal(elements.detail.hidden, true);
+    await openURL(full.href);
+    assert.ok(descendants(elements.content).some(node => node.className === 'call-list'));
+    await openURL(overview.href);
+    assert.ok(text().includes('Observed call statistics'));
+    await openURL('?view=session&session=s1&unit=u1&node=call-1&context=1');
+  });
 
   await t.test('Context keeps native identity even without a recorded request', async () => {
     assertIdentity();

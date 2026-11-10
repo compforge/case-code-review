@@ -193,9 +193,9 @@ Viewer 是只读渲染层。Review 业务日志、原生 AgentGo Session 是事�
 Job View 按业务关联组合多个 Session 的片段，Context View 展示某次模型调用实际收到的消息。
 
 首页按开始时间倒序展示 Review，支持 Repository、日期（CST）与 completion 筛选，同时展示
-版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区按 Global / Job / Session 排列，默认
-打开 Global；Context 是某次 model call 的详情，在 Job 或 Session 内打开，不是并列入口。
-URL 保留父 View、Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
+版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区在左侧菜单排列 Global / Job / Session，默认
+打开 Global；Job 和 Session 的对象列表位于同一侧栏。Context 是某次 model call 的详情，在 Job 或 Session 内打开，不是并列入口。
+URL 保留父 View、Session tab、Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
 分享与浏览器前进后退。Refresh 重新读取当前快照。Timeline 与 Stage 弹框不再是页面概念。
 
 | View | 观测对象 | 展示与下钻 |
@@ -216,10 +216,14 @@ Job 的 Execution outcome、Assessment、Trial delivery 与 Human Verdict 是不
 按 tool_call_id 在该 Unit 关联的 R1 与完整 Lane Session 中定位；多个 Session 匹配时列出候选，
 不按阶段或时间猜关联，也不把整个共享 Lane 归到每个 Unit。
 
-Session 以紧凑调用行展示摘要、耗时、input/output/cache 与重试 Attempt，使用小条形图比较 context
+Session 分为 Overview 与 Full Session 两个 tab，默认打开 Overview，仅展示 Execution / Unit 数、
+模型与工具调用数及累计耗时，不展示 token 消耗摘要或 Measurements。Full Session 直接展示筛选控件与完整调用列表，
+从 Job 下钻到 Execution、工具 receipt 或模型调用时直接打开 Full Session。
+
+Full Session 以紧凑调用行展示摘要、耗时、input/output/cache 与重试 Attempt，使用小条形图比较 context
 大小，不按 token 数撑大卡片。录制顺序保留并行调用事实；按耗时或 context 排序时明确是诊断排序。
 从 Job 下钻时高亮对应 Execution，默认仍显示完整 Session，也可以显式筛选该 Execution 片段。
-成本摘要始终属于完整 Session，每个原生调用仅计数一次。input 为原生 Input + CacheWrite，cache read
+Overview 统计始终属于完整 Session，每个原生调用仅计数一次。调用行的 input 为原生 Input + CacheWrite，cache read
 是 input 的子集；缺失 usage/duration 独立计数，不当作零。累计模型时间不等于 Review wall time。
 
 工具完成不代表批量子查询都成功。`search_code` 复用工具自身的 batch/outcome parser，分别呈现 hits、
@@ -350,18 +354,19 @@ business navigation.
 
 ### Viewer 的基本统计与 Measurements
 
-Global 与 Session 使用同一个原生调用统计函数，直接累计已记录的 model/tool call、
-input/output/cache token 和两类调用耗时；Global 按原生 Session ID 去重，共享 Lane 只计一次。
-Usage 和耗时分别显示已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
+Global 与 Session Overview 使用同一个原生调用统计函数；Global 展示 model/tool call、
+input/output/cache token 和两类调用耗时，按原生 Session ID 去重，共享 Lane 只计一次。
+Session Overview 只展示调用数与耗时，不请求或渲染 Measurements。
+Usage 和耗时分别保留已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
 Review 尚未 finalization 时也可读取这些已观察到的数据。
 
 Measurements 使用 quality-harness Go trajectory SDK 的目录与 Session / Global 投影。
-首次打开 Global 或 Session 时，Viewer 自动读取关联的原生 SessionView 并执行确定性 Measurer，
+首次打开 Global 时，Viewer 自动读取关联的原生 SessionView 并执行确定性 Measurer，
 不需要 Python、uv 或手工导出。Go SDK 直接消费共享调用事实，不通过子进程调用当前 CLI。
 
 每个原生 Session 只计算一次，共享 Lane 不按 Unit 复制。默认计算 model/tool usage，包括工具
 失败次数、状态覆盖、token 与累计耗时；新增 Go Measurer 在服务组装处注册后自动进入通用表格。
-Global 只呈现聚合值，Session 保留原生调用证据。Python 离线 eval 的 context/retry 等能力仍独立使用。
+Global 只呈现聚合值，测量 API 保留 Session 投影及原生调用证据。Python 离线 eval 的 context/retry 等能力仍独立使用。
 
 结果保存在相邻的 `review.measurements.json`，缓存身份包含 Review journal 和原生 Session 文件内容
 摘要、Go Measurer 版本及投影契约版本。相同 Review 的并发请求合并，重启后复用磁盘结果；输入或

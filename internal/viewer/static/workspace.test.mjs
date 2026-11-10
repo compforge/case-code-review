@@ -58,3 +58,22 @@ test('Global is the default and existing Context links retain call identity', ()
   const global = new URL(workspaceURL('/r/repo/review', params, {view:'global'}), 'http://localhost');
   assert.equal(global.searchParams.has('context'), false);
 });
+
+/**
+ * @case Session tabs survive reload; Job call and Execution links bypass the overview
+ * @see {@link component://docs/observability.md}
+ */
+test('Session tabs preserve explicit selection and open evidence in Full Session', () => {
+  assert.equal(workspaceParams('?view=session&session=s').get('tab'), 'overview');
+  assert.equal(workspaceParams('?view=session&session=s&tab=full').get('tab'), 'full');
+  assert.equal(workspaceParams('?view=session&tab=unknown').get('tab'), 'overview');
+  for (const key of ['node', 'execution', 'tool', 'context']) {
+    const direct = workspaceParams(`?view=session&session=s&tab=overview&${key}=target`);
+    assert.equal(direct.get('tab'), 'full');
+    const url = workspaceURL('/r/repo/review', workspaceParams('?view=job&unit=u&tab=overview'), { view: 'session', session: 's', [key]: 'target' });
+    const restored = workspaceParams(new URL(url, 'http://localhost').search);
+    assert.equal(restored.get('tab'), 'full');
+    assert.equal(restored.get('unit'), 'u');
+    assert.equal(restored.get(key), 'target');
+  }
+});

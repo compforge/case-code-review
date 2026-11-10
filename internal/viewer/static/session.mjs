@@ -1,4 +1,4 @@
-import { callStatistics, renderCallStatistics, renderMeasurements } from './measurements.mjs';
+import { callStatistics, renderCallStatistics } from './measurements.mjs';
 import { el, badge, duration, number, meta, button, link, details, field, notices } from './ui.mjs';
 
 export function renderCallBody(result) {
@@ -30,11 +30,21 @@ export function renderCallBody(result) {
 export function renderSession(parent, page, state, signal) {
   const { session, items } = page;
   parent.append(el('div', 'SESSION VIEW', 'eyebrow'), el('h2', session.role), el('code', session.id));
+  const tab = state.params.get('tab') || 'overview';
+  const tabs = el('nav', null, 'tabs session-tabs'); tabs.setAttribute('aria-label', 'Session views');
+  for (const [value, title] of [['overview', 'Overview'], ['full', 'Full Session']]) {
+    const a = link(title, { tab: value, node: null, execution: null, tool: null, context: null }, state);
+    a.setAttribute('aria-current', tab === value ? 'page' : 'false'); tabs.append(a);
+  }
+  parent.append(tabs);
+  if (tab === 'overview') {
+    parent.append(el('p', `${session.executions?.length || 0} Executions · ${session.units?.length || 0} Units`, 'muted'));
+    renderCallStatistics(parent, callStatistics([page]), { includeUsage: false });
+    return;
+  }
   const models = items.filter(i => i.kind === 'model_call');
-  renderCallStatistics(parent, callStatistics([page]));
-  renderMeasurements(parent, page.measurements, session.id);
   const focus = state.params.get('execution');
-  if (focus) parent.append(el('p', `Highlighted Execution ${focus}. Full Session remains visible; totals cover the full Session.`, 'notice'));
+  if (focus) parent.append(el('p', `Highlighted Execution ${focus}. Full Session remains visible.`, 'notice'));
   const controls = el('div', null, 'filters');
   const filter = el('input'); filter.placeholder = 'Filter calls, tools or errors'; filter.setAttribute('aria-label', 'Filter Session');
   const kind = el('select'); kind.setAttribute('aria-label', 'Call kind'); for (const [v, label] of [['', 'All events'], ['model_call', 'Model calls'], ['tool_call', 'Tool calls'], ['failed', 'Failures / query errors']]) { const o = el('option', label); o.value = v; kind.append(o); }
