@@ -1,6 +1,6 @@
 // Context belongs to an explicitly selected model call inside Job or Session.
 /**
- * @spec Global, Job and Session are workspace views; Context keeps its parent view and native call identity
+ * @spec Session overview/full tabs survive reload; evidence links open Full Session; Context keeps its parent view and native call identity
  * @see {@link component://docs/observability.md}
  */
 export function workspaceParams(search) {
@@ -11,6 +11,10 @@ export function workspaceParams(search) {
   } else if (!['global', 'job', 'session'].includes(params.get('view'))) {
     params.set('view', 'global');
   }
+  if (params.get('view') === 'session') {
+    if (['node', 'execution', 'tool', 'context'].some(key => params.get(key))) params.set('tab', 'full');
+    else if (!['overview', 'full'].includes(params.get('tab'))) params.set('tab', 'overview');
+  }
   return params;
 }
 
@@ -19,5 +23,6 @@ export function workspaceURL(base, params, changes) {
   // Selecting another scope or call closes the old context unless explicitly requested.
   if (!Object.hasOwn(changes, 'context') && ['view', 'session', 'node', 'unit', 'execution', 'tool'].some(key => Object.hasOwn(changes, key))) next.delete('context');
   for (const [key, value] of Object.entries(changes)) value ? next.set(key, value) : next.delete(key);
+  if (next.get('view') === 'session' && ['node', 'execution', 'tool', 'context'].some(key => changes[key])) next.set('tab', 'full');
   return `${base}?${next}`;
 }

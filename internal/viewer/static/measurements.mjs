@@ -30,15 +30,17 @@ export function callStatistics(pages) {
   return result;
 }
 
-export function renderCallStatistics(parent, stats) {
+export function renderCallStatistics(parent, stats, { includeUsage = true } = {}) {
   parent.append(el('h3', 'Observed call statistics'));
   const grid = el('div', null, 'metric-grid');
   const metrics = [
     ['Model calls', number(stats.models), 'Recorded calls'], ['Tool calls', number(stats.tools), 'Recorded executions'],
-    ['Input tokens', number(stats.tokenKnown.input ? stats.input : null), `Includes cache read and cache write · ${stats.tokenKnown.input}/${stats.models} calls`],
-    ['Output tokens', number(stats.tokenKnown.output ? stats.output : null), `${stats.tokenKnown.output}/${stats.models} calls`],
-    ['Cache read', number(stats.tokenKnown.cacheRead ? stats.cacheRead : null), `Subset of input tokens · ${stats.tokenKnown.cacheRead}/${stats.models} calls`],
-    ['Cache write', number(stats.tokenKnown.cacheWrite ? stats.cacheWrite : null), `Subset of input tokens · ${stats.tokenKnown.cacheWrite}/${stats.models} calls`],
+    ...(includeUsage ? [
+      ['Input tokens', number(stats.tokenKnown.input ? stats.input : null), `Includes cache read and cache write · ${stats.tokenKnown.input}/${stats.models} calls`],
+      ['Output tokens', number(stats.tokenKnown.output ? stats.output : null), `${stats.tokenKnown.output}/${stats.models} calls`],
+      ['Cache read', number(stats.tokenKnown.cacheRead ? stats.cacheRead : null), `Subset of input tokens · ${stats.tokenKnown.cacheRead}/${stats.models} calls`],
+      ['Cache write', number(stats.tokenKnown.cacheWrite ? stats.cacheWrite : null), `Subset of input tokens · ${stats.tokenKnown.cacheWrite}/${stats.models} calls`],
+    ] : []),
     ['Model time', duration(stats.modelTimeKnown ? stats.modelTime : null), 'Sum of recorded call durations'],
     ['Tool time', duration(stats.toolTimeKnown ? stats.toolTime : null), 'Sum of recorded execution durations'],
   ];
@@ -46,7 +48,7 @@ export function renderCallStatistics(parent, stats) {
     const card = el('article', null, 'metric-card');
     card.append(el('h3', name), el('div', value, 'metric-value'), el('p', note, 'muted')); grid.append(card);
   }
-  parent.append(grid, el('p', `Usage ${stats.usageKnown}/${stats.models} model calls · model duration ${stats.modelTimeKnown}/${stats.models} · tool duration ${stats.toolTimeKnown}/${stats.tools}. Cumulative time can overlap and is not wall time.`, 'muted'));
+  parent.append(grid, el('p', `${includeUsage ? `Usage ${stats.usageKnown}/${stats.models} model calls · ` : ''}Model duration ${stats.modelTimeKnown}/${stats.models} · tool duration ${stats.toolTimeKnown}/${stats.tools}. Cumulative time can overlap and is not wall time.`, 'muted'));
   if (stats.issues) parent.append(el('p', `${stats.issues} recording gaps; these are observed totals and may be incomplete.`, 'notice'));
 }
 

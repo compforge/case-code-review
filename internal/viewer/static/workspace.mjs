@@ -48,9 +48,8 @@ async function render() {
   history.replaceState(null, '', `${base}?${state.params}`);
   const view = state.params.get('view');
   $('workspace').dataset.view = view;
-  $('navigation').hidden = view === 'global';
   document.querySelectorAll('[data-view]').forEach(a => { a.href = state.url({ view: a.dataset.view }); a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'); });
-  $('navigation').replaceChildren(); $('content').replaceChildren(); $('detail').hidden = true;
+  $('selection').replaceChildren(); $('content').replaceChildren(); $('detail').hidden = true;
   $('detail').classList.remove('expanded');
   try {
     if (view === 'global') {
@@ -69,9 +68,9 @@ async function render() {
       renderGlobal($('content'), review, pages, measurements);
     } else if (view === 'job') {
       const jobs = review.Jobs || [];
-      $('navigation').append(el('h3', `Unit Jobs · ${jobs.length}`));
-      const input = el('input'); input.placeholder = 'Filter paths or Unit ID'; input.setAttribute('aria-label', 'Filter Units'); $('navigation').append(input);
-      const list = el('div'); $('navigation').append(list);
+      $('selection').append(el('h3', `Unit Jobs · ${jobs.length}`));
+      const input = el('input'); input.placeholder = 'Filter paths or Unit ID'; input.setAttribute('aria-label', 'Filter Units'); $('selection').append(input);
+      const list = el('div'); $('selection').append(list);
       const selected = state.params.get('unit') || jobs[0]?.id;
       state.selectDefault('view',view);state.selectDefault('unit',selected);
       const populate = () => { list.replaceChildren(); for (const job of jobs) {
@@ -110,19 +109,17 @@ async function render() {
       }
       id ||= sessions[0]?.id;
       state.selectDefault('view',view);state.selectDefault('session',id);
-      $('navigation').append(el('h3', `Sessions · ${sessions.length}`));
+      $('selection').append(el('h3', `Sessions · ${sessions.length}`));
       for (const session of sessions) {
         const a = link(`${session.role}${session.lane ? ` · ${session.lane}` : ''}`, { view, session: session.id, node: null, execution: null, tool:null }, state);
         a.className = `nav-item ${session.id === id ? 'selected' : ''}`;
-        a.append(el('small', (review.Jobs || []).find(j => session.units.includes(j.id))?.paths?.[0] || session.id), el('small', `${session.executions?.length || 0} Executions · ${session.units?.length || 0} Units`)); $('navigation').append(a);
+        a.append(el('small', (review.Jobs || []).find(j => session.units.includes(j.id))?.paths?.[0] || session.id), el('small', `${session.executions?.length || 0} Executions · ${session.units?.length || 0} Units`)); $('selection').append(a);
       }
       if (!id) { empty($('content'), 'No native Session recorded', 'No agent work is recorded for this Review. Review completion and recording availability are independent.'); return; }
       $('content').append(el('p', 'Reading the selected native Session…', 'loading'));
       const session = await state.session(id);
       if (signal.aborted) return;
       $('content').replaceChildren(); notices($('content'), session.issues);
-      session.measurements = await state.get('measurements').catch(error => { if (signal.aborted) throw error; return { status: 'error' }; });
-      if (signal.aborted) return;
       renderSession($('content'), session, state, signal);
     }
     if (view !== 'global' && state.params.get('context') === '1') await showContext(signal);
