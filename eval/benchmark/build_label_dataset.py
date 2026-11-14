@@ -16,6 +16,7 @@ from eval.eval_snapshot import canonical_sha256, dataset_artifacts
 HEADER_RE = re.compile(
     r"^\s*🤖\s+\*\*devloop code-review\*\*(?:\s*·\s*([^\n]+))?\n+"
 )
+READY_RE = re.compile(r"(?:^|[ \t]+·[ \t]+)ready in (?:<1s|\d+s|\d+m \d+s)$")
 FOOTER_RE = re.compile(r"\n*<sub>ccr:fp=[A-Za-z0-9_-]+</sub>\s*$")
 THREAD_ID_RE = re.compile(r"(?:discussion_r|note_)(\d+)")
 
@@ -148,8 +149,10 @@ def choose_session_finding(
 
 
 def normalize_finding(raw: str) -> tuple[str, str | None]:
+    """Extract the published model alias without the optional delivery duration."""
     match = HEADER_RE.match(raw)
-    model = match.group(1).strip() if match and match.group(1) else None
+    metadata = match.group(1).strip() if match and match.group(1) else ""
+    model = READY_RE.sub("", metadata).strip() or None
     body = raw[match.end() :] if match else raw
     return FOOTER_RE.sub("", body).strip(), model
 
@@ -191,6 +194,7 @@ def build_example(record: dict, session_findings: dict[str, list[dict]]) -> dict
     }
     if session_finding and session_finding.get("engine"):
         example["engine"] = session_finding["engine"]
+        example["model"] = model or example["engine"].get("model")
     return example
 
 
