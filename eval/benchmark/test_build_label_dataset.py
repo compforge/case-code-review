@@ -81,6 +81,40 @@ class BuildLabelDatasetTest(unittest.TestCase):
             self.assertEqual(engine["assessment"]["support"], "supported")
             self.assertTrue(engine["trial"]["passed_trial"])
 
+    def test_comment_header_separates_model_from_delivery_time(self) -> None:
+        for suffix, expected_model in (
+            ("", None),
+            (" · critic-model", "critic-model"),
+            (" · critic-model · ready in 2m 44s", "critic-model"),
+            (" · ready in 2m 44s", None),
+            (" · ready in <1s", None),
+            (" · ready in 49s", None),
+        ):
+            with self.subTest(suffix=suffix):
+                raw = f"🤖 **devloop code-review**{suffix}\n\nreal finding\n\n<sub>ccr:fp=abcdef</sub>"
+                self.assertEqual(dataset.normalize_finding(raw), ("real finding", expected_model))
+        self.assertEqual(dataset.normalize_finding("plain finding"), ("plain finding", None))
+
+    def test_model_uses_session_only_when_comment_has_no_alias(self) -> None:
+        record = {
+            "label": "important", "fingerprint": "abcdef",
+            "source": "github:org/repo#1", "reply_id": "1",
+        }
+        for alias, engine_model, expected_model in (
+            (None, "session-model", "session-model"),
+            (None, None, None),
+            ("published-alias", "session-model", "published-alias"),
+        ):
+            with self.subTest(alias=alias, engine_model=engine_model):
+                header = "🤖 **devloop code-review**"
+                if alias:
+                    header += f" · {alias}"
+                record["finding"] = header + " · ready in 5m 1s\n\nreal finding"
+                sessions = {"abcdef": [{"repo": "/tmp/repo", "engine": {"model": engine_model}}]} if engine_model else {}
+                example = dataset.build_example(record, sessions)
+                self.assertEqual(example["model"], expected_model)
+                self.assertEqual(example["finding"], "real finding")
+
     def test_manifest_pins_harvest_snapshot_and_dataset_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

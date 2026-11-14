@@ -146,6 +146,10 @@ jq -s 'group_by(.label) | map({label: .[0].label, count: length})' \
 }
 ```
 
+顶层 `model` 优先保留评论头中的模型 alias；`ready in …` 是交付耗时，不参与模型身份。
+没有 alias 时使用关联 Session 的 `engine.model`，两者都缺失时为 `null`。
+按实际模型 ID 分组时使用 `engine.model`，避免与评论中的展示 alias 混用。
+
 `engine` 让同一个 human verdict 能追溯到 generator、reviewer、feature 与 Trial 输入，避免把不同
 引擎版本的结果混成同一组效果数据。若只比较收敛式 Hypothesis Review，不要重新运行 Unit Review；
 先冻结候选集：
