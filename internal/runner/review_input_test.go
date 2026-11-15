@@ -12,6 +12,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness"
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/llm"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -35,7 +36,7 @@ func TestCapturedPR139CluesReduceActualProjection(t *testing.T) {
 		content.WriteString(message.TextContent())
 		content.WriteByte('\n')
 	}
-	original, _, _, _ := renderClues(clues)
+	original, _, _ := renderClues(clues)
 	oldTokens, newTokens := llm.CountTokens(original), llm.CountTokens(content.String())
 	if newTokens >= oldTokens {
 		t.Fatalf("real doc distribution expanded: before=%d after=%d", oldTokens, newTokens)
@@ -63,7 +64,11 @@ func TestDryRunUsesExecutionInputAndProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := New(Args{RepoDir: repo, Template: *tmpl})
+	comments, err := prcomment.Load("prcomment/testdata/comments.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := New(Args{RepoDir: repo, Template: *tmpl, PRComments: comments})
 	_, preview, _, err := a.DryRun(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +95,15 @@ func TestDryRunUsesExecutionInputAndProjection(t *testing.T) {
 		if m.TextContent() != preview[0].ProjectedMessages[i].TextContent() {
 			t.Fatalf("message %d differs", i)
 		}
+	}
+	// PR comments remain complete even though only a.go is changed and the
+	// comment snapshot includes unanchored discussion and an other.go anchor.
+	var prompt strings.Builder
+	for _, m := range expected {
+		prompt.WriteString(m.TextContent())
+	}
+	if strings.Count(prompt.String(), comments.Render()) != 1 {
+		t.Fatal("R1 projection lost or duplicated the PR comment snapshot")
 	}
 	foundDiff := false
 	for _, m := range messages {

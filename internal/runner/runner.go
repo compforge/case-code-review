@@ -34,6 +34,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
 	"github.com/qiankunli/case-code-review/internal/runner/formation"
 	"github.com/qiankunli/case-code-review/internal/runner/hypothesisreview"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/runner/source"
 	"github.com/qiankunli/case-code-review/internal/runner/trial"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
@@ -41,7 +42,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/telemetry"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
-	"github.com/qiankunli/case-code-review/internal/unit/history"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
@@ -127,10 +127,8 @@ type Args struct {
 
 	SpecPath string // optional external contract input; repository contracts follow the source snapshot
 
-	// HistoryIndex is the loaded --history (symbol-id -> prior findings). A unit's
-	// covered functions are looked up here and injected via {{prior_findings}} so
-	// the reviewer reconciles them with the change. Nil when no history is passed.
-	HistoryIndex history.Index
+	// PRComments is the complete PR discussion snapshot shared by R1 and R2.
+	PRComments prcomment.Snapshot
 
 	// Model is the user-configured model name used as fallback when
 	// template phases (plan/memory_compression) don't specify one.
@@ -893,8 +891,8 @@ func (a *Runner) persistTrialDecisions(
 }
 
 // tagSymbolIDs resolves each comment's enclosing symbol-id (<relpath>::<symbol>)
-// from the post-change file, so callers (e.g. devloop) can key review history by
-// unit instead of by drift-prone line numbers. Best-effort: a comment whose line
+// from the post-change file to retain the finding's source identity independently
+// of drift-prone line numbers. Best-effort: a comment whose line
 // resolves to no function — or an unsupported file — is left untagged.
 func (a *Runner) tagSymbolIDs(comments []finding.Finding) {
 	for i := range comments {
@@ -994,12 +992,12 @@ func unitInterest(u unit.Unit) board.Interest {
 
 // renderClues groups a Unit's Clues into prompt context blocks by Kind: the
 // spec/case contract + docstrings ({{spec_cases}}), the @rule criteria, the see-also
-// links ({{see_also}}), and a previous review's findings ({{prior_findings}}). Clue
+// links ({{see_also}}). Clue
 // Text is raw content; how it reached the unit is worded here via clueLabel — one
 // place to change, and dedup upstream compares raw content. The rule.json text is
 // merged with rules by the caller.
-func renderClues(clues []unit.Clue) (specCases, rules, seeAlso, priorFindings string) {
-	var specBlocks, ruleLines, linkLines, historyBlocks []string
+func renderClues(clues []unit.Clue) (specCases, rules, seeAlso string) {
+	var specBlocks, ruleLines, linkLines []string
 	for _, c := range clues {
 		switch c.Kind {
 		case unit.ClueSpec, unit.ClueDoc:
@@ -1011,10 +1009,6 @@ func renderClues(clues []unit.Clue) (specCases, rules, seeAlso, priorFindings st
 			ruleLines = append(ruleLines, "- "+clueLabel(c)+c.Text)
 		case unit.ClueLink:
 			linkLines = append(linkLines, "- "+c.Text)
-		case unit.ClueHistory:
-			// Prior-review findings: not a contract — the reviewer reconciles them
-			// (already framed as an adjudication task by the history finder).
-			historyBlocks = append(historyBlocks, c.Text)
 		case unit.ClueProject:
 			// Project context has its own prompt section; it is neither a
 			// governing contract nor a review target.
@@ -1025,7 +1019,7 @@ func renderClues(clues []unit.Clue) (specCases, rules, seeAlso, priorFindings st
 			specBlocks = append(specBlocks, clueLabel(c)+c.Text)
 		}
 	}
-	return strings.Join(specBlocks, "\n"), strings.Join(ruleLines, "\n"), strings.Join(linkLines, "\n"), strings.Join(historyBlocks, "\n")
+	return strings.Join(specBlocks, "\n"), strings.Join(ruleLines, "\n"), strings.Join(linkLines, "\n")
 }
 
 func renderProjectContext(clues []unit.Clue) string {

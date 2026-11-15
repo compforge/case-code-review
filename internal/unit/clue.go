@@ -16,10 +16,6 @@ const (
 	// ClueProject carries Component facts such as a source file's semantic role,
 	// or points at a changed manifest/lockfile kept as on-demand context.
 	ClueProject ClueKind = "project"
-	// ClueHistory carries a prior review's findings on this symbol, so the reviewer
-	// can judge whether the current change addresses them (the review-history
-	// feedback loop).
-	ClueHistory ClueKind = "history"
 )
 
 // Relation is how the symbol a clue came from connects to the changed unit.

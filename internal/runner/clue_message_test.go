@@ -111,7 +111,7 @@ func withClueManager(t *testing.T, messages []agentgo.AgentMessage, check func(a
 func TestClueMessageRetainsKindAndDomainPolicy(t *testing.T) {
 	body := strings.Repeat("Preserve this evidence and its constraints. ", 20)
 	var input []agentgo.AgentMessage
-	for _, kind := range []unit.ClueKind{unit.ClueDoc, unit.ClueSpec, unit.ClueRule, unit.ClueHistory, unit.ClueProject, unit.ClueLink} {
+	for _, kind := range []unit.ClueKind{unit.ClueDoc, unit.ClueSpec, unit.ClueRule, unit.ClueProject, unit.ClueLink} {
 		clue := unit.Clue{Kind: kind, Relation: unit.RelCallee, Ref: "a.go::Run", Snapshot: "base", Text: body}
 		message := NewClueMessage(clue)
 		if message.Kind != kind || message.Clue != clue {

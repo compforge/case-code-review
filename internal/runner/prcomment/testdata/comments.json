@@ -1,0 +1,47 @@
+[
+  {
+    "id": "conversation:human",
+    "pr": 7,
+    "body": "Requests can race even when the retry path is in another file.",
+    "author": "alice",
+    "created_at": "2026-11-15T10:00:00Z",
+    "reply_to_id": null,
+    "anchor": null,
+    "resolution": "unsupported",
+    "url": "https://example.test/pr/7#human"
+  },
+  {
+    "id": "review:bot",
+    "pr": 7,
+    "body": "Other bot: concurrent retries may lose an update.",
+    "author": "another-bot",
+    "created_at": "2026-11-15T10:01:00Z",
+    "anchor": {
+      "path": "other.go",
+      "revision": "base",
+      "line": 7,
+      "outdated": true
+    },
+    "resolution": "resolved",
+    "resolved_by": "alice",
+    "resolved_at": "2026-11-15T10:02:00Z"
+  },
+  {
+    "id": "conversation:reply",
+    "pr": 7,
+    "body": "The first fix missed that retry path.",
+    "author": "bob",
+    "created_at": "2026-11-15T10:03:00Z",
+    "reply_to_id": "conversation:human",
+    "resolution": "unknown"
+  },
+  {
+    "id": "conversation:nested",
+    "pr": 7,
+    "body": "Confirmed with concurrent requests; ignore the earlier claim that all callers serialize.",
+    "author": "alice",
+    "created_at": "2026-11-15T10:04:00Z",
+    "reply_to_id": "conversation:reply",
+    "resolution": "unknown"
+  }
+]

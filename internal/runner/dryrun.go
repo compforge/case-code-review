@@ -41,7 +41,6 @@ type UnitContext struct {
 	SpecCases      string                  `json:"spec_cases,omitempty"`      // contract: own spec/case + inherited caller spec + depended-on callee contracts
 	Rules          string                  `json:"rules,omitempty"`           // path-glob rule.json + function-level @rule
 	SeeAlso        string                  `json:"see_also,omitempty"`        // curated @link pointers
-	Prior          string                  `json:"prior,omitempty"`           // a previous review's findings on this unit (to reconcile)
 	ProjectContext string                  `json:"project_context,omitempty"` // changed manifest/lock pointers from the same Component
 	SourcePreloads []string                `json:"source_preloads,omitempty"` // descriptors, not content: own source + related bodies
 	UsageSites     string                  `json:"usage_sites,omitempty"`     // CodeGraph reference sites of the changed symbols
@@ -124,7 +123,6 @@ func (a *Runner) DryRun(ctx context.Context) (*Preview, []UnitContext, string, e
 			SpecCases:      input.specCases,
 			Rules:          input.rules,
 			SeeAlso:        input.seeAlso,
-			Prior:          input.prior,
 			ProjectContext: input.projectContext,
 			SourcePreloads: a.describePreloadedSources(u),
 			UsageSites:     input.usageSites,

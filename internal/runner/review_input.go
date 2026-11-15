@@ -8,6 +8,8 @@ import (
 
 	"github.com/qiankunli/case-code-review/internal/harness/msg"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/runner/feature"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/unit"
 	"github.com/qiankunli/case-code-review/internal/unit/change"
 )
@@ -15,13 +17,13 @@ import (
 // reviewInput is preparation for a Unit's execution, shared with dry-run.
 // It owns no second review state; all facts are read from the captured input and Unit.
 type reviewInput struct {
-	changeFiles, specCases, rules, seeAlso, prior, projectContext, usageSites string
-	usageCount                                                                int
-	documents                                                                 []agentgo.AgentMessage
-	own, related                                                              []*msg.File
-	initial                                                                   []msg.FileContextEntry
-	outcomes                                                                  []string
-	outlineAttempts                                                           []recording.InitialOutlineAttempt
+	changeFiles, specCases, rules, seeAlso, projectContext, usageSites string
+	usageCount                                                         int
+	documents                                                          []agentgo.AgentMessage
+	own, related                                                       []*msg.File
+	initial                                                            []msg.FileContextEntry
+	outcomes                                                           []string
+	outlineAttempts                                                    []recording.InitialOutlineAttempt
 }
 
 func (a *Runner) prepareReviewInput(ctx context.Context, u unit.Unit) reviewInput {
@@ -32,7 +34,7 @@ func (a *Runner) prepareReviewInput(ctx context.Context, u unit.Unit) reviewInpu
 
 	// Render this unit's found context (clues) into the prompt blocks.
 	promptClues, documents := separateClueDocuments(u.Clues)
-	specCases, specRules, seeAlso, priorFindings := renderClues(promptClues)
+	specCases, specRules, seeAlso := renderClues(promptClues)
 	if len(documents) > 0 {
 		specCases += "\nDocstrings are supplied as separate document messages with their source references and relationships."
 	}
@@ -51,7 +53,7 @@ func (a *Runner) prepareReviewInput(ctx context.Context, u unit.Unit) reviewInpu
 
 	own, related, outcomes := a.preloadReviewFiles(ctx, u)
 	initial, attempts := a.initialFileContext(ctx, u, usagePaths, own, related)
-	return reviewInput{changeFiles: changeFilesExcludingCurrent, specCases: specCases, rules: rule, seeAlso: seeAlso, prior: priorFindings, projectContext: projectContext, usageSites: usageSites, usageCount: usageCount, documents: documents, own: own, related: related, initial: initial, outcomes: outcomes, outlineAttempts: attempts}
+	return reviewInput{changeFiles: changeFilesExcludingCurrent, specCases: specCases, rules: rule, seeAlso: seeAlso, projectContext: projectContext, usageSites: usageSites, usageCount: usageCount, documents: documents, own: own, related: related, initial: initial, outcomes: outcomes, outlineAttempts: attempts}
 }
 
 func (a *Runner) reviewMessages(u unit.Unit, input reviewInput, planResult string) []agentgo.AgentMessage {
@@ -78,8 +80,6 @@ func (a *Runner) reviewMessages(u unit.Unit, input reviewInput, planResult strin
 			content = strings.ReplaceAll(content, "{{see_also}}", input.seeAlso)
 			// Run-level ranked symbol map (real names, anti-guessing).
 			content = strings.ReplaceAll(content, "{{repo_map}}", a.repoMap)
-			// A previous review's findings on this unit, to reconcile against the change.
-			content = strings.ReplaceAll(content, "{{prior_findings}}", input.prior)
 			// Always substitute the {{plan_guidance}} token so the literal placeholder
 			// never leaks into the rendered prompt. When the plan phase produced no
 			// output, strip the surrounding "### Review Plan (Optional)\n…\n\n" wrapper
@@ -97,7 +97,11 @@ func (a *Runner) reviewMessages(u unit.Unit, input reviewInput, planResult strin
 	}
 
 	domain := a.assembleReviewMessages(buildMessages, input.own, input.related, input.initial, reviewDiffMessage(u))
-	return append(domain, input.documents...)
+	domain = append(domain, input.documents...)
+	if comments := a.reviewComments().Render(); comments != "" {
+		domain = append(domain, msg.Text("user", comments))
+	}
+	return domain
 }
 
 func reviewDiffMessage(u unit.Unit) *msg.Diff {
@@ -129,4 +133,11 @@ func reviewDiffMessage(u unit.Unit) *msg.Diff {
 		}
 	}
 	return msg.NewDiff(u.Paths(), u.Diff()).ConfigurePresentation("Review diff ("+u.ID+")", 30).ConfigureReviewSource(sources)
+}
+
+func (a *Runner) reviewComments() prcomment.Snapshot {
+	if !a.features.Enabled(feature.History) {
+		return nil
+	}
+	return a.args.PRComments
 }

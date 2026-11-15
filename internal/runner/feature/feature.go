@@ -23,7 +23,7 @@ const (
 	Rule             Gate = "rule"              // @rule clues (authored; all relations)
 	Link             Gate = "link"              // @link see-also clues (authored; all relations)
 	Doc              Gate = "doc"               // docstring clues (derived from source; all relations)
-	History          Gate = "history"           // prior-review findings clues (reconciliation)
+	History          Gate = "history"           // PR-wide comments shared by discovery and assessment
 	HypothesisReview Gate = "hypothesis_review" // independent evidence review before deterministic Trial
 	Relocation       Gate = "relocation"        // LLM re-location of comments to the right line
 	Routing          Gate = "routing"           // multi-model round-robin pool; off = single model (deterministic)
@@ -74,7 +74,7 @@ var registry = map[Gate]def{
 	Rule:             {true, "@rule clues (authored; all relations)", false},
 	Link:             {true, "@link see-also clues (authored; all relations)", false},
 	Doc:              {true, "docstring clues (derived from source; all relations)", false},
-	History:          {true, "prior-review findings clues (reconciliation)", false},
+	History:          {true, "PR-wide comments shared by discovery and assessment", false},
 	HypothesisReview: {true, "independent evidence review of hypotheses before deterministic Trial", false},
 	Relocation:       {true, "LLM re-location of comments to the right line", false},
 	Routing:          {true, "multi-model round-robin pool; off = single model (deterministic)", false},

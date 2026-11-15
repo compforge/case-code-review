@@ -15,8 +15,8 @@ import (
 	"github.com/qiankunli/case-code-review/internal/runner"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/runner/finding"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/telemetry"
-	"github.com/qiankunli/case-code-review/internal/unit/history"
 )
 
 func runReview(args []string) error {
@@ -85,9 +85,9 @@ func runReview(args []string) error {
 		rt.Findings, fileReader, baseReader, features.Enabled(feature.SearchSymbolContext),
 	)
 
-	historyIndex, err := history.Load(opts.historyPath)
+	prComments, err := prcomment.Load(opts.historyPath)
 	if err != nil {
-		return fmt.Errorf("load history: %w", err)
+		return fmt.Errorf("load PR comments: %w", err)
 	}
 	var stream *jsonlEmitter
 	if opts.outputFormat == "jsonl" {
@@ -121,7 +121,7 @@ func runReview(args []string) error {
 		Background:            opts.background,
 		BizID:                 opts.bizID,
 		SpecPath:              opts.specPath,
-		HistoryIndex:          historyIndex,
+		PRComments:            prComments,
 		GitRunner:             cc.GitRunner,
 		Features:              features,
 		Version:               versionString(),
@@ -252,9 +252,9 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 	if opts.outputFormat == "json" {
 		defer console.Quiet()()
 	}
-	historyIndex, err := history.Load(opts.historyPath)
+	prComments, err := prcomment.Load(opts.historyPath)
 	if err != nil {
-		return fmt.Errorf("load history: %w", err)
+		return fmt.Errorf("load PR comments: %w", err)
 	}
 	features, err := resolveFeatures(opts.features)
 	if err != nil {
@@ -271,7 +271,7 @@ func runDryRun(cc *commonContext, opts reviewOptions) error {
 		FileFilter:       cc.FileFilter,
 		GitRunner:        cc.GitRunner,
 		SpecPath:         opts.specPath,
-		HistoryIndex:     historyIndex,
+		PRComments:       prComments,
 		SystemRule:       cc.Resolver,
 		Background:       opts.background,
 		Features:         features,

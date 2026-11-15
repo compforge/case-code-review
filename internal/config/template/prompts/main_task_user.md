@@ -54,10 +54,6 @@ Contracts and cases bound to the changed function(s). Check whether this diff br
 References the author flagged as relevant when changing these function(s) — fetch their content when needed to settle a material premise (a bare path is a doc; `<path>::<symbol>` is another function). If empty, none were flagged.
 {{see_also}}
 
-### Prior Review (Optional)
-Findings already delivered as durable comments on this MR. Use them to understand the current revision, but do not create a new Hypothesis for the same underlying issue, whether it is fixed or still present. Only report a distinct regression with a different trigger or impact. If empty, there is no prior delivery to reconcile.
-{{prior_findings}}
-
 ### Repo Symbol Map (Optional)
 Symbols that actually exist in this repository, ranked by relevance to this change. When searching or reading other code, use these exact names — do not invent or guess identifier names; if a name you expected is not listed, search a fragment of it rather than the full guess. If empty, no map was built.
 {{repo_map}}
