@@ -33,7 +33,7 @@ export function renderSession(parent, page, state, signal) {
   const tab = state.params.get('tab') || 'overview';
   const tabs = el('nav', null, 'tabs session-tabs'); tabs.setAttribute('aria-label', 'Session views');
   for (const [value, title] of [['overview', 'Overview'], ['full', 'Full Session']]) {
-    const a = link(title, { tab: value, node: null, execution: null, tool: null, context: null }, state);
+    const a = link(title, { tab: value, node: null, execution: null, tool: null, prompt: null }, state);
     a.setAttribute('aria-current', tab === value ? 'page' : 'false'); tabs.append(a);
   }
   parent.append(tabs);
@@ -48,7 +48,7 @@ export function renderSession(parent, page, state, signal) {
   const controls = el('div', null, 'filters');
   const filter = el('input'); filter.placeholder = 'Filter calls, tools or errors'; filter.setAttribute('aria-label', 'Filter Session');
   const kind = el('select'); kind.setAttribute('aria-label', 'Call kind'); for (const [v, label] of [['', 'All events'], ['model_call', 'Model calls'], ['tool_call', 'Tool calls'], ['failed', 'Failures / query errors']]) { const o = el('option', label); o.value = v; kind.append(o); }
-  const sort = el('select'); sort.setAttribute('aria-label', 'Sort calls'); for (const [v, label] of [['source', 'Recorded order'], ['duration', 'Longest duration'], ['input', 'Largest context']]) { const o = el('option', label); o.value = v; sort.append(o); }
+  const sort = el('select'); sort.setAttribute('aria-label', 'Sort calls'); for (const [v, label] of [['source', 'Recorded order'], ['duration', 'Longest duration'], ['input', 'Largest prompt']]) { const o = el('option', label); o.value = v; sort.append(o); }
   const fragment = el('input'); fragment.type = 'checkbox'; fragment.id = 'fragment'; fragment.disabled = !focus;
   const label = el('label', 'Selected Execution only'); label.prepend(fragment);
   controls.append(filter, kind, sort, label); parent.append(controls);
@@ -81,12 +81,12 @@ export function renderSession(parent, page, state, signal) {
       }
       const row = el('article', null, `call-row ${item.kind==='operation' ? 'event-row' : ''} ${item.id === selected ? 'selected' : ''} ${focus && item.execution_id === focus ? 'focused' : ''}`);
       const main = el('div', null, 'call-main');
-      main.append(link(item.name, { view: 'session', session: session.id, node: item.id, context: item.kind === 'model_call' ? '1' : null }, state)); if(item.kind!=='operation') main.append(badge(item.status));
-      if(item.model_call_id) main.append(link('Requesting model →',{view:'session',session:session.id,node:item.model_call_id,tool:null,context:'1'},state));
+      main.append(link(item.name, { view: 'session', session: session.id, node: item.id, prompt: item.kind === 'model_call' ? '1' : null }, state)); if(item.kind!=='operation') main.append(badge(item.status));
+      if(item.model_call_id) main.append(link('Requesting model →',{view:'session',session:session.id,node:item.model_call_id,tool:null,prompt:'1'},state));
       row.append(main, el('p', item.error || item.summary || item.tool_call_id || item.id, 'call-preview'), el('small', item.kind==='operation' ? item.started_at : meta(item)));
       if (item.kind === 'model_call') {
         row.append(el('small', `Input ${number(item.usage ? (item.usage.input_tokens ?? 0) + (item.usage.cache_write_input_tokens ?? 0) : null)} · output ${number(item.usage?.output_tokens)} · cache read ${number(item.usage?.cache_read_input_tokens)}`));
-        const bar = el('meter'); bar.min = 0; bar.max = maxInput; bar.value = (item.usage?.input_tokens || 0) + (item.usage?.cache_write_input_tokens || 0); bar.setAttribute('aria-label', 'Relative context tokens'); row.append(bar);
+        const bar = el('meter'); bar.min = 0; bar.max = maxInput; bar.value = (item.usage?.input_tokens || 0) + (item.usage?.cache_write_input_tokens || 0); bar.setAttribute('aria-label', 'Relative prompt tokens'); row.append(bar);
       }
       if (item.searches?.length) {
         const counts = new Map(); for (const q of item.searches) counts.set(q.status, (counts.get(q.status) || 0) + 1);
@@ -96,7 +96,7 @@ export function renderSession(parent, page, state, signal) {
     }
   };
   filter.oninput = draw; kind.onchange = draw; sort.onchange = draw; fragment.onchange = draw; draw();
-  if (selected && state.params.get('context') !== '1') { const item = items.find(i => i.id === selected); if (item) show(item); else parent.prepend(el('p', 'Selected node is not present in this Session snapshot.', 'notice')); }
+  if (selected && state.params.get('prompt') !== '1') { const item = items.find(i => i.id === selected); if (item) show(item); else parent.prepend(el('p', 'Selected node is not present in this Session snapshot.', 'notice')); }
 }
 
 // Receipts can refer to R1 evidence or any earlier call in the shared Lane.

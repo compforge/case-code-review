@@ -190,25 +190,25 @@ Session JSONL 是本地执行事实源，不是对外发布协议。需要在长
 
 Viewer 是只读渲染层。Review 业务日志、原生 AgentGo Session 是事实源；查看页面不执行评审、
 采集 Forge 标注或运行评价。Trajectory 是标准化的执行记录，Session View 是对执行过程的渲染；
-Job View 按业务关联组合多个 Session 的片段，Context View 展示某次模型调用实际收到的消息。
+Job View 按业务关联组合多个 Session 的片段，Prompt View 展示某次模型调用实际收到的消息。
 
 首页按开始时间倒序展示 Review，支持 Repository、日期（CST）与 completion 筛选，同时展示
 版本、Finding 数、wall time 和已记录的录制缺口。Review 工作区在左侧菜单排列 Global / Job / Session，默认
 打开 Global。Job / Session 使用“左侧导航、中间对象列表、右侧详情”三栏布局：进入 View 先展示列表，
 点击条目后才加载右侧详情，不自动选择第一项；URL 中已有明确选择时直接恢复详情。较窄窗口将导航移到顶部，
-手机上列表与详情上下排列。Context 是某次 model call 的详情抽屉，在 Job 或 Session 内打开，不增加第四栏，也不是并列入口。
+手机上列表与详情上下排列。Prompt 是某次 model call 的详情抽屉，在 Job 或 Session 内打开，不增加第四栏，也不是并列入口。
 URL 保留父 View、Session tab、Unit、Hypothesis、原生 Session、Execution 与调用 ID，支持刷新、
 分享与浏览器前进后退。Refresh 重新读取当前快照。Timeline 与 Stage 弹框不再是页面概念。
 
 | View | 观测对象 | 展示与下钻 |
 |---|---|---|
 | Global | 当前一次 Review | 完成状态、wall time、Unit outcome 分布、Hypothesis / Finding 数、Token/cache 与 Session / Execution 总数；只展示宏观汇总 |
-| Job | 一个 Unit 的业务执行 | Hypothesis → Assessment 四轴及理由 → Trial → Finding；Operation 原始事实折叠，关联调用下钻到 Session / Context |
+| Job | 一个 Unit 的业务执行 | Hypothesis → Assessment 四轴及理由 → Trial → Finding；Operation 原始事实折叠，关联调用下钻到 Session / Prompt |
 | Session | 一个完整原生 Session | R1 一个 loop 一个 Session；整个 R2 Lane 连续对话共用一个 Session，多次 Execution 分段展示；辅助调用单独标识 |
 
-Session 中点击 model call 直接打开对应 Context View 详情面板，Job 也可从关联调用打开，保留 role、消息与内容块顺序，展开消息正文、tool schemas
+Session 中点击 model call 直接打开对应 Prompt View 详情面板，Job 也可从关联调用打开，保留 role、消息与内容块顺序，展开消息正文、tool schemas
 和 call configuration；当前 response 单独展示，并保留 Native identity 中的 Session reference 与 Operation ID。
-Context 由显式 URL 参数打开；关闭详情清除调用选择，刷新后保持关闭，仍留在原 Job / Session，可展开面板阅读长消息。
+Prompt 由显式 URL 参数 `prompt=1` 打开。关闭详情清除调用选择，刷新后保持关闭，仍留在原 Job / Session，可展开面板阅读长消息。
 Global 的范围是一次 Review，只展示汇总，不重复 Job、Session 或 Operation 明细。它使用 journal 与
 关联索引；共享 Lane 不按 Unit 重复计数。基础成本从关联原生 Session 调用汇总，不依赖 Review
 finalization；缺失字段保留 coverage。完成 Job 数排除仍有 unassessed hypotheses 的 Unit；缺失 wall time 与录制的零耗时分别展示。
@@ -234,7 +234,7 @@ Compaction 事件、失败调用和未观察到结果的调用保留可见；点
 Run 级事件关联到所有调用共同所属的 Execution；Execution、Unit 或 Hypothesis 归属缺失或冲突时
 保留未知，不选择某个模型或工具调用充当 Run 的 owner。
 
-Context 首先展示消息 outline，展开时渲染具体内容块。可以比较同一 Session 的前一个模型请求，按完整
+Prompt 首先展示消息 outline，展开时渲染具体内容块。可以比较同一 Session 的前一个模型请求，按完整
 消息精确匹配并保留重复次数，分别展示 retained、added/changed、removed/replaced 及 tool schema 变化。
 未匹配的替换显示为删除和增加，不声称语义等价；有录制 compaction 时提供对应事件入口。重复消息是
 可复核的观察，不是质量 Verdict。消息 JSON UTF-8 bytes 与 provider token 计费分开标注。
@@ -247,7 +247,7 @@ Context 首先展示消息 outline，展开时渲染具体内容块。可以比�
 - `/session?session=<native-id>` 使用 AgentLedger 原生 SessionView reader，读取完整原生 Session 后
   返回调用摘要与显式业务关联；未关联的文件不能由 URL 任意读取。
 - `/session?session=<native-id>&node=<native-node-id>` 才返回所选节点正文；原生 record attributes
-  中重复的正文不会再次序列化。Context 的相邻请求也只在点击比较后加载。
+  中重复的正文不会再次序列化。Prompt 的相邻请求也只在点击比较后加载。
 - Session 缺失、损坏或尾行截断时保留可读取的 prefix 和诊断，不影响 Review / Job 首屏。
   打开页面只做读取；共享 Host allowlist 继续防止 DNS rebinding 读取本地录制。
 
@@ -255,7 +255,7 @@ Viewer 只消费当前 schema，不叠加历史字段猜测。单次运行受 di
 这里用于发现问题和形成改进假设。质量、速度、成本的效果结论仍需 eval 在固定样本上对照验证。
 
 前端为 Go embed 的原生 ES modules，无 npm 运行时依赖。`make test` 同时执行 Go tests 与 Node.js
-内置 runner 的概览、导航与 Context 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Context。
+内置 runner 的概览、导航与 Prompt 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Prompt。
 
 ## 3. eval：效果与轨迹闭环
 
@@ -350,7 +350,7 @@ unfinished Units make coverage partial, even when useful Findings were delivered
 
 The Review workspace reads business records and explicit native Session references. Final token totals
 come from the manifest; before finalization they remain pending. Job summaries never read native
-call bodies. Session View reads the selected continuous Session, while Context loads one actual
+call bodies. Session View reads the selected continuous Session, while Prompt loads one actual
 request and optionally its predecessor. Missing call evidence remains visible without blocking
 business navigation.
 

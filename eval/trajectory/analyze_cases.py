@@ -26,7 +26,7 @@ def case_report(results: list[dict]) -> str:
             lines.append("Review evidence unavailable in this result.")
         for unit in evidence.get("units", []):
             lines.extend(["", f"Unit `{unit['unit_id']}` · recorded status `{unit['status']}`",
-                          f"[Job View]({unit['job_view']}) · [Context View]({unit['context_text']})"])
+                          f"[Job View]({unit['job_view']}) · [Prompt View]({unit['prompt_text']})"])
             for path in unit["session_views"]:
                 lines.append(f"[Session View fragment]({path})")
             if unit["issues"]:
@@ -95,7 +95,7 @@ def main() -> int:
     parser.add_argument("selected", type=Path)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ccr", default="ccr", help="CLI used only for offline ATIF/Job export; Unit views require Job export support")
-    parser.add_argument("--views-only", action="store_true", help="export linked Job/Context evidence without ATIF evaluation or model calls")
+    parser.add_argument("--views-only", action="store_true", help="export linked Job/Prompt evidence without ATIF evaluation or model calls")
     args = parser.parse_args()
     results = analyze(args.selected, args.out, args.ccr, views_only=args.views_only)
     failed = sum("error" in row for row in results)

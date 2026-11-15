@@ -40,8 +40,8 @@ func TestWorkspaceTemplatesRender(t *testing.T) {
 					t.Fatal("journal page lost review identity")
 				}
 				global, job, session := strings.Index(out.String(), `data-view="global"`), strings.Index(out.String(), `data-view="job"`), strings.Index(out.String(), `data-view="session"`)
-				if global < 0 || job <= global || session <= job || strings.Contains(out.String(), `data-view="context"`) {
-					t.Fatal("workspace must expose Global / Job / Session, with Context nested under a call")
+				if global < 0 || job <= global || session <= job || strings.Contains(out.String(), `data-view="prompt"`) {
+					t.Fatal("workspace must expose Global / Job / Session, with Prompt nested under a call")
 				}
 				if strings.Contains(out.String(), "Review results and statistics") || strings.Contains(out.String(), "Review Overview") {
 					t.Fatal("removed review summary remains")

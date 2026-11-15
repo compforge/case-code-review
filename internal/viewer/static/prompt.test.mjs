@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { compareMessages, duplicateMessages } from './context.mjs';
+import { compareMessages, duplicateMessages } from './prompt.mjs';
 const msg = (text, role = 'user') => ({ role, content: [{ type: 'text', text }] });
 test('adjacent request comparison accounts for repeated messages independently', () => {
   const previous = [msg('system', 'system'), msg('same'), msg('same'), msg('removed')];

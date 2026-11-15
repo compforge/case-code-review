@@ -20,7 +20,7 @@ const descendants = node => [node, ...node.children.flatMap(descendants)];
 const settle = async () => { await new Promise(resolve => setImmediate(resolve)); };
 
 /**
- * @case Model Context preserves native identity; closing it survives reload without losing Session scope
+ * @case Model Prompt preserves native identity; closing it survives reload without losing Session scope
  * @see {@link component://docs/observability.md}
  */
 test('model call details preserve evidence and explicit navigation state', async t => {
@@ -45,7 +45,7 @@ test('model call details preserve evidence and explicit navigation state', async
     getElementById: id => elements[id], createElement: tag => new Element(tag), querySelectorAll: () => menu,
     addEventListener: (name, fn) => { documentEvents[name] = fn; },
   };
-  globalThis.location = { pathname: '/r/repo/review', search: '?view=session&session=s1&unit=u1&node=call-1&context=1', href: 'http://localhost/r/repo/review', origin: 'http://localhost' };
+  globalThis.location = { pathname: '/r/repo/review', search: '?view=session&session=s1&unit=u1&node=call-1&prompt=1', href: 'http://localhost/r/repo/review', origin: 'http://localhost' };
   globalThis.history = { replaceState: (_, __, url) => navigate(url), pushState: (_, __, url) => navigate(url) };
   globalThis.window = { addEventListener: (name, fn) => { events[name] = fn; } };
   const requests = [];
@@ -99,7 +99,7 @@ test('model call details preserve evidence and explicit navigation state', async
     requests.length = 0;
     await click(menu.find(a => a.dataset.view === 'session'));
     const params = new URLSearchParams(location.search);
-    for (const key of ['unit', 'session', 'node', 'execution', 'context']) assert.equal(params.has(key), false);
+    for (const key of ['unit', 'session', 'node', 'execution', 'prompt']) assert.equal(params.has(key), false);
     assert.equal(descendants(elements.content).some(node => node.textContent === 'Select a Session'), true);
     assert.equal(descendants(elements.selection).filter(node => node.tagName === 'a').length, 2);
     assert.deepEqual(requests, []);
@@ -112,7 +112,7 @@ test('model call details preserve evidence and explicit navigation state', async
     await click(menu.find(a => a.dataset.view === 'session'));
     assert.equal(new URLSearchParams(location.search).has('session'), false);
     assert.equal(descendants(elements.content).some(node => node.textContent === 'Select a Session'), true);
-    await openURL('?view=session&session=s1&unit=u1&node=call-1&context=1');
+    await openURL('?view=session&session=s1&unit=u1&node=call-1&prompt=1');
   });
 
   await t.test('Session tabs separate the overview and full list without fetching measurements', async () => {
@@ -132,22 +132,22 @@ test('model call details preserve evidence and explicit navigation state', async
     assert.equal(text().includes('Observed call statistics'), false);
     assert.equal(requests.some(url => url.includes('/measurements')), false);
     const overview = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === 'Overview');
-    await openURL('?view=session&session=s1&execution=e1&node=call-1&context=1');
+    await openURL('?view=session&session=s1&execution=e1&node=call-1&prompt=1');
     const back = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === 'Overview');
     documentEvents.click({ target: back, button: 0, preventDefault() {} });
     await settle();
     const params = new URLSearchParams(location.search);
     assert.equal(params.get('tab'), 'overview');
-    for (const key of ['node', 'execution', 'context']) assert.equal(params.has(key), false);
+    for (const key of ['node', 'execution', 'prompt']) assert.equal(params.has(key), false);
     assert.equal(elements.detail.hidden, true);
     await openURL(full.href);
     assert.ok(descendants(elements.content).some(node => node.className === 'call-list'));
     await openURL(overview.href);
     assert.ok(text().includes('Observed call statistics'));
-    await openURL('?view=session&session=s1&unit=u1&node=call-1&context=1');
+    await openURL('?view=session&session=s1&unit=u1&node=call-1&prompt=1');
   });
 
-  await t.test('Context keeps native identity even without a recorded request', async () => {
+  await t.test('Prompt keeps native identity even without a recorded request', async () => {
     assertIdentity();
     const request = call.node.request;
     delete call.node.request;
@@ -164,30 +164,27 @@ test('model call details preserve evidence and explicit navigation state', async
     assert.equal(params.get('view'), 'session');
     assert.equal(params.get('session'), session.id);
     assert.equal(params.get('unit'), 'u1');
-    assert.equal(params.has('context'), false);
+    assert.equal(params.has('prompt'), false);
     assert.equal(params.has('node'), false);
     await openURL(location.href);
     assert.equal(elements.detail.hidden, true);
   });
 
-  await t.test('plain Session call links open native detail without forcing Context', async () => {
+  await t.test('plain Session call links open native detail without forcing Prompt', async () => {
     await openURL('?view=session&session=s1&node=call-1');
-    assert.equal(new URLSearchParams(location.search).has('context'), false);
+    assert.equal(new URLSearchParams(location.search).has('prompt'), false);
     assertIdentity();
-    assert.equal(descendants(elements.detail).some(node => node.textContent === 'CONTEXT VIEW'), false);
+    assert.equal(descendants(elements.detail).some(node => node.textContent === 'PROMPT VIEW'), false);
   });
 
-  await t.test('clicking a model row and legacy Context links still opens Context', async () => {
+  await t.test('clicking a model row opens Prompt', async () => {
     const row = descendants(elements.content).find(node => node.tagName === 'a' && node.textContent === item.name);
     let prevented = false;
     documentEvents.click({ target: row, button: 0, preventDefault() { prevented = true; } });
     await settle();
     assert.equal(prevented, true);
-    assert.equal(new URLSearchParams(location.search).get('context'), '1');
-    assert.equal(descendants(elements.detail).some(node => node.textContent === 'CONTEXT VIEW'), true);
-    await openURL('?view=context&session=s1&node=call-1');
-    assert.equal(new URLSearchParams(location.search).get('view'), 'session');
-    assert.equal(descendants(elements.detail).some(node => node.textContent === 'CONTEXT VIEW'), true);
+    assert.equal(new URLSearchParams(location.search).get('prompt'), '1');
+    assert.equal(descendants(elements.detail).some(node => node.textContent === 'PROMPT VIEW'), true);
     assertIdentity();
   });
 });

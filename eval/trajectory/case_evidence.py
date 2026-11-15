@@ -32,8 +32,8 @@ def message_text(message: dict) -> tuple[str | None, str, str]:
     return value.get("role"), text, message.get("type", "native")
 
 
-@spec("Context outlines preserve message order and native evidence; excerpts and headings are not reconstructed prompts or causal judgments")
-def context_outline(node: dict) -> dict:
+@spec("Prompt outlines preserve message order and native evidence; excerpts and headings are not reconstructed prompts or causal judgments")
+def prompt_outline(node: dict) -> dict:
     request = (node.get("request") or {}).get("input")
     outline = {"node_id": node["id"], "session": node.get("session"),
                "evidence": node.get("evidence", []), "messages": []}
@@ -53,18 +53,18 @@ def context_outline(node: dict) -> dict:
     return outline
 
 
-def render_context(job: dict, contexts: list[dict]) -> str:
-    lines = [f"# Context View · {job['job']['id']}", "",
+def render_prompt(job: dict, prompts: list[dict]) -> str:
+    lines = [f"# Prompt View · {job['job']['id']}", "",
              "Recorded requests; excerpts below are abbreviated. Exact requests and responses remain in the linked JobView JSON.", ""]
-    for context in contexts:
-        lines.extend([f"## ModelCall {context['node_id']}",
-                      f"Session: {json.dumps(context['session'], ensure_ascii=False)}", ""])
-        if context.get("issue"):
-            lines.extend([context["issue"], ""])
+    for prompt in prompts:
+        lines.extend([f"## ModelCall {prompt['node_id']}",
+                      f"Session: {json.dumps(prompt['session'], ensure_ascii=False)}", ""])
+        if prompt.get("issue"):
+            lines.extend([prompt["issue"], ""])
             continue
-        tools = context.get("tools")
+        tools = prompt.get("tools")
         lines.append(f"Request tools (outside messages): {len(tools) if isinstance(tools, list) else 'unknown'}")
-        for message in context["messages"]:
+        for message in prompt["messages"]:
             lines.append(f"[{message['index']}] {message['role'] or 'unknown role'} · {message['native_type']} · {message['characters']} characters")
             for heading in message["headings"]:
                 lines.append("  section: " + heading)
@@ -94,13 +94,13 @@ def build_case_evidence(session: Path, unit_ids: list[str], out: Path, ccr: str)
         if job.get("schema_version") != "agent-ledger/job@1" or job.get("attributes", {}).get("unit_id") != unit:
             raise ValueError(f"invalid or mismatched JobView for {unit}")
         calls = list(call_nodes(job.get("nodes", [])))
-        contexts = [context_outline(node) for node in calls if node["kind"] == "model_call"]
+        prompts = [prompt_outline(node) for node in calls if node["kind"] == "model_call"]
         out.mkdir(parents=True, exist_ok=True)
-        job_path, context_path = out / f"{identity}.job.json", out / f"{identity}.context.json"
+        job_path, prompt_path = out / f"{identity}.job.json", out / f"{identity}.prompt.json"
         job_path.write_text(json.dumps(job, ensure_ascii=False, indent=2))
-        context_path.write_text(json.dumps(contexts, ensure_ascii=False, indent=2))
-        text_path = out / f"{identity}.context.md"
-        text_path.write_text(render_context(job, contexts))
+        prompt_path.write_text(json.dumps(prompts, ensure_ascii=False, indent=2))
+        text_path = out / f"{identity}.prompt.md"
+        text_path.write_text(render_prompt(job, prompts))
         sessions = {}
         for node in calls:
             ref = node.get("session")
@@ -120,7 +120,7 @@ def build_case_evidence(session: Path, unit_ids: list[str], out: Path, ccr: str)
             session_paths.append(str(path.resolve()))
         views.append({"unit_id": unit, "job": job["job"], "status": job.get("status"),
                       "issues": job.get("issues", []), "job_view": str(job_path.resolve()),
-                      "context_view": str(context_path.resolve()), "context_text": str(text_path.resolve()),
+                      "prompt_view": str(prompt_path.resolve()), "prompt_text": str(text_path.resolve()),
                       "session_views": session_paths,
                       "session_calls": [{key: node.get(key) for key in ("session", "id", "kind", "evidence")}
                                         for node in calls]})
