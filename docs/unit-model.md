@@ -74,14 +74,14 @@ Session 的 grouping 阶段记录库调用的实际耗时，后续 review 状态
 Clue 用两个正交维度表达上下文：
 
 - **Relation**：事实与 Unit 的关系，如 `self`、`owner`、`caller`、`callee`、`used`、`project`。
-- **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`history`、`project`。
+- **Kind**：事实的来源或契约种类，如 `spec`、`case`、`rule`、`link`、`doc`、`project`。
 
 其中 `spec / case / link / rule / doc` 是 Project Knowledge 中作者声明的 Biz Knowledge：它们表达项目
 希望代码守住的业务契约、具体场景、关系和说明。Language Knowledge 负责识别注释、装饰器、
 symbol-id / fqn 等语法与身份，把这些声明绑定到 definition / relation；Project Knowledge 负责声明
 内容本身。两者分开后，新增语言只需实现可靠绑定，不必复制业务契约模型。
 
-因此“caller 的 spec”和“self 的 history”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
+因此“caller 的 spec”和“self 的 doc”无需新增专用字段。ClueFinder 只负责发现并挂载事实，
 不决定 prompt 排版；Unit 保存完整的 Fragments 与 Clues，Runner 再按预算、优先级和消息形状投影为
 Review Messages。
 
@@ -129,8 +129,7 @@ ContextItems 和消息 token 估算；估算不包含工具 schema，也不是 p
 
 路径和短函数名不足以跨文件、重命名和依赖建立关系。语言层提供稳定 `symbol-id`；作者声明的
 契约另保留可跨仓匹配的 `fqn`。Fragment 与 Unit 的目标身份复用 RepoKit 的版本、源码范围与补丁身份，成员顺序不改变 Unit 身份。
-Clue 和历史反馈使用各自支持的身份连接，Forge 只剩文件锚点时
-才退化到 path。
+Clue 按源码身份连接；PR comments 按 PR 归属共享给 R1/R2，评论 anchor 只作为导航线索，不决定可见范围。
 
 身份解析失败表示 `unknown`，不能用猜测的同名符号替代。这是防止“上下文看似丰富、实际属于
 另一个函数”的基本准确性边界。

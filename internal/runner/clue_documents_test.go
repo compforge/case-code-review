@@ -21,7 +21,7 @@ func TestClueDocumentsLeaveFixedInstructionsAndShareBody(t *testing.T) {
 		{Kind: unit.ClueDoc, Relation: unit.RelUsed, Ref: "types.go::Worker", Text: body},
 	}
 	inline, documents := separateClueDocuments(clues)
-	specs, _, _, _ := renderClues(inline)
+	specs, _, _ := renderClues(inline)
 	if strings.Contains(specs, body) || !strings.Contains(specs, "existing contract") {
 		t.Fatal("doc body remains pinned or spec was lost")
 	}
@@ -52,7 +52,7 @@ func TestClueDocumentsLeaveFixedInstructionsAndShareBody(t *testing.T) {
 				t.Fatalf("lost clue provenance: %+v", clue)
 			}
 		}
-		original, _, _, _ := renderClues(clues)
+		original, _, _ := renderClues(clues)
 		projectedText := specs + "\n" + content.String()
 		oldTokens, newTokens := llm.CountTokens(original), llm.CountTokens(projectedText)
 		if newTokens >= oldTokens {

@@ -7,7 +7,6 @@ import (
 	"github.com/qiankunli/case-code-review/internal/language"
 	"github.com/qiankunli/case-code-review/internal/runner/feature"
 	"github.com/qiankunli/case-code-review/internal/unit"
-	"github.com/qiankunli/case-code-review/internal/unit/history"
 	"github.com/qiankunli/case-code-review/internal/unit/sourcecontext"
 	"github.com/qiankunli/case-code-review/internal/unit/spec"
 )
@@ -74,9 +73,6 @@ func (a *Runner) configureFinders(catalog spec.Catalog) {
 		Doc:  f.Enabled(feature.Doc),
 	}
 	finders := []unit.ClueFinder{spec.NewRelatedFinder(catalog, analyzer, kinds)}
-	if f.Enabled(feature.History) {
-		finders = append(finders, history.Finder{Index: a.args.HistoryIndex})
-	}
 	// One CodeGraph snapshot per review, shared by clue finders and merge
 	// adjacency, owner/used contracts and documentation; built lazily on first use.
 

@@ -16,6 +16,7 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
@@ -323,7 +324,12 @@ func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
 	client := &assessmentScriptedClient{responses: []*agentgo.LLMResponse{
 		reviewAssessmentResponse("call-1"), reviewAssessmentResponse("call-1"),
 	}}
+	comments, err := prcomment.Load("../prcomment/testdata/comments.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := Config{
+		PRComments: comments,
 		Task: template.LlmConversation{Messages: []template.ChatMessage{
 			{Role: "system", Content: "stable verification rules"},
 			{Role: "user", Content: "{{hypothesis}} {{prior_assessments}}"},
@@ -338,6 +344,15 @@ func TestReviewAppendsHypothesisWithFreshExecutionState(t *testing.T) {
 	}
 	if len(client.requests) != 2 {
 		t.Fatalf("requests=%d", len(client.requests))
+	}
+	for _, request := range client.requests {
+		var prompt strings.Builder
+		for _, message := range request.Messages {
+			prompt.WriteString(message.TextContent())
+		}
+		if strings.Count(prompt.String(), comments.Render()) != 1 {
+			t.Fatal("R2 Lane lost or duplicated PR comments between hypotheses")
+		}
 	}
 	var content strings.Builder
 	for _, message := range client.requests[1].Messages {

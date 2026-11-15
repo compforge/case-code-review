@@ -73,7 +73,7 @@ func TestDogfoodContextAssembly(t *testing.T) {
 	type ctx struct{ sc, ru, sa string }
 	got := map[string]ctx{}
 	for _, u := range units {
-		sc, ru, sa, _ := renderClues(u.Clues)
+		sc, ru, sa := renderClues(u.Clues)
 		for _, symbol := range u.AllSymbols() {
 			got[symbol] = ctx{sc, ru, sa}
 		}

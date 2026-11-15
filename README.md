@@ -89,7 +89,7 @@ ccr review --format jsonl               # stream accepted Findings before the ru
 
 `ccr review --timeout` sets the total time limit in minutes for each Unit, including discovery, verification queueing, Trial and wrap-up (default 10; 0 disables the Unit time limit).
 
-For continuous PR/MR review, pass earlier delivered findings with `--history prior.json`. The forge comments are the durable source; the caller fetches them for each revision so ccr can distinguish new findings from repeat delivery.
+For continuous PR/MR review, pass all PR comments with `--history comments.json` as a JSON array of RepoKit Python Comment fields. The caller fetches the complete discussion for each revision, including human comments and unanchored replies. R1 and R2 share this context to understand feedback and avoid repeat delivery.
 
 Use `--max-tokens-budget 200000` with `review` or `scan` to set a run-wide input + output token budget (default: unlimited). Once reported usage reaches it, new model calls stop and accepted results are retained. In-flight calls can finish, so this is a soft limit.
 

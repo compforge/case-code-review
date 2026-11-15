@@ -37,7 +37,7 @@ case-code-review/
     ├── project/    Repository、RepoKit 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
     ├── material/   共享材料分类入口：继承 CodeGraph 通用规则，仅追加 CCR 领域标签，供 Diff、Scan 与图共同使用
     ├── language/   ★ CodeGraph 接入边界：向 RepoKit 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
-    ├── unit/       ★ 接入 RepoKit 的 Fragment / Unit，持有评审知识；`spec`/`history`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
+    ├── unit/       ★ 接入 RepoKit 的 Fragment / Unit，持有评审知识；`spec`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
     ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力。详见 `docs/harness.md`
     ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 与业务 Operation，按 Unit 投影 Observation JobView
     ├── llm/        模型连接配置、评审 token 预算与估算；协议和路由复用 AgentGo/litellm；作为稳定基础设施平铺
@@ -73,6 +73,7 @@ Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结�
 4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
    所有模型调用统一通过 AgentGo ModelExecutor 消费 stream，使用 ChatModel、Message 与 CallConfig；领域消息通过 ToMessage 投影，CCR 不维护另一套模型消息 DTO。Session JSONL 必须记录实际 prompt、response、工具与完成状态；失败的 PartialMessage 与 usage 是诊断事实，不视为已提交消息。
    Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；Review JSONL 同时保存业务产物与 Operation 状态，通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制。
+   PR comments 是两阶段共享的 PR 级讨论材料，按 PR 获取全部评论，不按作者、review 类型或文件锚点筛选；平台 resolution 不代表认可或修复。
    一个 Unit 的 R1 → R2 → Trial 过程是一个 Observation JobView；共享 Lane Session 只提供明确关联的调用，不能整体归入每个 Unit。
    Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
 5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。

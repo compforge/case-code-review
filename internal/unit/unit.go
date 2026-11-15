@@ -86,7 +86,7 @@ type Unit struct {
 }
 
 // AllSymbols returns every symbol-id this Unit covers across its Fragments — the
-// join keys for spec/case/history lookup.
+// join keys for spec/case lookup.
 func (u Unit) AllSymbols() []string {
 	var out []string
 	for _, f := range u.Fragments {

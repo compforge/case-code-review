@@ -65,9 +65,9 @@ Use `read_base_files` whenever attribution is not already decisive from an added
 
 ### Novelty
 
-- `new`: not represented by another Hypothesis in this Lane or a durable prior Review delivery.
+- `new`: not represented by another Hypothesis in this Lane or an issue already raised in the PR comments.
 - `duplicate_in_case`: the same underlying defect as an earlier Hypothesis in this Lane; name the canonical Hypothesis ID in the reason.
-- `already_delivered`: the same underlying defect was already delivered on the MR.
+- `already_delivered`: the same underlying defect was already raised in the PR comments by a person or a bot; cite the matching comment ID or URL. Read replies and corrections before deciding. A general comment or resolved discussion is not automatically a defect or proof of a fix.
 
 Pre-existing behavior, low-value observations, and prior deliveries must not be rescued by a strong support judgment.
 

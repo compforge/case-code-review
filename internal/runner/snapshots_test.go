@@ -95,7 +95,7 @@ func TestCapturedGraphAndOldContractsSurviveWorkspaceChanges(t *testing.T) {
 
 func TestBeforeClueLabelsDoNotLookCurrent(t *testing.T) {
 	c := unit.Clue{Kind: unit.ClueDoc, Relation: unit.RelUsed, Ref: "a.go::A", Snapshot: "old-commit", Text: "old docs"}
-	text, _, _, _ := renderClues([]unit.Clue{c})
+	text, _, _ := renderClues([]unit.Clue{c})
 	if !strings.Contains(text, "before change, snapshot old-commit") {
 		t.Fatal(text)
 	}

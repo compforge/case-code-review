@@ -43,6 +43,7 @@ func (a *Runner) reviewHypothesis(
 		wrapUpDeadline = run.budget.wrapUpDeadline
 	}
 	result = hypothesisreview.Review(ctx, hypothesisreview.Config{
+		PRComments:              a.reviewComments(),
 		WrapUpDeadline:          wrapUpDeadline,
 		ExplorationFraction:     a.args.Template.ReviewTimeBudget.WithDefaults().ExplorationFraction,
 		Task:                    *task,

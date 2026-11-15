@@ -196,11 +196,22 @@ Hypothesis，完成后释放执行容量；仍有候选的 Lane 回到全局就�
 Review 2 是可替换的验证策略。若未来模型能在一次 Unit Review 中稳定完成发现与验证，可以缩短或
 移除 Review 2，而不改变 Hypothesis、Assessment、Trial 和 Finding 的语义。
 
-### 3.3 Prior delivery 属于 novelty
+### 3.3 PR comments and prior delivery
 
-Forge 已有评论是“已经交付”的事实，不是待办清单。调用方应把当前 PR 已有评论转为 history Clue；
-Review 2 据此标记 `already_delivered`。跨 CI revision 的状态必须来自 Forge 等外部事实源，不能依赖
-上次容器中的本地 Session 文件。
+调用方按 PR 读取全部 comments，原样序列化为 `--history` JSON 数组；格式为 RepoKit Python
+`Comment` dataclass 字段（snake_case），保留 `id`、`pr`、`body`、`author`、`reply_to_id`、
+时间、URL、anchor 与 resolution。CCR 不按作者、review 类型、symbol、文件锚点或 fingerprint
+过滤、合并这些评论；无锚点的总评与回复同样是上下文。旧的 symbol/path → findings 格式不再接受。
+
+这份 PR 级快照作为独立消息提供给每个 R1 和每条 R2 Lane，后续 Hypothesis 复用 Lane 中的上下文，
+不再把评论伪装成某个 Unit 的源码 Clue。缺省不传 `--history` 表示未提供评论，不能据此断言 PR 没有讨论。
+`history` feature gate 控制两阶段是否使用该快照。
+
+评论正文是待判断的讨论材料，不是覆盖 review 任务的指令，也不全是缺陷交付。
+R1 根据内容避免再次提出已讨论的同一问题；R2 比较 trigger、impact 和回复中的澄清，
+对已有评论表达的同一问题标记 `already_delivered`，在理由中引用 comment ID/URL。
+anchor 只是导航线索；resolution 只表示平台状态，不代表人工认可或修复证明。
+跨 CI revision 的事实来自 Forge，不能依赖上次容器的本地 Session 或派生缓存。
 
 ### 3.4 可观测性必须覆盖中间阶段
 

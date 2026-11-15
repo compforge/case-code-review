@@ -16,11 +16,13 @@ import (
 	"github.com/qiankunli/case-code-review/internal/harness/tool"
 	"github.com/qiankunli/case-code-review/internal/llm"
 	"github.com/qiankunli/case-code-review/internal/recording"
+	"github.com/qiankunli/case-code-review/internal/runner/prcomment"
 	"github.com/qiankunli/case-code-review/internal/runner/unitreview"
 	"github.com/qiankunli/case-code-review/internal/unit"
 )
 
 type Config struct {
+	PRComments              prcomment.Snapshot
 	WrapUpDeadline          func() time.Time
 	ExplorationFraction     float64
 	Task                    template.LlmConversation
@@ -75,6 +77,13 @@ func Review(
 		}
 		condensed := renderReviewPrompt(message.Content, config, input, true, retainedContext)
 		messages = append(messages, newHypothesisMessage(full, condensed))
+	}
+	// The snapshot is PR-wide and independent of this hypothesis's Unit. A
+	// continuing Lane already retains it; a new Lane receives the same snapshot.
+	if !retainedContext {
+		if comments := config.PRComments.Render(); comments != "" {
+			messages = append(messages, msg.Text("user", comments))
+		}
 	}
 	messages = append(messages, reviewContextMessages(input)...)
 
