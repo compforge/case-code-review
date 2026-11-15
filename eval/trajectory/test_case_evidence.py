@@ -7,11 +7,11 @@ from unittest.mock import patch
 
 from eval.eval_snapshot import review_sha256
 from eval.trajectory.analyze_cases import analyze
-from eval.trajectory.case_evidence import context_outline
+from eval.trajectory.case_evidence import prompt_outline
 
 
 class CaseEvidenceTests(unittest.TestCase):
-    def test_context_preserves_order_sections_and_unknown_requests(self):
+    def test_prompt_preserves_order_sections_and_unknown_requests(self):
         node = {"id": "call", "session": {"source": "agentgo", "id": "s"},
                 "request": {"input": {"messages": [
                     {"role": "system", "content": "# Policy\nCheck recovery"},
@@ -19,13 +19,13 @@ class CaseEvidenceTests(unittest.TestCase):
                     {"role": "user", "content": "# Diff\n" + "x" * 200},
                     {"role": "tool", "content": [{"type": "text", "text": "unavailable"}]}],
                     "tools": [{"name": "read"}]}}}
-        outline = context_outline(node)
+        outline = prompt_outline(node)
         self.assertEqual([m["role"] for m in outline["messages"]], ["system", "user", "user", "tool"])
         self.assertEqual(outline["messages"][2]["headings"], ["# Diff"])
         self.assertTrue(outline["messages"][2]["excerpt_truncated"])
         self.assertEqual(outline["messages"][3]["excerpt"], "unavailable")
         self.assertEqual(outline["tools"], [{"name": "read"}])
-        self.assertIn("issue", context_outline({"id": "missing"}))
+        self.assertIn("issue", prompt_outline({"id": "missing"}))
 
     def test_views_only_retains_gaps_and_analyst_notes_without_evaluation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -57,6 +57,14 @@ class CaseEvidenceTests(unittest.TestCase):
             self.assertTrue(any("checkpoint failed" in issue for issue in evidence["issues"]))
             self.assertTrue(any("missing session_end" in issue for issue in evidence["issues"]))
             unit = evidence["units"][0]
+            prompt_path = Path(unit["prompt_view"])
+            prompt_text = Path(unit["prompt_text"])
+            self.assertTrue(prompt_path.name.endswith(".prompt.json"))
+            self.assertTrue(prompt_text.name.endswith(".prompt.md"))
+            self.assertEqual(json.loads(prompt_path.read_text())[0]["node_id"], "m")
+            self.assertIn("# Prompt View", prompt_text.read_text())
+            self.assertNotIn("context_view", unit)
+            self.assertNotIn("context_text", unit)
             self.assertEqual(unit["status"], "completed")
             self.assertEqual(unit["issues"], ["missing tool result"])
             self.assertEqual(unit["session_calls"][0]["id"], "m")

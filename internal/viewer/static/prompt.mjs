@@ -21,7 +21,7 @@ export function duplicateMessages(messages) {
 }
 function messageOutline(messages, container) {
   const duplicates = duplicateMessages(messages);
-  const filter = el('input'); filter.placeholder = 'Filter messages or headings'; filter.setAttribute('aria-label', 'Filter context messages');
+  const filter = el('input'); filter.placeholder = 'Filter messages or headings'; filter.setAttribute('aria-label', 'Filter prompt messages');
   const mode = el('select'); mode.setAttribute('aria-label', 'Message subset'); for (const [v, label] of [['all', 'All messages'], ['user', 'User messages / task inputs'], ['duplicate', 'Exact repeated messages']]) { const o = el('option', label); o.value = v; mode.append(o); }
   const controls = el('div', null, 'filters'); controls.append(filter, mode); container.append(controls);
   const list = el('div', null, 'message-list'); container.append(list);
@@ -46,11 +46,11 @@ function messageOutline(messages, container) {
 }
 
 /**
- * @spec Context retains the selected call's native Session reference and Operation identity
+ * @spec Prompt retains the selected call's native Session reference and Operation identity
  * @see {@link component://docs/observability.md}
  */
-export async function renderContext(parent, page, state, signal) {
-  parent.append(el('div', 'CONTEXT VIEW', 'eyebrow'), el('h2', 'What the model actually received'), el('p', 'Ordered request messages and tool schemas. Response is separate from historical assistant messages. Sizes below are serialized UTF-8 bytes, not billed tokens.', 'muted'));
+export async function renderPrompt(parent, page, state, signal) {
+  parent.append(el('div', 'PROMPT VIEW', 'eyebrow'), el('h2', 'What the model actually received'), el('p', 'Ordered request messages and tool schemas. Response is separate from historical assistant messages. Sizes below are serialized UTF-8 bytes, not billed tokens.', 'muted'));
   const calls = page.items.filter(i => i.kind === 'model_call');
   if (!calls.length) { parent.append(el('p', 'No model calls recorded in this Session.', 'empty')); return; }
   const selected = calls.find(i => i.id === state.params.get('node'));
@@ -72,7 +72,7 @@ export async function renderContext(parent, page, state, signal) {
       const old = previous.node.request?.input;
       if (!Array.isArray(old?.messages)) { compare.append(el('p', 'Previous request not recorded; differences are unknown.', 'notice')); return; }
       const diff = compareMessages(old.messages, messages);
-      compare.append(el('p', `${diff.retained.length} retained exactly · ${diff.added.length} added / changed · ${diff.removed.length} removed / replaced`), el('p', encode(old.tools) === encode(request.tools) ? 'Tool schemas unchanged.' : 'Tool schemas changed.'), link('Open previous Context →', { session: page.session.id, node: selected.previous, context: '1' }, state));
+      compare.append(el('p', `${diff.retained.length} retained exactly · ${diff.added.length} added / changed · ${diff.removed.length} removed / replaced`), el('p', encode(old.tools) === encode(request.tools) ? 'Tool schemas unchanged.' : 'Tool schemas changed.'), link('Open previous Prompt →', { session: page.session.id, node: selected.previous, prompt: '1' }, state));
       const changes = el('div', null, 'diff-columns');
       const added = el('section'); added.append(el('h4', 'Added / changed'));
       for (const index of diff.added) added.append(button(`#${index + 1} · ${messages[index].role}`, () => { const row = parent.querySelector(`#message-${index}`); row.hidden = false; row.open = true; row.scrollIntoView({ block: 'center' }); }));

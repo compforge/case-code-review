@@ -32,7 +32,7 @@ type reviewListData struct {
 	Reviews      []reviewListEntry
 }
 
-// +spec=`Global summarizes one Review; Job and Session provide scoped views; Context describes a selected model call`
+// +spec=`Global summarizes one Review; Job and Session provide scoped views; Prompt describes a selected model call`
 // +link=component://docs/observability.md
 func handleReviewList(w http.ResponseWriter, r *http.Request, root, selectedRepo string) {
 	repos, err := DiscoverRepos(root)

@@ -1,7 +1,7 @@
 import { $, el, button, empty, notices, link } from './ui.mjs';
 import { renderJob } from './job.mjs';
 import { renderSession, findToolSessions } from './session.mjs';
-import { renderContext } from './context.mjs';
+import { renderPrompt } from './prompt.mjs';
 import { renderGlobal } from './global.mjs';
 import { workspaceParams, workspaceURL } from './navigation.mjs';
 
@@ -35,7 +35,7 @@ const state = {
   detail(title, content) {
     const aside = $('detail'); aside.hidden = false;
     const toolbar = el('div', null, 'detail-toolbar');
-    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); state.params.delete('context'); state.params.delete('node'); history.replaceState(null, '', state.url({})); }));
+    toolbar.append(el('h3', title), button('Expand', () => aside.classList.toggle('expanded')), button('Close', () => { aside.hidden = true; aside.classList.remove('expanded'); state.params.delete('prompt'); state.params.delete('node'); history.replaceState(null, '', state.url({})); }));
     aside.replaceChildren(toolbar, content);
   },
   isActive(signal) { return !signal.aborted; },
@@ -49,7 +49,7 @@ async function render() {
   const view = state.params.get('view');
   $('workspace').dataset.view = view;
   $('selection').hidden = view === 'global';
-  document.querySelectorAll('[data-view]').forEach(a => { a.href = state.url({ view: a.dataset.view, unit: null, hypothesis: null, session: null, execution: null, node: null, tool: null, context: null, tab: null }); a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'); });
+  document.querySelectorAll('[data-view]').forEach(a => { a.href = state.url({ view: a.dataset.view, unit: null, hypothesis: null, session: null, execution: null, node: null, tool: null, prompt: null, tab: null }); a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'); });
   $('selection').replaceChildren(); $('content').replaceChildren(); $('detail').hidden = true;
   $('detail').classList.remove('expanded');
   try {
@@ -75,7 +75,7 @@ async function render() {
       const selected = state.params.get('unit');
       const populate = () => { list.replaceChildren(); for (const job of jobs) {
         if (!`${job.id} ${job.paths}`.toLowerCase().includes(input.value.toLowerCase())) continue;
-        const a = link(job.paths?.[0] || job.id, { view: 'job', unit: job.id, hypothesis: null, session: null, execution: null, node: null, tool: null, context: null, tab: null }, state); a.className = `nav-item ${job.id === selected ? 'selected' : ''}`;
+        const a = link(job.paths?.[0] || job.id, { view: 'job', unit: job.id, hypothesis: null, session: null, execution: null, node: null, tool: null, prompt: null, tab: null }, state); a.className = `nav-item ${job.id === selected ? 'selected' : ''}`;
         a.append(el('small', `${job.outcome || 'unknown'} · ${review.JobCounts?.[job.id]?.Hypotheses || 0} hypotheses · ${review.JobCounts?.[job.id]?.Findings || 0} findings`)); list.append(a);
       } }; populate(); input.oninput = populate;
       if (!selected) {
@@ -98,7 +98,7 @@ async function render() {
       const populate = () => {
         list.replaceChildren();
         for (const session of sessions) {
-          const a = link(`${session.role}${session.lane ? ` · ${session.lane}` : ''}`, { view, session: session.id, unit: null, hypothesis: null, node: null, execution: null, tool: null, context: null, tab: null }, state);
+          const a = link(`${session.role}${session.lane ? ` · ${session.lane}` : ''}`, { view, session: session.id, unit: null, hypothesis: null, node: null, execution: null, tool: null, prompt: null, tab: null }, state);
           a.className = `nav-item ${session.id === id ? 'selected' : ''}`;
           a.append(el('small', (review.Jobs || []).find(j => session.units.includes(j.id))?.paths?.[0] || session.id), el('small', `${session.executions?.length || 0} Executions · ${session.units?.length || 0} Units`)); list.append(a);
         }
@@ -112,7 +112,7 @@ async function render() {
         if(matches.length!==1) {
           empty($('content'),matches.length ? 'Multiple Session matches' : 'Tool receipt unavailable',matches.length ? 'The same tool ID occurs in multiple native Sessions. Choose the recorded source explicitly.' : 'No matching tool call was found in this Unit’s associated Sessions. Missing recordings remain possible.');
           for(const match of matches) $('content').append(link(`${match.role} · ${match.id} · ${match.count} matches`,{session:match.id},state));
-          $('content').append(link('Browse Sessions →',{tool:null,session:null,node:null,execution:null,context:null,tab:null},state));
+          $('content').append(link('Browse Sessions →',{tool:null,session:null,node:null,execution:null,prompt:null,tab:null},state));
           return;
         }
         id=matches[0].id;
@@ -128,23 +128,23 @@ async function render() {
       $('content').replaceChildren(); notices($('content'), session.issues);
       renderSession($('content'), session, state, signal);
     }
-    if (view !== 'global' && state.params.get('context') === '1') await showContext(signal);
+    if (view !== 'global' && state.params.get('prompt') === '1') await showPrompt(signal);
   } catch (error) {
     if (error.name !== 'AbortError' && !signal.aborted) { $('content').replaceChildren(el('h2', 'Evidence unavailable'), el('p', error.message, 'notice'), button('Retry', () => { cache.clear(); render(); })); }
   }
 }
 
-async function showContext(signal) {
-  const body = el('div', null, 'context-detail');
-  state.detail('Context · Model call', body);
+async function showPrompt(signal) {
+  const body = el('div', null, 'prompt-detail');
+  state.detail('Prompt · Model call', body);
   try {
     const id = state.params.get('session');
     if (!id || !state.params.get('node')) {
-      body.append(el('p', 'Select a model call from Job or Session to inspect its context.', 'notice'));
+      body.append(el('p', 'Select a model call from Job or Session to inspect its prompt.', 'notice'));
       return;
     }
     const page = await state.session(id);
-    if (!signal.aborted) await renderContext(body, page, state, signal);
+    if (!signal.aborted) await renderPrompt(body, page, state, signal);
   } catch (error) {
     if (!signal.aborted) body.append(el('p', error.message, 'notice'));
   }

@@ -25,7 +25,7 @@ Trajectory Harness 提供标准化、Dataset、评估器执行、结果持久化
 按“执行、观察、改进”组织实践：执行侧由 CCR 的业务编排与 Agent framework/harness 产生真实
 R1 / R2 loop 记录，同一份执行事实再支持观察与改进两条路径：
 
-- **人的观察与监督**：实际 message list 及请求信息 → Context View；loop 执行轨迹 → SessionView；
+- **人的观察与监督**：实际 message list 及请求信息 → Prompt View；loop 执行轨迹 → SessionView；
   某个业务 Job 经历的一个或多个 loop、确定性操作与交付 → JobView。三种 View 主要服务渲染和
   呈现，业务与调用引用使人能从结果追查到具体动作、反馈与上下文。
 - **评估与改进**：标准化 Trajectory → Good / Fast / Cheap（质量或效果、速度、成本）评价 →
@@ -77,7 +77,7 @@ ccr export <review.jsonl> --format job --unit <unit-id> --pretty
 - `views/*.job.json`：跨 R1、R2、Trial 的标准 JobView，保留目标、业务结果与完整原始请求/响应。
 - `views/*.session.json`：标准 SessionView 的 **Job 所属调用片段**，保留原生 Session/Node 身份；
   `attributes.selection` 明确范围。这不是整个共享 Lane Session，分组顺序也不证明因果。
-- `views/*.context.json` / `*.context.md`：逐调用的请求组织，保留 message 顺序、role、实际 Markdown
+- `views/*.prompt.json` / `*.prompt.md`：逐调用的请求组织，保留 message 顺序、role、实际 Markdown
   标题及工具定义的位置。摘录明确标注显示截断；无标题的内容不推断语义章节，完整内容仍在 JobView。
 
 选择记录可附带 `diagnosis` 对象，由分析者保存判据及其来源、目标源码版本、预期与实际、

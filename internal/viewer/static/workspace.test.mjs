@@ -30,33 +30,33 @@ test('empty review has no invented Jobs or Sessions', () => {
 });
 
 /**
- * @case Context is deep-linked to a specific model call and stays inside its Job or Session
+ * @case Prompt is deep-linked to a specific model call and stays inside its Job or Session
  * @see {@link component://docs/observability.md}
  */
-test('model context preserves Job scope and survives URL reload', () => {
+test('model prompt preserves Job scope and survives URL reload', () => {
   const params = workspaceParams('?view=job&unit=u&hypothesis=h');
   const node = 'call:["run","model_call","model",2]';
-  const url = workspaceURL('/r/repo/review', params, {session:'lane',node,context:'1'});
+  const url = workspaceURL('/r/repo/review', params, {session:'lane',node,prompt:'1'});
   const restored = workspaceParams(new URL(url, 'http://localhost').search);
   assert.equal(restored.get('view'), 'job');
   assert.equal(restored.get('unit'), 'u');
   assert.equal(restored.get('hypothesis'), 'h');
   assert.equal(restored.get('node'), node);
-  assert.equal(restored.get('context'), '1');
+  assert.equal(restored.get('prompt'), '1');
   const next = new URL(workspaceURL('/r/repo/review', restored, {view:'session',session:'other',node:null}), 'http://localhost');
-  assert.equal(next.searchParams.has('context'), false);
+  assert.equal(next.searchParams.has('prompt'), false);
   assert.equal(next.searchParams.has('node'), false);
 });
 
-test('Global is the default and existing Context links retain call identity', () => {
+test('Global is the default and Prompt links retain call identity', () => {
   assert.equal(workspaceParams('').get('view'), 'global');
   assert.equal(workspaceParams('?view=missing').get('view'), 'global');
-  const params = workspaceParams('?view=context&session=lane&node=model-2');
+  const params = workspaceParams('?view=session&session=lane&node=model-2&prompt=1');
   assert.equal(params.get('view'), 'session');
-  assert.equal(params.get('context'), '1');
+  assert.equal(params.get('prompt'), '1');
   assert.equal(params.get('node'), 'model-2');
   const global = new URL(workspaceURL('/r/repo/review', params, {view:'global'}), 'http://localhost');
-  assert.equal(global.searchParams.has('context'), false);
+  assert.equal(global.searchParams.has('prompt'), false);
 });
 
 /**
@@ -67,7 +67,7 @@ test('Session tabs preserve explicit selection and open evidence in Full Session
   assert.equal(workspaceParams('?view=session&session=s').get('tab'), 'overview');
   assert.equal(workspaceParams('?view=session&session=s&tab=full').get('tab'), 'full');
   assert.equal(workspaceParams('?view=session&tab=unknown').get('tab'), 'overview');
-  for (const key of ['node', 'execution', 'tool', 'context']) {
+  for (const key of ['node', 'execution', 'tool', 'prompt']) {
     const direct = workspaceParams(`?view=session&session=s&tab=overview&${key}=target`);
     assert.equal(direct.get('tab'), 'full');
     const url = workspaceURL('/r/repo/review', workspaceParams('?view=job&unit=u&tab=overview'), { view: 'session', session: 's', [key]: 'target' });
