@@ -2,98 +2,67 @@
 
 ## 项目定位与边界
 
-`ccr` 是以 **Unit 为一等评审边界、以契约守恒为目标**的 AI code review CLI，基于
-[open-code-review (ocr)](https://github.com/alibaba/open-code-review) 地基重写、独立演进
-（衍生归属见 `NOTICE`）。稳定主链路是：
+CCR 是以 Unit 为评审边界、检查改动是否守住既有契约的 AI code review CLI。它基于
+[open-code-review](https://github.com/alibaba/open-code-review) 重写并独立演进，衍生归属见 [NOTICE](NOTICE)。
+评审效果同时看准确性、完成度和成本。改进效果时结合阶段产物、实际 Session 轨迹、源码事实和项目声明的契约。
 
-```text
-Project / Language facts ─▶ Unit ─Unit Review─▶ Hypothesis
-    ─Hypothesis Review in Lane─▶ Assessment ─Trial (Review 3) gate─▶ Finding
-```
+## 评审主流程
 
-Project Knowledge 既解释 Repository / Component / FileRole 等结构，也包含用
-`spec / case / link / rule / doc` 表达的 Biz Knowledge；Language Knowledge 提供源码事实，并负责把
-这些声明绑定到代码身份。两者共同参与 Unit formation 或按作用域向 Unit Review / Hypothesis Review
-提供上下文。CCR 的 Unit 让相关改动得到完整、有界的共同评审，按源码关系组织行为边界并减少重复探索。
+1. Runner 捕获变更前后的源码快照。Project Knowledge 用 Repository、Component 和 FileRole 解释工程结构，
+   并提供作者用 `spec / case / link / rule / doc` 声明的业务契约。Language 接入同一版本的 CodeGraph 图，把声明和关系关联到源码。
+2. Formation 调用 RepoKit 将相关改动的 Fragment 组装为 Unit，再将相关项目、源码和契约线索作为 Clue 挂到 Unit。
+   Unit 是一次 run 的评审聚合根，持有目标改动，并逐步保存实际读到的证据和阶段结果。
+3. Unit Review（R1）通过 Harness 调查 Unit 并提交可证伪的 Hypothesis。Hypothesis Review（R2）在 Lane 中独立复核，形成 Assessment。
+   Trial（R3）执行确定性规则，记录裁决并决定是否交付 Finding。完整仓库扫描另走 `scan file → Harness execution → Finding`。
 
-CCR 不追求通读仓库或穷举所有问题，而是在相关、有界的上下文内发现具体缺陷。任何优化都要同时观察
-**健壮性、准确性、成本**：loop 必须真实完成，结论必须有证据，时间、token 和工具调用必须有界。
-
-效果演进依靠三项长期能力共同推进：成熟稳定的 Review Pipeline 保证阶段结果逐条流动且可完成；
-Session 轨迹分析持续校正 prompt、工具取舍与 schema；Language（接入 CodeGraph）与 Project Knowledge
-持续提供更可靠的源码、项目结构和业务契约事实。不能只靠扩大模型上下文或堆叠 prompt 提升效果。
-
-`ccr` 是 contract 资产的消费侧引擎；spec/case/rule/link 的定义、`spec.json` 协议和 `specgen`
-抽取器由独立项目 [`spec-case`](https://github.com/compforge/spec-case) 持有。
+各阶段按单条结果推进。已成熟的 Hypothesis 可以在其他 Unit 仍在调查时进入复核。[评审流程图](docs/review-pipeline.svg)
 
 ## 代码地图与核心模块
 
-```
-case-code-review/
-├── cmd/ccr/        CLI 入口：review/scan/config/… 子命令；组装 Args、加载 spec.json
-├── eval/           benchmark 效果分析 → 原 Session 的 trajectory 分析；共享环境和事实读取，入口见 `eval/README.md`
-└── internal/
-    ├── runner/     ★ 顶层编排；`formation` 形成 Unit，`unitreview` 产生 Hypothesis，`hypothesisreview` 产生 Assessment，`trial` 确定性地产出 Finding
-    ├── project/    Repository、RepoKit 提供的 Component 与可组合 FileRole；提供项目结构知识，决定 source 进入 Unit，并把 entrypoint/handler、manifest/lock 投影为项目 Clue。详见 `docs/project.md`
-    ├── material/   共享材料分类入口：继承 CodeGraph 通用规则，仅追加 CCR 领域标签，供 Diff、Scan 与图共同使用
-    ├── language/   ★ CodeGraph 接入边界：向 RepoKit 提供 review snapshot、预算与优先级，共享分析缓存与图，从 Node + Relation 投影 symbol-id、源码范围、outline、文档与契约关联；解析和关系绑定由独立 CodeGraph 项目持有。详见 `docs/language.md`
-    ├── unit/       ★ 接入 RepoKit 的 Fragment / Unit，持有评审知识；`spec`/`sourcecontext` 子包沿 relation 将 Clue 汇入 Unit，再由 Runner 组装评审消息。详见 `docs/unit-model.md`
-    ├── harness/    ★ 通用执行域：适配 agentgo 的 loop、工具 hook、上下文与事件；`msg`/`tool` 提供执行机制，不依赖 Runner/Unit/Finding。`board` 是默认关闭的试验能力。详见 `docs/harness.md`
-    ├── recording/  Review 元数据、业务产物、计数与文件生命周期；关联 AgentGo Session 与业务 Operation，按 Unit 投影 Observation JobView
-    ├── llm/        模型连接配置、评审 token 预算与估算；协议和路由复用 AgentGo/litellm；作为稳定基础设施平铺
-    ├── config/     模板 prompt、rule.json、tools 配置
-    └── gitcmd · telemetry · viewer …   独立支撑能力
-```
-
-**主链路**：
-
-```
-repokit.Diff ─▶ captured Change ─Component/FileRole─▶ FormUnits ─▶ RepoUnit ─▶ review Unit
-                                      └─▶ entrypoint/handler、manifest/lock ─▶ project Clue
-    ─ClueFinder 找 Clue─▶ Unit Review ─▶ Hypothesis
-    ─Lane─▶ Hypothesis Review ─▶ Assessment ─Trial (Review 3)─▶ Finding
-full scan ─▶ scan file ─▶ Harness execution ─▶ Finding
+```text
+cmd/ccr/             CLI 入口、参数和契约加载
+internal/
+  runner/            固定评审快照，编排 formation、unitreview、hypothesisreview 和 trial
+  project/           解释 Repository、Component、FileRole，投影项目事实
+  material/          在 CodeGraph 的通用材料分类上追加 CCR 标签
+  language/          将 CodeGraph 图适配为评审需要的源码身份、范围和关系
+  unit/              适配 RepoKit Unit，汇集 Clue、证据快照与阶段结果
+  harness/           通过 AgentGo 运行单次 Execution，管理消息、工具、预算与事件
+  recording/         保存 Review 业务产物、Operation 和原生 Session 的关联
+  viewer/            从录制事实投影 Review、Job 和 Session
+  llm/               模型连接配置、token 预算与估算
+  config/            prompt 模板、规则和工具配置
+eval/                固定样本的效果评测与原始 Session 的轨迹分析
 ```
 
-Source 调用 repokit.Diff 捕获变更与前后源码；Formation 调用 repokit.FormUnits 并适配评审 Unit；Unit 是一次 run 的评审聚合根，先持有
-Fragments / Clues，随后追加实际读取的文件、相关 diff、搜索结果以及 Hypothesis、Assessment 与 Trial decision。Runner
-把 Unit 投影为评审消息，Harness 执行 Review loop，但不拥有这些评审领域状态。
+## 跨模块约定
 
-## 关键约定
+- **源码与契约。** RepoKit 拥有 Fragment 分类和 Unit 组装。CodeGraph 的 Node 和 Relation 是消费方的源码事实源。
+  图、源码工具和仓库契约按各自的 before/after 快照读取，无法绑定的身份保留为 unknown。
+  契约定义、`spec.json` 协议和 `specgen` 由 [spec-case](https://github.com/compforge/spec-case) 维护。
+- **评审与执行。** 阶段包负责产生判断，结果追加到来源 Unit。Runner 通过 ExecutionSpec、工具、hook 和事件接入 Harness。
+  Harness 负责执行机制，依赖方向从评审领域指向 Harness。评审只读，Finding 是否发布由调用方决定。
+- **覆盖与完成。** 组装遇到容量边界时保留目标并报告。每个 Unit 的时间预算覆盖发现、复核排队与裁决。
+  退出时汇合仍运行的阶段，保留已完成结果，最终排序独立于完成顺序。未完成的 Unit 和未复核的 Hypothesis
+  在输出与录制中标明 partial / incomplete。判定 clean 需要完成证据。
+- **记录与观测。** 业务结果和 Operation 归 Review 日志，实际模型输入、回复和工具调用归 AgentGo Session。
+  Viewer、export、stats 和 eval 消费同一批事实。一个 Unit 对应一个 JobView，共享 Lane 中的调用按明确的业务关联归属。
 
-1. **Knowledge owner 唯一**：Project Knowledge 消费 RepoKit 的 Repository / Component，消费通用文件角色并提供评审投影和
-   `spec / case / link / rule / doc` 等 Biz Knowledge；RepoKit 拥有变更拆分与组装，CodeGraph 拥有通用材料分类、代码图与关系绑定，Material 追加 CCR 标签，Language 负责图接入和 CCR 身份适配，Runner 固定 graph、源码工具与仓库契约共用的输入视图；
-   Unit 拥有一次 run 的行为作用域、完整事实快照与阶段结果；Harness 只拥有 Execution 机制，各 Review
-   阶段只拥有产生结果的逻辑，依赖方向不得反转。
-2. **Unit 以相关改动为边界**：RepoKit 拥有 Fragment 分类与 Unit 组装，按同一声明、包含、调用、import、同文件、namespace 逐步聚合；明确关系不因数量达到上限而停止归并。CCR 提供评审数量软上限、token 预算并适配 Clue 与运行状态。
-   Fragment 编辑身份唯一，Unit 可共享 import 引用；合并后去重。缺少图关系或预算不足时保留目标并报告边界，不能强行满足数量目标。
-   通用理念见 [RepoKit Unit 文档](https://github.com/compforge/repokit/blob/main/docs/units.md)，CCR 语义见 `docs/unit-model.md`。
-3. **发现、复核、裁决分离**：Unit Review 只产生 Hypothesis，Hypothesis Review 形成 Assessment，Trial（Review 3）用确定性
-   规则决定 Finding；成熟结果逐条向下游流动，不设置全局阶段屏障。partial / incomplete 必须显式存在，不能把 0 Finding 自动解释为 clean。Unit 的时间预算与完成边界覆盖发现、复核和裁决全流程，Lane 不拥有候选的期限。
-4. **Review Execution 有界、只读、可观测**：确定上下文先作为评审消息注入，未知事实再通过只读工具补证；
-   所有模型调用统一通过 AgentGo ModelExecutor 消费 stream，使用 ChatModel、Message 与 CallConfig；领域消息通过 ToMessage 投影，CCR 不维护另一套模型消息 DTO。Session JSONL 必须记录实际 prompt、response、工具与完成状态；失败的 PartialMessage 与 usage 是诊断事实，不视为已提交消息。
-   Session 使用 AgentGo 通用协议，保存局部 loop 的模型、工具与上下文事实；Review JSONL 同时保存业务产物与 Operation 状态，通过 session_id/run_id/execution_id/attempt 关联 Session，正文不复制。
-   PR comments 是两阶段共享的 PR 级讨论材料，按 PR 获取全部评论，不按作者、review 类型或文件锚点筛选；平台 resolution 不代表认可或修复。
-   一个 Unit 的 R1 → R2 → Trial 过程是一个 Observation JobView；共享 Lane Session 只提供明确关联的调用，不能整体归入每个 Unit。
-   Runner、Harness 和模型客户端只记录自己拥有的阶段；Viewer、export、stats 与 eval 从共同记录投影，按请求身份归属时间和 token，保留缺口和并发关系；成本不依赖 debrief 是否生成。
-5. **事实源不重复**：CodeGraph 的 Node + Relation 是消费侧唯一源码事实。Facts 只在构图入口使用；caller/callee、owner、used、usage 与文档共享各自版本的 review snapshot，不按裸名或文本扫描补做绑定；contract schema / 生成器归 `spec-case`，发布版本归 `VERSION`。
-   只要产生可提交的仓库改动，就同步递增 `VERSION`；ignored 的本地数据与运行产物不触发版本升级。
-   Go 通用操作优先 stdlib / `go-stdx`；Go 改动提交前运行 `go build ./...` 与 `go test ./...`。
+## 开发与验证
 
-## References
+- 仓库出现可提交的改动时同步递增 `VERSION`。被忽略的本地数据与运行产物不触发版本升级。
+- Go 通用操作优先使用标准库或 `go-stdx`。提交 Go 改动前运行 `go build ./...` 和 `go test ./...`。
+- 修改 Knowledge、Unit 组装或 Clue 时，核对项目或源码事实的来源、目标改动覆盖和证据相关性。
+- 修改 Execution 时，验证终态、资源边界和失败可见性。修改评审策略时，用 Session 和人工标签核对具体判断，
+  同时比较 wrong、missed、完成度与成本。
 
-- 理念：`README.md` · `README.zh-CN.md`
-- 内核分层与依赖方向：Project 组织项目事实、Language 接入源码事实、Unit 汇总评审知识、Harness 执行——`docs/kernel.md`
-- Harness 执行模型：Execution 生命周期、Agent Loop、上下文管理、预算、工具扩展点、Session JSONL
-  与 HTML Viewer 可观测性——`docs/harness.md`
-- 可观测性：Review 业务日志与关联的 AgentGo Session 是共同事实源，Viewer 用于单次运行诊断，eval/benchmark 用固定数据观察三个阶段的效果，eval/trajectory 回到原 Session，让 Detector、
-  Verifier 与 Measurer 分别承担行为发现、契约判断和事实测量——`docs/observability.md`
-- spec/case/rule/link 资产、`spec.json` 协议与 `specgen`：[`spec-case`](https://github.com/compforge/spec-case)
-- 项目知识：Repository / Component / FileRole 等结构知识、作者声明的 Biz Knowledge 及其投影——`docs/project.md`
-- Unit 与上下文：`Fragment` / `Unit` 作用域、Clue 两轴上下文与图事实消费——`docs/unit-model.md`
-- 源码语言边界：Analyzer / RepositoryIndex、symbol-id 适配、CodeGraph 消费与覆盖边界——`docs/language.md`
-- Unit Review：有界探索、增量提交、anytime 完成、上下文治理与效果优化；默认关闭的 Board/Bulletin
-  作为试验特性单独记录——`docs/unit_review.md`
-- Hypothesis Review：Lane、四轴 Assessment、evidence receipt、prior delivery 与确定性 Trial（Review 3）
-  ——`docs/hypothesis_review.md`
-- 上游归属（Apache-2.0 衍生）：`NOTICE`
+## 主题文档
+
+| 要修改或排查的部分 | 阅读入口 |
+|---|---|
+| Component、文件角色与作者声明的业务契约 | [Project Knowledge](docs/project.md) |
+| review snapshot、symbol-id、CodeGraph 关系与绑定缺口 | [Language](docs/language.md) |
+| Fragment 组装、数量和 token 预算、Unit 证据快照 | [Unit 与评审上下文](docs/unit-model.md) |
+| R1 发现、R2 复核与 Trial 裁决的输入、交接和终态 | [评审流程](docs/review-pipeline.md) |
+| Execution 生命周期、模型、消息、工具与预算 | [Harness](docs/harness.md) |
+| 运行记录、Viewer、成本归属与评测 | [可观测性](docs/observability.md) · [评测入口](eval/README.md) |

@@ -40,13 +40,13 @@ const (
 	// symbol body under a shared hard budget. Default off until trajectory A/B
 	// demonstrates lower follow-up reads without effect or token regression.
 	SearchSymbolContext Gate = "search_symbol_context"
-	// ReviewTeam is the Review Team v0 (docs/unit_review.md): concurrent unit
+	// ReviewTeam is the Review Team v0 (docs/review-pipeline.md): concurrent unit
 	// loops share an in-memory case board — auto-published facts, directed
 	// incremental injection at turn boundaries. Default OFF (experimental)
 	// until the regression corpus shows cross-file recall or dedup benefit.
 	ReviewTeam Gate = "review_team"
 	// PostBulletin is the model-initiated publish side of the Review Team
-	// (see docs/unit_review.md): a `post_bulletin` tool for observation-level
+	// (see docs/review-pipeline.md): a `post_bulletin` tool for observation-level
 	// suspicions to the board — the channel the cross-file consistency prize
 	// actually rides on (auto facts only say who read what). Effective only when
 	// review_team is also on (no board, no tool).

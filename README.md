@@ -16,46 +16,6 @@ ccr does not try to enumerate every possible defect. It focuses bounded agent ex
 
 ![CCR agentic review pipeline from Diff to Finding](docs/review-pipeline.svg)
 
-## Core model
-
-### Unit: the review boundary
-
-A **Unit** brings related changes into a complete, bounded review context. It can cover one declaration, a region of a file, or cooperating changes across files.
-
-CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships, so changes such as a caller and its callee can be reviewed together. Deleted code is interpreted against the pre-change source.
-
-Grouping stays within capacity limits. When those limits prevent further merging, CCR retains the changes for review and reports the boundary. See [Unit formation](docs/unit-model.md) for grouping rules and configuration.
-
-### Review 1 discovers; Review 2 verifies; Review 3 gates
-
-| stage | responsibility | output | public-prosecution analogy |
-|---|---|---|---|
-| **Unit Review (Review 1)** | explore a Unit, follow evidence, identify plausible defects | `Hypothesis` | investigation proposes a case theory |
-| **Hypothesis Review (Review 2)** | independently check source, diff, baseline, impact, attribution, and duplication | `Assessment` | prosecutor reviews whether evidence supports the allegation |
-| **Trial (Review 3)** | apply deterministic delivery gates | `Finding` or rejection | court gate decides what may be delivered |
-
-The analogy explains separation of duties; these are code-review stages, not legal simulations. Review 1 is encouraged to discover. Review 2 is encouraged to disprove weak hypotheses. **Review 3** is an alias for deterministic Trial, not another agent loop, so incomplete or unsupported work cannot silently become a public comment. The three passes also echo the Chinese mnemonic “吾日三省吾身”: review the result repeatedly before delivering it.
-
-These stages form an incremental pipeline rather than three global batches. A mature Hypothesis can enter Review 2 and Trial while other Units are still being investigated, so accepted work survives later timeouts. Conversely, a simple change with no remaining material lead can finish immediately; a budget is a ceiling, not a target runtime.
-
-Large repositories can raise snapshot capture budgets with `--max-files` and
-`--max-snapshot-bytes`. These limits control preparation, independently of model
-context and output limits; exceeding them fails explicitly rather than reviewing
-a truncated snapshot.
-
-### Language Knowledge and Project Knowledge
-
-Two knowledge foundations support Unit formation and both review stages:
-
-| knowledge | what it contributes |
-|---|---|
-| **Language Knowledge** | syntax-aware symbols, spans, outlines, definitions, references, calls, imports, symbol/file proximity, plus the syntax and identities used to bind authored declarations to code |
-| **Project Knowledge** | structural knowledge such as Repository, Component, FileRole and entrypoints; authored biz knowledge such as `spec`, `case`, `link`, `rule`, and `doc` |
-
-Language owns how authored knowledge is extracted and attached; Project Knowledge owns what those declarations mean in the reviewed project. This `spec / case / link / rule / doc` model is the origin of the “case” in case-code-review. [`spec-case`](https://github.com/compforge/spec-case) remains an optional way to author and distribute it; ccr also works without it.
-
-Design details: [`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness and observability`](docs/harness.md)
-
 ## How to use
 
 ### Install
@@ -122,6 +82,48 @@ ccr review --feature doc=off
 ```
 
 Run `ccr review --help` for the full command and feature list.
+
+## Core model
+
+### Unit: the review boundary
+
+A **Unit** brings related changes into a complete, bounded review context. It can cover one declaration, a region of a file, or cooperating changes across files.
+
+CCR uses [`CodeGraph`](https://github.com/compforge/codegraph) to locate changed declarations and bindings and follow their source relationships, so changes such as a caller and its callee can be reviewed together. Deleted code is interpreted against the pre-change source.
+
+Grouping stays within capacity limits. When those limits prevent further merging, CCR retains the changes for review and reports the boundary. See [Unit formation](docs/unit-model.md) for grouping rules and configuration.
+
+### Review 1 discovers; Review 2 verifies; Review 3 gates
+
+| stage | responsibility | output | public-prosecution analogy |
+|---|---|---|---|
+| **Unit Review (Review 1)** | explore a Unit, follow evidence, identify plausible defects | `Hypothesis` | investigation proposes a case theory |
+| **Hypothesis Review (Review 2)** | independently check source, diff, baseline, impact, attribution, and duplication | `Assessment` | prosecutor reviews whether evidence supports the allegation |
+| **Trial (Review 3)** | apply deterministic delivery gates | `Finding` or rejection | court gate decides what may be delivered |
+
+The analogy explains separation of duties; these are code-review stages, not legal simulations. Review 1 is encouraged to discover. Review 2 is encouraged to disprove weak hypotheses. **Review 3** is an alias for deterministic Trial, not another agent loop, so incomplete or unsupported work cannot silently become a public comment. The three passes also echo the Chinese mnemonic “吾日三省吾身”: review the result repeatedly before delivering it.
+
+These stages form an incremental pipeline rather than three global batches. A mature Hypothesis can enter Review 2 and Trial while other Units are still being investigated, so accepted work survives later timeouts. Conversely, a simple change with no remaining material lead can finish immediately; a budget is a ceiling, not a target runtime.
+
+Large repositories can raise snapshot capture budgets with `--max-files` and
+`--max-snapshot-bytes`. These limits control preparation, independently of model
+context and output limits; exceeding them fails explicitly rather than reviewing
+a truncated snapshot.
+
+[Review pipeline](docs/review-pipeline.md)
+
+### Language Knowledge and Project Knowledge
+
+Two knowledge foundations support Unit formation and both review stages:
+
+| knowledge | what it contributes |
+|---|---|
+| **Language Knowledge** | syntax-aware symbols, spans, outlines, definitions, references, calls, imports, symbol/file proximity, plus the syntax and identities used to bind authored declarations to code |
+| **Project Knowledge** | structural knowledge such as Repository, Component, FileRole and entrypoints; authored biz knowledge such as `spec`, `case`, `link`, `rule`, and `doc` |
+
+Language owns how authored knowledge is extracted and attached; Project Knowledge owns what those declarations mean in the reviewed project. This `spec / case / link / rule / doc` model is the origin of the “case” in case-code-review. [`spec-case`](https://github.com/compforge/spec-case) remains an optional way to author and distribute it; ccr also works without it.
+
+[Developer guide](AGENTS.md)
 
 ## Status
 

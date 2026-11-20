@@ -33,6 +33,9 @@ Viewer 只展示；它不解释格式、不改变评审行为，也不进入模�
 Runner 可以用 Harness 执行 Unit Review 或 Hypothesis Review；Harness 不反向 import Runner、Unit、
 Assessment 等评审领域对象。领域语义通过消息、工具、hook 和 event 适配进入。
 
+Lane、Assessment 和试验性的 Review Team 由 Runner 的评审扩展接入这些机制。消息生命周期由 AgentGo
+`AgentMessage` 契约承载。
+
 ## 2. 流程
 
 ### 2.1 启动 Execution
@@ -166,6 +169,9 @@ Harness 通过 `MaterialMessage` 接口登记和投影材料，不依赖 Unit �
 - 压缩：只在轻量手段不足时进行有损总结；
 - 投影：临近调用时降成模型可见消息。
 
+AgentGo 的 ArtifactManager 管理运行材料，CCR 通过扩展点维护对象并定义用途。Artifact 提供材料和
+业务数据的独立身份，AgentMessage 记录它们在对话中的使用。模型可见覆盖以实际请求投影为准。
+
 ContextManager.Transform 与 dry-run 调用同一个纯投影函数，输入消息与 Artifact 值，输出请求视图。
 ContextManager.Transform 每次从当前 AgentMessage 基线生成请求视图，批次与历史使用同一套
 覆盖判断，raw 不变。临时引用不会提交到历史。Compact 按基线判断预算，Compactor 接收消息与材料准备态；AgentGo 接受压缩结果后，
@@ -243,6 +249,29 @@ partial/incomplete，不把空输出包装成成功；此前已被领域层接�
 预算耗尽不额外购买收卷轮次；未完成的 Execution 以带原因的 truncated 结束，已接受的结果保留，
 尚未派发的 Review Unit 记为 skipped_policy。局部预算拒绝不计为 provider 失败。
 
+#### 模型截断与推理控制
+
+Harness 使用 AgentGo 的 `EndReasonLength`：当 length 恢复禁用或耗尽时，Execution 输出
+`truncated` / `length`，保留部分响应和已报告用量，不归类为正常完成或网络错误。
+`ExecutionSpec.MaxLengthRecoveries` 为 nil 时沿用 AgentGo 默认 3 次，显式 0 禁用；恢复仍受
+原 deadline、MaxTurns 和 token budget 约束。Plan、重定位、scan 汇总/去重等单次任务使用
+`CompleteText`，拒绝 `length` / `max_tokens` 及只有 reasoning 的响应，不把半份正文当完整结果。
+上下文摘要被截断时也不提交为完整 checkpoint。
+
+任务模板的 `reasoning_effort` 可分别用于 `MAIN_TASK`、`PLAN_TASK`、`HYPOTHESIS_REVIEW_TASK`、
+`RE_LOCATION_TASK` 及 scan 的 `PROJECT_SUMMARY_TASK` / `DEDUP_TASK`。例如为 PLAN_TASK 增加
+`"reasoning_effort": "low"`，即可覆盖该次调用的 provider 默认；空值或 `auto` 保留默认。
+既有模板不自动降档。其他 effort 值原样传给目标模型，不把 minimal/medium/xhigh/max 压成 high/low。
+模型支持的值与别名映射由服务端校验。上下文压缩继续沿用原有的显式 off 策略，现在该设置会真正传到模型请求。
+
+`off` / `none` 表示关闭思考。OpenAI Chat Completions 使用 `reasoning_effort`，同时覆盖该 endpoint
+已配置的 `thinking` / `enable_thinking` 扩展；Anthropic 使用 `thinking` 与 `output_config.effort`。
+覆盖只影响单次调用，不修改共享默认配置；不会按模型名猜测私有档位映射。
+
+`agentgo.Usage.Reasoning` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
+不另计总 token 或费用；0 也可能表示供应商未报告。AgentGo Session 保留调用意图、截断恢复决定、
+stop reason 和 reasoning 用量，CCR 的成本投影继续保留这个分项。调用意图不等于服务端实际生效档位。
+
 ### 3.4 Tool 与 Hook 是执行能力，不是领域所有权
 
 工具定义、参数解析、provider 调用和通用 telemetry 位于 Harness。某个工具是否在一个阶段可见、
@@ -270,6 +299,47 @@ domain message 实现同一接口。Harness 把 tool、hook 和事件收敛为�
 
 AgentGo 的运行时消息协议可以出现在 Runner 的 execution assembly，但不进入 Unit/Finding 等持久领域
 模型，也不要求 Session Viewer 理解具体 domain message。
+
+### Model routing ownership
+
+CCR keeps stage model selection, effort, review budgets and recording. AgentGo's
+ChatModel and Router own model calls and endpoint failover; litellm owns vendor
+protocols. Native Harness messages carry opaque provider replay state through
+CCR without rebuilding SDK requests.
+
+A routed pool has one `routing.call_timeout_sec` budget (default 180 seconds).
+`routing.attempt_timeout_sec` optionally bounds each endpoint; when omitted the
+call budget is divided by the pool size so a stalled primary leaves fallback time.
+Provider retries are disabled inside the pool. Authentication/validation/context
+overflow and non-retryable failures stop failover. `finish_reason=length` remains
+an explicit truncated response, and CCR's existing continuation/wrap-up policy
+handles it. Endpoint attempts report safe labels, timing, timeout scope and
+failover decisions; these facts do not prove production latency improvements.
+
+CCR uses `ModelExecutor.Call` for Loop, summary and auxiliary calls. The provider
+request uses streaming; the executor returns the final result and publishes
+incremental facts. Harness recording, output budgets and lossless tool argument
+repair run as model middleware. `TransformContext.ModelExecutor` and staged
+artifacts pass through ContextManager and zone compaction explicitly. Summary
+progress never becomes a conversation message. The final system message gets a
+cache breakpoint unless explicitly configured; the provider decides whether caching is
+supported. No cache-hit claim is inferred from prompt layout alone.
+
+All CCR model callers use AgentGo `ChatModel`, `LLMRequest`, `LLMResponse` and
+`Message` directly, including planning, relocation and context compression.
+Domain `AgentMessage.ToMessage()` is the sole projection into model messages;
+there is no CCR message DTO, native escape hatch, or reverse response conversion.
+The Harness only repairs lossless tool argument drift, retaining native reasoning,
+stop reason, usage, metadata and opaque provider state.
+
+Auxiliary calls record the executor's native events in a local AgentGo Session,
+including the redacted request snapshot. Failed responses remain diagnostic
+`PartialMessage` evidence with reported usage; query, cost and Viewer surfaces
+retain it as an error, without executing or committing its tool calls. Router attempt facts are recorded there as well; loop executions use
+AgentGo's own event recording. The review budget charges each reported attempt
+once, including usage on failed attempts, with the final response as a fallback
+for models without attempt facts. Cache reads and reasoning are already included
+in input and output; cache writes are added once. Missing usage stays unknown.
 
 ## 4. 可观测性：Session JSONL 与 HTML Viewer
 
@@ -334,73 +404,7 @@ Harness 变更至少验证：
 
 ## References
 
-- [`kernel.md`](kernel.md) — Harness 在 CCR Kernel 中的职责
+- [`AGENTS.md`](../AGENTS.md) — Harness 的全局职责与依赖方向
 - [`observability.md`](observability.md) — Session JSONL、Viewer 与 eval 的可观测性分工
-- [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
-- [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
+- [评审流程](review-pipeline.md) — R1 与 R2 如何使用预算、只读工具和完成契约，随后交给 Trial
 - [`unit-model.md`](unit-model.md) — Review Messages 所承载的 Unit / Clue 语义
-
-## 模型截断与推理控制
-
-Harness 使用 AgentGo 的 `EndReasonLength`：当 length 恢复禁用或耗尽时，Execution 输出
-`truncated` / `length`，保留部分响应和已报告用量，不归类为正常完成或网络错误。
-`ExecutionSpec.MaxLengthRecoveries` 为 nil 时沿用 AgentGo 默认 3 次，显式 0 禁用；恢复仍受
-原 deadline、MaxTurns 和 token budget 约束。Plan、重定位、scan 汇总/去重等单次任务使用
-`CompleteText`，拒绝 `length` / `max_tokens` 及只有 reasoning 的响应，不把半份正文当完整结果。
-上下文摘要被截断时也不提交为完整 checkpoint。
-
-任务模板的 `reasoning_effort` 可分别用于 `MAIN_TASK`、`PLAN_TASK`、`HYPOTHESIS_REVIEW_TASK`、
-`RE_LOCATION_TASK` 及 scan 的 `PROJECT_SUMMARY_TASK` / `DEDUP_TASK`。例如为 PLAN_TASK 增加
-`"reasoning_effort": "low"`，即可覆盖该次调用的 provider 默认；空值或 `auto` 保留默认。
-既有模板不自动降档。其他 effort 值原样传给目标模型，不把 minimal/medium/xhigh/max 压成 high/low。
-模型支持的值与别名映射由服务端校验。上下文压缩继续沿用原有的显式 off 策略，现在该设置会真正传到模型请求。
-
-`off` / `none` 表示关闭思考。OpenAI Chat Completions 使用 `reasoning_effort`，同时覆盖该 endpoint
-已配置的 `thinking` / `enable_thinking` 扩展；Anthropic 使用 `thinking` 与 `output_config.effort`。
-覆盖只影响单次调用，不修改共享默认配置；不会按模型名猜测私有档位映射。
-
-`agentgo.Usage.Reasoning` 与记录中的 `reasoning_tokens` 是 completion tokens 的分项，
-不另计总 token 或费用；0 也可能表示供应商未报告。AgentGo Session 保留调用意图、截断恢复决定、
-stop reason 和 reasoning 用量，CCR 的成本投影继续保留这个分项。调用意图不等于服务端实际生效档位。
-
-
-## Model routing ownership
-
-CCR keeps stage model selection, effort, review budgets and recording. AgentGo's
-ChatModel and Router own model calls and endpoint failover; litellm owns vendor
-protocols. Native Harness messages carry opaque provider replay state through
-CCR without rebuilding SDK requests.
-
-A routed pool has one `routing.call_timeout_sec` budget (default 180 seconds).
-`routing.attempt_timeout_sec` optionally bounds each endpoint; when omitted the
-call budget is divided by the pool size so a stalled primary leaves fallback time.
-Provider retries are disabled inside the pool. Authentication/validation/context
-overflow and non-retryable failures stop failover. `finish_reason=length` remains
-an explicit truncated response, and CCR's existing continuation/wrap-up policy
-handles it. Endpoint attempts report safe labels, timing, timeout scope and
-failover decisions; these facts do not prove production latency improvements.
-
-CCR uses `ModelExecutor.Call` for Loop, summary and auxiliary calls. The provider
-request uses streaming; the executor returns the final result and publishes
-incremental facts. Harness recording, output budgets and lossless tool argument
-repair run as model middleware. `TransformContext.ModelExecutor` and staged
-artifacts pass through ContextManager and zone compaction explicitly. Summary
-progress never becomes a conversation message. The final system message gets a
-cache breakpoint unless explicitly configured; the provider decides whether caching is
-supported. No cache-hit claim is inferred from prompt layout alone.
-
-All CCR model callers use AgentGo `ChatModel`, `LLMRequest`, `LLMResponse` and
-`Message` directly, including planning, relocation and context compression.
-Domain `AgentMessage.ToMessage()` is the sole projection into model messages;
-there is no CCR message DTO, native escape hatch, or reverse response conversion.
-The Harness only repairs lossless tool argument drift, retaining native reasoning,
-stop reason, usage, metadata and opaque provider state.
-
-Auxiliary calls record the executor's native events in a local AgentGo Session,
-including the redacted request snapshot. Failed responses remain diagnostic
-`PartialMessage` evidence with reported usage; query, cost and Viewer surfaces
-retain it as an error, without executing or committing its tool calls. Router attempt facts are recorded there as well; loop executions use
-AgentGo's own event recording. The review budget charges each reported attempt
-once, including usage on failed attempts, with the final response as a fallback
-for models without attempt facts. Cache reads and reasoning are already included
-in input and output; cache writes are added once. Missing usage stays unknown.

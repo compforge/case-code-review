@@ -142,9 +142,12 @@ Repository 可以包含多个语言和多个 Component。项目上下文按 Repo
 新语言的工程发现与通用角色进入 RepoKit；语言声明和入口语义进入 CodeGraph；CCR 只补充角色到 Review 的投影。
 跨仓测试覆盖 nested component、polyglot、unknown、role composition 及历史快照，Language 继续消费 CodeGraph 的解析结果。
 
+长期方向是让 Repository 提供开发与 review 共同消费的记忆文件，共享项目约定、历史决策和业务背景。
+具体存储协议待定义。
+
 ## References
 
-- [`kernel.md`](kernel.md) — Project Knowledge 在 CCR Kernel 中的位置
+- [`AGENTS.md`](../AGENTS.md) — Project Knowledge 的全局职责
 - [`unit-model.md`](unit-model.md) — Project 事实如何参与 Unit formation 与 Clue 组织
 - [`language.md`](language.md) — decorator、call、symbol 等源码事实的 owner
-- [`unit_review.md`](unit_review.md) — Project Clue 进入 Review 1 后如何被消费
+- [评审流程](review-pipeline.md#r1-公安侦查-unit-review) — R1 如何消费项目 Clue

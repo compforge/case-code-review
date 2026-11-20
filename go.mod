@@ -9,12 +9,12 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55
 	github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372
-	github.com/compforge/codegraph v0.15.4-0.20261109033530-9ad1ea207624
+	github.com/compforge/codegraph v0.15.4-0.20261120030233-8a1e9ee2d38b
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
 	github.com/compforge/quality-harness/sdks/go/trajectory v0.0.0-20261109145402-249aeebcfcd8
-	github.com/compforge/repokit/toolkit/go v0.58.1-0.20261109081304-e987b702cfda
+	github.com/compforge/repokit/toolkit/go v0.78.4-0.20261120031234-b8342f275f8b
 	github.com/gofrs/flock v0.13.0
-	github.com/odvcencio/gotreesitter v0.57.0
+	github.com/odvcencio/gotreesitter v0.57.1-0.20261119211502-c492362a81dd
 	github.com/pkoukk/tiktoken-go v0.1.8
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.43.0

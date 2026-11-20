@@ -107,6 +107,9 @@ Unit
 事实到 Execution 的投影。Artifact 为运行中的材料及业务数据提供独立身份，消息表达出现位置与用途；
 具体关联和使用策略由 CCR 决定，Unit 继续持有评审事实与结果。AgentGo 管理 Artifact 容器生命周期。
 
+Review 2 先复用形成 Hypothesis 时 Unit 已保留的事实，只为缺失事实继续读取。
+Trial 从同一 Unit 取得 Hypothesis、Assessment、receipt 和必要快照。
+
 任务指令、目标 diff、源码和文档分别装配为类型化消息。目标 diff 保留完整增删与前后路径语义，并在
 所属任务活跃期间作为必要材料保留；文件正文可复用 diff 中精确的快照、路径和行内容覆盖。
 文档的正文身份与 Snapshot / Ref / Relation 分离，相同正文可以共用展开，来源各自保留。
@@ -155,6 +158,9 @@ Unit 在 formation 后保持稳定身份和 Fragment 边界，并沿主链路追
 “如何产生”的逻辑，Unit 只保存“关于这个行为范围已经知道什么”，不吸收 Lane conversation、turn、
 token 等执行状态；后者仍属于 Harness Session。
 
+一次 Review 1 通常为一个 Unit 启动一个 Execution。Review 2 可通过 Lane 为同一 Unit 产生更多 Execution。
+重试、并行证据核查或固定 Hypothesis 重放可以改变 Execution 数量，Unit 的语义和身份保持稳定。
+
 快照始终保存完整 raw 内容；Runner 为不同 Execution 投影独立的 File/Diff/Search AgentMessage，由消息
 类型定义压缩方式，并按当前 Review 阶段赋予保留优先级。消息压缩不会反向修改 Unit，因此 Review 2
 和 Trial 看到的领域事实不受某次 prompt 投影影响。
@@ -180,8 +186,7 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 
 - [RepoKit Fragment 与 Unit](https://github.com/compforge/repokit/blob/main/docs/units.md) — 通用变更模型、关系优先级与分阶段聚合
 
-- [`kernel.md`](kernel.md) — CCR 总体主链路与领域边界
+- [`AGENTS.md`](../AGENTS.md) — CCR 总体主链路与领域边界
 - [`project.md`](project.md) — Repository、Component、FileRole 与项目事实投影
 - [`language.md`](language.md) — symbol、definition、reference 与图事实的生产边界
-- [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与效果优化
-- [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 在 Lane 中的复核与 Trial
+- [评审流程](review-pipeline.md) — Unit 中的证据与阶段结果如何支撑侦查、复核和裁决

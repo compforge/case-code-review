@@ -136,7 +136,7 @@ Go 版本；它不证明部署环境使用同一版本。缺少锁定版本、ch
 ## References
 
 - [CodeGraph](https://github.com/compforge/codegraph) — Document 分析、图模型与语言能力
-- [`kernel.md`](kernel.md) — Language 在 CCR Kernel 中的位置
+- [`AGENTS.md`](../AGENTS.md) — Language 的全局职责
 - [`unit-model.md`](unit-model.md) — 源码关系如何参与 Unit 与 Clue
 - [`harness.md`](harness.md) — 只读源码工具与执行边界
 

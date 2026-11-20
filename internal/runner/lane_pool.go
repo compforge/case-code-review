@@ -39,7 +39,7 @@ type lanePoolConfig struct {
 //
 // +spec=`A Lane owns one conversation and executes one hypothesis at a time; fixed workers return it to the ready queue after each hypothesis`
 // +why=`Conversation lifetime must not require a resident worker, and busy Lanes must yield capacity to other ready Lanes`
-// +link=component://docs/hypothesis_review.md
+// +link=component://docs/review-pipeline.md#hypothesis-进入-lane
 type lanePool struct {
 	config    lanePoolConfig
 	units     map[string]unit.Unit

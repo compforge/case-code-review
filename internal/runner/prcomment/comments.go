@@ -17,7 +17,7 @@ type Snapshot []json.RawMessage
 // Load reads the complete PR comment array supplied by --history. No author,
 // anchor, review marker, resolution or fingerprint controls inclusion.
 // +spec=Every comment and reply remains visible to R1 and R2 independently of Unit membership.
-// +link=component://docs/hypothesis_review.md#33-pr-comments-and-prior-delivery
+// +link=component://docs/review-pipeline.md#pr-comments-and-prior-delivery
 func Load(path string) (Snapshot, error) {
 	if path == "" {
 		return nil, nil

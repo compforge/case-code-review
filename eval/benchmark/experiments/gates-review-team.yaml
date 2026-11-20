@@ -1,4 +1,4 @@
-# review_team 三臂消融——回答"team 机制有没有用"（unit_review.md 验收标准：
+# review_team 三臂消融——回答"team 机制有没有用"（docs/review-pipeline.md 验收标准：
 # 跨文件实锤召回或 pulled→行为改变至少中一个，否则止损）。
 # 用法：uv run --project eval python -m eval.benchmark.run eval/benchmark/experiments/gates-review-team.yaml
 name: gates-review-team

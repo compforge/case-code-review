@@ -55,7 +55,7 @@ type Debrief struct {
 	// UsageSites is how many pre-grepped use sites the initial context carried.
 	UsageSites int
 
-	// Review Team board activity (docs/unit_review.md), 0 when the board is off.
+	// Review Team board activity (docs/review-pipeline.md), 0 when the board is off.
 	BoardPulled         int // peer bulletins injected into this unit's loop
 	BoardInjectedTokens int // their rough token cost
 	BoardPosted         int // facts this unit published for peers

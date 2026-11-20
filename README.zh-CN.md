@@ -16,41 +16,6 @@ ccr 不追求穷举所有缺陷，而是在有界的 agent 探索中发现实现
 
 ![CCR 从 Diff 到 Finding 的 Agentic Review 流水线](docs/review-pipeline.svg)
 
-## 核心模型
-
-### Unit：评审边界
-
-**Unit 让相关改动得到完整、有界的共同评审**。它可以覆盖一个声明、文件中的一个区域，或跨文件协作的多处改动。
-
-CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 定位改动涉及的声明和绑定，并沿源码关系组织评审，让调用方与被调用方等相关改动一起审。删除的代码依据改动前的源码理解。
-
-分组受容量预算约束；无法继续合并时，CCR 保留改动进入评审并报告边界。具体分组规则与配置见 [Unit 模型](docs/unit-model.md)。
-
-### Review 1 发现，Review 2 验证，Review 3 门禁
-
-| 阶段 | 职责 | 产出 | 公检法类比 |
-|---|---|---|---|
-| **Unit Review（Review 1）** | 探索 Unit、沿证据调查、提出可能的缺陷 | `Hypothesis` | 公安侦查并提出案件假设 |
-| **Hypothesis Review（Review 2）** | 独立核对源码、diff、baseline、影响、归因与重复性 | `Assessment` | 检察院复核指控是否有证据支持 |
-| **Trial（Review 3）** | 执行确定性的交付门禁 | `Finding` 或驳回 | 法院门禁决定什么可以交付 |
-
-这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；**Review 3 是 Trial 的别名**，不是第三个 agent loop，而是用确定性规则决定是否交付。三个阶段也借“吾日三省吾身”作记忆点：结论在交付前要经过反复审视。
-
-三个阶段组成增量 Pipeline，而不是前一阶段全部结束后才启动下一阶段。成熟 Hypothesis 可以在其它 Unit 仍调查时进入 Review 2 和 Trial，已经完成的结果不会因后续超时丢失；简单改动若已无 material lead，也可以立即结束，预算只是上限而不是目标耗时。
-
-### Language Knowledge 与 Project Knowledge
-
-两类 Knowledge 共同支持 Unit formation 和两个评审阶段：
-
-| Knowledge | 提供什么 |
-|---|---|
-| **Language Knowledge** | 语法感知的 symbol、span、outline、definition、reference、call、import、symbol/file proximity（关系接近度），以及将作者声明绑定到代码的语法和稳定身份 |
-| **Project Knowledge** | Repository / Component / FileRole / entrypoint 等结构知识，以及 `spec`、`case`、`link`、`rule`、`doc` 等作者声明的 Biz Knowledge |
-
-Language 拥有如何抽取和绑定，Project Knowledge 拥有这些声明在当前项目里表达的业务含义。`spec / case / link / rule / doc` 正是 case-code-review 名字中 “case” 的来源。[`spec-case`](https://github.com/compforge/spec-case) 仍是可选的契约编写与分发方式；没有采用它的仓库也能使用 ccr。
-
-设计展开：[`Kernel`](docs/kernel.md) · [`Project`](docs/project.md) · [`Language`](docs/language.md) · [`Unit`](docs/unit-model.md) · [`Unit Review`](docs/unit_review.md) · [`Hypothesis Review`](docs/hypothesis_review.md) · [`Harness 与可观测性`](docs/harness.md)
-
 ## 使用
 
 ### 安装
@@ -116,6 +81,43 @@ ccr review --feature doc=off
 ```
 
 完整命令和 feature 列表见 `ccr review --help`。
+
+## 核心模型
+
+### Unit：评审边界
+
+**Unit 让相关改动得到完整、有界的共同评审**。它可以覆盖一个声明、文件中的一个区域，或跨文件协作的多处改动。
+
+CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 定位改动涉及的声明和绑定，并沿源码关系组织评审，让调用方与被调用方等相关改动一起审。删除的代码依据改动前的源码理解。
+
+分组受容量预算约束；无法继续合并时，CCR 保留改动进入评审并报告边界。具体分组规则与配置见 [Unit 模型](docs/unit-model.md)。
+
+### Review 1 发现，Review 2 验证，Review 3 门禁
+
+| 阶段 | 职责 | 产出 | 公检法类比 |
+|---|---|---|---|
+| **Unit Review（Review 1）** | 探索 Unit、沿证据调查、提出可能的缺陷 | `Hypothesis` | 公安侦查并提出案件假设 |
+| **Hypothesis Review（Review 2）** | 独立核对源码、diff、baseline、影响、归因与重复性 | `Assessment` | 检察院复核指控是否有证据支持 |
+| **Trial（Review 3）** | 执行确定性的交付门禁 | `Finding` 或驳回 | 法院门禁决定什么可以交付 |
+
+这个类比只用来解释职责分离，并不是在代码里模拟法律系统。Review 1 鼓励发现，Review 2 鼓励证伪弱假设；**Review 3 是 Trial 的别名**，不是第三个 agent loop，而是用确定性规则决定是否交付。三个阶段也借“吾日三省吾身”作记忆点：结论在交付前要经过反复审视。
+
+三个阶段组成增量 Pipeline，而不是前一阶段全部结束后才启动下一阶段。成熟 Hypothesis 可以在其它 Unit 仍调查时进入 Review 2 和 Trial，已经完成的结果不会因后续超时丢失；简单改动若已无 material lead，也可以立即结束，预算只是上限而不是目标耗时。
+
+[公检法三阶段的完整评审流程](docs/review-pipeline.md)
+
+### Language Knowledge 与 Project Knowledge
+
+两类 Knowledge 共同支持 Unit formation 和两个评审阶段：
+
+| Knowledge | 提供什么 |
+|---|---|
+| **Language Knowledge** | 语法感知的 symbol、span、outline、definition、reference、call、import、symbol/file proximity（关系接近度），以及将作者声明绑定到代码的语法和稳定身份 |
+| **Project Knowledge** | Repository / Component / FileRole / entrypoint 等结构知识，以及 `spec`、`case`、`link`、`rule`、`doc` 等作者声明的 Biz Knowledge |
+
+Language 拥有如何抽取和绑定，Project Knowledge 拥有这些声明在当前项目里表达的业务含义。`spec / case / link / rule / doc` 正是 case-code-review 名字中 “case” 的来源。[`spec-case`](https://github.com/compforge/spec-case) 仍是可选的契约编写与分发方式；没有采用它的仓库也能使用 ccr。
+
+[开发指南](AGENTS.md)
 
 ## 状态
 

@@ -197,7 +197,7 @@ type Runner struct {
 	beforeAnalyzer *language.Analyzer
 	grouping       formation.GroupingReport
 	// board is the Review Team's shared case board for this run (nil when the
-	// review_team gate is off). See docs/unit_review.md.
+	// review_team gate is off). See docs/review-pipeline.md.
 	board          *board.Registry
 	hypothesisHook *unitreview.HypothesisHook
 	budget         *llm.BudgetModel
@@ -278,7 +278,7 @@ func New(args Args) *Runner {
 		args.ChatModel = a.budget
 		a.args.ChatModel = a.budget
 	}
-	// Review Team board (docs/unit_review.md): one shared in-memory board per run
+	// Review Team board (docs/review-pipeline.md): one shared in-memory board per run
 	// when the gate is on; nil otherwise (loop behavior byte-identical).
 	if f.Enabled(feature.ReviewTeam) {
 		a.board = board.New()
@@ -955,7 +955,7 @@ func (a *Runner) splitUnits(ctx context.Context) ([]unit.Unit, error) {
 
 	// Review Team: register each unit's board interest before dispatch — its
 	// files + covered symbols + clue neighbors (the Relation axis reused as
-	// "what this unit watches"; see docs/unit_review.md).
+	// "what this unit watches"; see docs/review-pipeline.md).
 	if a.board != nil {
 		for _, u := range units {
 			a.board.Register(u.ID, unitInterest(u))
