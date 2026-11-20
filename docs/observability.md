@@ -13,7 +13,7 @@ CCR 用两个视角观察同一次执行：**SessionView 看一个 Agent Session
 JobView 是读取时的投影，不再持久化另一份完整 View，也没有独立的 `.timeline` 文件。
 一个 Review 可有多个 Unit Job，一个持续运行的 Lane Session 也可参与多个 Job。
 
-### Agent 与 Job 的关系
+## Agent 与 Job 的关系
 
 “任务式”和“持续式”描述 Agent 与 Job 的关系，不是两种 Session 数据结构。任务式 Agent 的一次
 Session 可能完成一个 Job；持续式 R2 Lane 则在同一个 Session 的不同 Run 中处理多个 Unit 的 Hypothesis。
@@ -62,6 +62,15 @@ Scope 是业务工作范围，Execution 是一次 Harness 执行；它可能包�
 Stage 保存源头起止时间与完成状态。多个 Unit 或 Lane 并发时，duration 不可相加作为 Review wall-clock。
 成本从实际请求/响应按调用身份计算，缺失 usage 保持 unknown，不依赖 debrief 是否生成。
 Session 与业务日志都不替代 Forge comment、代码仓和业务事实源；本地正文不自动上传。
+
+Viewer 用 Review 和 Session 的证据区分无发现且已完成、候选被 Trial 拦截、执行未完成三种情况。
+同一份记录也支撑回放和 eval。
+
+### Review 终态
+
+Unit pipeline 为每个进入评审的 Unit 记录终态及尚未复核的 Hypothesis ID。Review manifest 将结果固化在
+`session_end.completion` 中，CLI、Viewer 和 eval 共用这个字段。已交付的 Finding、录制缺口和 warning
+分别记录。预算跳过或尚未完成的 Unit 均计为 partial，即使已有 Finding 交付。
 
 ### 本地记录保留与清理
 
@@ -241,6 +250,8 @@ Prompt 首先展示消息 outline，展开时渲染具体内容块。可以比�
 
 ### 查询与加载边界
 
+最终 token 总量取自封存的 manifest。封存前显示 pending，当前已观测的调用统计仍可查看。
+
 - Review / Global 首屏只读取业务 journal 和 Session 关联索引，不读取原生 prompt/response。
 - `/job?unit=<id>` 使用 `recording.ReadJobSummary`，与标准 JobView 共用业务 membership 和 Operation
   投影，始终校验完整的 Session 引用、文件名及重复 owner，但不加载调用正文。`/job?unit=<id>&format=json` 保留完整标准 JobView 导出。
@@ -256,6 +267,33 @@ Viewer 只消费当前 schema，不叠加历史字段猜测。单次运行受 di
 
 前端为 Go embed 的原生 ES modules，无 npm 运行时依赖。`make test` 同时执行 Go tests 与 Node.js
 内置 runner 的概览、导航与 Prompt 比较测试（Node.js 20+）；修改后的页面还需用真实录制验证视图跳转与长 Prompt。
+
+### Viewer 的基本统计与 Measurements
+
+Global 与 Session Overview 使用同一个原生调用统计函数；Global 展示 model/tool call、
+input/output/cache token 和两类调用耗时，按原生 Session ID 去重，共享 Lane 只计一次。
+Session Overview 只展示调用数与耗时，不请求或渲染 Measurements。
+Usage 和耗时分别保留已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
+Review 尚未 finalization 时也可读取这些已观察到的数据。
+
+Measurements 使用 quality-harness Go trajectory SDK 的目录与 Session / Global 投影。
+首次打开 Global 时，Viewer 自动读取关联的原生 SessionView 并执行确定性 Measurer，
+不需要 Python、uv 或手工导出。Go SDK 直接消费共享调用事实，不通过子进程调用当前 CLI。
+
+每个原生 Session 只计算一次，共享 Lane 不按 Unit 复制。默认计算 model/tool usage，包括工具
+失败次数、状态覆盖、token 与累计耗时；新增 Go Measurer 在服务组装处注册后自动进入通用表格。
+Global 只呈现聚合值，测量 API 保留 Session 投影及原生调用证据。Python 离线 eval 的 context/retry 等能力仍独立使用。
+
+结果保存在相邻的 `review.measurements.json`，缓存身份包含 Review journal 和原生 Session 文件内容
+摘要、Go Measurer 版本及投影契约版本。相同 Review 的并发请求合并，重启后复用磁盘结果；输入或
+算法版本变化后自动重算。计算期间记录继续变化时不发布不一致快照，页面提示刷新后重试。
+
+测量沿 HTTP 请求 context 取消，并有两分钟上限。错误保留在日志与 measurement 状态中，不影响
+基础调用统计。Refresh 重新读取录制事实与测量结果，不触发模型调用、Detector 或 Verifier。
+Python 离线命令仍可用于分析，但其快照不满足 Go 引擎版本时，Viewer 会自动替换为当前 Go 测量。
+
+CCR 通过 go.mod/go.sum 固定 Go trajectory module 的提交，构建不依赖本地 Go workspace。
+安装版只需 CCR 二进制，不附加 Python 运行时。
 
 ## 3. eval：效果与轨迹闭环
 
@@ -288,6 +326,11 @@ Dataset snapshot 把带时区的采集窗口、源快照身份与规范化产物
 Viewer 中发现的重复 `read_files` 或搜索空转可以进一步沉淀为 Trajectory Detector；未完成 Unit
 等明确契约由 Verifier 判断，人工确认的 Finding 则沉淀为 label 和固定数据集。只有在对照实验中
 确认问题具有普遍性、指标改善且没有召回或成本回退，才能认为优化有效。
+
+Pipeline 提供固定的对照阶段。Review 1 和 Review 2 的 trajectory 帮助判断偏差来自初始消息、
+Tool surface 还是终止、压缩、复用等执行机制。跨 case 汇总 agent 主动查找的材料，决定哪些材料应提前
+投影，以及提供 source、outline 或 reference。用下一批 trajectory 验证初始 token、模型轮次、工具调用
+和召回的变化，再决定是否将信息加入初始上下文。
 
 ### 3.1 已知问题的阶段归因
 
@@ -331,52 +374,19 @@ eval 的标签协议、数据边界、数据集构建、Trajectory 诊断、固�
 [`eval/README.md`](../eval/README.md)。真实 corpus、labels、datasets 和 trajectory 放在被忽略的
 `eval/data/`；公开仓只提交通用工具、匿名 fixture 与方法说明。
 
+### 3.2 交付价值的长期评估
+
+固定样本可优先覆盖以下类型，评估证据强度、影响与可逆性，再检查 Pipeline 的交付取舍。
+
+- **需求不匹配或范围外的变化**：没有实现验收条件，或者做了需求、Spec 和 Agent 计划之外的事情；
+- **影响范围较大的变化**：涉及共享接口、核心数据、权限安全、事务并发、跨服务调用或关键业务链路；
+- **证据不足或相互冲突的变化**：缺少测试和验证，代码事实与 AI 结论不一致，或者上下游影响仍未确认；
+- **难以逆转的长期选择**：引入新的架构约束、核心依赖、数据模型或迁移成本；
+- **AI 自己也不确定的判断**：无法回到明确代码证据、依赖缺失 Context，或者只能给出低置信度推断。
+
 ## References
 
 - [`harness.md`](harness.md)——Session recorder、Execution 生命周期和 Viewer 投影契约
 - [`../eval/README.md`](../eval/README.md)——效果评估的采集、数据集、Verifier 与实验流程
 - [`unit_review.md`](unit_review.md)——Review 1 的效果、上下文与完成契约
 - [`hypothesis_review.md`](hypothesis_review.md)——Review 2 的 Assessment、Lane 与 Trial gate
-
-
-## Review completion and on-demand views
-
-The Unit pipeline owns the terminal result of each admitted Unit, including
-unassessed Hypothesis IDs. The Review manifest seals these results in
-`session_end.completion`, separately from delivered Findings and recording gaps.
-CLI, Viewer and eval consume this same result. Warnings explain individual
-failures; their names and counts do not determine completion. Budget-skipped or
-unfinished Units make coverage partial, even when useful Findings were delivered.
-
-The Review workspace reads business records and explicit native Session references. Final token totals
-come from the manifest; before finalization they remain pending. Job summaries never read native
-call bodies. Session View reads the selected continuous Session, while Prompt loads one actual
-request and optionally its predecessor. Missing call evidence remains visible without blocking
-business navigation.
-
-### Viewer 的基本统计与 Measurements
-
-Global 与 Session Overview 使用同一个原生调用统计函数；Global 展示 model/tool call、
-input/output/cache token 和两类调用耗时，按原生 Session ID 去重，共享 Lane 只计一次。
-Session Overview 只展示调用数与耗时，不请求或渲染 Measurements。
-Usage 和耗时分别保留已知调用数，缺失不作零值；累计时间包含并发重叠，不能当作 wall time。
-Review 尚未 finalization 时也可读取这些已观察到的数据。
-
-Measurements 使用 quality-harness Go trajectory SDK 的目录与 Session / Global 投影。
-首次打开 Global 时，Viewer 自动读取关联的原生 SessionView 并执行确定性 Measurer，
-不需要 Python、uv 或手工导出。Go SDK 直接消费共享调用事实，不通过子进程调用当前 CLI。
-
-每个原生 Session 只计算一次，共享 Lane 不按 Unit 复制。默认计算 model/tool usage，包括工具
-失败次数、状态覆盖、token 与累计耗时；新增 Go Measurer 在服务组装处注册后自动进入通用表格。
-Global 只呈现聚合值，测量 API 保留 Session 投影及原生调用证据。Python 离线 eval 的 context/retry 等能力仍独立使用。
-
-结果保存在相邻的 `review.measurements.json`，缓存身份包含 Review journal 和原生 Session 文件内容
-摘要、Go Measurer 版本及投影契约版本。相同 Review 的并发请求合并，重启后复用磁盘结果；输入或
-算法版本变化后自动重算。计算期间记录继续变化时不发布不一致快照，页面提示刷新后重试。
-
-测量沿 HTTP 请求 context 取消，并有两分钟上限。错误保留在日志与 measurement 状态中，不影响
-基础调用统计。Refresh 重新读取录制事实与测量结果，不触发模型调用、Detector 或 Verifier。
-Python 离线命令仍可用于分析，但其快照不满足 Go 引擎版本时，Viewer 会自动替换为当前 Go 测量。
-
-CCR 通过 go.mod/go.sum 固定 Go trajectory module 的提交，构建不依赖本地 Go workspace。
-安装版只需 CCR 二进制，不附加 Python 运行时。

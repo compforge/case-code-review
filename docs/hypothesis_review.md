@@ -147,6 +147,9 @@ Supporting Change / Clue 可以在预算压力下降级，但当前 Hypothesis �
 
 ### 2.6 Trial（Review 3）是确定性门禁
 
+合法 Assessment 一经接受即触发 Trial，其它 Unit 和 Lane 可继续执行。Trial decision 随完成
+时点持久化，并追加到来源 Unit。
+
 Trial 不发起模型推理。只有 Assessment 同时满足以下条件才产出 Finding：
 
 ```text
@@ -234,7 +237,7 @@ Hypothesis 可独立重放 Review 2，不必每次重跑昂贵的 Unit Review。
 
 ## References
 
-- [`kernel.md`](kernel.md) — Review 1、Review 2 与 Trial（Review 3）的总体位置
+- [`AGENTS.md`](../AGENTS.md) — Review 1、Review 2 与 Trial（Review 3）的总体位置
 - [`unit_review.md`](unit_review.md) — Hypothesis 如何从 Unit Review 产生
 - [`harness.md`](harness.md) — Execution continuation、typed message、Session 与 Viewer
 - [`../eval/README.md`](../eval/README.md) — 标签、重放和阶段评测
