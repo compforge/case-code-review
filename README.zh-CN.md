@@ -104,6 +104,8 @@ CCR 通过 [`CodeGraph`](https://github.com/compforge/codegraph) 定位改动涉
 
 三个阶段组成增量 Pipeline，而不是前一阶段全部结束后才启动下一阶段。成熟 Hypothesis 可以在其它 Unit 仍调查时进入 Review 2 和 Trial，已经完成的结果不会因后续超时丢失；简单改动若已无 material lead，也可以立即结束，预算只是上限而不是目标耗时。
 
+[公检法三阶段的完整评审流程](docs/review-pipeline.md)
+
 ### Language Knowledge 与 Project Knowledge
 
 两类 Knowledge 共同支持 Unit formation 和两个评审阶段：

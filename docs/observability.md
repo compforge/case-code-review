@@ -388,5 +388,4 @@ eval 的标签协议、数据边界、数据集构建、Trajectory 诊断、固�
 
 - [`harness.md`](harness.md)——Session recorder、Execution 生命周期和 Viewer 投影契约
 - [`../eval/README.md`](../eval/README.md)——效果评估的采集、数据集、Verifier 与实验流程
-- [`unit_review.md`](unit_review.md)——Review 1 的效果、上下文与完成契约
-- [`hypothesis_review.md`](hypothesis_review.md)——Review 2 的 Assessment、Lane 与 Trial gate
+- [评审流程](review-pipeline.md#评测与验收) — 各阶段的效果、完成度与交付门禁

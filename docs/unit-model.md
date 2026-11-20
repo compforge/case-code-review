@@ -189,5 +189,4 @@ Unit 设计同时影响召回、准确率和成本，至少应观察：
 - [`AGENTS.md`](../AGENTS.md) — CCR 总体主链路与领域边界
 - [`project.md`](project.md) — Repository、Component、FileRole 与项目事实投影
 - [`language.md`](language.md) — symbol、definition、reference 与图事实的生产边界
-- [`unit_review.md`](unit_review.md) — Unit 进入 Review 1 后的探索、收敛与效果优化
-- [`hypothesis_review.md`](hypothesis_review.md) — Hypothesis 在 Lane 中的复核与 Trial
+- [评审流程](review-pipeline.md) — Unit 中的证据与阶段结果如何支撑侦查、复核和裁决

@@ -1,10 +1,10 @@
 // Package board is the Review Team's shared state: an in-memory case board that
 // concurrent review-unit loops post progress bulletins to and pull peers'
 // relevant bulletins from, at turn boundaries. It is the v0 mechanism layer of
-// docs/unit_review.md — auto-published facts + directed incremental injection,
+// docs/review-pipeline.md — auto-published facts + directed incremental injection,
 // no dynamic tasks, no LLM lead.
 //
-// Consumption is asymmetric on purpose (see docs/unit_review.md): publishing is a
+// Consumption is asymmetric on purpose (see docs/review-pipeline.md): publishing is a
 // push the engine does for free from tool calls; consumption is NOT a pull tool
 // (a model can't query what it doesn't know exists, and a pull round is exactly
 // the fetch cost initial source context spent months eliminating). So the board decides WHO
@@ -21,7 +21,7 @@ import (
 )
 
 // Level is a bulletin's confidence tier. The gap between observation and
-// confirmed is the trust boundary (docs/unit_review.md): an observation is one
+// confirmed is the trust boundary (docs/review-pipeline.md): an observation is one
 // unit's suspicion and must not be consumed as established fact — the injection
 // stamp enforces this at render time, not the reader's discretion.
 type Level int
@@ -44,7 +44,7 @@ func (l Level) String() string {
 }
 
 // Bulletin is one progress note posted by a unit's loop — the "in-flight,
-// public, peer-facing" sibling of the Debrief (docs/unit_review.md). Routing
+// public, peer-facing" sibling of the Debrief (docs/review-pipeline.md). Routing
 // keys (Paths/Symbols) say what the note is ABOUT, so peers interested in the
 // same code receive it.
 type Bulletin struct {
@@ -103,7 +103,7 @@ type Board interface {
 }
 
 // Injection caps keep a turn's board digest to a few cards, never a firehose
-// (see docs/unit_review.md). Overflow is summarized as a count line,
+// (see docs/review-pipeline.md). Overflow is summarized as a count line,
 // not queued — stale bulletins lose value.
 const (
 	maxPerPull = 5
@@ -197,7 +197,7 @@ type scored struct {
 
 // render builds the injected digest. The header is the isolation stamp: peers'
 // notes are context, and an observation is explicitly NOT a fact to be repeated
-// as a finding (the input-boundary discipline in docs/unit_review.md).
+// as a finding (the input-boundary discipline in docs/review-pipeline.md).
 func render(hits []scored, total int) string {
 	var sb strings.Builder
 	sb.WriteString("Notes from other review units working on this change-set. " +

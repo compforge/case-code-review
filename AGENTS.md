@@ -63,7 +63,6 @@ eval/                固定样本的效果评测与原始 Session 的轨迹分�
 | Component、文件角色与作者声明的业务契约 | [Project Knowledge](docs/project.md) |
 | review snapshot、symbol-id、CodeGraph 关系与绑定缺口 | [Language](docs/language.md) |
 | Fragment 组装、数量和 token 预算、Unit 证据快照 | [Unit 与评审上下文](docs/unit-model.md) |
-| R1 调查范围、工具与增量提交 | [Unit Review](docs/unit_review.md) |
-| R2 Lane、证据、既有 PR 讨论与 Trial 裁决 | [Hypothesis Review](docs/hypothesis_review.md) |
+| R1 发现、R2 复核与 Trial 裁决的输入、交接和终态 | [评审流程](docs/review-pipeline.md) |
 | Execution 生命周期、模型、消息、工具与预算 | [Harness](docs/harness.md) |
 | 运行记录、Viewer、成本归属与评测 | [可观测性](docs/observability.md) · [评测入口](eval/README.md) |

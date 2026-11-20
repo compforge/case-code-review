@@ -406,6 +406,5 @@ Harness 变更至少验证：
 
 - [`AGENTS.md`](../AGENTS.md) — Harness 的全局职责与依赖方向
 - [`observability.md`](observability.md) — Session JSONL、Viewer 与 eval 的可观测性分工
-- [`unit_review.md`](unit_review.md) — Unit Review 如何使用预算、工具与完成契约
-- [`hypothesis_review.md`](hypothesis_review.md) — Review 2 的只读证据与 Assessment 完成契约
+- [评审流程](review-pipeline.md) — R1 与 R2 如何使用预算、只读工具和完成契约，随后交给 Trial
 - [`unit-model.md`](unit-model.md) — Review Messages 所承载的 Unit / Clue 语义

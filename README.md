@@ -110,6 +110,8 @@ Large repositories can raise snapshot capture budgets with `--max-files` and
 context and output limits; exceeding them fails explicitly rather than reviewing
 a truncated snapshot.
 
+[Review pipeline](docs/review-pipeline.md)
+
 ### Language Knowledge and Project Knowledge
 
 Two knowledge foundations support Unit formation and both review stages:

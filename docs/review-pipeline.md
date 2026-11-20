@@ -1,31 +1,23 @@
-# Unit Review：在有界探索中提高速度与效果
+# 评审流程：从 Unit 到 Finding
 
-> Review 1 优化设计。Unit 与上下文如何形成见 [`unit-model.md`](unit-model.md)；Review 2 的
-> Assessment 完成纪律见 [`hypothesis_review.md`](hypothesis_review.md)。
+CCR 用公检法的分工串起一次评审。公安沿改动追查具体问题，检察逐项复核证据，法院按确定性规则裁决能否交付。
+一条 Hypothesis 提交后就能进入复核，此时 R1 仍可继续调查。Unit 保存这条主张、实际读取的证据、Assessment 和裁决结果。
 
-## 理念 / 目标
+| 阶段 | 处理什么 | 交给下一步什么 |
+|---|---|---|
+| [公安侦查](#r1-公安侦查-unit-review) | Unit 的相关改动与 Clue | 带触发条件、影响和源码锚点的 Hypothesis |
+| [检察复核](#r2-检察复核-hypothesis-review) | 一个 Hypothesis 及其证据 | 关于支持度、变更归因、修复价值和重复性的 Assessment |
+| [法院裁决](#r3-法院裁决-trial) | 已接受的 Assessment 与证据凭据（receipt） | 裁决记录，通过门禁的 Finding |
 
-Unit Review（Review 1）的职责是从一个代码行为作用域中发现**值得独立复核、可以被证伪的
-问题主张**，不是在一个 loop 内完成终审：
+![从变更到 Finding 的评审流程](review-pipeline.svg)
 
-```text
-Clue / Unit == Unit Review ==> Hypothesis ==> Lane / Hypothesis Review
-                                             ==> Assessment == Trial (Review 3) ==> Finding
-```
+## R1 公安侦查 Unit Review
 
-Review 2 已经负责补证、反驳、归因、价值判断和去重，因此 Review 1 应优化为**有界的线索筛查**：
-
-- 保留重要问题的召回，不把“不确定”误当成“不能报告”；
-- 尽早排除没有具体 trigger / impact 的空泛可能性；
-- 将工具调用集中在少量有价值的 lead 上；
-- 每个 Unit 都形成明确终态，不让轮次耗尽伪装成 clean；
-- 以相关上下文密度换效果，不以无限搜索和无限预载换安全感。
+R1 在一个 Unit 内筛查值得独立复核的线索（lead）。形成可证伪的主张后即可提交，仍待核实的部分写入 uncertainty。
 
 这里的 lead 只是 Unit Review 内部的临时调查状态，不新增公开领域对象。成功进入上下文或由工具读取的
 文件快照、相关 diff 和搜索结果直接追加到 Unit；第一个需要持久化、进入 Lane 调度和 eval 的判断结果仍然是挂在来源
 Unit 上的 Hypothesis。
-
-## 目标流程
 
 ```text
 Unit + Review Messages
@@ -54,9 +46,91 @@ Hypothesis；仍缺的证据写进 uncertainty，交给 Review 2 定向补证。
 高影响但补证较贵的主张应在取得最短证据链后带明确的 uncertainty 提交。只有模糊可能性、始终没有
 现实 trigger 的调查才留在可舍弃的尾部。
 
-## 关键设计
+## R2 检察复核 Hypothesis Review
 
-### 1. 用完成契约限制发散，而不是靠模型自觉
+R2 在 Lane 中逐条接收 Hypothesis。来源 Unit 提供证据，Lane 保留相关主张的对话和前案。当前主张的复核结果通过 `submit_assessment` 交给 Trial。
+
+Review 2 收到当前 Hypothesis、来源 Unit 的 Change / Clue 投影、形成该主张时实际读取的事实快照和
+Lane 前案后，分别判断：
+
+| 轴 | 问题 | 结果 |
+|---|---|---|
+| `support` | trigger、执行路径和 impact 是否被证据支持 | `supported / contradicted / insufficient` |
+| `attribution` | 当前 diff 是否事实上造成或实质改变问题 | `caused / pre_existing / unknown` |
+| `value` | 是否是开发者值得修复的具体缺陷 | `actionable / low_value / unknown` |
+| `novelty` | 是否已经在本次 run 或 MR 中交付 | `new / duplicate_in_case / already_delivered` |
+
+这些轴不能压成一个总分。真实但 pre-existing、真实但低价值、或已经交付的问题，都不应再次形成
+Finding。
+
+Review 2 不平均地“多查一些材料”，而是先把主张还原为
+`trigger / reachability -> execution path -> impact`，将 Hypothesis 的 `uncertainty` 视为待核实清单，
+优先寻找能直接支持或推翻关键前提的最短证据链。若触发条件已被反驳，就不再调查后续影响；合理的
+定向检查后仍有关键前提未知，则判 `insufficient`，不能用一个条件成立时自洽的故事替代可达性证明。
+
+Review 2 可以用 `read_go_dependency` 读取本地已有、版本可核验的 Go 依赖与标准库源码，核实 SDK
+或语言 API 的具体行为。材料的定位与校验归 Language，解析与符号关系归 CodeGraph；工具结果作为
+独立的 dependency snapshot 保留，receipt 记录其版本与内容身份，不能用作仓库 diff 锚点。
+这类源码事实不证明外部服务状态或部署配置。若决定性前提没有被已有 Repository 上下文、版本化
+依赖材料、真实 fixture/test 或实际构造该状态的 adapter 直接证明，Review 2 应停止外查并将
+`support` 判为 `insufficient`；本地代码只展示“收到某状态后会怎样”，不能单独证明外部系统会产生该状态。
+`web_search` 与 `web_fetch` 把这个边界显式化：前者表达按 query 寻找来源，后者表达读取已知 URL。
+当前两者都不联网，而是成功返回 `unavailable / unverified` 并签发当前 Hypothesis 专属 receipt。该结果
+不是可重试的工具错误；Review 2 只能据此提交 `insufficient`，Assessment Hook 与 Trial 都会拒绝同一
+Hypothesis 后续的 `supported` 结论。未来接入获准的 Web evidence provider 时，可以保持模型可见的工具
+契约不变，只替换访问实现。
+Review 2 的第一轮直接提交已有证据足够的 Assessment，或读取已经明确的 Repository 内部缺口；不额外增加
+一次 Plan Task。
+
+### 只读证据与 receipt
+
+Review 2 先检查 Unit 已保留的 diff、baseline、源码和搜索结果，只在缺少决定性事实时继续调用只读
+工具；新读到的事实同样追加到来源 Unit。模型提交的 evidence 文本只是引用；Runner 为 Unit 快照
+和成功只读工具调用签发 receipt。Trial 要求评论锚点存在匹配的 diff receipt，防止模型只靠叙述伪造
+“已经核实”。
+
+receipt 是完整性机制，不是主流程中的领域对象。它随 Assessment 持久化，供 Trial、Viewer 和 eval
+核对。receipt 证明材料确实对模型可见，不证明材料必然支持结论；Assessment 仍须把每个关键前提与
+对应的证据或反证连起来。
+
+### 增量提交与完成契约
+
+当前一次 Review 2 execution 只负责一个 Hypothesis。模型判断完成后应立即调用
+`submit_assessment`。Harness 只在当前 Hypothesis 的 Assessment 通过解析和领域校验后接受完成；合法
+提交由 AgentGo 作为 terminal tool 结束 execution，不再额外调用 `task_done`。Assessment 被接受后立即
+进入确定性 Trial，不等待同 Lane 的后续 Hypothesis 或其它 Review 1。无效提交只返回修正提示，loop
+继续运行。
+
+若 execution 超时或失败：
+
+- 已提交 Assessment 仍然保留；
+- 超时且尚未提交时保留 unassessed 与执行终态；系统不代替 reviewer 生成 Assessment，避免未完成复核被解释为否决；
+- 其它失败中未评估的 Hypothesis 产生明确 warning；
+- 未评估项不能通过 Trial，也不能把 0 Finding 解释为 clean。
+
+## R3 法院裁决 Trial
+
+合法 Assessment 一经接受即触发 Trial，其它 Unit 和 Lane 可继续执行。Trial decision 随完成
+时点持久化，并追加到来源 Unit。
+
+Trial 不发起模型推理。只有 Assessment 同时满足以下条件才产出 Finding：
+
+```text
+support     == supported
+attribution == caused
+value       == actionable
+novelty     == new
+evidence    != empty
+matching diff receipt exists
+```
+
+Finding 是通过交付门禁后的结果，不是“模型又重复了一遍 Hypothesis”。
+Trial 的当前规则虽然只读取 Hypothesis、Assessment 和 receipt，但入口接收完整 Unit；以后增加更复杂
+的确定性门禁时，仍能核对同一份文件/diff/搜索快照，不需要再设计 Review 2 到 Trial 的材料协议。
+
+## R1 的调查工具与预算
+
+### 用完成契约限制发散，而不是靠模型自觉
 
 Review 1 的 prompt 应明确：
 
@@ -69,7 +143,7 @@ Review 1 的 prompt 应明确：
 
 “多想几个方向”可以保留为内部推理自由，不能成为必须把每个方向变成工具调用的完成条件。
 
-### 2. 成熟 Hypothesis 增量提交
+### 成熟 Hypothesis 增量提交
 
 `submit_hypothesis` 每次只提交一个成熟主张，并可在一次 Review 1 中调用多次：
 
@@ -104,7 +178,7 @@ wrap-up、调用约束、StopGuard 和停止状态；Runner 的 `HypothesisHook`
 三层都不互相偷走职责。Unit Review 允许无成熟 Hypothesis 时自然结束，因此不会强制工具调用；需要
 terminal tool 的执行在 wrap-up 阶段由 Harness 检查是否成功完成。
 
-### 3. 探索预算结束后硬关闭调查工具
+### 探索预算结束后硬关闭调查工具
 
 `ccr review --timeout` 是每个 Unit 从 Review 1 开始到 Review 2、Trial 和结果落盘结束的总时限。
 Unit 启动前的排队不计入；启动后的计划、上下文准备、候选交接、Review 2 排队和收卷共同使用这个期限。
@@ -132,7 +206,7 @@ truncated，保留已接受的结果，不把强制停止当作 completed。
 不能在现有协议上直接把 30 改成 10：当前所有 Hypothesis 都在第 22 轮后提交，单独降上限会把
 召回和成本一起清零，看起来快，实际是少报。
 
-### 4. 默认去掉独立 LLM Plan
+### 默认去掉独立 LLM Plan
 
 Review 1 本身就是发散阶段，第一轮可以完成 change summary 和 lead 选择。独立 Plan 既增加一次
 模型调用，也会把 speculative lead 作为 Main Loop 的锚点。
@@ -144,7 +218,7 @@ truncated。改动规模是混杂因素，因此先以 `plan=off` 做固定 corp
 若大 Unit 后续确实需要 Plan，应限制为：变更行为摘要、最多三条 candidate lead、每条唯一的
 最便宜补证动作；不再生成一份全面风险清单。
 
-### 5. 给 Unit 相关 Change，而不是全量 Change 列表
+### 给 Unit 相关 Change，而不是全量 Change 列表
 
 `other_changed_files` 改为有关系说明的有界列表：
 
@@ -159,7 +233,7 @@ other_changed_files_count: 17
 初期可用已有 call、usage、import/reference 和同一配置绑定结果排序；其余 diff 仍可通过只读工具
 按需获取。repo map 同样应优先提供 Unit 相关切片，而不是让每个 Unit 看到相同的 run 级长列表。
 
-### 6. 按调查价值治理上下文
+### 按调查价值治理上下文
 
 Unit 与 Clue 在 Execution 之前被直接投影成 Review 1 消息，其中源码是带语义标签的 File 消息；Harness 不认识
 Unit。每轮模型返回后，`read_files` 结果也会恢复成 File 消息再进入 ContextManager。在轮次已被控制后，
@@ -322,7 +396,7 @@ Initial Context 进一步把静态关系投影成独立 `File` source 消息与 
 它也可能正是避免工具调用的原因，只通过策略 A/B 比较 token、轮次、完成率和 Finding 质量。这样
 trajectory 才能反向演进 Initial Context，用可控的初始 token 减少后续工具轮次、时间和总 token。
 
-### 7. 试验特性：Review Team 跨 Unit 协作
+### 试验特性：Review Team 跨 Unit 协作
 
 `review_team` 与 `post_bulletin` 默认关闭，不属于 Unit Review 的稳定完成路径。试验开启后，多个 Unit
 可以通过 run 级 Board 共享已经确认的事实和可能影响其他 Unit 的主张，但 Board 不是第二套
@@ -336,7 +410,7 @@ transcript，也不改变静态 Unit 边界：
 Board 的语义属于 Runner Review 扩展；Harness 只提供通用 event 和 turn-context provider。这样既能
 让 Unit 像队友一样交换材料，又不把“代码评审团队”固化进执行内核。
 
-### 8. 谨慎扩展 Unit 的关系轴
+### 谨慎扩展 Unit 的关系轴
 
 本次“一文件一 Unit”说明 call-chain 无法覆盖所有行为关系。可以在已有 usage/reference 事实上
 增加 changed-symbol reference 候选轴：一个 changed symbol 被另一个 changed file 使用时，允许
@@ -345,24 +419,141 @@ Board 的语义属于 Runner Review 扩展；Harness 只提供通用 event 和 t
 先通过 directly-related changed files 验证收益，再决定是否真正 merge Unit。不能把整个
 ChangeSet 合成一个巨型 Unit，否则只是把重复探索换成超大 prompt 和更差的覆盖公平性。
 
-### 9. 路由以 Execution 为单位保持连续性
+### 路由以 Execution 为单位保持连续性
 
 同一个 Unit 的不同 turn 若轮流由不同模型服务，会削弱推理连续性。可在 Execution admission 时
 分配 primary model，执行内保持身份，失败时允许 failover；不同 Unit 之间继续 round-robin。
 先用 Session 的 per-response alias 验证收益，优先级低于终态协议、ToolGate 和 Plan 消融。
 
-## 落地顺序
+## R2 的调度与证据复用
 
-1. **无代码基线**：固定 corpus 对比 `plan=on/off`，记录 Review 1 分阶段成本。
-2. **增量协议验证**：观察单数 `submit_hypothesis` 的首次产出时间、完成率和召回。
-3. **有界探索调参**：基于硬 ToolGate 和终态预留逐步下调 turn budget。
-4. **上下文收窄**：只展示 directly-related changed files 和 Unit-scoped repo map。
-5. **历史淘汰**：按 lead/evidence 生命周期压缩旧工具结果。
-6. **Unit / routing 实验**：changed-reference 轴和 execution-level model lease 分别消融。
+调用时将 Unit、当前 Hypothesis 和前案状态投影为 `ReviewInput`。
 
-前 3 步应放在同一 candidate arm 中验证。只降轮次而不改变提交时机，会制造不可接受的漏报。
+### Hypothesis 进入 Lane
 
-## Eval 与验收
+每个增量提交并解析完成的 Hypothesis 立即进入 Review 2 调度，不等待来源 Unit 或全部 Unit Review 结束。`LanePool` 用强关系
+选择 Lane：同一 Origin Unit、重叠的 target/evidence/read path、共同 symbol 或高比例读取重合都可
+建立关系；Repository / Component 和目录公共祖先只在多个候选 Lane 间加权，不能单独证明两个问题
+相关。
+
+找不到相关 Lane 时创建新 Lane。相同 Lane 串行判断 Hypothesis，并保留：
+
+- 一个 LoopSession 中的 AgentGo 对话状态和原生 Session；
+- 已签发的 evidence receipt；
+- 前面 Hypothesis 的 Assessment。
+
+因此后续 Hypothesis 可以复用已经读取的文件与判断背景；不相关 Lane 在全局并发上限内并行。
+
+每个候选继承来源 Unit 的总期限，排队也计入该期限。Lane 负责运行连续性，时间预算属于 Unit：同 Lane
+可以包含不同期限的候选，一个候选过期不会取消其它 Unit 的工作，也不会清空已有证据。等待中的候选
+到期即记录未评估，不必等待前一个候选结束；运行中的复核通过自身 context 取消，并保留已接受结果。
+Review 1 提前交卷后，Review 2 使用实际剩余时间，所有候选共享复核与收卷边界。
+
+Lane 持有待处理队列、对话状态和 Session。固定 Worker 池从就绪 Lane 中取得独占执行权，每次消费一个
+Hypothesis；执行结束更新 Lane 状态，再将仍有任务的 Lane 放回就绪队列尾部。空闲 Lane 保留状态，
+不占用 Worker；同 Lane 的 Hypothesis 等待前一次执行结束，不同 Lane 可以并行。
+
+每次执行重新绑定当前 Hypothesis 的完成条件、Assessment 收集器和预算，完成状态不会随对话继承。
+Worker 不绑定 Lane 或 Session，Review 结束后统一关闭各 Lane 的 Session。
+
+### Prompt 上下文形状
+
+首次进入 Lane 时建立稳定 system 前缀；后续相关 Hypothesis 追加 message list 到同一 conversation：
+
+```text
+system: <Review 2 convergence rules / closed-set contract>
+
+user: Hypothesis A(
+        claim,
+        change_set,
+        clues,
+        unit_context=[target_diff, file_snapshots, related_diffs, search_results...],
+        prior_assessments=[]
+      )
+assistant: <decide from retained Unit context, or read only a missing fact>
+assistant: tool_call(read_diffs / read_base_files / read_files / search_code)  # optional
+tool: <typed evidence result>
+assistant: tool_call(submit_assessment)
+tool: <accepted; execution completes>
+
+user: Hypothesis B(...)  # 同一 Lane，只追加新快照/结果，复用前面的 conversation
+...
+```
+
+LoopSession 保留先前的 assistant、file/tool result 和 Assessment；Lane 按各快照/结果的稳定 ID 记录已注入事实，
+新一轮只追加当前 Hypothesis 与来源 Unit 的增量上下文，不重复挂载已经可见的旧 file message、
+Assessment 或 receipt。文件快照仍投影为独立 typed message，而不是把整个 Unit 打包成一条巨型消息，
+从而可以分别做范围覆盖、压缩和淘汰。receipt 账本由 Runner 在模型上下文之外累计，继续供 Trial
+校验；若旧文件内容已被 compaction 压到不足以判断，模型仍可按需重新读取。
+
+`read_files` 会先检查当前 Lane conversation 中实际可见的文件范围。完整覆盖时不访问 provider，而是
+明确提示内容已经来自 retained Unit context 或 earlier read result；只有路径已知、范围不完整或正文
+已被压缩掉时才正常读取，避免把“曾经见过路径”误当成“当前仍有证据”。
+
+Supporting Change / Clue 可以在预算压力下降级，但当前 Hypothesis 不能被删除或只剩 ID。稳定前缀和
+尾部追加有利于 provider cache，也避免每次复核重新读取相同上下文。
+
+### Lane 只拥有运行连续性
+
+Lane 的存在依据是独立生命周期：它有稳定 ID、串行队列、LoopSession、证据账本和前案判断。它不拥有
+Hypothesis 真伪，也不把目录接近直接升级为业务相关。这样调度和判断保持分离。
+
+Unit 才拥有领域事实和阶段结果；Lane 不复制或接管这些状态。相同 claim 出现在不同 Unit 时保留不同
+Hypothesis ID，Lane / Trial 使用 Fingerprint 识别底层同一问题，从而兼顾来源可追踪与交付去重。
+
+#### R1 / R2 衔接：调度效率与上下文复用
+
+R1 持续产生 Hypothesis，R2 增量接续复核。最初考虑的“一个 Lane 一个 queue + Worker”
+侧重上下文复用：相关 Hypothesis 交给同一个执行者，沿用 message list、已读取的证据和前案判断。
+但上下文需要长期保留，并不意味着 Worker 也要长期绑定该 Lane；各 Lane 的候选数量、到达时间和
+复核耗时不同，执行容量应能在它们之间流动。
+
+当前采用全局就绪队列和共享 Worker 池，侧重缩短跨 Lane 的排队等待、提高有界并发容量的利用率，
+同时保留上下文复用。Lane 持有自己的 Hypothesis 队列和 LoopSession，Worker 每次只处理一个
+Hypothesis，完成后释放执行容量；仍有候选的 Lane 回到全局就绪队列尾部，让其它就绪 Lane 获得
+执行机会。下一次接手的 Worker 继续使用该 Lane 的 Session，追加当前 Hypothesis 的消息即可。
+
+这里的全局队列以就绪 Lane 为调度单位，同一 Lane 仍串行访问同一份上下文。因此，Hypothesis 2
+若在同 Lane 的 Hypothesis 1 完成后到达，可以直接复用已有上下文；若在其运行期间到达，仍需等待。
+这个取舍改善跨 Lane 的调度效率，保留同 Lane 的复用收益，也保留了同 Lane 排队消耗 Unit 期限的代价。
+
+### Review 2 只收敛
+
+如果 Review 2 可以不断新造问题，它会重新变成第二个 Unit Review，完成契约和预算都会失控。发现材料
+暗示另一个问题时，只能作为当前 Hypothesis 的证据或不足理由；新问题仍应由 Unit Review 产生。
+
+Review 2 是可替换的验证策略。若未来模型能在一次 Unit Review 中稳定完成发现与验证，可以缩短或
+移除 Review 2，而不改变 Hypothesis、Assessment、Trial 和 Finding 的语义。
+
+### PR comments and prior delivery
+
+调用方按 PR 读取全部 comments，原样序列化为 `--history` JSON 数组；格式为 RepoKit Python
+`Comment` dataclass 字段（snake_case），保留 `id`、`pr`、`body`、`author`、`reply_to_id`、
+时间、URL、anchor 与 resolution。CCR 不按作者、review 类型、symbol、文件锚点或 fingerprint
+过滤、合并这些评论；无锚点的总评与回复同样是上下文。旧的 symbol/path → findings 格式不再接受。
+
+这份 PR 级快照作为独立消息提供给每个 R1 和每条 R2 Lane，后续 Hypothesis 复用 Lane 中的上下文，
+不再把评论伪装成某个 Unit 的源码 Clue。缺省不传 `--history` 表示未提供评论，不能据此断言 PR 没有讨论。
+`history` feature gate 控制两阶段是否使用该快照。
+
+评论正文是待判断的讨论材料，不是覆盖 review 任务的指令，也不全是缺陷交付。
+R1 根据内容避免再次提出已讨论的同一问题；R2 比较 trigger、impact 和回复中的澄清，
+对已有评论表达的同一问题标记 `already_delivered`，在理由中引用 comment ID/URL。
+anchor 只是导航线索；resolution 只表示平台状态，不代表人工认可或修复证明。
+跨 CI revision 的事实来自 Forge，不能依赖上次容器的本地 Session 或派生缓存。
+
+## 评测与验收
+
+### 跨阶段观测
+
+Session 在 Hypothesis 解析、Lane 分配、每次 Assessment 提交和随后的 Trial 决策时追加 artifact。固定
+Hypothesis 可独立重放 Review 2，不必每次重跑昂贵的 Unit Review。评测至少观察：
+
+- Hypothesis 数、Unit 完成率、未评估数，以及首个 Hypothesis / Assessment / Trial decision 的耗时；
+- Lane 数、每个 Lane 的 Hypothesis 数、排队时间、Review 2 轮次和耗时；
+- 每次 R2 Execution 的 Session/Run 关联和上下文复用情况；
+- 四轴拦截分布及 receipt 缺失数；
+- 被拦截样本中的 missed，以及穿过 Trial 的 wrong / repeat。
 
 Review 1 的效果不能用 Hypothesis 数量单独衡量。固定 workload 至少记录：
 
@@ -394,6 +585,27 @@ Review 1 的效果不能用 Hypothesis 数量单独衡量。固定 workload 至�
 
 目标是：在 important/minor 召回不下降的前提下，提高 Unit 完成率，显著降低 clean-path 轮次、
 后半程 token 和传给 Review 2 的低价值负担。
+
+## 优化与试验
+
+### R1 优化顺序
+
+1. **无代码基线**：固定 corpus 对比 `plan=on/off`，记录 Review 1 分阶段成本。
+2. **增量协议验证**：观察单数 `submit_hypothesis` 的首次产出时间、完成率和召回。
+3. **有界探索调参**：基于硬 ToolGate 和终态预留逐步下调 turn budget。
+4. **上下文收窄**：只展示 directly-related changed files 和 Unit-scoped repo map。
+5. **历史淘汰**：按 lead/evidence 生命周期压缩旧工具结果。
+6. **Unit / routing 实验**：changed-reference 轴和 execution-level model lease 分别消融。
+
+前 3 步应放在同一 candidate arm 中验证。只降轮次而不改变提交时机，会制造不可接受的漏报。
+
+### R2 试验方向
+
+大型、跨模块 Hypothesis 可能需要分别核查语法/API、局部行为、跨模块影响或业务契约。未来可让多个
+聚焦 execution 读取同一 Hypothesis，各自提交局部判断，再合成完整 Assessment。
+
+这仍是试验方向：固定开销、冲突合并和业务背景缺失可能抵消收益。当前默认仍由一个 Lane execution
+完成四轴判断，先用 labeled corpus 证明拆分能降低 wrong 且不增加 missed，再扩展模型。
 
 ## 基线回放与设计依据
 
@@ -475,5 +687,8 @@ wrap-up 只在接近上限时以文本提示注入，工具仍然可用；模型
 - **把所有 changed files 合成一个 Unit**：会破坏相关上下文密度和覆盖公平。
 - **用 finding 数下降证明效果提升**：可能只是 incomplete 或漏报。
 
-实现以 `internal/runner/unitreview` 和 `internal/harness` 的通用 execution 能力为准；评测与回放
-约定见 [`../eval/README.md`](../eval/README.md)。
+## References
+
+- [Unit 与评审上下文](unit-model.md)
+- [Harness 执行机制](harness.md)
+- [可观测性](observability.md) · [评测与回放](../eval/README.md)
