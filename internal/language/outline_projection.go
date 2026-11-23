@@ -47,8 +47,6 @@ func graphOutlineEntries(graph *cg.Graph, path string) []outlineEntry {
 		if node.Language == "python" {
 			switch node.Kind {
 			case cg.Field, cg.Variable, cg.Constant:
-				// Assignment signatures include values. Use the published name
-				// rather than parsing a second declaration header in CCR.
 				signature = displaySignature(node.Name)
 			}
 		}
@@ -56,9 +54,6 @@ func graphOutlineEntries(graph *cg.Graph, path string) []outlineEntry {
 			switch node.Kind {
 			case cg.Struct, cg.Interface, cg.Type, cg.TypeAlias:
 				label = "type"
-				if signature != "" {
-					signature = "type " + signature
-				}
 			}
 		}
 		entries = append(entries, outlineEntry{Name: node.QualifiedName, Owner: owner, Label: label, Signature: signature, Span: locationSpan(*node.Location), CanOwn: owns[node.ID] || canOwnOutlineChildren(label)})

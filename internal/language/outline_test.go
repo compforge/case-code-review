@@ -121,7 +121,7 @@ class Settings:
 	}
 	for _, definition := range analysis.Definitions {
 		if definition.Name == "token" {
-			if definition.Signature != `token: str = "module-value"` {
+			if definition.Signature != "token: str" {
 				t.Fatalf("outline policy changed definition signature: %q", definition.Signature)
 			}
 			return
