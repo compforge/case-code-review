@@ -9,12 +9,12 @@ require (
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/compforge/agent-ledger/go v0.0.0-20261026033357-2b1898bebf55
 	github.com/compforge/agentgo v0.0.2-0.20261020095607-237e77c2a372
-	github.com/compforge/codegraph v0.15.4-0.20261120030233-8a1e9ee2d38b
+	github.com/compforge/codegraph v0.15.4-0.20261123072315-3b96e2a64d0a
 	github.com/compforge/go-stdx v0.1.1-0.20261010101953-ebb567922ec3
 	github.com/compforge/quality-harness/sdks/go/trajectory v0.0.0-20261109145402-249aeebcfcd8
-	github.com/compforge/repokit/toolkit/go v0.78.4-0.20261120031234-b8342f275f8b
+	github.com/compforge/repokit/toolkit/go v0.78.4-0.20261123080133-3607e4bec31b
 	github.com/gofrs/flock v0.13.0
-	github.com/odvcencio/gotreesitter v0.57.1-0.20261119211502-c492362a81dd
+	github.com/odvcencio/gotreesitter v0.58.1-0.20261123054809-3e8cac17b358
 	github.com/pkoukk/tiktoken-go v0.1.8
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.43.0
@@ -29,7 +29,6 @@ require (
 )
 
 require (
-	github.com/FlavioCFOliveira/GoGraph v0.15.0 // indirect
 	github.com/RoaringBitmap/roaring/v2 v2.26.0 // indirect
 	github.com/alitto/pond/v2 v2.7.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
@@ -58,6 +57,7 @@ require (
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
+	github.com/qiankunli/GoGraph v0.0.0-20261123062006-2511c40ce8c7 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/tidwall/gjson v1.10.2 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
